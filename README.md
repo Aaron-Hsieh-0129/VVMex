@@ -1,10 +1,11 @@
-# GPUVVM (GPU-accelerated Vector Vorticity Model)
+# VVMex
 
 [![C++](https://img.shields.io/badge/C++-17%2B-blue.svg)](https://isocpp.org/)
 [![Kokkos](https://img.shields.io/badge/Kokkos-Performance_Portability-blueviolet.svg)](https://kokkos.org/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-A GPU-accelerated (Kokkos-based) C++ implementation of the **Vector Vorticity equation cloud-resolving Model (VVM)**.
+VVMex is a GPU-capable, object-oriented C++ design of the Vector Vorticity cloud-resolving Model (VVM). 
+The name preserves the connection to VVM while leaving “ex” intentionally open, reflecting the model’s goals of extensibility, exascale-oriented development, and modern C++-based implementation.
 
 
 ## Table of Contents
@@ -49,7 +50,7 @@ A GPU-accelerated (Kokkos-based) C++ implementation of the **Vector Vorticity eq
 | **HDF5** | `≥ 1.14.5` | **pnetcdf** | `≥ 1.14.1` |
 | **ADIOS2** | `≥ 2.11.0` | | |
 
-*Please refer to our [Installation Tutorial](https://aaron-hsieh-0129.github.io/VVM_GPU_CPP/user-guides/environment/) for detailed instructions on setting up these libraries.*
+*Please refer to our [Installation Tutorial](https://aaron-hsieh-0129.github.io/VVMex/user-guides/environment/) for detailed instructions on setting up these libraries.*
 
 
 ## Quick Start
@@ -57,8 +58,8 @@ A GPU-accelerated (Kokkos-based) C++ implementation of the **Vector Vorticity eq
 ### Step 1: Clone the Repository
 After installing the required libraries, clone the project from GitHub:
 ```bash
-git clone --recursive https://github.com/Aaron-Hsieh-0129/VVM_GPU_CPP.git
-cd VVM_GPU_CPP
+git clone --recursive https://github.com/Aaron-Hsieh-0129/VVMex.git
+cd VVMex
 ```
 
 - Noted that if you can't successfully clone the repo, make sure you can access the github by setting the SSH key in github.
@@ -67,7 +68,7 @@ cd VVM_GPU_CPP
 You must define the project root directory using the `VVM_ROOT` environment variable before compiling or running the model. Add this to your session or `~/.bashrc`:
 
 ```bash
-export VVM_ROOT=/absolute/path/to/your/VVM_GPU_CPP
+export VVM_ROOT=/absolute/path/to/your/VVMex
 ```
 
 ### Step 3: Configure CMake Presets

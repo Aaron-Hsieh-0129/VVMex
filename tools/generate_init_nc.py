@@ -16,7 +16,7 @@ VVM_ROOT = os.environ.get("VVM_ROOT")
 if not VVM_ROOT:
     print("[Error] Can't find environment variable `VVM_ROOT`! ")
     print("Please set your VVM_ROOT such as: ")
-    print("  export VVM_ROOT=/path/to/VVM_GPU_CPP")
+    print("  export VVM_ROOT=/path/to/VVMex")
     print("[Recommend] add it to envs/<your_env_scripts> or bashrc/zshrc")
     sys.exit(1)
 
