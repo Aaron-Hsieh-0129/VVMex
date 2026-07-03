@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Redirecting to VVMex</title>
+  </head>
+  <body>
+    <p>
+      This project has been renamed to
+      <a id="redirect-link" href="/VVMex/">VVMex</a>.
+    </p>
+
+    <script>
+      const oldBase = "/VVM_GPU_CPP/";
+      const newBase = "/VVMex/";
+
+      if (window.location.pathname.startsWith(oldBase)) {
+        const suffix = window.location.pathname.slice(oldBase.length);
+        const target =
+          newBase +
+          suffix +
+          window.location.search +
+          window.location.hash;
+
+        document.getElementById("redirect-link").href = target;
+        window.location.replace(target);
+      }
+    </script>
+  </body>
+</html>

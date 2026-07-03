@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(VVM LANGUAGES CXX C Fortran)
+project(VVMex LANGUAGES CXX C Fortran)
 
 cmake_policy(SET CMP0135 NEW)
 
@@ -8,7 +8,7 @@ if(NOT DEFINED ENV{VVM_ROOT})
     message(FATAL_ERROR "
     [Error] VVM_ROOT environment variable is not set!
     Please set the project root directory path before running CMake.
-    Example: export VVM_ROOT=/path/to/VVM_GPU_CPP
+    Example: export VVM_ROOT=/path/to/VVMex
     Please ensure you have sourced your env_setup.sh file.
     ")
 endif()

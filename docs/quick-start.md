@@ -1,6 +1,6 @@
 # Quick Start
 
-This guide covers dependencies, building GPUVVM, and running jobs through the recommended `submit.py` wrapper.
+This guide covers dependencies, building VVMex, and running jobs through the recommended `submit.py` wrapper.
 
 ## Requirements
 
@@ -16,7 +16,7 @@ This guide covers dependencies, building GPUVVM, and running jobs through the re
 
 ### Libraries
 
-This guide covers dependencies, building GPUVVM, and running the `vvm` executable. For detailed instructions on building the full dependency stack from source, please refer to the **[Environment Installation Guide](user-guides/environment.md)**.
+This guide covers dependencies, building VVMex, and running the `vvm` executable. For detailed instructions on building the full dependency stack from source, please refer to the **[Environment Installation Guide](user-guides/environment.md)**.
 
 | Library | Minimum (tested) | Role |
 | ------- | ------------------ | ---- |
@@ -35,8 +35,8 @@ The root `CMakeLists.txt` also expects **NVIDIA CPU Math Library** (`libnvcpumat
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/Aaron-Hsieh-0129/VVM_GPU_CPP.git
-cd VVM_GPU_CPP
+git clone https://github.com/Aaron-Hsieh-0129/VVMex.git
+cd VVMex
 ```
 
 ### 2. Environment setup
@@ -44,7 +44,7 @@ cd VVM_GPU_CPP
 Define `VVM_ROOT` for convenient build and run commands:
 
 ```bash
-export VVM_ROOT=/absolute/path/to/your/VVM_GPU_CPP
+export VVM_ROOT=/absolute/path/to/your/VVMex
 cd $VVM_ROOT
 ```
 

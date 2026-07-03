@@ -1,8 +1,8 @@
-# GPUVVM (GPU-accelerated Vector Vorticity Model)
+# VVMex
 
-**GPUVVM** is a GPU-accelerated, [Kokkos](https://kokkos.org/)-based C++ implementation of the **Vector Vorticity equation cloud-resolving Model (VVM)**. It uses **MPI** for domain decomposition, **CUDA** through Kokkos on NVIDIA GPUs, and **ADIOS2** for scalable output.
+**VVMex** is a GPU-accelerated, [Kokkos](https://kokkos.org/)-based C++ implementation of the **Vector Vorticity equation cloud-resolving Model (VVM)**. It uses **MPI** for domain decomposition, **CUDA** through Kokkos on NVIDIA GPUs, and **ADIOS2** for scalable output.
 
-The source code is at [VVM_GPU_CPP](https://github.com/Aaron-Hsieh-0129/VVM_GPU_CPP).
+The source code is at [VVMex](https://github.com/Aaron-Hsieh-0129/VVMex).
 
 **Recommended run path:** Use `submit.py` for production and routine test runs. It reads `CMakePresets.json`, prepares the runtime environment, separates compute and I/O tasks, and helps keep CPU/GPU allocation aligned.
 
@@ -27,7 +27,7 @@ The source code is at [VVM_GPU_CPP](https://github.com/Aaron-Hsieh-0129/VVM_GPU_
 
 ## Source repository
 
-Clone and build instructions use the project root layout (`CMakePresets.json`, `src/`, `rundata/`). The upstream repository is [`VVM_GPU_CPP`](https://github.com/Aaron-Hsieh-0129/VVM_GPU_CPP) on GitHub.
+Clone and build instructions use the project root layout (`CMakePresets.json`, `src/`, `rundata/`). The upstream repository is [`VVMex`](https://github.com/Aaron-Hsieh-0129/VVMex) on GitHub.
 
 ## License
 

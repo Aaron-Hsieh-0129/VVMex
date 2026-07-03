@@ -1,5 +1,5 @@
-# GPUVVM Installation Guide
-This guide provides step-by-step instructions for building the dependencies required for GPUVVM from source.
+# VVMex Installation Guide
+This guide provides step-by-step instructions for building the dependencies required for VVMex from source.
 
 ## 0. Preparation
 To make this guide easy to copy and paste, please define your target installation directory first. All libraries will be installed under this directory.
@@ -25,7 +25,7 @@ unset LIBRARY_PATH LD_LIBRARY_PATH
 ## 1. Compiler & Core Tools
 
 ### GCC 11.4
-GPUVVM requires C++17 support. If your system GCC is too old, build GCC 11.4:
+VVMex requires C++17 support. If your system GCC is too old, build GCC 11.4:
 
 ```bash
 wget https://ftp.gnu.org/gnu/gcc/gcc-11.4.0/gcc-11.4.0.tar.gz
@@ -230,7 +230,7 @@ Warning: If using less than 2.11.0, some errors may appear when compiling VVM. Y
 ---
 
 ## 4. Environment Setup Script
-To avoid cluttering your `.bashrc`, create a file named `env_setup.sh` in your workspace. Source this file (`source env_setup.sh`) every time before compiling or running GPUVVM.
+To avoid cluttering your `.bashrc`, create a file named `env_setup.sh` in your workspace. Source this file (`source env_setup.sh`) every time before compiling or running VVMex.
 **env_setup.sh:**
 
 ```bash
@@ -261,6 +261,6 @@ export C_INCLUDE_PATH=$INSTALL_DIR/include:$C_INCLUDE_PATH
 export LIBRARY_PATH=$INSTALL_DIR/lib64:$INSTALL_DIR/$LIB/lib:$LIBRARY_PATH
 export LD_LIBRARY_PATH=$INSTALL_DIR/lib64:$INSTALL_DIR/lib:$LD_LIBRARY_PATH
 
-echo "GPUVVM Environment Loaded Successfully!"
+echo "VVMex Environment Loaded Successfully!"
 
 ```

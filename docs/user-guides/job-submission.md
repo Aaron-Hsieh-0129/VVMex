@@ -1,6 +1,6 @@
 # Job Submission
 
-GPUVVM jobs should normally be launched with the root-level `submit.py` wrapper. The wrapper is the supported path because it reads `CMakePresets.json`, prepares library paths, creates run directories, separates compute and I/O ranks, and requests CPU/GPU resources consistently for local or SLURM execution.
+VVMex jobs should normally be launched with the root-level `submit.py` wrapper. The wrapper is the supported path because it reads `CMakePresets.json`, prepares library paths, creates run directories, separates compute and I/O ranks, and requests CPU/GPU resources consistently for local or SLURM execution.
 
 **Use `submit.py` first:** Direct `mpirun` commands are kept only for advanced debugging. For performance runs, incorrect CPU/GPU assignment can make ranks share GPUs, starve I/O tasks, or slow the model substantially.
 

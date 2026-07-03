@@ -19,32 +19,31 @@ These cases match the **idealized** modes and **automated regression** configs i
 
 ### Advection u
 
-<!-- <iframe width="100%" height="400" src="https://www.youtube.com/embed/7qR-_FeTCc8v" title="GPUVVM advection_u benchmark" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe> -->
-<iframe width="100%" height="600" src="https://www.youtube.com/embed/7qR-_FeTCc8" title="GPUVVM advection u" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<iframe width="100%" height="600" src="https://www.youtube.com/embed/7qR-_FeTCc8" title="VVMex advection u" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
 
 ### Advection v
 
-<iframe width="100%" height="600" src="https://www.youtube.com/embed/4q6sFE4QlrA" title="GPUVVM advection v" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<iframe width="100%" height="600" src="https://www.youtube.com/embed/4q6sFE4QlrA" title="VVMex advection v" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
 
 ### Advection w
 
-<iframe width="100%" height="600" src="https://www.youtube.com/embed/zaMPpXLgrQY" title="GPUVVM advection w" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<iframe width="100%" height="600" src="https://www.youtube.com/embed/zaMPpXLgrQY" title="VVMex advection w" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
 
 ### Stretching
 
-<iframe width="100%" height="600" src="https://www.youtube.com/embed/Feoa3RW3als" title="GPUVVM stretching term" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<iframe width="100%" height="600" src="https://www.youtube.com/embed/Feoa3RW3als" title="VVMex stretching term" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
 
 ### Twisting
 
-<iframe width="100%" height="600" src="https://www.youtube.com/embed/ZtVoWcYPmtA" title="GPUVVM twisting" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<iframe width="100%" height="600" src="https://www.youtube.com/embed/ZtVoWcYPmtA" title="VVMex twisting" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
 
 ### 2D bubble (no physics)
 
-<iframe width="100%" height="600" src="https://www.youtube.com/embed/zmWaabfmZ8Y" title="GPUVVM 2dbubble" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<iframe width="100%" height="600" src="https://www.youtube.com/embed/zmWaabfmZ8Y" title="VVMex 2dbubble" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
 
 ### 3D bubble (no physics)
 
-<iframe width="100%" height="600" src="https://www.youtube.com/embed/gSi1ukT0mXw" title="GPUVVM 3dbubble" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<iframe width="100%" height="600" src="https://www.youtube.com/embed/gSi1ukT0mXw" title="VVMex 3dbubble" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
 
 ## Full physics and complex domains
 
@@ -54,11 +53,11 @@ These cases match the **idealized** modes and **automated regression** configs i
 
 ### RCE self-aggregation (SST 300 K)
 
-<iframe width="100%" height="600" src="https://www.youtube.com/embed/QMaB25El1H4" title="GPUVVM RCE 300K" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<iframe width="100%" height="600" src="https://www.youtube.com/embed/QMaB25El1H4" title="VVMex RCE 300K" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
 
 ### RCE self-aggregation (RCEMIP, SST 305 K)
 
-<iframe width="100%" height="600" src="https://www.youtube.com/embed/w2JkpAE6j8U" title="GPUVVM rcemip 305K" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<iframe width="100%" height="600" src="https://www.youtube.com/embed/w2JkpAE6j8U" title="VVMex rcemip 305K" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
 
 
 ## See also

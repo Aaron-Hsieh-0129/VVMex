@@ -1,6 +1,6 @@
 # System architecture
 
-GPUVVM is a **C++17** cloud-resolving model using **Kokkos** for on-device parallelism (CUDA backend enabled in CMake), **MPI** for distributed memory, and optional **NCCL** for collectives on NVIDIA GPUs when `ENABLE_NCCL` is on.
+VVMex is a **C++17** cloud-resolving model using **Kokkos** for on-device parallelism (CUDA backend enabled in CMake), **MPI** for distributed memory, and optional **NCCL** for collectives on NVIDIA GPUs when `ENABLE_NCCL` is on.
 
 ## Repository layout (application code)
 

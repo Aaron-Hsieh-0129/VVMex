@@ -503,7 +503,7 @@ void OutputManager::grads_ctl_file() {
     outFile << "DSET ^" << filename_prefix_ << "_%tm6.h5\n";
     outFile << "DTYPE hdf5_grid\n";
     outFile << "OPTIONS template\n";
-    outFile << "TITLE VVM_GPU_CPP\n";
+    outFile << "TITLE VVMex\n";
     outFile << "UNDEF -9999.0\n";
     outFile << "XDEF " << grid_.get_global_points_x() << " LINEAR "
             << format_grads_axis_number(axes.first.start) << " "
