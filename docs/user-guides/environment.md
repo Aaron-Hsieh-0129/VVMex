@@ -201,6 +201,24 @@ cd ../..
 
 ```
 
+### libfabric 1.22.0
+libfabric provides the OpenFabrics Interfaces used by high-performance communication transports. Build it before ADIOS2 so ADIOS2 can find it when enabling SST/RDMA-capable transports.
+
+```bash
+wget https://github.com/ofiwg/libfabric/releases/download/v1.22.0/libfabric-1.22.0.tar.bz2
+tar -xjf libfabric-1.22.0.tar.bz2
+cd libfabric-1.22.0
+./configure --prefix=$INSTALL_DIR \
+            --enable-shared \
+            CC=gcc CXX=g++
+make -j$(nproc)
+make install
+cd ..
+
+export PKG_CONFIG_PATH=$INSTALL_DIR/lib/pkgconfig:$INSTALL_DIR/lib64/pkgconfig:$PKG_CONFIG_PATH
+export LD_LIBRARY_PATH=$INSTALL_DIR/lib:$INSTALL_DIR/lib64:$LD_LIBRARY_PATH
+```
+
 
 ### ADIOS2 2.11.0
 
@@ -214,6 +232,7 @@ cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_COMPILER=mpicc \
     -DCMAKE_CXX_COMPILER=mpic++ \
+    -DCMAKE_PREFIX_PATH=$INSTALL_DIR \
     -DADIOS2_USE_MPI=ON \
     -DADIOS2_USE_HDF5=ON \
     -DADIOS2_USE_Kokkos=ON \
