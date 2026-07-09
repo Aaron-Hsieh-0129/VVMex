@@ -118,15 +118,14 @@ VVM_GPU_LIST=0,1,2,3,4,5,6,7 ./submit.py --local \
 ./submit.py --preset <your_preset_name> -c ./rundata/input_configs/default_cases/sea_grass_mountain.json --compute 16 --nodes 1 --gpus 16
 ```
 
-### Asynchronous I/O (optional)
-If you configure `output.engine` as `SST` in your JSON, ADIOS2 requires dedicated I/O tasks. `submit.py` detects the SST engine and prompts for I/O tasks in interactive mode, or you can specify them directly:
+### Asynchronous I/O with SST
+If `output.engine` is `SST` in your JSON, `submit.py` sets the required I/O ranks automatically when `--io` is omitted. You can run the same style of command and let the wrapper choose the I/O task count:
 
 ```bash
-# 16 simulation tasks + 4 I/O tasks across 4 nodes, 20 gpus in total
-./submit.py --preset <your_preset_name> -c my_config.json --compute 16 --io 4 --nodes 4 --gpus 5
+./submit.py --preset <your_preset_name> -c my_config.json --compute 16 --nodes 4 --gpus 4
 ```
 
-More detail: [Job submission](user-guides/job-submission.md).
+Use `--io N` only when you want to override the wrapper's inferred I/O rank count. More detail: [Job submission](user-guides/job-submission.md).
 
 ## Direct MPI (advanced)
 
