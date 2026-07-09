@@ -65,8 +65,6 @@ nav:
       - Physics Implementation: developer-guides/physics.md
       - P3 Modifications: developer-guides/p3-modifications.md
   - Examples:
-      - Gallery Overview: examples/index.md
-      - Video gallery: examples/gallery.md
-      - Idealized Simulations: examples/idealized.md
-      - TaiwanVVM: examples/taiwan-vvm.md
+      - Default cases: examples/default-cases.md
+      - View gallery: examples/gallery.md
 

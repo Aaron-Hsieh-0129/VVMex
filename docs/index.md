@@ -23,7 +23,7 @@ The source code is at [VVMex](https://github.com/Aaron-Hsieh-0129/VVMex).
 | [Job submission](user-guides/job-submission.md) | Local and SLURM workflows, CPU/GPU allocation, asynchronous I/O ranks |
 | [User guides](user-guides/index.md) | JSON configuration and I/O |
 | [Developer guides](developer-guides/index.md) | Architecture and physics hooks |
-| [Examples](examples/index.md) | Idealized tests and Taiwan setups |
+| [Examples](examples/index.md) | Default cases and view gallery |
 
 ## Source repository
 

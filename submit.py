@@ -19,7 +19,7 @@ except ImportError:
 # Defaults
 # ==============================================================================
 
-DEFAULT_CONFIG = "rundata/input_configs/taiwanvvm.json"
+DEFAULT_CONFIG = "rundata/input_configs/default_cases/advection_u.json"
 DEFAULT_COMPUTE = 1
 DEFAULT_IO = None                 # None means infer from output.engine
 DEFAULT_NODES = 1
@@ -364,6 +364,8 @@ def interactive_wizard():
     print("")
     print(" This wizard asks only the common options needed for a normal run.")
     print(" Other options are still available from the command line; see below.")
+    print(" If you are not sure what to enter, run ./submit.py and follow")
+    print(" the prompts step by step. Press Enter to accept a shown default.")
     print("--------------------------------------------------------------------")
     print(" Prompted Options")
     print("--------------------------------------------------------------------")
@@ -395,10 +397,20 @@ def interactive_wizard():
     print("                    This is not asked in the wizard. Override with --gpus N.")
     print("                    This is not based on compute + IO ranks.")
     print("                    IO ranks do not increase the GPU request by default.")
+    print("                    For local runs, specify physical GPU IDs with")
+    print("                    VVM_GPU_LIST=0,1,2,3 ./submit.py --local ...")
     print("")
     print(" --ntasks         : compute ranks + IO ranks")
     print(" --ntasks-per-node: ceil((compute ranks + IO ranks) / nodes)")
     print(" --gpus-per-node  : ceil(compute ranks / nodes), unless --gpus is given")
+    print("--------------------------------------------------------------------")
+    print(" Local GPU Selection")
+    print("--------------------------------------------------------------------")
+    print(" For local runs on specific physical GPUs, set VVM_GPU_LIST before")
+    print(" launching this wizard or the command-line run. Example:")
+    print('   VVM_GPU_LIST=0,1,2,3,4,5,6,7 ./submit.py --local -c "rundata/input_configs/default_cases/taiwanvvm_2048.json" --preset blaze --compute 8 --nodes 1')
+    print(" If VVM_GPU_LIST is not set, local ranks are mapped by local rank")
+    print(" modulo GPUs/node.")
     print("--------------------------------------------------------------------")
     print(" Advanced SLURM Options: command-line only")
     print("--------------------------------------------------------------------")
@@ -459,6 +471,16 @@ def interactive_wizard():
     print("       This is derived from compute ranks per node.")
     print("       IO ranks do not increase the GPU request by default.")
     print("       Override with --gpus N if needed.")
+    if args.local:
+        gpu_list = os.environ.get("VVM_GPU_LIST", "")
+        print("       Local GPU IDs are selected with VVM_GPU_LIST.")
+        if gpu_list:
+            print(f"       Current VVM_GPU_LIST={gpu_list}")
+        else:
+            print("       VVM_GPU_LIST is not set for this wizard session.")
+            print("       To choose exact local GPU IDs, exit and rerun like this:")
+            print('       VVM_GPU_LIST=0,1,2,3,4,5,6,7 ./submit.py --local -c "rundata/input_configs/default_cases/taiwanvvm_2048.json" --preset blaze --compute 8 --nodes 1')
+
 
     if not args.local:
         args.time = ask("\nTime limit", DEFAULT_TIME)
@@ -484,6 +506,9 @@ def interactive_wizard():
     args.slurm_arg = []
 
     cmd_parts = [sys.argv[0]]
+
+    if args.local and os.environ.get("VVM_GPU_LIST"):
+        cmd_parts.insert(0, f'VVM_GPU_LIST={os.environ["VVM_GPU_LIST"]}')
 
     if args.local:
         cmd_parts.append("--local")
@@ -515,7 +540,13 @@ def interactive_wizard():
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="VVM GPU C++ job submission wrapper"
+        description="VVM GPU C++ job submission wrapper",
+        epilog=(
+            "If you do not know which inputs to provide, run ./submit.py with no "
+            "arguments and follow the prompts. For local runs that need specific "
+            "physical GPUs, prefix the command with VVM_GPU_LIST, for example: "
+            "VVM_GPU_LIST=0,1,2,3 ./submit.py --local -c <config> --preset <preset> --compute 4 --nodes 1"
+        ),
     )
 
     parser.add_argument("-c", "--config", help="Path to JSON configuration file")
@@ -725,6 +756,13 @@ def main():
     print(f" IO/node           : {io_per_node}")
     print(f" Total tasks/node  : {tasks_per_node}")
     print(f" GPUs/node         : {args.gpus}")
+    if args.local:
+        gpu_list = env.get("VVM_GPU_LIST", "")
+        if gpu_list:
+            print(f" Local GPU list    : {gpu_list}")
+        else:
+            print(" Local GPU list    : <unset; ranks map by local rank modulo GPUs/node>")
+            print("                     Set VVM_GPU_LIST=0,1,... before ./submit.py --local to choose GPU IDs.")
     print(f" CPUs/task         : {args.cpus}")
     if not args.local:
         print(f" Exclusive         : {args.exclusive}")

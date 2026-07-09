@@ -23,17 +23,17 @@ Wrapper example:
 
 ```bash
 cd $VVM_ROOT
-./submit.py -c ./rundata/input_configs/default_config.json --compute 16 --io 4 --nodes 4 --gpus 5
+./submit.py -c ./rundata/input_configs/default_cases/sea_grass_mountain.json --compute 16 --io 4 --nodes 4 --gpus 5
 ```
 
 Manual MPI examples:
 
 ```bash
 # 1 simulation rank, 1 I/O rank
-mpirun -np 2 ./build/vvm ./rundata/input_configs/default_config.json --io-tasks 1
+mpirun -np 2 ./build/vvm ./rundata/input_configs/default_cases/advection_u.json --io-tasks 1
 
 # 2 simulation ranks, 2 I/O ranks
-mpirun -np 4 ./build/vvm ./rundata/input_configs/default_config.json --io-tasks 2
+mpirun -np 4 ./build/vvm ./rundata/input_configs/default_cases/advection_u.json --io-tasks 2
 ```
 
 The first `world_size - N` ranks run `Grid`, `Model`, and `OutputManager` on the simulation communicator. The last `N` ranks execute `VVM::IO::run_io_server()` (`src/io/IOServer.cpp`), which opens the SST stream named from `output_dir` and `output_filename_prefix`, then writes collective HDF5 on the I/O side.
@@ -54,4 +54,4 @@ On global rank 0, if the engine is `SST`, the main program removes an existing d
 
 ## NetCDF and preprocessing
 
-Reading spatial inputs (topography, land) uses **NetCDF** via the `netcdf_reader` block in the JSON file. Writing may include NetCDF-related options depending on build flags (`enable_netcdf` in `output`). Preprocessing tools under `tools/` (for example `generate_init_nc.py`) produce NetCDF aligned with `netcdf_reader` and land-surface needs.
+Reading spatial inputs (topography, land) uses **NetCDF** via the `netcdf_reader` block in the JSON file. Default cases read spatial inputs from `rundata/initial_conditions/spatial/default_cases/`. Writing may include NetCDF-related options depending on build flags (`enable_netcdf` in `output`). Preprocessing tools under `tools/` (for example `generate_init_nc.py`) produce NetCDF aligned with `netcdf_reader` and land-surface needs.

@@ -90,15 +90,17 @@ cmake --build build -j<core_number>
 
 ### Step 5: Configure the Experiment
 
-- **Main Settings**: Modify `rundata/input_configs/default_config.json` to design your experiment. Each physical process has its own toggle switch.
+- **Default cases**: Start from a sample JSON under `rundata/input_configs/default_cases/`. These are ready-to-run VVMex cases with matching profiles and spatial inputs.
+
+- **Main Settings**: Copy one of the default-case JSON files and modify it to design your experiment. Each physical process has its own toggle switch.
     
 - **Initial Conditions**:
     
-    - Generate initial input files using the Python scripts located under `tools/`.
+    - Default-case profiles are under `rundata/initial_conditions/profiles/default_cases/`.
         
-    - Specify your generated spatial file path (typically placed in `rundata/initial_conditions/spatial/`) within `default_config.json`.
+    - Default-case spatial NetCDF files are under `rundata/initial_conditions/spatial/default_cases/`.
         
-    - Initial profiles should be placed under `rundata/initial_conditions/profiles/`.
+    - The spatial NetCDF files can be generated with `tools/generate_init_nc.py`; the script writes the path configured in `netcdf_reader.source_file`.
 
 ### Step 6: Execute
 
@@ -108,7 +110,7 @@ We provide a user-friendly wrapper script (submit.py) located in the root direct
 
 **Interactive Mode:**
 
-Simply run the script without any arguments and follow the guided prompts:
+If you do not know which inputs to provide, simply run the script without any arguments and follow the guided prompts step by step:
 
 ```bash
 $VVM_ROOT/submit.py
@@ -122,14 +124,25 @@ For automated workflows or quick executions, you can pass arguments directly.
 
 ```bash
 cd $VVM_ROOT
-./submit.py -c ./rundata/input_configs/default_config.json --compute 4 --local
+./submit.py -c ./rundata/input_configs/default_cases/advection_u.json --compute 4 --local
+```
+
+- Local execution on specific GPUs:
+
+```bash
+cd $VVM_ROOT
+VVM_GPU_LIST=0,1,2,3,4,5,6,7 ./submit.py --local \
+  -c "rundata/input_configs/default_cases/taiwanvvm_2048.json" \
+  --preset blaze \
+  --compute 8 \
+  --nodes 1
 ```
 
 - SLURM Submission (SST Engine with Asynchronous I/O):
 
 ```bash
 cd $VVM_ROOT
-./submit.py -c ./rundata/input_configs/default_config.json --compute 16 --io 4 --nodes 4 --gpus 5 -t 24:00:00
+./submit.py -c ./rundata/input_configs/default_cases/sea_grass_mountain.json --compute 16 --io 4 --nodes 4 --gpus 5 -t 24:00:00
 ```
 
 
@@ -143,7 +156,7 @@ mpirun -np 1 ./build/vvm
 
 ##### Asynchronous I/O (Optional)
 
-To use asynchronous output, specify the SST engine in `default_config.json`. You can then allocate dedicated tasks for I/O.
+To use asynchronous output, specify the SST engine in your case JSON. You can then allocate dedicated tasks for I/O.
 
 For example, to use **1 GPU/CPU for the model** and **1 CPU for I/O**:
 
