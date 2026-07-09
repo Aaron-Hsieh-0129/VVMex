@@ -226,7 +226,7 @@ void Initializer::initialize_grid() const {
         Kokkos::deep_copy(flex_height_coef_mid_mutable, flex_height_coef_mid_h);
     } 
     else if (v_coord_type == "rcemip") {
-        std::string source_file = config_.get_value<std::string>("grid.rcemip_grid_data_path", "../rundata/initial_conditions/profiles/snd_rcemip_anal300_v3.txt");
+        std::string source_file = config_.get_value<std::string>("grid.rcemip_grid_data_path", "./rundata/initial_conditions/profiles/snd_rcemip_anal300_v3.txt");
         std::ifstream infile(source_file);
         
         if (!infile.is_open()) {
@@ -606,6 +606,16 @@ void Initializer::assign_vars() const {
             th(k,j,i) = thbar(k);
         }
     );
+    std::string test_mode = config_.get_value<std::string>("simulation.idealized_test", "none");
+    if (test_mode == "2dbubble") {
+        Kokkos::parallel_for("assign_th", Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0,0,0}, {nz,ny,nx}),
+            KOKKOS_LAMBDA(int k, int j, int i) {
+                thbar(k) = 300.;
+                th(k,j,i) = thbar(k);
+                rhobar(k) = rhobar_up(k) = 1;
+            }
+        );
+    }
 
     auto& lon = state_.get_field<2>("lon").get_mutable_device_data();
     auto& lat = state_.get_field<2>("lat").get_mutable_device_data();
@@ -757,7 +767,7 @@ void Initializer::initialize_perturbation() const {
                                       Kokkos::pow((z_mid(k) - real(5000.)) / real(1000.), 2)
                                      );
                 if (radius_norm <= real(1.)) {
-                    th(k, j, i) += real(10.) * (Kokkos::cos(PI * real(0.5) * radius_norm));
+                    th(k, j, i) += real(5.) * (Kokkos::cos(PI * real(0.5) * radius_norm));
                 }
             }
         );
@@ -793,7 +803,7 @@ void Initializer::initialize_perturbation() const {
                 const int global_i = global_start_i + i;
 
                 VVM::Real radius_norm = Kokkos::sqrt(
-                                      Kokkos::pow(((global_i + 1) - (int) (nx/2)) * dx() / real(2000.), 2) +
+                                      Kokkos::pow(((global_i + 1) - (int) (nx/2)) * dx() / real(5000.), 2) +
                                       Kokkos::pow((z_mid(k) - real(3000.)) / real(2000.), 2)
                                      );
                 if (radius_norm <= real(1.)) {

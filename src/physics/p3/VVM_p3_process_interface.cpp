@@ -77,6 +77,23 @@ VVM_P3_Interface::VVM_P3_Interface(const VVM::Utils::ConfigurationManager &confi
     if (!state.has_field("nr")) state.add_field<3>("nr", {nz_total, ny_total, nx_total});
     if (!state.has_field("ni")) state.add_field<3>("ni", {nz_total, ny_total, nx_total});
     if (!state.has_field("bm")) state.add_field<3>("bm", {nz_total, ny_total, nx_total});
+
+
+    std::string source_file = config.get_value<std::string>("initial_conditions.source_file");
+    if (source_file == "./rundata/initial_conditions/profiles/default_cases/p3_bubble_shear.txt") {
+        if (!state.has_field("th_m_diag")) state.add_field<3>("th_m_diag", {nz_total, ny_total, nx_total});
+        if (!state.has_field("qv_m_diag")) state.add_field<3>("qv_m_diag", {nz_total, ny_total, nx_total});
+        if (!state.has_field("qv_after_p3")) state.add_field<3>("qv_after_p3", {nz_total, ny_total, nx_total});
+        if (!state.has_field("qc_after_p3")) state.add_field<3>("qc_after_p3", {nz_total, ny_total, nx_total});
+        if (!state.has_field("qi_after_p3")) state.add_field<3>("qi_after_p3", {nz_total, ny_total, nx_total});
+        if (!state.has_field("qr_after_p3")) state.add_field<3>("qr_after_p3", {nz_total, ny_total, nx_total});
+        if (!state.has_field("nc_after_p3")) state.add_field<3>("nc_after_p3", {nz_total, ny_total, nx_total});
+        if (!state.has_field("nr_after_p3")) state.add_field<3>("nr_after_p3", {nz_total, ny_total, nx_total});
+        if (!state.has_field("ni_after_p3")) state.add_field<3>("ni_after_p3", {nz_total, ny_total, nx_total});
+        if (!state.has_field("qm_after_p3")) state.add_field<3>("qm_after_p3", {nz_total, ny_total, nx_total});
+        if (!state.has_field("bm_after_p3")) state.add_field<3>("bm_after_p3", {nz_total, ny_total, nx_total});
+        if (!state.has_field("th_after_p3")) state.add_field<3>("th_after_p3", {nz_total, ny_total, nx_total});
+    }
 }
 
 void VVM_P3_Interface::allocate_p3_buffers() {
@@ -618,6 +635,8 @@ void VVM_P3_Interface::preprocessing_and_packing(VVM::Core::State& state) {
     auto bm_3d = state.get_field<3>("bm").get_mutable_device_data();
     auto th_3d = state.get_field<3>("th").get_device_data();
     auto thm_3d = state.get_field<3>("th_m").get_device_data();
+    Kokkos::deep_copy(state.get_field<3>("th_m_diag").get_mutable_device_data(), state.get_field<3>("th_m").get_device_data());
+    Kokkos::deep_copy(state.get_field<3>("qv_m_diag").get_mutable_device_data(), state.get_field<3>("qv_m").get_device_data());
     auto qv_3d = state.get_field<3>("qv").get_mutable_device_data();
     auto qvm_3d = state.get_field<3>("qv_m").get_mutable_device_data();
 
@@ -1120,6 +1139,17 @@ void VVM_P3_Interface::run(VVM::Core::State &state, const VVM::Real dt) {
         this->compute_time_averaged_precip(state);
         m_need_reset_precip = true;
     }
+
+    Kokkos::deep_copy(state.get_field<3>("qv_after_p3").get_mutable_device_data(), state.get_field<3>("qv").get_device_data());
+    Kokkos::deep_copy(state.get_field<3>("qc_after_p3").get_mutable_device_data(), state.get_field<3>("qc").get_device_data());
+    Kokkos::deep_copy(state.get_field<3>("qr_after_p3").get_mutable_device_data(), state.get_field<3>("qr").get_device_data());
+    Kokkos::deep_copy(state.get_field<3>("qi_after_p3").get_mutable_device_data(), state.get_field<3>("qi").get_device_data());
+    Kokkos::deep_copy(state.get_field<3>("nc_after_p3").get_mutable_device_data(), state.get_field<3>("nc").get_device_data());
+    Kokkos::deep_copy(state.get_field<3>("ni_after_p3").get_mutable_device_data(), state.get_field<3>("ni").get_device_data());
+    Kokkos::deep_copy(state.get_field<3>("nr_after_p3").get_mutable_device_data(), state.get_field<3>("nr").get_device_data());
+    Kokkos::deep_copy(state.get_field<3>("qm_after_p3").get_mutable_device_data(), state.get_field<3>("qm").get_device_data());
+    Kokkos::deep_copy(state.get_field<3>("bm_after_p3").get_mutable_device_data(), state.get_field<3>("bm").get_device_data());
+    Kokkos::deep_copy(state.get_field<3>("th_after_p3").get_mutable_device_data(), state.get_field<3>("th").get_device_data());
 }
 
 void VVM_P3_Interface::compute_time_averaged_precip(VVM::Core::State& state) {
