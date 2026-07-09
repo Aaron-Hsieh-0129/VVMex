@@ -11,11 +11,11 @@
         "boundary_condition": {
             "x": "periodic",
             "y": "periodic",
-            "__bc_option": "periodic"
+            "__bc_option": "periodic, zero_gradient"
         },
         "fix_lonlat": true,
         "vertical_coordinate_type": "default",
-        "__vertical_coordinate_type_options": "default, taiwanvvm, rcemip",
+        "__vertical_coordinate_type_options": "default, taiwanvvm",
         "rcemip_grid_data_path": "./rundata/initial_conditions/profiles/snd_rcemip_anal300_v3.txt"
     },
     "simulation": {
@@ -27,7 +27,7 @@
     },
     "initial_conditions": {
         "format": "txt",
-        "source_file": "./rundata/initial_conditions/profiles/TNNUA.txt",
+        "source_file": "./rundata/initial_conditions/profiles/default_cases/TNNUA.txt",
         "constant_upper_wind": {
             "enable": false,
             "pressure_threshold_Pa": 25000.0
@@ -36,7 +36,7 @@
         "__perturbation": "none, 2dbubble, 3dbubble"
     },
     "netcdf_reader": {
-        "source_file": "./rundata/initial_conditions/spatial/sea_grass_mountain.nc",
+        "source_file": "./rundata/initial_conditions/spatial/default_cases/sea_urban_mountain.nc",
         "Tg_source": "atmosphere",
         "__Tg_source_options": "atmosphere, netcdf",
         "variables_to_read": {
@@ -44,38 +44,33 @@
                 "lon", "lat",
                 "topo", "sea_land_ice_mask", 
                 "vegtype", "soiltype", "slopetype", "Tg", 
-                "albedo", "gvf", "lai", "shdmax", "shdmin"
+                "albedo", "gvf", "lai", "shdmax", "shdmin",
+                "sm1", "sm2", "sm3", "sm4",
+                "sl1", "sl2", "sl3", "sl4"
             ]
         }
     },
-    "restart": {
-        "enable": false,
-        "source_file": "./output/sea_grass_mountain_moreoutput_gfx_modrad/vvm_output_000144.h5",
-        "file_interval_s": 600.0
-    },
     "output": {
-        "output_dir": "./output/sea_grass_mountain_test",
-        "engine": "HDF5",
+        "output_dir": "./output/sea_urban_mountain",
+        "engine": "SST",
+        "__engine": "HDF5 (synchronous), SST (asynchronous)",
         "queue_limit": 20,
-        "data_transport": "ucx",
-        "control_transport": "sockets",
-        "output_initial_step": true,
+        "data_transport": "WAN",
+        "control_transport": "TCP",
         "__data_transport": "ucx (it will choose automatically), RDMA (for machines with infinite band), WAN (using network), and empty (for single node auto design by ADIOS2) ",
-        "enable_netcdf": true,
         "output_filename_prefix": "vvm_output",
         "fields_to_output": [
             "thbar", "pibar", "rhobar", "rhobar_up",
             "u", "v", "w", "th", "xi", "eta", "zeta",
-            "qv", "qc", "qr", "qi", "nc", "ni", "nr", "bm",
+            "qv", "qc", "qr", "qi",
             "sw_heating", "lw_heating", "swdn", "lwdn", "lwup",
             "swup_toa", "swdn_toa", "lwup_toa", "lwdn_toa",
             "swup_sfc", "swdn_sfc", "lwup_sfc", "lwdn_sfc",            
             "precip_liq_surf_mass", "precip_ice_surf_mass",
             "Tg", "sfc_flux_th", "sfc_flux_qv", "sfc_flux_u", "sfc_flux_v", "le", "hfx",
             "st1", "st2", "st3", "st4", "gfx", "topo",
-            "sm1", "sm2", "sm3", "sm4",
-            "sl1", "sl2", "sl3", "sl4", "sfemis", "zorl",
-            "chx", "cmx"
+            "slc1", "slc2", "slc3", "slc4", "sfemis", "zorl",
+            "chx", "cmx", "albedo"
         ],
         "output_grid": {
             "x_start": 0,
@@ -98,22 +93,22 @@
                 "enable": true,
                 "damp_thermo": true,
                 "damp_vort": true,
-                "sponge_layer_base": 4800.0,
+                "sponge_layer_base": 29000.0,
                 "inv_CRAD": 3600.0
             },
             "random_perturbation": {
                 "enable": true,
                 "time_s": 10,
-                "amplitude": 0.00167,
-                "z_start_m": 100,
+                "amplitude": 0.5,
+                "z_start_m": 0,
                 "z_end_m": 200,
                 "random_seed": 1129
             },
             "lateral_boundary_nudging": {
                 "enable": false,
                 "boundaries": {
-                    "west": false,
-                    "east": false,
+                    "west": true,
+                    "east": true,
                     "south": false,
                     "north": false
                 },
@@ -124,7 +119,7 @@
                 "target_vars": ["qv"],
                 "forcing_data": {
                     "time_varying": false,
-                    "directory": "../rundata/LS_forcings/",
+                    "directory": "./rundata/LS_forcings/",
                     "file_name_for_not_varying": "ls_forcing_constant.nc",
                     "file_prefix": "ls_forcing_",
                     "update_interval_s": 3600.0
