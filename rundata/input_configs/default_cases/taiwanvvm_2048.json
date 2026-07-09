@@ -1,0 +1,374 @@
+{
+    "grid": {
+        "nx": 2048,
+        "ny": 2048,
+        "nz": 69,
+        "n_halo_cells": 2,
+        "dx": 500.0,
+        "dy": 500.0,
+        "dz": 500.0,
+        "dz1": 100.0,
+        "boundary_condition": {
+            "x": "periodic",
+            "y": "periodic",
+            "__bc_option": "periodic, zero_gradient"
+        },
+        "fix_lonlat": true,
+        "vertical_coordinate_type": "taiwanvvm",
+        "__vertical_coordinate_type_options": "default, taiwanvvm, rcemip",
+        "rcemip_grid_data_path": "./rundata/initial_conditions/profiles/snd_rcemip_anal300_v3.txt"
+    },
+    "simulation": {
+        "total_time_s": 86400.0,
+        "dt_s": 1.0,
+        "output_interval_s": 600.0,
+        "idealized_test": "none",
+        "__idealized_test": "none, advection_u, advection_v, advection_w, stretching, twisting, 2dbubble"
+    },
+    "initial_conditions": {
+        "format": "txt",
+        "source_file": "./rundata/initial_conditions/profiles/default_cases/tpe_20120819_at004.txt",
+        "constant_upper_wind": {
+            "enable": true,
+            "pressure_threshold_Pa": 25000.0
+        },
+        "perturbation": "none",
+        "__perturbation": "none, 2dbubble, 3dbubble"
+    },
+    "netcdf_reader": {
+        "source_file": "./rundata/initial_conditions/spatial/default_cases/taiwanvvm_2048.nc",
+        "Tg_source": "atmosphere",
+        "__Tg_source_options": "atmosphere, netcdf",
+        "variables_to_read": {
+            "2d": [
+                "lon", "lat",
+                "topo", "sea_land_ice_mask",
+                "vegtype", "soiltype", "slopetype", "Tg",
+                "albedo", "gvf", "lai", "shdmax", "shdmin",
+                "sm1", "sm2", "sm3", "sm4",
+                "sl1", "sl2", "sl3", "sl4"
+            ]
+        }
+    },
+    "output": {
+        "output_dir": "/raid/mog/taiwanvvm_2048_20120819",
+        "engine": "SST",
+        "__engine": "HDF5 (synchronous), SST (asynchronous)",
+        "queue_limit": 20,
+        "data_transport": "WAN",
+        "control_transport": "TCP",
+        "__data_transport": "ucx (it will choose automatically), RDMA (for machines with infinite band), WAN (using network), and empty (for single node auto design by ADIOS2) ",
+        "output_filename_prefix": "vvm_output",
+        "fields_to_output": [
+            "thbar", "pibar", "rhobar", "rhobar_up",
+            "u", "v", "w", "th", "xi", "eta", "zeta",
+            "qv", "qc", "qr", "qi", "nc", "ni", "nr", "bm",
+            "sw_heating", "lw_heating", "swdn", "lwdn", "lwup",
+            "swup_toa", "swdn_toa", "lwup_toa", "lwdn_toa",
+            "swup_sfc", "swdn_sfc", "lwup_sfc", "lwdn_sfc",            
+            "precip_liq_surf_mass", "precip_ice_surf_mass",
+            "Tg", "sfc_flux_th", "sfc_flux_qv", "sfc_flux_u", "sfc_flux_v", "le", "hfx",
+            "st1", "st2", "st3", "st4", "gfx", "topo",
+            "sm1", "sm2", "sm3", "sm4",
+            "sl1", "sl2", "sl3", "sl4", "sfemis", "zorl",
+            "chx", "cmx", "albedo"
+        ],
+        "output_grid": {
+            "x_start": 0,
+            "x_end": -1,
+            "y_start": 0,
+            "y_end": -1,
+            "z_start": 0,
+            "z_end": -1
+        }
+    },
+    "dynamics": {
+        "solver": {
+            "w_solver_method": "tridiagonal",
+            "_w_solver_method_options": "Choose 'tridiagonal' (original) or 'jacobi' (3D parallel)",
+            "iteration": 100,
+            "WRXMU": 4.0e-6
+        },
+        "forcings": {
+            "sponge_layer": {
+                "enable": true,
+                "damp_thermo": true,
+                "damp_vort": true,
+                "sponge_layer_base": 17000.0,
+                "inv_CRAD": 3600.0
+            },
+            "random_perturbation": {
+                "enable": false,
+                "time_s": 200,
+                "amplitude": 0.5,
+                "z_start_m": 0,
+                "z_end_m": 2000,
+                "random_seed": 1129
+            },
+            "lateral_boundary_nudging": {
+                "enable": false,
+                "boundaries": {
+                    "west": true,
+                    "east": true,
+                    "south": false,
+                    "north": false
+                },
+                "tau_b": 300.0,
+                "offset": 14000.0,
+                "width": 4000.0,
+                "radius": 4000.0,
+                "target_vars": ["qv"],
+                "forcing_data": {
+                    "time_varying": false,
+                    "directory": "./rundata/LS_forcings/",
+                    "file_name_for_not_varying": "ls_forcing_constant.nc",
+                    "file_prefix": "ls_forcing_",
+                    "update_interval_s": 3600.0
+                }
+            },
+            "areamn": {
+                "enable": true,
+                "uvtau": 7200,
+                "nudge_start_m": 0
+            }
+        },
+        "prognostic_variables": {
+            "th": {
+                "tendency_terms": {
+                    "advection": {
+                        "enable": true,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    }
+                }
+            },
+            "xi": {
+                "tendency_terms": {
+                    "advection": {
+                        "enable": true,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    },
+                    "buoyancy": {
+                        "enable": true,
+                        "temporal_scheme": "ForwardEuler",
+                        "spatial_scheme": "Takacs"
+                    },
+                    "stretching": {
+                        "enable": true,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    },
+                    "twisting": {
+                        "enable": true,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    },
+                    "coriolis": {
+                        "enable": false,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    }
+                }
+            },
+            "eta": {
+                "tendency_terms": {
+                    "advection": {
+                        "enable": true,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    },
+                    "buoyancy": {
+                        "enable": true,
+                        "temporal_scheme": "ForwardEuler",
+                        "spatial_scheme": "Takacs"
+                    },
+                    "stretching": {
+                        "enable": true,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    },
+                    "twisting": {
+                        "enable": true,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    },
+                    "coriolis": {
+                        "enable": false,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    }
+                }
+            },
+            "zeta": {
+                "tendency_terms": {
+                    "advection": {
+                        "enable": true,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    },
+                    "stretching": {
+                        "enable": true,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    },
+                    "twisting": {
+                        "enable": true,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    },
+                    "coriolis": {
+                        "enable": false,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    }
+                }
+            },
+            "qv": {
+                "tendency_terms": {
+                    "advection": {
+                        "enable": true,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    }
+                }
+            },
+            "qc": {
+                "tendency_terms": {
+                    "advection": {
+                        "enable": true,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    }
+                }
+            },
+            "qr": {
+                "tendency_terms": {
+                    "advection": {
+                        "enable": true,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    }
+                }
+            },
+            "qi": {
+                "tendency_terms": {
+                    "advection": {
+                        "enable": true,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    }
+                }
+            },
+            "qm": {
+                "tendency_terms": {
+                    "advection": {
+                        "enable": true,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    }
+                }
+            },
+            "nc": {
+                "tendency_terms": {
+                    "advection": {
+                        "enable": true,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    }
+                }
+            },
+            "nr": {
+                "tendency_terms": {
+                    "advection": {
+                        "enable": true,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    }
+                }
+            },
+            "ni": {
+                "tendency_terms": {
+                    "advection": {
+                        "enable": true,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    }
+                }
+            },
+            "bm": {
+                "tendency_terms": {
+                    "advection": {
+                        "enable": true,
+                        "temporal_scheme": "AdamsBashforth2",
+                        "spatial_scheme": "Takacs"
+                    }
+                }
+            }
+        }
+    },
+    "physics": {
+        "p3": {
+            "enable_p3": true,
+            "make_lookup_table": false,
+            "do_predict_nc": true,
+            "do_prescribed_ccn": false,
+            "max_total_ni": 2000.0e3
+        },
+        "rrtmgp": {
+            "enable_rrtmgp": true,
+            "column_chunk_size": 16384,
+            "__column_chunk_size": "This should be modified according to domain and rank and the larger the faster (costs more memory).",
+            "rad_frequency_s": 120,
+            "active_gases": ["h2o", "co2", "o3", "n2o", "co", "ch4", "o2", "n2"],
+            "fixed_total_solar_irradiance": -1,
+            "fixed_solar_zenith_angle": -1,
+            "pool_size_multiplier": 1.0,
+            "time": {
+                "year": 2012,
+                "month": 8,
+                "day": 18,
+                "hour": 16,
+                "minute": 0,
+                "second": 0
+            }
+        },
+        "turbulence": {
+            "enable_turbulence": true
+        },
+        "surface_process": {
+            "enable": true,
+            "frequency_s": 120,
+
+            "land_scheme": "noahlsm",
+            "__land_scheme_options": "none, noahlsm",
+
+            "ocean_scheme": "sflux_2d",
+            "__ocean_scheme_options": "none, sflux_2d, sflux_tc_2d, tco_ocean",
+
+            "__mode_explaination1": "If noahlsm is turned on, it will call Fortran land model (src/physics/land) with ocean/land/ice model inside.",
+            "__mode_explaination2": "However, by changing ocean_scheme options to sflux_2d or sflux_tc_2d, it uses the C++ surface flux (original VVM surface flux, src/physics/surface) and the ocean model in LandProcess will be turned off."
+        }
+    },
+    "performance": {
+        "timing": {
+            "enable": true,
+            "warmup_steps": 0,
+            "print_interval_steps": 7200,
+            "reset_after_interval_print": false
+        }
+    },
+    "optimization": {
+        "cuda_graph_halo_exchange": ["u", "w", "xi", "eta", "zeta", "th", "qv", "qc", "qi", "qr", "qm", "nc", "ni", "nr", "bm"]
+    },
+    "constants": {
+        "gravity": 9.806,
+        "Rd": 287.04,
+        "PSFC": 100000,
+        "P0": 100000,
+        "Cp": 1004.5,
+        "Lv": 2.5e6,
+        "OMEGA": 7.292e-5,
+        "PI": 3.14159265
+    }
+}
