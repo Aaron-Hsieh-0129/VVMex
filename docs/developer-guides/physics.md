@@ -40,7 +40,7 @@ This is why `microphysics_->run` is called after `dycore_->update_thermodynamics
 
 ## P3
 
-The P3 implementation lives under `src/physics/p3/` with EAMxx-style pack-oriented kernels. Lookup tables can be generated or read from `rundata/p3/` depending on `make_lookup_table` and paths in configuration.
+The P3 implementation lives under `src/physics/p3/` with EAMxx-style pack-oriented kernels. VVMex modifies this EAMxx framework to follow Fortran P3 process coupling for vapor adjustment, droplet activation, rain size distribution, mass conservation, and lookup-table behavior; see [P3 modifications](p3-modifications.md) for the full comparison table. Lookup tables can be generated or read from `rundata/p3/` depending on `make_lookup_table` and paths in configuration.
 
 ## RRTMGP
 
