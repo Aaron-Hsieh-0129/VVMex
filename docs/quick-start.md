@@ -71,13 +71,13 @@ The main binary is **`build/vvm`** (`RUNTIME_OUTPUT_DIRECTORY` is the build root
 
 ## Configure a run
 
-1. Copy or edit **`rundata/input_configs/default_config.json`**. This is the default path the executable uses when run from `build/` (see `src/main.cpp`).
+1. Choose a sample from **`rundata/input_configs/default_cases/`**. These JSON files are the recommended starting points for runnable VVMex examples.
 
 2. Set **`output.output_dir`** to a directory you can write.
 
-3. Point **`initial_conditions.source_file`** at a profile under `rundata/initial_conditions/profiles/` (or your own file).
+3. Check **`initial_conditions.source_file`**. Default cases point at profiles under `rundata/initial_conditions/profiles/default_cases/`.
 
-4. For spatial NetCDF (topography, land), set **`netcdf_reader.source_file`** and run `tools/generate_init_nc.py` if you need to generate that file.
+4. Check **`netcdf_reader.source_file`**. Default cases point at spatial NetCDF inputs under `rundata/initial_conditions/spatial/default_cases/`. These NetCDF files can be regenerated with `tools/generate_init_nc.py`.
 
 5. Optional: pass a different config path as the **first non-option argument**:
 
@@ -99,16 +99,23 @@ Use `submit.py` from the project root. It safely handles SLURM resource allocati
 ./submit.py
 ```
 
-The interactive phase shows which fields you need to fill in, explains the run options, and prints an equivalent command-line invocation at the end so you can reuse it for future runs.
+If you do not know which inputs to provide, run `./submit.py` with no arguments. The interactive phase prompts for the required values step by step, explains the run options, and prints an equivalent command-line invocation at the end so you can reuse it for future runs.
 
 ### Command-line execution
 
 ```bash
 # Local test run without SLURM (4 MPI tasks)
-./submit.py --local --preset <your_preset_name> -c ./rundata/input_configs/default_config.json --compute 4
+./submit.py --local --preset <your_preset_name> -c ./rundata/input_configs/default_cases/advection_u.json --compute 4
+
+# Local run on specific GPU IDs
+VVM_GPU_LIST=0,1,2,3,4,5,6,7 ./submit.py --local \
+  -c "rundata/input_configs/default_cases/taiwanvvm_2048.json" \
+  --preset blaze \
+  --compute 8 \
+  --nodes 1
 
 # Submit to SLURM (16 Compute tasks, 1 Node)
-./submit.py --preset <your_preset_name> -c ./rundata/input_configs/default_config.json --compute 16 --nodes 1 --gpus 16
+./submit.py --preset <your_preset_name> -c ./rundata/input_configs/default_cases/sea_grass_mountain.json --compute 16 --nodes 1 --gpus 16
 ```
 
 ### Asynchronous I/O (optional)
@@ -126,7 +133,7 @@ More detail: [Job submission](user-guides/job-submission.md).
 Manual MPI is useful for small debug sessions after the environment has already been prepared. It bypasses the wrapper's resource checks, so verify rank placement, GPU visibility, CPU binding, and OpenMP settings yourself.
 
 ```bash
-mpirun -np 1 ./build/vvm ./rundata/input_configs/default_config.json
+mpirun -np 1 ./build/vvm ./rundata/input_configs/default_cases/advection_u.json
 ```
 
 ### Asynchronous I/O (optional)
@@ -135,10 +142,10 @@ Reserve ranks for dedicated I/O servers that consume an ADIOS2 **SST** stream an
 
 ```bash
 # 1 simulation rank + 1 I/O rank
-mpirun -np 2 ./build/vvm ./rundata/input_configs/default_config.json --io-tasks 1
+mpirun -np 2 ./build/vvm ./rundata/input_configs/default_cases/advection_u.json --io-tasks 1
 
 # 2 simulation ranks + 2 I/O ranks
-mpirun -np 4 ./build/vvm ./rundata/input_configs/default_config.json --io-tasks 2
+mpirun -np 4 ./build/vvm ./rundata/input_configs/default_cases/advection_u.json --io-tasks 2
 ```
 
 Details: [I/O management](user-guides/io-management.md).

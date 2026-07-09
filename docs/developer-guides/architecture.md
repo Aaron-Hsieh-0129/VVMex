@@ -15,7 +15,7 @@ VVMex is a **C++17** cloud-resolving model using **Kokkos** for on-device parall
 | `src/utils/` | `ConfigurationManager` (JSON via nlohmann), timing and timers |
 | `src/share/` | Shared EAMxx-derived utilities, constants, physics helpers |
 | `externals/ekat/` | EKAT submodule: logging, YAML, testing utilities, Kokkos integration (this only used in EAMxx-related things) |
-| `rundata/` | Sample `default_config.json`, initial profiles, initial fields, P3 lookup tables |
+| `rundata/` | Default-case JSON configs, initial profiles, spatial initial fields, P3 lookup tables |
 
 Fortran pieces (e.g. Noah OpenACC) are linked through the physics/land subtree as required by CMake.
 
@@ -23,7 +23,7 @@ Fortran pieces (e.g. Noah OpenACC) are linked through the physics/land subtree a
 
 1. **MPI:** `MPI_Init`, then optional **shared-memory** communicator sizing to set OpenMP threads per rank (`omp_set_num_threads`).
 2. **GPU:** `cudaGetDeviceCount` / `cudaGetDevice`; Kokkos is initialized with `set_device_id` from the node-local rank modulo GPU count.
-3. **Configuration:** `ConfigurationManager` loads JSON (default `../rundata/input_configs/default_config.json` or CLI path).
+3. **Configuration:** `ConfigurationManager` loads the JSON path passed on the command line or by `submit.py`; runnable samples live under `rundata/input_configs/default_cases/`.
 4. **I/O split:** If `--io-tasks N` > 0, ranks are colored into simulation vs I/O; I/O ranks call `run_io_server` and exit; simulation ranks continue.
 5. **Simulation ranks:** NCCL communicator is created when enabled; `Grid` builds a Cartesian MPI decomposition; `State` and `HaloExchanger` are constructed; `Model::init` runs initializer and optional physics `initialize`/`init`; `OutputManager` writes initial step; the loop calls `model.run_step(dt)` until `simulation.total_time_s` is reached.
 

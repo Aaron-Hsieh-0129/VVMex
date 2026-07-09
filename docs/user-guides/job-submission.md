@@ -6,7 +6,7 @@ VVMex jobs should normally be launched with the root-level `submit.py` wrapper. 
 
 ## Interactive mode
 
-Run the wrapper without arguments and answer the prompts:
+If you do not know which inputs to provide, run the wrapper without arguments and answer the prompts step by step:
 
 ```bash
 cd $VVM_ROOT
@@ -28,8 +28,21 @@ cd $VVM_ROOT
 ./submit.py \
   --local \
   --preset <your_preset_name> \
-  -c ./rundata/input_configs/default_config.json \
+  -c ./rundata/input_configs/default_cases/advection_u.json \
   --compute 4
+```
+
+### Local run on specific GPUs
+
+For local execution, use `VVM_GPU_LIST` to select the physical GPU IDs exposed to VVMex ranks. This is the correct way to pin a local run to specific GPUs; `--gpus` controls the per-node GPU count used by the wrapper, while `VVM_GPU_LIST` selects the IDs.
+
+```bash
+cd $VVM_ROOT
+VVM_GPU_LIST=0,1,2,3,4,5,6,7 ./submit.py --local \
+  -c "rundata/input_configs/default_cases/taiwanvvm_2048.json" \
+  --preset blaze \
+  --compute 8 \
+  --nodes 1
 ```
 
 ### SLURM compute run
@@ -38,7 +51,7 @@ cd $VVM_ROOT
 cd $VVM_ROOT
 ./submit.py \
   --preset <your_preset_name> \
-  -c ./rundata/input_configs/default_config.json \
+  -c ./rundata/input_configs/default_cases/sea_grass_mountain.json \
   --compute 16 \
   --nodes 1 \
   --gpus 16 \
@@ -52,7 +65,7 @@ cd $VVM_ROOT
 cd $VVM_ROOT
 ./submit.py \
   --preset <your_preset_name> \
-  -c ./rundata/input_configs/default_config.json \
+  -c ./rundata/input_configs/default_cases/sea_grass_mountain.json \
   --compute 16 \
   --io 4 \
   --nodes 4 \
@@ -69,10 +82,10 @@ cd $VVM_ROOT
 total MPI tasks = compute tasks + I/O tasks
 ```
 
-For GPU runs, request enough GPUs so compute ranks do not unexpectedly share devices. A common starting point is:
+For GPU runs, request enough GPUs so compute ranks do not unexpectedly share devices. For local runs, set `VVM_GPU_LIST` when you need specific physical GPU IDs. A common starting point is:
 
 ```text
-GPUs per node >= ceil((compute tasks + I/O tasks) / nodes)
+GPUs per node >= ceil(compute tasks / nodes)
 ```
 
 I/O ranks are CPU-side SST readers/writers, but they still consume MPI ranks and CPU cores. If you use fewer GPUs than tasks per node, the wrapper will warn that MPI ranks may share GPUs.
@@ -94,7 +107,7 @@ Direct MPI remains useful for small debugging sessions after the environment has
 
 ```bash
 cd $VVM_ROOT
-mpirun -np 1 ./build/vvm ./rundata/input_configs/default_config.json
+mpirun -np 1 ./build/vvm ./rundata/input_configs/default_cases/advection_u.json
 ```
 
 For asynchronous I/O, reserve the final ranks for I/O servers:
@@ -103,8 +116,8 @@ For asynchronous I/O, reserve the final ranks for I/O servers:
 cd $VVM_ROOT
 
 # 1 simulation rank + 1 I/O rank
-mpirun -np 2 ./build/vvm ./rundata/input_configs/default_config.json --io-tasks 1
+mpirun -np 2 ./build/vvm ./rundata/input_configs/default_cases/advection_u.json --io-tasks 1
 
 # 2 simulation ranks + 2 I/O ranks
-mpirun -np 4 ./build/vvm ./rundata/input_configs/default_config.json --io-tasks 2
+mpirun -np 4 ./build/vvm ./rundata/input_configs/default_cases/advection_u.json --io-tasks 2
 ```

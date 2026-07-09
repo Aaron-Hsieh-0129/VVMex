@@ -1,8 +1,8 @@
 # Model configuration
 
-Runtime settings are loaded from a **single JSON file**. The recommended `submit.py` workflow passes this path to the executable for you. If you run the executable directly, it searches for `../rundata/input_configs/default_config.json` relative to the current working directory when you run from the `build` directory, unless you pass another path as the first non-option argument (see [Command-line options](#command-line-options)).
+Runtime settings are loaded from a **single JSON file**. The recommended `submit.py` workflow passes this path to the executable for you. If you run the executable directly, pass the JSON path as the first non-option argument (see [Command-line options](#command-line-options)).
 
-The repository ships an example at `rundata/input_configs/default_config.json`. Keys prefixed with `__` are documentation-only and are not read by the code.
+The repository ships runnable sample configurations under `rundata/input_configs/default_cases/`. Each default-case JSON references a matching profile under `rundata/initial_conditions/profiles/default_cases/` and, when needed, a spatial NetCDF file under `rundata/initial_conditions/spatial/default_cases/`. Keys prefixed with `__` are documentation-only and are not read by the code.
 
 ## Command-line options
 
@@ -35,9 +35,27 @@ Most experiments follow the same editing order:
 
 Keep JSON paths relative to the directory where `submit.py` starts the model, normally the project root. Keys starting with `__` or `_` are inline comments for humans; they are not intended as runtime controls.
 
+## Default-case inputs
+
+Use the default cases when you want a known sample setup before designing your own experiment:
+
+```bash
+./submit.py --local --preset <your_preset_name> -c ./rundata/input_configs/default_cases/advection_u.json --compute 1
+```
+
+The three default-case directories are:
+
+| Directory | Purpose |
+| --------- | ------- |
+| `rundata/input_configs/default_cases/` | Runnable JSON files such as `advection_u.json`, `2dbubble.json`, `rcemip.json`, `sea_grass_mountain.json`, and `taiwanvvm_2048.json`. |
+| `rundata/initial_conditions/profiles/default_cases/` | Sounding/profile text files used by those JSON files. |
+| `rundata/initial_conditions/spatial/default_cases/` | Spatial NetCDF inputs for topography, surface, and land fields. These can be generated with `tools/generate_init_nc.py`. |
+
+For the complete case list and generation notes, see [Default cases](../examples/default-cases.md).
+
 ## Top-level sections
 
-The configuration is grouped into nested objects. The sections below mirror the landfix-era `default_config.json` layout and the attached example.
+The configuration is grouped into nested objects. The sections below mirror the layout used by the default-case JSON files.
 
 ### `grid`
 
@@ -67,7 +85,7 @@ Use `taiwanvvm` when you need the TaiwanVVM-style vertical coordinate and output
 | `output_interval_s` | Output cadence in simulated seconds. |
 | `idealized_test` | Selects a built-in dynamics test: `none`, `advection_u`, `advection_v`, `advection_w`, `stretching`, `twisting`, or `2dbubble`. |
 
-Integration tests under `tests/configs/` set `idealized_test` to match each case name where applicable. For production-like runs, keep `idealized_test` as `none`.
+The idealized default cases and integration tests set `idealized_test` to match each case name where applicable. For production-like runs, keep `idealized_test` as `none`.
 
 ### `initial_conditions`
 
@@ -81,7 +99,7 @@ Integration tests under `tests/configs/` set `idealized_test` to match each case
 | `constant_upper_wind.pressure_threshold_Pa` | Pressure threshold for constant upper-wind handling. |
 | `perturbation` | Optional perturbation preset: `none`, `2dbubble`, or `3dbubble`. |
 
-Place shared profiles under `rundata/initial_conditions/profiles/`. The profile must be consistent with the vertical coordinate choice and the physics you enable.
+Default-case profiles live under `rundata/initial_conditions/profiles/default_cases/`. Place your own shared profiles under `rundata/initial_conditions/profiles/` or a project-specific subdirectory. The profile must be consistent with the vertical coordinate choice and the physics you enable.
 
 ### `netcdf_reader`
 
@@ -89,11 +107,11 @@ Place shared profiles under `rundata/initial_conditions/profiles/`. The profile 
 
 | Key | Role |
 | --- | ---- |
-| `source_file` | Spatial NetCDF file, usually under `rundata/initial_conditions/spatial/`. |
+| `source_file` | Spatial NetCDF file, usually under `rundata/initial_conditions/spatial/`; default cases use `rundata/initial_conditions/spatial/default_cases/`. |
 | `Tg_source` | Surface/ground temperature source. `atmosphere` initializes `Tg` from the atmospheric state; `netcdf` reads it from the NetCDF field. |
 | `variables_to_read.2d` | List of 2D fields to read. Common fields include `lon`, `lat`, `topo`, `sea_land_ice_mask`, `vegtype`, `soiltype`, `slopetype`, `Tg`, `albedo`, `gvf`, `lai`, `shdmax`, and `shdmin`. |
 
-The exact variable set must match what your preprocessing tool wrote. For Taiwan-style cases, generate or prepare the file before submission; see [TaiwanVVM example](../examples/taiwan-vvm.md).
+The exact variable set must match what your preprocessing tool wrote. The default spatial NetCDF files can be generated with `tools/generate_init_nc.py`. For Taiwan-style cases, generate or prepare the file before submission; see [TaiwanVVM example](../examples/taiwan-vvm.md).
 
 ### `restart`
 

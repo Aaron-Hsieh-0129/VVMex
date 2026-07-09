@@ -4,9 +4,9 @@ High-resolution simulations over **Taiwan** use **realistic topography** and **l
 
 ## Configuration overview
 
-1. **Grid and domain** — Set `grid.nx`, `grid.ny`, `grid.nz`, and spacing to match your experiment. `fix_lonlat: true` is typical for lon/lat-consistent setups (see sample `default_config.json`).
+1. **Grid and domain** — Set `grid.nx`, `grid.ny`, `grid.nz`, and spacing to match your experiment. `fix_lonlat: true` is typical for lon/lat-consistent setups. The large sample case is `rundata/input_configs/default_cases/taiwanvvm_2048.json`.
 
-2. **Spatial input file** — `netcdf_reader.source_file` must point to a NetCDF file containing the variables you need. The sample `default_config.json` lists 2D variables such as `lon`, `lat`, `topo`, `sea_land_ice_mask`, vegetation and soil types, slopes, ground temperature, albedo, greenness, LAI, etc. Your file must provide the same names (or you must change the list and preprocessing to match).
+2. **Spatial input file** — `netcdf_reader.source_file` must point to a NetCDF file containing the variables you need. Default cases use files under `rundata/initial_conditions/spatial/default_cases/`, including `taiwanvvm_2048.nc`. The JSON lists 2D variables such as `lon`, `lat`, `topo`, `sea_land_ice_mask`, vegetation and soil types, slopes, ground temperature, albedo, greenness, LAI, etc. Your file must provide the same names (or you must change the list and preprocessing to match).
 
 3. **Land and surface** — Enable `physics.land.enable_land` for Noah; tune `frequency_step`. Enable `physics.surface.enable_surface` and choose `mode` (e.g. `sflux_tc_2d`) when you need surface flux coupling. These interact with the 2D fields read from NetCDF.
 
@@ -14,7 +14,7 @@ High-resolution simulations over **Taiwan** use **realistic topography** and **l
 
 ## Generating spatial NetCDF
 
-The tool `tools/generate_init_nc.py` reads **`rundata/input_configs/default_config.json`** (same path as the main config used in the tool) and writes:
+The tool `tools/generate_init_nc.py` reads the JSON selected by `CONFIG_PATH` near the top of the script, for example **`rundata/input_configs/default_cases/taiwanvvm_2048.json`**, and writes:
 
 - `netcdf_reader.source_file` from the config (directories are created if missing).
 
@@ -35,4 +35,4 @@ For lateral boundary forcing, `tools/generate_ls_forcing.py` can prepare forcing
 - Taiwan runs are often **large**; submit them through `submit.py` so MPI ranks, GPUs, CPUs, and optional `--io` tasks are allocated together.
 - The repository README credits **Noah** land GPU work to the Central Weather Administration (CWA) of Taiwan.
 
-For a minimal first run, start from `rundata/input_configs/default_config.json`, replace `output.output_dir` and `initial_conditions.source_file` with local paths, and verify `netcdf_reader.source_file` exists after preprocessing.
+For a minimal first run, start from a default case such as `rundata/input_configs/default_cases/taiwanvvm_2048.json`, replace `output.output_dir` with a path valid on your machine, and verify `netcdf_reader.source_file` exists after preprocessing.

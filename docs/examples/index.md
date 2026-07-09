@@ -1,11 +1,10 @@
 # Examples
 
-This section describes representative ways to use VVMex: **idealized benchmarks** (including automated regression tests), **Taiwan-oriented** real-data workflows, and a **[video gallery](gallery.md)** of YouTube embeds for dynamics tests and full-physics cases.
+This section describes representative ways to use VVMex: ready-to-run **default cases** and a **[view gallery](gallery.md)** of sample dynamics and full-physics simulations.
 
 | Example | Description |
 | ------- | ----------- |
-| [Video gallery](gallery.md) | YouTube clips: regression-aligned dynamics, TaiwanVVM, RCE self-aggregation |
-| [Idealized simulations](idealized.md) | `idealized_test` modes, `tests/configs/` regression cases, profiles |
-| [TaiwanVVM](taiwan-vvm.md) | NetCDF topography/land, `generate_init_nc.py`, Noah and surface options |
+| [Default cases](default-cases.md) | Runnable sample JSONs under `rundata/input_configs/default_cases/` with matching profiles and spatial NetCDF inputs |
+| [View gallery](gallery.md) | YouTube clips: regression-aligned dynamics, TaiwanVVM, RCE self-aggregation |
 
 For build and run commands, see [Quick Start](../quick-start.md). For every JSON knob, see [Model configuration](../user-guides/configuration.md).
