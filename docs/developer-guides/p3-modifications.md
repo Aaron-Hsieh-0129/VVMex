@@ -1,44 +1,55 @@
-# Restoring Fortran P3 Conversions in EAMxx C++ Framework
+# VVMex P3 Modifications from Fortran P3
 
-The VVMex microphysics core utilizes the Kokkos-based **P3 microphysics scheme** ported from the E3SM EAMxx project. However, to couple effectively with the Vector Vorticity Model (VVM) dynamics, a major architectural modification was necessary.
+VVMex uses the Kokkos-based **P3 microphysics scheme** from E3SM EAMxx as the implementation framework, but modifies the process coupling to follow the original Fortran P3 behavior needed by the Vector Vorticity Model (VVM). The main change is that VVMex handles vapor-cloud-rain-ice phase adjustment inside the P3 microphysics step instead of relying on EAMxx macrophysics/SHOC to provide those tendencies externally.
 
-## Background: The Missing qv ↔ qc Conversions
-In the E3SM EAMxx architecture, explicit condensation, evaporation processes between water vapor ($q_v$) and cloud water($q_c$) are offloaded to a separate **macrophysics** (saturation adjustment) module. Consequently, these processes were stripped out of their C++ P3 implementation.
+In EAMxx, several processes are split across P3, SHOC, and other safeguards. In VVMex, these processes are coupled inside P3 so the microphysics can update vapor, hydrometeor mass, number, and thermodynamic state consistently during the model step.
 
-Because VVMex requires these processes to be handled internally during the microphysics step, **we have explicitly restored these conversions based on the original Fortran P3 formulation** (e.g., *Morrison and Milbrandt, 2015*).
+## Process Comparison
 
-## Key Modifications & Additions
+| Feature / process | VVMex modification following Fortran P3 | EAMxx P3 behavior |
+| ----------------- | --------------------------------------- | ----------------- |
+| Cloud fraction | All-or-nothing treatment. | Cloud fraction is decided by SHOC. |
+| Air density | Full non-hydrostatic calculation, $\rho = P / (R T)$. | Hydrostatic approximation, $\rho = -\frac{1}{g}\frac{dP}{dz}$. |
+| Saturation vapor pressure (`qvs`, `qis`) | Uses `Polysvp1`, combining Flatau et al. (1992) style polynomial saturation vapor pressure with Goff-Gratch behavior. | Uses Murphy-Koop or `Polysvp1`; the `Polysvp1` path is Flatau-only. |
+| Droplet activation | Performed after `ice_nucleation` and before `cloud_water_autoconversion`, together with the initial-step saturation adjustment. | Coupled to SHOC or prescribed external inputs. |
+| Rain droplet size distribution | Marshall-Palmer distribution with $\mu_r = 0$. | Generalized Gamma distribution with $\mu_r = 1$. |
+| In-cloud limits | No artificial in-cloud or precipitation thresholds are applied. | Applies explicit `incloud_limit = 5.1e-3` and `precip_limit = 1.0e-2` thresholds. |
+| Ice lookup table | Uses v6.4. The table resolution differs, so the `lookup_table_1a_dum1_c` coefficient is changed accordingly. | Uses v4.1.1. |
+| Condensation, evaporation, deposition, sublimation | Partitions vapor phase change among $q_c$, $q_r$, and $q_i$ using relaxation rates and saturation state. | SHOC handles condensation and evaporation of $q_c$. Deposition, sublimation, and evaporation of $q_r$ are handled separately in `ice_deposition_sublimation()` and `evaporate_rain()`. |
+| Bergeron process | Included within the coupled mixed-phase vapor-adjustment step. | Treated as an independent process tendency. |
+| Mass conservation | Applies coupled vapor-hydrometeor mass and number updates. | Processes are updated separately. |
+| Supersaturation limiter | No extra EAMxx-style supersaturation limiter; saturation behavior is controlled through the coupled vapor-adjustment and conservation update. | Additional safeguards prevent overshooting saturation. |
 
-We integrated the original Fortran logic into the Kokkos pack-oriented kernels. The major modifications are encapsulated in the following newly implemented files under `src/physics/p3/impl/`:
+## Restored and Modified Kernels
 
-### 1. `p3_calc_cond_evap_dep_sub_impl.hpp`
-This file restores the semi-analytic integration for thermodynamic phase changes. It handles:
-- **Cloud Condensation/Evaporation:** Explicit tendencies for $q_v \rightarrow q_c$ (`qv2qc_conden_tend`) and $q_c \rightarrow q_v$ (`qc2qv_evap_tend`).
+The Fortran-P3-style logic is integrated into the Kokkos pack-oriented kernels under `src/physics/p3/impl/`.
 
-- **Rain Condensation/Evaporation:** Adjustments for $q_r$.
+### `p3_calc_cond_evap_dep_sub_impl.hpp`
 
-- **Ice Deposition/Sublimation:** Restored processes for $q_v \rightarrow q_i$ and $q_i \rightarrow q_v$.
+This file restores the semi-analytic integration for thermodynamic phase changes and combines competing vapor adjustment pathways according to their calculated timescales. It handles:
 
-- This function combines original ice depostion/sublimation to do the competing adjustment according to calculated time scale.
+- **Cloud condensation/evaporation:** explicit tendencies for $q_v \rightarrow q_c$ (`qv2qc_conden_tend`) and $q_c \rightarrow q_v$ (`qc2qv_evap_tend`).
+- **Rain condensation/evaporation:** vapor exchange involving $q_r$.
+- **Ice deposition/sublimation:** restored processes for $q_v \rightarrow q_i$ and $q_i \rightarrow q_v$.
+- **Mixed-phase competition:** coupled vapor adjustment among $q_c$, $q_r$, and $q_i$ based on relaxation rates and saturation state.
 
-### 2. `p3_droplet_activation_impl.hpp`
-Restores the droplet activation parameterization based on environmental supersaturation, initializing the cloud droplet number concentration tendency (`nc_nuclet_tend`) and the associated mass tendency (`qv2qc_nucleat_tend`).
+### `p3_droplet_activation_impl.hpp`
 
-### 3. `p3_limit_cond_evap_dep_sub_impl.hpp`
-To prevent the microphysics from over-depleting water vapor or driving the grid cell into unrealistic supersaturation, this module imposes limits on the total condensation, evaporation, deposition, and sublimation tendencies based on a strict saturation adjustment calculation.
+This file restores droplet activation inside P3. It computes new droplets from environmental supersaturation and initializes both cloud droplet number tendency (`nc_nuclet_tend`) and associated mass tendency (`qv2qc_nucleat_tend`). In the VVMex sequence, activation occurs after ice nucleation and before cloud-water autoconversion.
 
-## Interface and Main Loop Integration
+### `p3_limit_cond_evap_dep_sub_impl.hpp`
 
-These restored processes are tightly integrated into the `p3_main` execution flow.
+This file limits the coupled condensation, evaporation, deposition, and sublimation tendencies so the update does not over-deplete available water or violate the coupled mass/number update. In VVMex this is part of the Fortran-P3-style coupled vapor adjustment, not the same as the additional EAMxx supersaturation safeguard listed in the comparison table.
 
-In `p3_main_impl_part2.hpp`, the sequence of operations was modified to incorporate the restored kernels:
-1. **Calculate Tendencies:** `calc_cond_evap_dep_sub` is called alongside other microphysical growth processes.
+## Main Loop Integration
 
-2. **Activation:** `droplet_activation` computes new droplets generated via supersaturation.
+These processes are integrated into the `p3_main` execution flow. In `p3_main_impl_part2.hpp`, the sequence includes:
 
-3. **Impose Limits:** Before mapping back to cell averages, `limit_cond_evap_dep_sub` scales the tendencies to conserve water mass and maintain thermodynamic equilibrium.
-
-4. **Prognostic Updates:** The tendencies (`qv2qc_conden_tend`, `qc2qv_evap_tend`, etc.) are finally injected into `update_prognostic_liquid` and `update_prognostic_ice` to correctly advance the state variables ($q_v, q_c, q_r, q_i, T, \theta$).
+1. **Phase-change tendency calculation:** `calc_cond_evap_dep_sub` computes coupled condensation, evaporation, deposition, and sublimation tendencies.
+2. **Droplet activation:** `droplet_activation` computes supersaturation-driven new droplet mass and number.
+3. **Coupled limiting and conservation:** `limit_cond_evap_dep_sub` scales the coupled tendencies before mapping back to cell averages.
+4. **Prognostic updates:** tendencies such as `qv2qc_conden_tend`, `qc2qv_evap_tend`, `qv2qi_depos_tend`, and related number tendencies are injected into the liquid and ice update paths to advance $q_v$, $q_c$, $q_r$, $q_i$, temperature, and potential temperature consistently.
 
 ## Tracking the Code Changes
-For developers navigating the codebase, these specific modifications are tagged with comments such as `// Aaron - evporation/condensation/deposition/sublimation` or `// Aaron - limit saturation adjustment` within `p3_functions.hpp` and the `_impl.hpp` files.
+
+For developers navigating the codebase, the VVMex-specific P3 changes are marked with comments such as `// Aaron - evporation/condensation/deposition/sublimation` and `// Aaron - limit saturation adjustment` within `p3_functions.hpp` and related `_impl.hpp` files.
