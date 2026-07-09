@@ -496,6 +496,8 @@ protected:
 #ifdef SCREAM_P3_SMALL_KERNELS
     P3F::P3Temporaries m_temporaries;
 #endif
+
+    bool declare_p3_diag_ = false;
 };
 
 } // namespace Physics

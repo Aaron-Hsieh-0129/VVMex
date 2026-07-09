@@ -80,7 +80,8 @@ VVM_P3_Interface::VVM_P3_Interface(const VVM::Utils::ConfigurationManager &confi
 
 
     std::string source_file = config.get_value<std::string>("initial_conditions.source_file");
-    if (source_file == "./rundata/initial_conditions/profiles/default_cases/p3_bubble_shear.txt") {
+    declare_p3_diag_ = source_file == "./rundata/initial_conditions/profiles/default_cases/p3_bubble_shear.txt" ? true : false;
+    if (declare_p3_diag_) {
         if (!state.has_field("th_m_diag")) state.add_field<3>("th_m_diag", {nz_total, ny_total, nx_total});
         if (!state.has_field("qv_m_diag")) state.add_field<3>("qv_m_diag", {nz_total, ny_total, nx_total});
         if (!state.has_field("qv_after_p3")) state.add_field<3>("qv_after_p3", {nz_total, ny_total, nx_total});
@@ -635,8 +636,11 @@ void VVM_P3_Interface::preprocessing_and_packing(VVM::Core::State& state) {
     auto bm_3d = state.get_field<3>("bm").get_mutable_device_data();
     auto th_3d = state.get_field<3>("th").get_device_data();
     auto thm_3d = state.get_field<3>("th_m").get_device_data();
-    Kokkos::deep_copy(state.get_field<3>("th_m_diag").get_mutable_device_data(), state.get_field<3>("th_m").get_device_data());
-    Kokkos::deep_copy(state.get_field<3>("qv_m_diag").get_mutable_device_data(), state.get_field<3>("qv_m").get_device_data());
+
+    if (declare_p3_diag_) {
+        Kokkos::deep_copy(state.get_field<3>("th_m_diag").get_mutable_device_data(), state.get_field<3>("th_m").get_device_data());
+        Kokkos::deep_copy(state.get_field<3>("qv_m_diag").get_mutable_device_data(), state.get_field<3>("qv_m").get_device_data());
+    }
     auto qv_3d = state.get_field<3>("qv").get_mutable_device_data();
     auto qvm_3d = state.get_field<3>("qv_m").get_mutable_device_data();
 
@@ -987,73 +991,6 @@ void VVM_P3_Interface::run(VVM::Core::State &state, const VVM::Real dt) {
     workspace_mgr.reset_internals();
 
 
-    /*
-    // Pre-P3 Saturation Adjustment (Emulating qcnuc + qccon)
-    // This step creates cloud water (qc) and cloud number (nc) from supersaturation
-    // BEFORE P3 runs, acting as the "activation" and "macrophysics" step.
-    // Constants
-    const Real nccn_val = 2.0e8; // Target CCN concentration (#/kg) or use m_nccn_view
-    const Real min_qc = 1.0e-12; // Threshold for "new cloud"
-    const Real Lv = 2.501e6;
-    const Real Cp = Constants::Cpair;
-    const Real Rv = Constants::RH2O;
-    using Physics = scream::physics::Functions<Real, scream::DefaultDevice>;
-    const int nlev_packs = m_num_lev_packs;
-
-    auto qv_view = m_qv_view;
-    auto qc_view = m_qc_view;
-    auto qr_view = m_qr_view;
-    auto nc_view = m_nc_view;
-    auto nr_view = m_nr_view;
-    auto th_view = m_th_view;
-    auto p_view  = m_pmid_dry_view; 
-    auto inv_exner_view = m_inv_exner_view;
-    Kokkos::parallel_for("saturation_adjustment", m_policy,
-        KOKKOS_LAMBDA(const MemberType& team) {
-            const int icol = team.league_rank();
-
-            Kokkos::parallel_for(Kokkos::TeamVectorRange(team, nlev_packs), [&](const int k_pack) {
-                auto& qv_pack = qv_view(icol, k_pack); auto& qc_pack = qc_view(icol, k_pack);
-                auto& nc_pack = nc_view(icol, k_pack); auto& th_pack = th_view(icol, k_pack);
-                const auto& p_pack = p_view(icol, k_pack); const auto& inv_exner_pack = inv_exner_view(icol, k_pack);
-
-                Spack T_pack = th_pack / inv_exner_pack;
-                auto is_too_cold = (T_pack < 233.15);
-
-                Smask range_mask(true);
-                Spack qvs_pack = Physics::qv_sat_dry(T_pack, p_pack, false, range_mask, Physics::Polysvp1, "VVM_Sat_Adj");
-                Spack delta_q_potential = qv_pack - qvs_pack;
-
-                auto need_condense = (delta_q_potential > 0.0);
-                auto need_evaporate = (delta_q_potential < 0.0) && (qc_pack > 1.0e-12);
-                auto need_adjustment = (need_condense || need_evaporate) && !is_too_cold;
-
-                if (need_adjustment.any()) {
-                    auto is_new_cloud = need_condense && (qc_pack < min_qc);
-                    Spack denominator = 1.0 + (Lv * Lv * qvs_pack) / (Cp * Rv * T_pack * T_pack);
-                    Spack adjustment = delta_q_potential / denominator;
-
-                    auto limit_evap = (adjustment < -qc_pack);
-                    adjustment.set(limit_evap, -qc_pack);
-                    auto limit_cond = (adjustment > qv_pack);
-                    adjustment.set(limit_cond, qv_pack);
-
-                    qv_pack.set(need_adjustment, qv_pack - adjustment);
-                    qc_pack.set(need_adjustment, qc_pack + adjustment);
-                    
-                    Spack d_th = inv_exner_pack * (Lv / Cp) * adjustment;
-                    th_pack.set(need_adjustment, th_pack + d_th);
-
-                    if (is_new_cloud.any()) nc_pack.set(is_new_cloud, nccn_val);
-                    auto is_cloud_gone = (qc_pack < 1.0e-12); 
-                    if (is_cloud_gone.any()) nc_pack.set(is_cloud_gone, 0.0);
-                }
-            });
-        }
-    );
-    // Kokkos::fence();
-    */
-
     P3F::p3_main(
         m_runtime_options, m_prog_state, m_diag_inputs, m_diag_outputs, m_infrastructure,
         m_history_only, m_lookup_tables,
@@ -1062,69 +999,6 @@ void VVM_P3_Interface::run(VVM::Core::State &state, const VVM::Real dt) {
 #endif
         workspace_mgr, m_num_cols, m_num_levs
     );
-
-    /*
-    Kokkos::parallel_for("post_p3_saturation_adjustment", m_policy,
-        KOKKOS_LAMBDA(const MemberType& team) {
-            const int icol = team.league_rank();
-
-            Kokkos::parallel_for(Kokkos::TeamThreadRange(team, nlev_packs), [&](const int k_pack) {
-                auto& qv_pack = qv_view(icol, k_pack);
-                auto& qc_pack = qc_view(icol, k_pack);
-                auto& nc_pack = nc_view(icol, k_pack);
-                auto& th_pack = th_view(icol, k_pack);
-                const auto& p_pack = p_view(icol, k_pack);
-                const auto& inv_exner_pack = inv_exner_view(icol, k_pack);
-
-                Spack qc_post_p3 = qc_pack; 
-
-                Spack T_pack = th_pack / inv_exner_pack;
-                auto is_too_cold = (T_pack < 233.15);
-
-                Smask range_mask(true);
-                Spack qvs_pack = Physics::qv_sat_dry(
-                    T_pack, p_pack, 
-                    false, 
-                    range_mask, 
-                    Physics::Polysvp1, 
-                    "Post_P3_Sat_Adj"
-                );
-
-                Spack delta_q = qv_pack - qvs_pack;
-                auto need_condense = (delta_q > 0.0);
-                
-                auto need_evaporate = (delta_q < 0.0) && (qc_pack > min_qc);
-
-                auto need_adj = (need_condense || need_evaporate) && !is_too_cold;
-
-                if (need_adj.any()) {
-                    Spack denominator = 1.0 + (Lv * Lv * qvs_pack) / (Cp * Rv * T_pack * T_pack);
-                    Spack adj = delta_q / denominator;
-
-                    auto limit_mask = (adj < -qc_pack);
-                    adj.set(limit_mask, -qc_pack);
-
-                    qv_pack.set(need_adj, qv_pack - adj);
-                    qc_pack.set(need_adj, qc_pack + adj);
-                    
-                    Spack d_th = inv_exner_pack * (Lv / Cp) * adj;
-                    th_pack.set(need_adj, th_pack + d_th);
-
-                    auto is_numerical_creation = (adj > 0.0) && (qc_post_p3 < min_qc);
-
-                    if (is_numerical_creation.any()) {
-                        nc_pack.set(is_numerical_creation, nccn_val);
-                    }
-                    auto is_cloud_gone = (qc_pack < min_qc);
-                    
-                    if (is_cloud_gone.any()) {
-                        nc_pack.set(is_cloud_gone, 0.0);
-                    }
-                }
-            });
-        }
-    );
-    */
 
     // Conduct the post-processing of the p3_main output.
     Kokkos::parallel_for("p3_main_local_vals",
@@ -1140,16 +1014,18 @@ void VVM_P3_Interface::run(VVM::Core::State &state, const VVM::Real dt) {
         m_need_reset_precip = true;
     }
 
-    Kokkos::deep_copy(state.get_field<3>("qv_after_p3").get_mutable_device_data(), state.get_field<3>("qv").get_device_data());
-    Kokkos::deep_copy(state.get_field<3>("qc_after_p3").get_mutable_device_data(), state.get_field<3>("qc").get_device_data());
-    Kokkos::deep_copy(state.get_field<3>("qr_after_p3").get_mutable_device_data(), state.get_field<3>("qr").get_device_data());
-    Kokkos::deep_copy(state.get_field<3>("qi_after_p3").get_mutable_device_data(), state.get_field<3>("qi").get_device_data());
-    Kokkos::deep_copy(state.get_field<3>("nc_after_p3").get_mutable_device_data(), state.get_field<3>("nc").get_device_data());
-    Kokkos::deep_copy(state.get_field<3>("ni_after_p3").get_mutable_device_data(), state.get_field<3>("ni").get_device_data());
-    Kokkos::deep_copy(state.get_field<3>("nr_after_p3").get_mutable_device_data(), state.get_field<3>("nr").get_device_data());
-    Kokkos::deep_copy(state.get_field<3>("qm_after_p3").get_mutable_device_data(), state.get_field<3>("qm").get_device_data());
-    Kokkos::deep_copy(state.get_field<3>("bm_after_p3").get_mutable_device_data(), state.get_field<3>("bm").get_device_data());
-    Kokkos::deep_copy(state.get_field<3>("th_after_p3").get_mutable_device_data(), state.get_field<3>("th").get_device_data());
+    if (declare_p3_diag_) {
+        Kokkos::deep_copy(state.get_field<3>("qv_after_p3").get_mutable_device_data(), state.get_field<3>("qv").get_device_data());
+        Kokkos::deep_copy(state.get_field<3>("qc_after_p3").get_mutable_device_data(), state.get_field<3>("qc").get_device_data());
+        Kokkos::deep_copy(state.get_field<3>("qr_after_p3").get_mutable_device_data(), state.get_field<3>("qr").get_device_data());
+        Kokkos::deep_copy(state.get_field<3>("qi_after_p3").get_mutable_device_data(), state.get_field<3>("qi").get_device_data());
+        Kokkos::deep_copy(state.get_field<3>("nc_after_p3").get_mutable_device_data(), state.get_field<3>("nc").get_device_data());
+        Kokkos::deep_copy(state.get_field<3>("ni_after_p3").get_mutable_device_data(), state.get_field<3>("ni").get_device_data());
+        Kokkos::deep_copy(state.get_field<3>("nr_after_p3").get_mutable_device_data(), state.get_field<3>("nr").get_device_data());
+        Kokkos::deep_copy(state.get_field<3>("qm_after_p3").get_mutable_device_data(), state.get_field<3>("qm").get_device_data());
+        Kokkos::deep_copy(state.get_field<3>("bm_after_p3").get_mutable_device_data(), state.get_field<3>("bm").get_device_data());
+        Kokkos::deep_copy(state.get_field<3>("th_after_p3").get_mutable_device_data(), state.get_field<3>("th").get_device_data());
+    }
 }
 
 void VVM_P3_Interface::compute_time_averaged_precip(VVM::Core::State& state) {
