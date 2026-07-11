@@ -62,8 +62,6 @@ git clone --recursive https://github.com/Aaron-Hsieh-0129/VVMex.git
 cd VVMex
 ```
 
-- Noted that if you can't successfully clone the repo, make sure you can access the github by setting the SSH key in github.
-
 ### Step 2: Environment Setup (Required)
 You must define the project root directory using the `VVM_ROOT` environment variable before compiling or running the model. Add this to your session or `~/.bashrc`:
 
