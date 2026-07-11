@@ -46,8 +46,12 @@ markdown_extensions:
   - pymdownx.arithmatex:
       generic: true
 
+extra_css:
+  - stylesheets/video-gallery.css
+
 extra_javascript:
   - javascripts/mathjax.js
+  - javascripts/video-gallery.js
   - https://polyfill.io/v3/polyfill.min.js?features=es6
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 
@@ -67,4 +71,3 @@ nav:
   - Examples:
       - Default cases: examples/default-cases.md
       - View gallery: examples/gallery.md
-

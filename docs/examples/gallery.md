@@ -19,45 +19,115 @@ These cases match the **idealized** modes and **automated regression** configs i
 
 ### Advection u
 
-<iframe width="100%" height="600" src="https://www.youtube.com/embed/7qR-_FeTCc8" title="VVMex advection u" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<div class="video-embed">
+  <button type="button" class="video-lite" data-youtube-id="7qR-_FeTCc8" data-title="VVMex advection u" aria-label="Load video: VVMex advection u">
+    <img src="https://i.ytimg.com/vi/7qR-_FeTCc8/hqdefault.jpg" alt="" loading="lazy">
+    <span class="video-lite-play" aria-hidden="true"></span>
+    <span class="video-lite-label">Load video: VVMex advection u</span>
+  </button>
+  <noscript><p><a href="https://www.youtube.com/watch?v=7qR-_FeTCc8">Watch VVMex advection u on YouTube.</a></p></noscript>
+</div>
 
 ### Advection v
 
-<iframe width="100%" height="600" src="https://www.youtube.com/embed/4q6sFE4QlrA" title="VVMex advection v" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<div class="video-embed">
+  <button type="button" class="video-lite" data-youtube-id="4q6sFE4QlrA" data-title="VVMex advection v" aria-label="Load video: VVMex advection v">
+    <img src="https://i.ytimg.com/vi/4q6sFE4QlrA/hqdefault.jpg" alt="" loading="lazy">
+    <span class="video-lite-play" aria-hidden="true"></span>
+    <span class="video-lite-label">Load video: VVMex advection v</span>
+  </button>
+  <noscript><p><a href="https://www.youtube.com/watch?v=4q6sFE4QlrA">Watch VVMex advection v on YouTube.</a></p></noscript>
+</div>
 
 ### Advection w
 
-<iframe width="100%" height="600" src="https://www.youtube.com/embed/zaMPpXLgrQY" title="VVMex advection w" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<div class="video-embed">
+  <button type="button" class="video-lite" data-youtube-id="zaMPpXLgrQY" data-title="VVMex advection w" aria-label="Load video: VVMex advection w">
+    <img src="https://i.ytimg.com/vi/zaMPpXLgrQY/hqdefault.jpg" alt="" loading="lazy">
+    <span class="video-lite-play" aria-hidden="true"></span>
+    <span class="video-lite-label">Load video: VVMex advection w</span>
+  </button>
+  <noscript><p><a href="https://www.youtube.com/watch?v=zaMPpXLgrQY">Watch VVMex advection w on YouTube.</a></p></noscript>
+</div>
 
 ### Stretching
 
-<iframe width="100%" height="600" src="https://www.youtube.com/embed/Feoa3RW3als" title="VVMex stretching term" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<div class="video-embed">
+  <button type="button" class="video-lite" data-youtube-id="Feoa3RW3als" data-title="VVMex stretching term" aria-label="Load video: VVMex stretching term">
+    <img src="https://i.ytimg.com/vi/Feoa3RW3als/hqdefault.jpg" alt="" loading="lazy">
+    <span class="video-lite-play" aria-hidden="true"></span>
+    <span class="video-lite-label">Load video: VVMex stretching term</span>
+  </button>
+  <noscript><p><a href="https://www.youtube.com/watch?v=Feoa3RW3als">Watch VVMex stretching term on YouTube.</a></p></noscript>
+</div>
 
 ### Twisting
 
-<iframe width="100%" height="600" src="https://www.youtube.com/embed/ZtVoWcYPmtA" title="VVMex twisting" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<div class="video-embed">
+  <button type="button" class="video-lite" data-youtube-id="ZtVoWcYPmtA" data-title="VVMex twisting" aria-label="Load video: VVMex twisting">
+    <img src="https://i.ytimg.com/vi/ZtVoWcYPmtA/hqdefault.jpg" alt="" loading="lazy">
+    <span class="video-lite-play" aria-hidden="true"></span>
+    <span class="video-lite-label">Load video: VVMex twisting</span>
+  </button>
+  <noscript><p><a href="https://www.youtube.com/watch?v=ZtVoWcYPmtA">Watch VVMex twisting on YouTube.</a></p></noscript>
+</div>
 
 ### 2D bubble (no physics)
 
-<iframe width="100%" height="600" src="https://www.youtube.com/embed/zmWaabfmZ8Y" title="VVMex 2dbubble" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<div class="video-embed">
+  <button type="button" class="video-lite" data-youtube-id="ulDRzJutGXw" data-title="VVMex, 2d warm bubble" data-aspect="1032 / 826" style="--video-aspect: 1032 / 826" aria-label="Load video: VVMex, 2d warm bubble">
+    <img src="https://i.ytimg.com/vi/ulDRzJutGXw/hqdefault.jpg" alt="" loading="lazy">
+    <span class="video-lite-play" aria-hidden="true"></span>
+    <span class="video-lite-label">Load video: VVMex, 2d warm bubble</span>
+  </button>
+  <noscript><p><a href="https://www.youtube.com/watch?v=ulDRzJutGXw">Watch VVMex, 2d warm bubble on YouTube.</a></p></noscript>
+</div>
 
 ### 3D bubble (no physics)
 
-<iframe width="100%" height="600" src="https://www.youtube.com/embed/gSi1ukT0mXw" title="VVMex 3dbubble" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<div class="video-embed">
+  <button type="button" class="video-lite" data-youtube-id="gSi1ukT0mXw" data-title="VVMex 3dbubble" aria-label="Load video: VVMex 3dbubble">
+    <img src="https://i.ytimg.com/vi/gSi1ukT0mXw/hqdefault.jpg" alt="" loading="lazy">
+    <span class="video-lite-play" aria-hidden="true"></span>
+    <span class="video-lite-label">Load video: VVMex 3dbubble</span>
+  </button>
+  <noscript><p><a href="https://www.youtube.com/watch?v=gSi1ukT0mXw">Watch VVMex 3dbubble on YouTube.</a></p></noscript>
+</div>
 
 ## Full physics and complex domains
 
 ### TaiwanVVM — topography, land, and physics
 
-<iframe width="100%" height="600" src="https://www.youtube.com/embed/6wFKTAkBJKw" title="GTaiwanVVM" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<div class="video-embed">
+  <button type="button" class="video-lite" data-youtube-id="6wFKTAkBJKw" data-title="GTaiwanVVM" aria-label="Load video: GTaiwanVVM">
+    <img src="https://i.ytimg.com/vi/6wFKTAkBJKw/hqdefault.jpg" alt="" loading="lazy">
+    <span class="video-lite-play" aria-hidden="true"></span>
+    <span class="video-lite-label">Load video: GTaiwanVVM</span>
+  </button>
+  <noscript><p><a href="https://www.youtube.com/watch?v=6wFKTAkBJKw">Watch GTaiwanVVM on YouTube.</a></p></noscript>
+</div>
 
 ### RCE self-aggregation (SST 300 K)
 
-<iframe width="100%" height="600" src="https://www.youtube.com/embed/QMaB25El1H4" title="VVMex RCE 300K" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<div class="video-embed">
+  <button type="button" class="video-lite" data-youtube-id="NccMcuHnp5I" data-title="VVMex, weakly forced RCEMIP case" data-aspect="1132 / 571" style="--video-aspect: 1132 / 571" aria-label="Load video: VVMex, weakly forced RCEMIP case">
+    <img src="https://i.ytimg.com/vi/NccMcuHnp5I/hqdefault.jpg" alt="" loading="lazy">
+    <span class="video-lite-play" aria-hidden="true"></span>
+    <span class="video-lite-label">Load video: VVMex, weakly forced RCEMIP case</span>
+  </button>
+  <noscript><p><a href="https://www.youtube.com/watch?v=NccMcuHnp5I">Watch VVMex, weakly forced RCEMIP case on YouTube.</a></p></noscript>
+</div>
 
 ### RCE self-aggregation (RCEMIP, SST 305 K)
 
-<iframe width="100%" height="600" src="https://www.youtube.com/embed/w2JkpAE6j8U" title="VVMex rcemip 305K" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<div class="video-embed">
+  <button type="button" class="video-lite" data-youtube-id="w2JkpAE6j8U" data-title="VVMex rcemip 305K" aria-label="Load video: VVMex rcemip 305K">
+    <img src="https://i.ytimg.com/vi/w2JkpAE6j8U/hqdefault.jpg" alt="" loading="lazy">
+    <span class="video-lite-play" aria-hidden="true"></span>
+    <span class="video-lite-label">Load video: VVMex rcemip 305K</span>
+  </button>
+  <noscript><p><a href="https://www.youtube.com/watch?v=w2JkpAE6j8U">Watch VVMex rcemip 305K on YouTube.</a></p></noscript>
+</div>
 
 
 ## See also
