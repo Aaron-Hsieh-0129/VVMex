@@ -202,6 +202,21 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 - **P3 Microphysics**: The explicit condensation and evaporation processes between water vapor and cloud water, which are absent in the EAMxx version, have been re-implemented according to the original P3 formulation (e.g., *Morrison and Milbrandt, 2015*).
 - **CWA Noah LSM**: The GPU-accelerated Noah land surface model is generously provided by the Central Weather Administration (CWA) of Taiwan.
 
+## Citation
+
+If you use VVMex, please cite the archived software release:
+
+```bibtex
+@software{vvmex_v1_0_0,
+  title   = {{VVMex v1.0.0: GPU-capable refactoring of the Vector Vorticity cloud-resolving Model}},
+  author  = {{VVMex development team}},
+  year    = {2026},
+  version = {1.0.0},
+  doi     = {10.5281/zenodo.21318987},
+  url     = {https://doi.org/10.5281/zenodo.21318987}
+}
+```
+
 
 ## Contact & Support
 GitHub Issues: For bugs, feature requests, or code contributions, please open an issue on the GitHub repository.
