@@ -8,3 +8,10 @@ src/physics/rrtmgp/** linguist-vendored
 src/physics/p3/** linguist-vendored
 *.h linguist-language=C++
 tests/baselines/*.h5 filter=lfs diff=lfs merge=lfs -text
+*.nc binary
+*.h5 binary
+*.hdf5 binary
+*.bp binary
+*.bp4 binary
+*.bp5 binary
+*.dat binary
