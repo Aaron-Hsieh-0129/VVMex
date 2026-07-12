@@ -1,15 +1,22 @@
 cff-version: 1.2.0
 message: "If you use VVMex, please cite the archived software release."
 type: software
-
 title: "VVMex v1.0.0: GPU-capable refactoring of the Vector Vorticity cloud-resolving Model"
-
-authors:
-  - name: "VVMex development team"
-
-abstract: "VVMex is a GPU-capable, object-oriented C++ refactoring of the Vector Vorticity cloud-resolving Model for large-eddy and cloud-resolving simulations on heterogeneous high-performance computing systems."
-
 version: "1.0.0"
 license: "Apache-2.0"
+abstract: "VVMex is a GPU-capable, object-oriented C++ refactoring of the Vector Vorticity cloud-resolving Model for large-eddy and cloud-resolving simulations on heterogeneous high-performance computing systems."
 repository-code: "https://github.com/Aaron-Hsieh-0129/VVMex"
 url: "https://github.com/Aaron-Hsieh-0129/VVMex"
+
+authors:
+  - given-names: "VVMex"
+    family-names: "development team"
+
+keywords:
+  - large-eddy simulation
+  - cloud-resolving model
+  - GPU
+  - Kokkos
+  - atmospheric model
+  - VVM
+  - VVMex
