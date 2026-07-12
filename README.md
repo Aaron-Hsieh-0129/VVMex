@@ -4,8 +4,11 @@
 [![Kokkos](https://img.shields.io/badge/Kokkos-Performance_Portability-blueviolet.svg)](https://kokkos.org/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-VVMex is a GPU-capable, object-oriented C++ design of the Vector Vorticity cloud-resolving Model (VVM). 
-The name preserves the connection to VVM while leaving “ex” intentionally open, reflecting the model’s goals of extensibility, exascale-oriented development, and modern C++-based implementation.
+VVMex is a GPU-capable, object-oriented C++ design of the Vector Vorticity cloud-resolving Model (VVM) for large-eddy simulations on heterogeneous high-performance computing systems. 
+
+The model is built with Kokkos to support accelerator-resident time stepping, modular dynamical and physical components, and extensible development toward exascale-oriented atmospheric modeling.
+
+The name VVMex preserves the connection to VVM while leaving “ex” intentionally open, reflecting extensibility, exascale-oriented development, and modern C++-based implementation.
 
 
 ## Table of Contents
@@ -26,32 +29,40 @@ The name preserves the connection to VVM while leaving “ex” intentionally op
   - **Land Surface Model**: Noah land surface model with GPU acceleration (Fortran OpenACC), provided by the Central Weather Administration (CWA) of Taiwan.
 - **TaiwanVVM Support**: Capable of simulating high-resolution Taiwan topography using generated terrain datasets (example scripts provided).
 
+## Repository contents
+
+| Path | Description |
+|---|---|
+| `src/` | Main VVMex source code. |
+| `tests/` | Verification and regression tests. |
+| `rundata/` | Example configurations and input files. |
+| `tools/` | Preprocessing, utility, and data-generation scripts. |
+| `docs/` | User and developer documentation. |
+| `externals/` | External dependencies included as Git submodules. |
+
 
 ## Requirements
 
-### Compiler Dependencies
+VVMex is currently tested on NVIDIA GPU systems. Other GPU backends and CPU-only execution are planned for future development but are not yet part of the validated release workflow.
 
-| Dependency       | Minimum Version | Note                                         |
-| :--------------- | :-------------- | :------------------------------------------- |
-| **C++ Compiler** | `≥ gcc 11`      |                                              |
-| **CUDA Toolkit** | `≥ 11.4`        | Currently tested exclusively on NVIDIA GPUs. |
-| **OpenMPI**      | `≥ 11.4`        |                                              |
+### Tested software environment
 
-**Recommendation:** For running on NVIDIA GPUs, installing **NVHPC (≥ 24.9)** is highly recommended, as it includes the required OpenMPI and CUDA-related packages out of the box. Development for other GPU platforms and CPU-only architectures is planned for the future.
+| Component | Tested version / requirement | Notes |
+|---|---:|---|
+| C++ compiler | GCC ≥ 11 and NVHPC ≥ 24.9 | NVHPC is recommended on NVIDIA GPU systems. |
+| CUDA Toolkit | ≥ 12.6 | Currently tested on NVIDIA GPUs. |
+| MPI | System MPI or NVHPC/HPC-X MPI | Use the MPI implementation provided by the target HPC system when possible. |
+| CMake | ≥ 3.20 | Required for CMake presets. |
+| Kokkos | ≥ 4.7.01 | Used for performance-portable C++ kernels. |
+| HDF5 | ≥ 1.14.5 | Required for NetCDF/HDF5 I/O. |
+| NetCDF-C | ≥ 4.4.1.1 | Required for NetCDF input/output. |
+| NetCDF-Fortran | ≥ 4.4.1 | Required by Fortran-based components. |
+| PnetCDF | ≥ 1.14.1 | Used for parallel NetCDF support. |
+| ADIOS2 | ≥ 2.11.0 | Used for scalable and asynchronous output. |
 
-### Library Dependencies
+Lower versions may work but have not been systematically tested.
 
-*(Lower versions might work but have not been formally tested.)*
-
-| Library | Minimum Version | Library | Minimum Version |
-| :--- | :--- | :--- | :--- |
-| **CMake** | `≥ 3.20` | **netcdf-c** | `≥ 4.4.1.1` |
-| **Kokkos** | `≥ 4.7.01` | **netcdf-fortran**| `≥ 4.4.1` |
-| **HDF5** | `≥ 1.14.5` | **pnetcdf** | `≥ 1.14.1` |
-| **ADIOS2** | `≥ 2.11.0` | | |
-
-*Please refer to our [Installation Tutorial](https://aaron-hsieh-0129.github.io/VVMex/user-guides/environment/) for detailed instructions on setting up these libraries.*
-
+For detailed installation instructions, see the [installation tutorial](https://aaron-hsieh-0129.github.io/VVMex/).
 
 ## Quick Start
 
@@ -169,6 +180,15 @@ To use **2 GPUs/CPUs for the model** and **2 CPUs for I/O**:
 cd $VVM_ROOT
 mpirun -np 4 ./build/vvm --io-tasks 2
 ```
+
+
+## Reproducing the paper experiments
+
+The configuration files used for the experiments in the VVMex v1.0 paper are provided in [`rundata/input_configs/default_cases/`](rundata/input_configs/default_cases/).
+
+A case-by-case summary is available in [`rundata/input_configs/default_cases/README.md`](rundata/input_configs/default_cases/README.md). The directory includes the configuration files for the verification, validation, and performance experiments reported in the paper.
+
+
 
 
 ## License
