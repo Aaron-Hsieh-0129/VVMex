@@ -42,7 +42,8 @@ private:
     void read_variable_2d(int ncid, const std::string& var_name, VVM::Core::Field<Dim>& field);
 
     template<size_t Dim>
-    void read_variable_3d(int ncid, const std::string& var_name, VVM::Core::Field<Dim>& field);
+    void read_variable_3d(int ncid, const std::string& var_name,
+                          VVM::Core::Field<Dim>& field, bool required_tracer = false);
 
     std::map<std::string, MPI_Offset> get_file_dimensions(int ncid) const;
     void validate_dimensions(const std::map<std::string, MPI_Offset>& file_dims) const;

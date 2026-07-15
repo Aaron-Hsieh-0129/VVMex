@@ -62,6 +62,13 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
     }
     else common_thermo.insert(common_thermo.end(), {"qc", "qr", "qi", "nc", "nr", "ni", "qm", "bm"});
 
+    if (config_.has_key("dynamics.tracers")) {
+        const auto tracer_config = config_.get_value<nlohmann::json>("dynamics.tracers");
+        for (const auto& tracer_name : state_.get_tracer_names()) {
+            prognostic_config[tracer_name] = tracer_config.at(tracer_name);
+        }
+    }
+
     bool coriolis_xi = config.get_value<bool>("dynamics.prognostic_variables.xi.tendency_terms.coriolis.enable", false);
     bool coriolis_eta = config.get_value<bool>("dynamics.prognostic_variables.eta.tendency_terms.coriolis.enable", false);
     bool coriolis_zeta = config.get_value<bool>("dynamics.prognostic_variables.zeta.tendency_terms.coriolis.enable", false);
@@ -84,7 +91,9 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
             }
         }
 
-        bool is_thermo = std::find(common_thermo.begin(), common_thermo.end(), var_name) != common_thermo.end();
+        const bool is_tracer = state_.is_tracer(var_name);
+        bool is_thermo = is_tracer ||
+            std::find(common_thermo.begin(), common_thermo.end(), var_name) != common_thermo.end();
 
         if (is_thermo) thermo_vars_.push_back(var_name);
         else vorticity_vars_.push_back(var_name);
@@ -109,6 +118,11 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
                 std::string spatial_scheme_name = term_conf.at("spatial_scheme");
                 std::string time_scheme_name = term_conf.value("temporal_scheme", "AdamsBashforth2");
 
+                if (is_tracer && term_name != "advection") {
+                    throw std::runtime_error("Tracer '" + var_name + "' has unsupported tendency term '" +
+                                             term_name + "'; passive tracers currently support advection only.");
+                }
+
                 if (rank == 0) {
                     std::cout << "    - Tendency term: " << term_name 
                               << " | Temporal Scheme: " << time_scheme_name 
@@ -120,6 +134,10 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
                     spatial_scheme = std::make_unique<Takacs>(config_, grid_, halo_exchanger_, bc_manager_);
                 } 
                 else {
+                    if (is_tracer) {
+                        throw std::runtime_error("Tracer '" + var_name + "', tendency term '" + term_name +
+                                                 "': unsupported spatial method '" + spatial_scheme_name + "'.");
+                    }
                     throw std::runtime_error("Unknown spatial scheme: " + spatial_scheme_name);
                 }
                 
@@ -129,14 +147,23 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
                 else if (term_name == "twisting") term = std::make_unique<TwistingTerm>(std::move(spatial_scheme), var_name, halo_exchanger_);
                 else if (term_name == "buoyancy") term = std::make_unique<BuoyancyTerm>(std::move(spatial_scheme), var_name, halo_exchanger_);
                 else if (term_name == "coriolis") term = std::make_unique<CoriolisTerm>(std::move(spatial_scheme), var_name, halo_exchanger_);
+                else throw std::runtime_error("Unknown tendency term '" + term_name +
+                                              "' for prognostic variable '" + var_name + "'.");
 
                 if (time_scheme_name == "AdamsBashforth2") {
                     ab2_terms.push_back(std::move(term));
                     has_ab2 = true;
-                } 
-                else {
+                }
+                else if (time_scheme_name == "ForwardEuler") {
                     fe_terms.push_back(std::move(term));
                     has_fe = true;
+                }
+                else {
+                    if (is_tracer) {
+                        throw std::runtime_error("Tracer '" + var_name + "', tendency term '" + term_name +
+                                                 "': unsupported temporal method '" + time_scheme_name + "'.");
+                    }
+                    throw std::runtime_error("Unknown temporal scheme: " + time_scheme_name);
                 }
             }
         }

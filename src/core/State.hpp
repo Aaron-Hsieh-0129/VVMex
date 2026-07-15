@@ -8,10 +8,12 @@
 #include "utils/ConfigurationManager.hpp"
 #include "Parameters.hpp"
 #include "vvm_types.hpp"
+#include <algorithm>
 #include <map>
 #include <string>
 #include <memory>
 #include <variant>
+#include <vector>
 #include <cuda_runtime.h>
 #if defined(ENABLE_NCCL)
     #include <nccl.h>
@@ -260,11 +262,20 @@ public:
         return fields_.find(name) != fields_.end();
     }
 
+    const std::vector<std::string>& get_tracer_names() const {
+        return tracer_names_;
+    }
+
+    bool is_tracer(const std::string& name) const {
+        return std::find(tracer_names_.begin(), tracer_names_.end(), name) != tracer_names_.end();
+    }
+
 private:
     const Utils::ConfigurationManager& config_ref_;
     const Grid& grid_;
     const Parameters& parameters_;
     std::map<std::string, AnyField> fields_;
+    std::vector<std::string> tracer_names_;
 
     size_t step_ = 0;
     VVM::Real time_ = 0.0;

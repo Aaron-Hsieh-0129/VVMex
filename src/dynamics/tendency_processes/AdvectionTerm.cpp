@@ -168,7 +168,8 @@ void AdvectionTerm::compute_tendency(
     auto& tendency = out_tendency.get_mutable_device_data();
 
     // Divide rho in tendency for thermodynamics variables
-    if (std::find(thermodynamics_vars_.begin(), thermodynamics_vars_.end(), variable_name_) != thermodynamics_vars_.end()) {
+    if (state.is_tracer(variable_name_) ||
+        std::find(thermodynamics_vars_.begin(), thermodynamics_vars_.end(), variable_name_) != thermodynamics_vars_.end()) {
         const int full_league_size = ny * nx;
         
         Kokkos::parallel_for("Divide_rho_for_thermovariables_team", 

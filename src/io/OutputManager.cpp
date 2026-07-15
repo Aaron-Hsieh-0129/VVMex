@@ -54,6 +54,31 @@ OutputManager::OutputManager(const Utils::ConfigurationManager& config, const VV
     output_dir_ = config.get_value<std::string>("output.output_dir");
     filename_prefix_ = config.get_value<std::string>("output.output_filename_prefix");
     fields_to_output_ = config.get_value<std::vector<std::string>>("output.fields_to_output");
+    if (config.has_key("dynamics.tracers")) {
+        const auto tracer_config = config.get_value<nlohmann::json>("dynamics.tracers");
+        static const std::unordered_set<std::string> optional_builtin_output_fields = {
+            "qc", "qr", "qi", "qm", "nc", "nr", "ni", "bm",
+            "sw_heating", "lw_heating", "swdn", "lwdn", "lwup",
+            "swup_toa", "swdn_toa", "lwup_toa", "lwdn_toa",
+            "swup_sfc", "swdn_sfc", "lwup_sfc", "lwdn_sfc",
+            "precip_liq_surf_mass", "precip_ice_surf_mass",
+            "sfc_flux_th", "sfc_flux_qv", "sfc_flux_u", "sfc_flux_v",
+            "le", "hfx", "st1", "st2", "st3", "st4", "gfx",
+            "slc1", "slc2", "slc3", "slc4", "sfemis", "zorl",
+            "chx", "cmx", "albedo"
+        };
+        for (const auto& field_name : fields_to_output_) {
+            if (tracer_config.contains(field_name) && !state_.is_tracer(field_name)) {
+                throw std::runtime_error("Output field '" + field_name +
+                                         "' names a disabled or unregistered tracer.");
+            }
+            if (!state_.has_field(field_name) &&
+                optional_builtin_output_fields.count(field_name) == 0) {
+                throw std::runtime_error("Output field '" + field_name +
+                                         "' is not registered. If this is a tracer, check its name and enable setting.");
+            }
+        }
+    }
     output_interval_s_ = config.get_value<VVM::Real>("simulation.output_interval_s");
     total_time_ = config.get_value<VVM::Real>("simulation.total_time_s");
     use_taiwanvvm_coordinates_ = (config.get_value<std::string>("grid.vertical_coordinate_type", "default") == "taiwanvvm");
