@@ -30,7 +30,7 @@ print(f"[Info] Change to VVM_ROOT: {VVM_ROOT}")
 # Set to False: Enter "Idealized Simulation" mode for user-defined ridge & land types
 USE_TAIWAN_TOPO = False
 
-CONFIG_PATH = './rundata/input_configs/grass.json'
+CONFIG_PATH = './rundata/input_configs/tracer_example.json'
 SOURCE_TW_DATA = './rundata/land/topolsm_TW.nc'
 
 # ==============================================================================
@@ -116,6 +116,118 @@ else:
 # ==============================================================================
 # Helper Functions for Idealized Simulation
 # ==============================================================================
+RESERVED_MODEL_FIELD_NAMES = {
+    'nx', 'ny', 'nz', 'x', 'y', 'z_mid', 'time', 'coordinates/x',
+    'coordinates/y', 'coordinates/z_mid', 'Tbar', 'Tvbar', 'thbar',
+    'rhobar', 'rhobar_up',
+    'pbar', 'pbar_up', 'dpbar_mid', 'pibar', 'pibar_up', 'qvbar', 'U', 'V',
+    'lon', 'lat', 'f', 'f_2d', 'psi', 'psinm1', 'chi', 'chinm1', 'utop',
+    'vtop', 'tempu', 'tempv', 'Tg', 'th', 'qv', 'T', 'T_m', 'xi', 'eta',
+    'zeta', 'u', 'v', 'w', 'u_mean', 'v_mean', 'w_mean', 'W3DNM1',
+    'u_topo', 'v_topo', 'w_topo', 'xi_topo', 'eta_topo', 'R_xi', 'R_eta',
+    'R_zeta', 'topo', 'ITYPEU', 'ITYPEV', 'ITYPEW', 'mask', 'height',
+    'sea_land_ice_mask', 'vegtype', 'soiltype', 'slopetype', 'albedo', 'gvf',
+    'lai', 'shdmax', 'shdmin', 'sm1', 'sm2', 'sm3', 'sm4', 'sl1', 'sl2',
+    'sl3', 'sl4', 'qc', 'qr', 'qi', 'qm', 'nc', 'nr', 'ni', 'bm', 'qp',
+    'RKM', 'RKH', 'sw_heating', 'lw_heating', 'net_heating', 'net_sw_flux',
+    'net_lw_flux', 'swdn', 'lwdn', 'lwup', 'swup_toa', 'swdn_toa',
+    'lwup_toa', 'lwdn_toa', 'swup_sfc', 'swdn_sfc', 'lwup_sfc', 'lwdn_sfc',
+    'precip_liq_surf_mass', 'precip_ice_surf_mass', 'precip_liq_surf_flux',
+    'precip_ice_surf_flux', 'diag_eff_radius_qc', 'diag_eff_radius_qi',
+    'diag_eff_radius_qr', 'P_wet', 'th_perturb', 'sfc_flux_th', 'sfc_flux_qv',
+    'sfc_flux_u', 'sfc_flux_v', 'hfx', 'le', 'gfx', 'sfemis', 'zorl', 'cmx',
+    'chx', 'canopy', 'snwdph', 'sneqv', 'gwet', 'zrough', 'VEN2D', 'ustar',
+    'molen', 'st1', 'st2', 'st3', 'st4', 'slc1', 'slc2', 'slc3', 'slc4',
+    'Q1', 'Q2', 'CGR_thermo', 'CGR_vort', 'lbn_weight', 'areamn_xi0',
+    'areamn_eta0', 'areamn_zeta0_top', 'areamn_local_sum_xi',
+    'areamn_global_sum_xi', 'areamn_local_sum_eta', 'areamn_global_sum_eta',
+    'areamn_local_sum_zeta_top', 'areamn_global_sum_zeta_top',
+    'areamn_utopmn0', 'areamn_vtopmn0'
+}
+
+
+def define_tracer_initial_fields(nz, ny, nx):
+    """User-editable tracer fields, keyed by the names declared in the JSON."""
+    tracer1 = np.zeros((nz, ny, nx), dtype='f8')
+    tracer1[nz//2, ny//4:ny//4*3, ny//4:ny//4*3] = 50
+    return {
+        'tracer1': tracer1
+    }
+
+
+def validate_tracer_initial_field(tracer_name, field, nz, ny, nx):
+    """Validate and normalize one user-defined tracer field."""
+    try:
+        field = np.asarray(field)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            f"Tracer '{tracer_name}' returned by define_tracer_initial_fields must be "
+            "a rectangular numeric three-dimensional array") from error
+
+    expected_shape = (nz, ny, nx)
+    if field.shape != expected_shape:
+        raise ValueError(
+            f"Tracer '{tracer_name}' returned by define_tracer_initial_fields has shape "
+            f"{field.shape}; expected {expected_shape} in (nz, ny, nx) ordering")
+    if field.dtype.kind not in ('i', 'u', 'f'):
+        raise ValueError(
+            f"Tracer '{tracer_name}' returned by define_tracer_initial_fields "
+            "must contain only numeric values")
+    return field.astype('f8', copy=False)
+
+
+def build_tracer_variables(experiment_config, nz, ny, nx, reserved_names):
+    """Validate enabled tracers and return their NetCDF variable definitions."""
+    dynamics = experiment_config.get('dynamics', {})
+    if not isinstance(dynamics, dict):
+        raise ValueError("Invalid 'dynamics' option: expected an object")
+
+    tracers = dynamics.get('tracers', {})
+    if not isinstance(tracers, dict):
+        raise ValueError("Invalid 'dynamics.tracers' option: expected an object")
+
+    user_defined_fields = define_tracer_initial_fields(nz, ny, nx)
+    if not isinstance(user_defined_fields, dict):
+        raise ValueError("define_tracer_initial_fields must return a dictionary")
+
+    tracer_variables = {}
+    for tracer_name, tracer_options in tracers.items():
+        if not isinstance(tracer_options, dict):
+            raise ValueError(
+                f"Tracer '{tracer_name}': invalid tracer options; expected an object")
+
+        enabled = tracer_options.get('enable', True)
+        if not isinstance(enabled, bool):
+            raise ValueError(f"Tracer '{tracer_name}': option 'enable' must be boolean")
+
+        if (not tracer_name or tracer_name in reserved_names or
+                tracer_name.startswith('d_') or
+                tracer_name.startswith('fe_tendency_') or
+                '_ls' in tracer_name or
+                tracer_name.endswith('_m')):
+            raise ValueError(
+                f"Tracer '{tracer_name}': name collides with an existing or reserved "
+                "VVMex field/NetCDF name")
+        if not enabled:
+            continue
+
+        if tracer_name not in user_defined_fields:
+            raise ValueError(
+                f"Enabled tracer '{tracer_name}' has no field in "
+                "define_tracer_initial_fields in tools/generate_init_nc.py")
+
+        tracer_variables[tracer_name] = {
+            'data': validate_tracer_initial_field(
+                tracer_name, user_defined_fields[tracer_name], nz, ny, nx),
+            'dims': ('nz', 'ny', 'nx'),
+            'units': '1',
+            'dtype': 'f8',
+            'long_name': f'Passive tracer: {tracer_name}'
+        }
+
+    return tracer_variables
+
+
 def get_ideal_topo_data(ny, nx):
     topo_idx = np.zeros((ny, nx), dtype='i4')
     
@@ -568,6 +680,9 @@ variables_config = {
     }
 }
 
+variables_config.update(build_tracer_variables(
+    config, NZ, NY, NX, RESERVED_MODEL_FIELD_NAMES.union(variables_config)))
+
 with nc.Dataset(FILENAME, 'w', format='NETCDF4') as ds:
     print(f"\nWriting Initialization Data to: {FILENAME} ...")
     
@@ -650,4 +765,3 @@ print("Initialization file generated successfully with detailed variable names!"
 #  7: 90 - 120%
 #  8: 120 - 150%
 #  9: > 150%      (Cliff)
-

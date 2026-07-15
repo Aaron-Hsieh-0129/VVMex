@@ -1,4 +1,5 @@
 #include "Initializer.hpp"
+#include "BoundaryConditionManager.hpp"
 #include "io/TxtReader.hpp"
 #include "io/PnetcdfReader.hpp"
 #include "io/Hdf5RestartReader.hpp"
@@ -51,17 +52,7 @@ Initializer::Initializer(const Utils::ConfigurationManager& config, const Grid& 
             throw std::runtime_error("[Initializer] Unsupported restart file extension: " + restart_source_file);
         }
     }
-    // else if (format == "netcdf") {
-    //     // TODO: Netcdf input
-    //     // reader_ = std::make_unique<Initializers::NetCDFReader>(source_file, grid);
-    //     std::cerr << "Warning: NetCDF reader is not implemented yet. Skipping initialization." << std::endl;
-    // } else {
-    //     std::cerr << "Warning: Unsupported input format '" << format << "'. Skipping initialization." << std::endl;
-    // }
-    
-
     // TODO: Initialize vorticity after loading velocity field
-
 }
 
 void Initializer::initialize_state() const {
@@ -78,10 +69,26 @@ void Initializer::initialize_state() const {
     } else {
         initialize_perturbation();
     }
+    apply_tracer_boundary_conditions();
     // init poisson should be placed after assign variables 
     // because the density would affect height factors.
     initialize_poisson();
     initialize_zeta_factor_for_twisting();
+}
+
+void Initializer::apply_tracer_boundary_conditions() const {
+    if (state_.get_tracer_names().empty()) return;
+
+    BoundaryConditionManager bc_manager(grid_);
+    bc_manager.initialize_bc_types(
+        config_.get_value<std::string>("grid.boundary_condition.x", "periodic"),
+        config_.get_value<std::string>("grid.boundary_condition.y", "periodic"));
+
+    for (const auto& tracer_name : state_.get_tracer_names()) {
+        auto& tracer = state_.get_field<3>(tracer_name);
+        bc_manager.apply_horizontal_bcs(tracer);
+        bc_manager.apply_zero_gradient_bottom_zero_top(tracer);
+    }
 }
 
 void Initializer::load_restart() const {
