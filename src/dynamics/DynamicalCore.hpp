@@ -10,7 +10,7 @@
 #include "core/Parameters.hpp"
 #include "core/vvm_types.hpp"
 #include "utils/ConfigurationManager.hpp"
-#include "temporal_schemes/TemporalScheme.hpp"
+#include "temporal_schemes/TimeIntegrator.hpp"
 #include "tendency_processes/TendencyCalculator.hpp"
 #include "spatial_schemes/Takacs.hpp"
 #include "solvers/WindSolver.hpp"
@@ -60,7 +60,7 @@ private:
     std::vector<std::string> vorticity_vars_;
     
     std::map<std::string, std::unique_ptr<TendencyCalculator>> tendency_calculators_;
-    std::map<std::string, std::unique_ptr<TemporalScheme>> time_integrators_;
+    std::map<std::string, std::unique_ptr<TimeIntegrator>> time_integrators_;
     std::vector<IntegrationStep> integration_procedure_;
 
     std::unique_ptr<WindSolver> wind_solver_;

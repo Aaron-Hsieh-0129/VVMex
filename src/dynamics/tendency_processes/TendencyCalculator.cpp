@@ -1,15 +1,18 @@
 #include "TendencyCalculator.hpp"
 #include "core/Field.hpp"
+#include <stdexcept>
 
 namespace VVM {
 namespace Dynamics {
 
 TendencyCalculator::TendencyCalculator(std::string var_name,
                                        std::vector<std::unique_ptr<TendencyTerm>> ab2_terms,
-                                       std::vector<std::unique_ptr<TendencyTerm>> fe_terms)
+                                       std::vector<std::unique_ptr<TendencyTerm>> fe_terms,
+                                       std::vector<std::unique_ptr<TendencyTerm>> ssprk_terms)
     : variable_name_(std::move(var_name)),
       ab2_tendency_terms_(std::move(ab2_terms)),
-      fe_tendency_terms_(std::move(fe_terms)) {}
+      fe_tendency_terms_(std::move(fe_terms)),
+      ssprk_tendency_terms_(std::move(ssprk_terms)) {}
 
 void TendencyCalculator::calculate_tendencies(Core::State& state, const Core::Grid& grid, const Core::Parameters& params) {
     if (ab2_tendency_terms_.empty() && fe_tendency_terms_.empty()) {
@@ -56,6 +59,31 @@ void TendencyCalculator::calculate_tendencies(Core::State& state, const Core::Gr
             term->compute_tendency(state, grid, params, fe_tendency_field);
         }
     }
+}
+
+Core::Field<3>& TendencyCalculator::calculate_ssprk_tendency(
+    Core::State& state,
+    const Core::Grid& grid,
+    const Core::Parameters& params,
+    VVM::Real stage_dt) {
+    if (ssprk_tendency_terms_.empty()) {
+        throw std::runtime_error(
+            "No SSPRK2 tendency terms are configured for '" +
+            variable_name_ + "'.");
+    }
+    if (!ssprk_tendency_field_) {
+        ssprk_tendency_field_ = std::make_unique<Core::Field<3>>(
+            "ssprk2_tendency_" + variable_name_,
+            std::array<int, 3>{
+                grid.get_local_total_points_z(),
+                grid.get_local_total_points_y(),
+                grid.get_local_total_points_x()});
+    }
+    ssprk_tendency_field_->set_to_zero();
+    for (const auto& term : ssprk_tendency_terms_) {
+        term->compute_stage_tendency(state, grid, params, *ssprk_tendency_field_, stage_dt);
+    }
+    return *ssprk_tendency_field_;
 }
 
 } // namespace Dynamics
