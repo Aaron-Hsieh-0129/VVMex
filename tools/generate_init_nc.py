@@ -30,7 +30,8 @@ print(f"[Info] Change to VVM_ROOT: {VVM_ROOT}")
 # Set to False: Enter "Idealized Simulation" mode for user-defined ridge & land types
 USE_TAIWAN_TOPO = False
 
-CONFIG_PATH = './rundata/input_configs/tracer_example.json'
+# CONFIG_PATH = './rundata/input_configs/tracer_muscl_w.json'
+CONFIG_PATH = './rundata/input_configs/2dbubble_move.json'
 SOURCE_TW_DATA = './rundata/land/topolsm_TW.nc'
 
 # ==============================================================================
@@ -150,8 +151,21 @@ def define_tracer_initial_fields(nz, ny, nx):
     """User-editable tracer fields, keyed by the names declared in the JSON."""
     tracer1 = np.zeros((nz, ny, nx), dtype='f8')
     tracer1[nz//2, ny//4:ny//4*3, ny//4:ny//4*3] = 50
+    tracer2 = np.zeros((nz, ny, nx), dtype='f8')
+    tracer2[nz//2, ny//4:ny//4*3, ny//4:ny//4*3] = 50
+    tracer3 = np.zeros((nz, ny, nx), dtype='f8')
+    tracer3[nz//4:nz//4*3, ny//4:ny//4*3, ny//4:ny//4*3] = 50
+    tracer_tri = np.zeros((nz, ny, nx), dtype='f8')
+    # tracer_tri[nz//4:nz//4*3, ny//4:ny//4*3, ny//4:ny//4*3] = 50
+    tracer_tri[nz//4:nz//2, ny//4:ny//4*3, ny//4:ny//4*3] = 50 * np.linspace(0, 1, nz//2-nz//4).reshape(nz//2-nz//4,1,1)
+    tracer_tri[nz//2:nz//4*3, ny//4:ny//4*3, ny//4:ny//4*3] = 50 * np.linspace(1, 0, nz//4*3-nz//2).reshape(nz//4*3-nz//2,1,1)
+    # tmp = np.arange(0, 1)
+
     return {
-        'tracer1': tracer1
+        'tracer1': tracer1,
+        'tracer2': tracer2,
+        'tracer3': tracer3,
+        'tracer_tri': tracer_tri
     }
 
 

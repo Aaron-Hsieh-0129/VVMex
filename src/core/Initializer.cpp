@@ -87,7 +87,7 @@ void Initializer::apply_tracer_boundary_conditions() const {
     for (const auto& tracer_name : state_.get_tracer_names()) {
         auto& tracer = state_.get_field<3>(tracer_name);
         bc_manager.apply_horizontal_bcs(tracer);
-        bc_manager.apply_zero_gradient_bottom_zero_top(tracer);
+        bc_manager.apply_zero_gradient(tracer);
     }
 }
 
@@ -732,7 +732,7 @@ void Initializer::initialize_perturbation() const {
         });
         if (test_mode == "advection_u") Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), u, real(10.));
         else if (test_mode == "advection_v") Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), v, real(10.));
-        else if (test_mode == "advection_w") Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), w, real(10.));
+        else if (test_mode == "advection_w") Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), w, real(100.));
         else if (test_mode == "stretching") {
             Kokkos::parallel_for("test_wind_init", 
                 Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0,0,0}, {nz, ny, nx}),
@@ -771,7 +771,7 @@ void Initializer::initialize_perturbation() const {
 
                 VVM::Real radius_norm = Kokkos::sqrt(
                                       Kokkos::pow(((global_i + 1) - (int) (nx/2)) * dx() / real(1000.), 2) +
-                                      Kokkos::pow((z_mid(k) - real(5000.)) / real(1000.), 2)
+                                      Kokkos::pow((z_mid(k) - real(1000.)) / real(2000.), 2)
                                      );
                 if (radius_norm <= real(1.)) {
                     th(k, j, i) += real(5.) * (Kokkos::cos(PI * real(0.5) * radius_norm));

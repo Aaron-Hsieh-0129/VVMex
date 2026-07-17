@@ -6,6 +6,8 @@
 #include "tendency_processes/BuoyancyTerm.hpp"
 #include "tendency_processes/CoriolisTerm.hpp"
 #include "spatial_schemes/Takacs.hpp"
+#include "spatial_schemes/MUSCL.hpp"
+#include "temporal_schemes/SSPRK2.hpp"
 #include "core/HaloExchanger.hpp"
 #include <stdexcept>
 #include <iostream>
@@ -83,6 +85,7 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
         }
         bool has_ab2 = false;
         bool has_fe = false;
+        bool has_ssprk2 = false;
 
         if (var_name == "th" && config.get_value<bool>("physics.rrtmgp.enable_rrtmgp", false)) {
             has_fe = true;
@@ -92,7 +95,7 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
         }
 
         const bool is_tracer = state_.is_tracer(var_name);
-        bool is_thermo = is_tracer ||
+        const bool is_thermo = is_tracer ||
             std::find(common_thermo.begin(), common_thermo.end(), var_name) != common_thermo.end();
 
         if (is_thermo) thermo_vars_.push_back(var_name);
@@ -104,8 +107,15 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
 
         std::vector<std::unique_ptr<TendencyTerm>> ab2_terms;
         std::vector<std::unique_ptr<TendencyTerm>> fe_terms;
+        std::vector<std::unique_ptr<TendencyTerm>> ssprk_terms;
 
+        size_t enabled_tendency_count = 0;
         if (var_conf.contains("tendency_terms")) {
+            for (const auto& item : var_conf.at("tendency_terms").items()) {
+                if (item.value().value("enable", true)) {
+                    ++enabled_tendency_count;
+                }
+            }
             for (auto& [term_name, term_conf] : var_conf.at("tendency_terms").items()) {
                 bool is_enabled = term_conf.value("enable", true);
                 if (!is_enabled) {
@@ -129,10 +139,38 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
                               << " | Spatial Scheme: " << spatial_scheme_name << std::endl;
                 }
 
+                const bool requests_muscl = spatial_scheme_name == "MUSCL";
+                const bool requests_ssprk2 = time_scheme_name == "SSPRK2";
+                // MUSCL is defined for cell-centered anelastic
+                // scalars. It can be selected explicitly for configured
+                // tracers and thermodynamic prognostics, including water and
+                // P3 scalar variables, but not for vorticity or momentum.
+                const bool muscl_eligible_scalar = is_thermo;
+                if (requests_muscl || requests_ssprk2) {
+                    if (!muscl_eligible_scalar ||
+                        term_name != "advection") {
+                        throw std::runtime_error(
+                            "Field '" + var_name + "' requested spatial scheme '" +
+                            spatial_scheme_name + "' and temporal scheme '" +
+                            time_scheme_name + "'; supported use is advection of "
+                            "a configured tracer or thermodynamic scalar with "
+                            "spatial scheme 'MUSCL' and temporal scheme "
+                            "'SSPRK2'.");
+                    }
+                    (void)MUSCL::validate_configuration(
+                        var_name, spatial_scheme_name, time_scheme_name,
+                        term_conf, enabled_tendency_count,
+                        grid_.get_halo_cells());
+                }
+
                 std::unique_ptr<SpatialScheme> spatial_scheme;
                 if (spatial_scheme_name == "Takacs") {
                     spatial_scheme = std::make_unique<Takacs>(config_, grid_, halo_exchanger_, bc_manager_);
-                } 
+                }
+                else if (spatial_scheme_name == "MUSCL") {
+                    spatial_scheme = std::make_unique<MUSCL>(
+                        var_name, term_conf, grid_);
+                }
                 else {
                     if (is_tracer) {
                         throw std::runtime_error("Tracer '" + var_name + "', tendency term '" + term_name +
@@ -142,7 +180,17 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
                 }
                 
                 std::unique_ptr<TendencyTerm> term;
-                if (term_name == "advection") term = std::make_unique<AdvectionTerm>(std::move(spatial_scheme), var_name, halo_exchanger_, bc_manager_);
+                if (term_name == "advection") {
+                    // MUSCL always produces an anelastic scalar flux
+                    // divergence. This explicit flag covers water variables
+                    // absent from the legacy Takacs name list without changing
+                    // the Takacs path.
+                    const bool normalize_muscl_scalar = requests_muscl && is_thermo;
+                    term = std::make_unique<AdvectionTerm>(
+                        std::move(spatial_scheme), var_name,
+                        halo_exchanger_, bc_manager_,
+                        normalize_muscl_scalar);
+                }
                 else if (term_name == "stretching") term = std::make_unique<StretchingTerm>(std::move(spatial_scheme), var_name, halo_exchanger_);
                 else if (term_name == "twisting") term = std::make_unique<TwistingTerm>(std::move(spatial_scheme), var_name, halo_exchanger_);
                 else if (term_name == "buoyancy") term = std::make_unique<BuoyancyTerm>(std::move(spatial_scheme), var_name, halo_exchanger_);
@@ -158,6 +206,10 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
                     fe_terms.push_back(std::move(term));
                     has_fe = true;
                 }
+                else if (time_scheme_name == "SSPRK2") {
+                    ssprk_terms.push_back(std::move(term));
+                    has_ssprk2 = true;
+                }
                 else {
                     if (is_tracer) {
                         throw std::runtime_error("Tracer '" + var_name + "', tendency term '" + term_name +
@@ -168,8 +220,23 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
             }
         }
         
-        tendency_calculators_[var_name] = std::make_unique<TendencyCalculator>(var_name, std::move(ab2_terms), std::move(fe_terms));
-        time_integrators_[var_name] = std::make_unique<TimeIntegrator>(var_name, has_ab2, has_fe);
+        if (has_ssprk2 && (has_ab2 || has_fe)) {
+            throw std::runtime_error(
+                "Advected variable '" + var_name +
+                "' cannot combine SSPRK2 with another temporal scheme; supported "
+                "pairing: spatial scheme 'MUSCL' with temporal scheme 'SSPRK2'.");
+        }
+
+        tendency_calculators_[var_name] = std::make_unique<TendencyCalculator>(
+            var_name, std::move(ab2_terms), std::move(fe_terms),
+            std::move(ssprk_terms));
+
+        std::unique_ptr<TemporalScheme> multistage_scheme;
+        if (has_ssprk2) {
+            multistage_scheme = std::make_unique<SSPRK2>(var_name, dims);
+        }
+        time_integrators_[var_name] = std::make_unique<TimeIntegrator>(
+            var_name, has_ab2, has_fe, std::move(multistage_scheme));
         
         if (has_ab2 || has_fe) {
              state_.add_field<3>(var_name + "_m", dims);
@@ -562,42 +629,83 @@ void DynamicalCore::update_thermodynamics(VVM::Real dt) {
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
 
+    auto apply_topographic_mask = [&](const std::string& var_name) {
+        const auto& ITYPEW = state_.get_field<3>("ITYPEW").get_device_data();
+        auto& var = state_.get_field<3>(var_name).get_mutable_device_data();
+
+        if (var_name == "th") {
+            const auto thbar = state_.get_field<1>("thbar").get_device_data();
+            Kokkos::parallel_for("topo_bc_th",
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {max_topo_idx + 1, ny - h, nx - h}),
+                KOKKOS_LAMBDA(const int k, const int j, const int i) {
+                    if (ITYPEW(k, j, i) != VVM::real(1.0)) {
+                        var(k, j, i) = thbar(k);
+                    }
+                });
+        } 
+        else {
+            Kokkos::parallel_for("topo_thermodynamic",
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {max_topo_idx + 1, ny - h, nx - h}),
+                KOKKOS_LAMBDA(const int k, const int j, const int i) {
+                    if (ITYPEW(k, j, i) != VVM::real(1.0)) {
+                        var(k, j, i) = VVM::real(0.0);
+                    }
+                });
+        }
+    };
+
+    auto process_stage_field = [&](const std::string& var_name) {
+        apply_topographic_mask(var_name);
+        // Preserve the established final-update ordering: exchange physical
+        // values first, then fill global horizontal and vertical boundaries.
+        halo_exchanger_.exchange_halos(state_.get_field<3>(var_name));
+        bc_manager_.apply_horizontal_bcs(state_.get_field<3>(var_name));
+        if (var_name == "th" || var_name == "qv") bc_manager_.apply_zero_gradient(state_.get_field<3>(var_name));
+        else bc_manager_.apply_zero_gradient_bottom_zero_top(state_.get_field<3>(var_name));
+    };
+
+    std::vector<std::string> legacy_final_fields;
     for (const auto& var_name : thermo_vars_) {
-        if (time_integrators_.count(var_name)) {
-            // var += dt * (AB2 + FE)
-            time_integrators_.at(var_name)->step(state_, grid_, params_, dt);
-            
-            const auto& ITYPEW = state_.get_field<3>("ITYPEW").get_device_data();
-            auto& var = state_.get_field<3>(var_name).get_mutable_device_data();
-            // Topography for theta
-            if (var_name == "th") {
-                const auto& thbar = state_.get_field<1>("thbar").get_device_data();
-                Kokkos::parallel_for("topo_bc_th",
-                    Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {max_topo_idx+1, ny-h, nx-h}),
-                    KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                        if (ITYPEW(k,j,i) != 1) {
-                            var(k,j,i) = thbar(k);
-                        }
-                    }
-                );
+        const auto integrator_it = time_integrators_.find(var_name);
+        if (integrator_it == time_integrators_.end()) continue;
+
+        auto& integrator = *integrator_it->second;
+        if (integrator.uses_multistage_scheme()) {
+            auto calculator_it =
+                tendency_calculators_.find(var_name);
+            if (calculator_it == tendency_calculators_.end()) {
+                throw std::runtime_error(
+                    "Missing tendency calculator for SSPRK2 variable '" +
+                    var_name + "'.");
             }
-            else {
-                Kokkos::parallel_for("topo",
-                    Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {max_topo_idx+1, ny-h, nx-h}),
-                    KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                        if (ITYPEW(k,j,i) != 1) {
-                            var(k,j,i) = real(0.);
-                        }
-                    }
-                );
-            }
+            auto evaluate_tendency =
+                [&](VVM::Real stage_dt) -> Core::Field<3>& {
+                    return calculator_it->second->
+                        calculate_ssprk_tendency(
+                            state_, grid_, params_, stage_dt);
+                };
+            auto process_stage = [&]() {
+                process_stage_field(var_name);
+            };
+            integrator.step(
+                state_, grid_, params_, dt,
+                evaluate_tendency, process_stage);
+        } 
+        else {
+            integrator.step(state_, grid_, params_, dt);
+            apply_topographic_mask(var_name);
+            legacy_final_fields.push_back(var_name);
         }
     }
 
-    halo_exchanger_.exchange_multiple_halos(thermo_vars_, state_);
-    for (const auto& var_name : thermo_vars_) {
+    // Keep the batched halo path and boundary formulas unchanged for every
+    // legacy scheme. SSPRK2 fields were already processed after both stages.
+    if (!legacy_final_fields.empty()) {
+        halo_exchanger_.exchange_multiple_halos(
+            legacy_final_fields, state_);
+    }
+    for (const auto& var_name : legacy_final_fields) {
         bc_manager_.apply_horizontal_bcs(state_.get_field<3>(var_name));
-
         if (var_name == "th" || var_name == "qv") {
             bc_manager_.apply_zero_gradient(state_.get_field<3>(var_name));
         }

@@ -5,8 +5,18 @@
 namespace VVM {
 namespace Dynamics {
 
-AdvectionTerm::AdvectionTerm(std::unique_ptr<SpatialScheme> scheme, std::string var_name, VVM::Core::HaloExchanger& halo_exchanger, const Core::BoundaryConditionManager& bc_manager)
-    : scheme_(std::move(scheme)), variable_name_(std::move(var_name)), halo_exchanger_(halo_exchanger), bc_manager_(bc_manager) {
+AdvectionTerm::AdvectionTerm(
+    std::unique_ptr<SpatialScheme> scheme,
+    std::string var_name,
+    VVM::Core::HaloExchanger& halo_exchanger,
+    const Core::BoundaryConditionManager& bc_manager,
+    bool force_anelastic_scalar_normalization)
+    : scheme_(std::move(scheme)),
+      variable_name_(std::move(var_name)),
+      force_anelastic_scalar_normalization_(
+          force_anelastic_scalar_normalization),
+      halo_exchanger_(halo_exchanger),
+      bc_manager_(bc_manager) {
 
     thermodynamics_vars_ = {"th", "qv", "qc", "qr", "qi", "nc", "nr", "ni"};
     dynamics_vars_ = {"xi", "eta", "zeta"};
@@ -20,6 +30,24 @@ void AdvectionTerm::compute_tendency(
     const Core::Grid& grid,
     const Core::Parameters& params,
     Core::Field<3>& out_tendency) const {
+    compute_tendency_impl(state, grid, params, out_tendency, VVM::real(0.0));
+}
+
+void AdvectionTerm::compute_stage_tendency(
+    Core::State& state,
+    const Core::Grid& grid,
+    const Core::Parameters& params,
+    Core::Field<3>& out_tendency,
+    VVM::Real stage_dt) const {
+    compute_tendency_impl(state, grid, params, out_tendency, stage_dt);
+}
+
+void AdvectionTerm::compute_tendency_impl(
+    Core::State& state,
+    const Core::Grid& grid,
+    const Core::Parameters& params,
+    Core::Field<3>& out_tendency,
+    VVM::Real stage_dt) const {
     // Get scalar field that needs to be advected
     const auto& advected_field = state.get_field<3>(variable_name_);
     auto& u_field = state.get_field<3>("u");
@@ -161,15 +189,24 @@ void AdvectionTerm::compute_tendency(
     bc_manager_.apply_horizontal_bcs(v_mean_field);
     bc_manager_.apply_horizontal_bcs(w_mean_field);
 
-    scheme_->calculate_flux_convergence_x(advected_field, u_mean_field, grid, params, out_tendency, variable_name_);
-    scheme_->calculate_flux_convergence_y(advected_field, v_mean_field, grid, params, out_tendency, variable_name_);
-    scheme_->calculate_flux_convergence_z(advected_field, w_mean_field, grid, params, out_tendency, variable_name_);
+    if (scheme_->handles_multidimensional_advection()) {
+        scheme_->calculate_advection_tendency(
+            state, advected_field, u_mean_field, v_mean_field, w_mean_field,
+            grid, params, out_tendency, variable_name_, stage_dt);
+    } else {
+        scheme_->calculate_flux_convergence_x(advected_field, u_mean_field, grid, params, out_tendency, variable_name_);
+        scheme_->calculate_flux_convergence_y(advected_field, v_mean_field, grid, params, out_tendency, variable_name_);
+        scheme_->calculate_flux_convergence_z(advected_field, w_mean_field, grid, params, out_tendency, variable_name_);
+    }
 
     auto& tendency = out_tendency.get_mutable_device_data();
 
     // Divide rho in tendency for thermodynamics variables
-    if (state.is_tracer(variable_name_) ||
-        std::find(thermodynamics_vars_.begin(), thermodynamics_vars_.end(), variable_name_) != thermodynamics_vars_.end()) {
+    if (force_anelastic_scalar_normalization_ ||
+        state.is_tracer(variable_name_) ||
+        std::find(thermodynamics_vars_.begin(),
+                  thermodynamics_vars_.end(),
+                  variable_name_) != thermodynamics_vars_.end()) {
         const int full_league_size = ny * nx;
         
         Kokkos::parallel_for("Divide_rho_for_thermovariables_team", 
