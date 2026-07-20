@@ -185,15 +185,21 @@ void TimeIntegrator::step(
 
     multistage_scheme_->begin_multistage_step(state, grid, params);
 
-    // SSPRK stages are orchestrated here. The callback routes both RHS
-    // evaluations through the variable's existing TendencyCalculator.
-    Core::Field<3>& first_tendency = evaluate_tendency(dt);
-    multistage_scheme_->advance_multistage(state, grid, params, first_tendency, dt, 0);
-    process_stage();
+    const int stage_count = multistage_scheme_->stage_count();
+    if (stage_count < 1) {
+        throw std::runtime_error(
+            "Multistage integration for '" + variable_name_ +
+            "' configured an invalid stage count.");
+    }
 
-    Core::Field<3>& second_tendency = evaluate_tendency(dt);
-    multistage_scheme_->advance_multistage(state, grid, params, second_tendency, dt, 1);
-    process_stage();
+    for (int stage = 0; stage < stage_count; ++stage) {
+        const VVM::Real stage_dt =
+            multistage_scheme_->stage_timestep(dt, stage);
+        Core::Field<3>& tendency = evaluate_tendency(stage_dt);
+        multistage_scheme_->advance_multistage(
+            state, grid, params, tendency, stage_dt, stage);
+        process_stage();
+    }
 }
 
 } // namespace Dynamics

@@ -14,8 +14,8 @@ namespace Dynamics {
 
 class MUSCL final : public SpatialScheme {
 public:
-    // MUSCL is scalar-category agnostic; DynamicalCore owns the current
-    // configuration eligibility policy for tracers and future water variables.
+    // MUSCL is scalar-category agnostic; NumericalMethodFactory owns the
+    // configuration eligibility policy for prognostic scalar categories.
     struct Options {
         VVM::Real lower_bound = VVM::real(0.0);
         VVM::Real max_cfl = VVM::real(0.9);
@@ -47,6 +47,9 @@ public:
           const Core::Grid& grid);
 
     bool handles_multidimensional_advection() const override { return true; }
+    bool produces_anelastic_scalar_flux_divergence() const override {
+        return true;
+    }
 
     void calculate_advection_tendency(
         const Core::State& state,

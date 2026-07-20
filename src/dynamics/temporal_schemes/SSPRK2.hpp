@@ -21,6 +21,7 @@ public:
         VVM::Real dt) const override;
 
     bool requires_tendency_recomputation() const override { return true; }
+    int stage_count() const override { return 2; }
 
     void begin_multistage_step(
         Core::State& state,
