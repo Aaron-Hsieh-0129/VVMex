@@ -20,6 +20,12 @@ public:
     // calculate the complete advection tendency in one evaluation.
     virtual bool handles_multidimensional_advection() const { return false; }
 
+    // Density-normalized prognostic scalars need this result divided by
+    // rhobar after the spatial flux divergence is evaluated.
+    virtual bool produces_anelastic_scalar_flux_divergence() const {
+        return false;
+    }
+
     virtual void calculate_advection_tendency(
         const Core::State& state,
         const Core::Field<3>& scalar,
