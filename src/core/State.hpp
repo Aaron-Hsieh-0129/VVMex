@@ -266,8 +266,21 @@ public:
         return tracer_names_;
     }
 
+    const std::vector<std::string>& get_tracer_source_targets() const {
+        return tracer_source_targets_;
+    }
+
+    const std::vector<std::string>& get_tracer_source_names() const {
+        return tracer_source_names_;
+    }
+
     bool is_tracer(const std::string& name) const {
         return std::find(tracer_names_.begin(), tracer_names_.end(), name) != tracer_names_.end();
+    }
+
+    bool is_tracer_source(const std::string& name) const {
+        return std::find(tracer_source_names_.begin(), tracer_source_names_.end(), name) !=
+               tracer_source_names_.end();
     }
 
 private:
@@ -276,6 +289,8 @@ private:
     const Parameters& parameters_;
     std::map<std::string, AnyField> fields_;
     std::vector<std::string> tracer_names_;
+    std::vector<std::string> tracer_source_targets_;
+    std::vector<std::string> tracer_source_names_;
 
     size_t step_ = 0;
     VVM::Real time_ = 0.0;

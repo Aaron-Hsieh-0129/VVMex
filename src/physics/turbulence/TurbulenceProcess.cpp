@@ -33,6 +33,8 @@ TurbulenceProcess::TurbulenceProcess(const Utils::ConfigurationManager& config,
     if (config.get_value<bool>("physics.p3.enable_p3", false)) {
         thermodynamics_vars_.insert(thermodynamics_vars_.end(), {"qc", "qr", "qi", "nc", "nr", "ni", "bm", "qm"});
     }
+    const auto& tracer_names = state.get_tracer_names();
+    thermodynamics_vars_.insert(thermodynamics_vars_.end(), tracer_names.begin(), tracer_names.end());
 }
 
 

@@ -349,6 +349,11 @@ void PnetcdfReader::read_and_initialize(VVM::Core::State& state) {
             append_unique(vars_3d, tracer_name);
         }
     }
+    if (config_prefix_ == "netcdf_reader") {
+        for (const auto& source_name : state.get_tracer_source_names()) {
+            append_unique(vars_3d, source_name);
+        }
+    }
 
     if (strict_missing_variables_ && rank_ == 0) {
         std::cout << "  [PnetcdfReader] Restart variables to read from " << source_file_ << ":" << std::endl;
@@ -395,7 +400,8 @@ void PnetcdfReader::read_and_initialize(VVM::Core::State& state) {
         if (rank_ == 0 && !strict_missing_variables_) std::cout << "  - Attempting to load 3D variables from config key '" << key_3d << "'..." << std::endl;
         for (const auto& var_name : vars_3d) {
             const bool required_tracer =
-                config_prefix_ == "netcdf_reader" && state.is_tracer(var_name);
+                config_prefix_ == "netcdf_reader" &&
+                (state.is_tracer(var_name) || state.is_tracer_source(var_name));
             try {
                 read_variable_3d(ncid_, var_name, state.get_field<3>(var_name), required_tracer);
                 if (rank_ == 0) std::cout << "    - Loaded 3D variable: " << var_name << std::endl;

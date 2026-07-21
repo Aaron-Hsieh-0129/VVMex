@@ -11,6 +11,7 @@
 #include "dynamics/temporal_schemes/TimeIntegrator.hpp"
 #include "dynamics/forcings/SpongeLayer.hpp"
 #include "dynamics/forcings/RandomForcing.hpp"
+#include "dynamics/forcings/TracerSource.hpp"
 #include "dynamics/forcings/LateralBoundaryNudging.hpp"
 #include "dynamics/forcings/AreaMeanNudging.hpp"
 #include <set>
@@ -50,6 +51,7 @@ private:
     std::unique_ptr<Physics::RRTMGP::RRTMGPRadiation> radiation_;
     std::unique_ptr<Dynamics::SpongeLayer> sponge_layer_;
     std::unique_ptr<Dynamics::RandomForcing> random_forcing_;
+    std::unique_ptr<Dynamics::TracerSource> tracer_source_;
     std::unique_ptr<Dynamics::LateralBoundaryNudging> lateral_boundary_nudging_;
     std::unique_ptr<Physics::LandProcess> land_;
     std::unique_ptr<Dynamics::AreaMeanNudging> area_mean_nudging_;

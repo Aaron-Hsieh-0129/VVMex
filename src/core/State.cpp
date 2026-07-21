@@ -163,11 +163,48 @@ State::State(const Utils::ConfigurationManager& config, const Parameters& params
             }
             if (!enabled) continue;
 
+            bool source_enabled = false;
+            if (tracer_options.contains("source")) {
+                const auto& source_options = tracer_options.at("source");
+                if (!source_options.is_object()) {
+                    throw std::runtime_error(
+                        "Configuration error for tracer '" + tracer_name +
+                        "': source options must be an object.");
+                }
+                if (source_options.contains("enable")) {
+                    try {
+                        source_enabled =
+                            source_options.at("enable").get<bool>();
+                    } catch (const nlohmann::json::exception& e) {
+                        throw std::runtime_error(
+                            "Configuration error for tracer '" + tracer_name +
+                            "': source option 'enable' must be boolean. " +
+                            e.what());
+                    }
+                } else {
+                    source_enabled = true;
+                }
+            }
+
             tracer_names_.push_back(tracer_name);
+            if (source_enabled) {
+                tracer_source_targets_.push_back(tracer_name);
+            }
         }
 
         for (const auto& tracer_name : tracer_names_) {
             add_field<3>(tracer_name, {nz_total, ny_total, nx_total});
+        }
+        for (const auto& tracer_name : tracer_source_targets_) {
+            const std::string source_name = tracer_name + "_source";
+            if (has_field(source_name) ||
+                prognostic_config.contains(source_name)) {
+                throw std::runtime_error(
+                    "Configuration error: tracer source field '" + source_name +
+                    "' collides with an existing VVMex field/NetCDF name.");
+            }
+            tracer_source_names_.push_back(source_name);
+            add_field<3>(source_name, {nz_total, ny_total, nx_total});
         }
     }
 }
