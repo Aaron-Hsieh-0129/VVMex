@@ -72,6 +72,9 @@ private:
     };
 
     void define_variables();
+    void define_adios_field_metadata(
+        const std::string& field_name,
+        const VVM::Core::FieldMetadata& metadata);
     void attach_hdf5_field_metadata(const std::string& filename);
 
     void grads_ctl_file();

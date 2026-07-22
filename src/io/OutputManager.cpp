@@ -176,6 +176,24 @@ OutputManager::~OutputManager() {
     if (writer_) writer_.Close();
 }
 
+void OutputManager::define_adios_field_metadata(
+    const std::string& field_name,
+    const VVM::Core::FieldMetadata& metadata)
+{
+    if (!metadata.units.empty()) {
+        io_.DefineAttribute<std::string>("units", metadata.units, field_name);
+    }
+    if (!metadata.long_name.empty()) {
+        io_.DefineAttribute<std::string>("long_name", metadata.long_name, field_name);
+    }
+    if (!metadata.standard_name.empty()) {
+        io_.DefineAttribute<std::string>("standard_name", metadata.standard_name, field_name);
+    }
+    if (!metadata.comment.empty()) {
+        io_.DefineAttribute<std::string>("comment", metadata.comment, field_name);
+    }
+}
+
 void OutputManager::define_variables() {
     const size_t gnx = grid_.get_global_points_x();
     const size_t gny = grid_.get_global_points_y();
@@ -234,9 +252,12 @@ void OutputManager::define_variables() {
                         field_variables_[field_name] = io_.DefineVariable<VVM::Real>(field_name, {dim4, gnz, gny, gnx}, {0, actual_out_z_start, actual_out_y_start, actual_out_x_start}, {dim4, local_nz, local_ny, local_nx});
                     }
 
-                    if (rank_ == 0) {
-                        const auto& metadata = field.get_metadata();
+                    const auto& metadata = field.get_metadata();
+                    if (field_variables_.count(field_name)) {
+                        define_adios_field_metadata(field_name, metadata);
+                    }
 
+                    if (rank_ == 0) {
                         std::cout
                             << "[OutputManager] " << field_name
                             << ": units='" << metadata.units
