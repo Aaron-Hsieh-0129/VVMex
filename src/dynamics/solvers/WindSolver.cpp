@@ -51,8 +51,18 @@ WindSolver::WindSolver(const Core::Grid& grid, const Utils::ConfigurationManager
     Kokkos::deep_copy(h_rdy2,  params_.rdy2);
     h_inv_C0_ = real(1.0) / (h_WRXMU + real(2.0) * h_rdx2 + real(2.0) * h_rdy2);
 
+    int nz = grid_.get_local_total_points_z();
+    int ny = grid_.get_local_total_points_y();
+    int nx = grid_.get_local_total_points_x();
+
     if (!state_.has_field("utop_mean_tmp")) state_.add_field<0>("utop_mean_tmp", {});
     if (!state_.has_field("vtop_mean_tmp")) state_.add_field<0>("vtop_mean_tmp", {});
+    if (!state_.has_field("W3DNM1")) state_.add_field<3>("W3DNM1", {nz, ny, nx}, Core::FieldMetadata{Core::GridStaggering::StaggeredZ, "m s-1", "previous-step vertical wind"});
+    if (!state_.has_field("u_topo")) state_.add_field<3>("u_topo", {nz, ny, nx}, Core::FieldMetadata{Core::GridStaggering::StaggeredX, "m s-1", "topography-adjusted x wind"});
+    if (!state_.has_field("v_topo")) state_.add_field<3>("v_topo", {nz, ny, nx}, Core::FieldMetadata{Core::GridStaggering::StaggeredY, "m s-1", "topography-adjusted y wind"});
+    if (!state_.has_field("w_topo")) state_.add_field<3>("w_topo", {nz, ny, nx}, Core::FieldMetadata{Core::GridStaggering::StaggeredZ, "m s-1", "topography-adjusted vertical wind"});
+    if (!state_.has_field("xi_topo")) state_.add_field<3>("xi_topo", {nz, ny, nx}, Core::FieldMetadata{Core::GridStaggering::StaggeredYZ, "s-1", "topography-adjusted x vorticity"});
+    if (!state_.has_field("eta_topo")) state_.add_field<3>("eta_topo", {nz, ny, nx}, Core::FieldMetadata{Core::GridStaggering::StaggeredXZ, "s-1", "topography-adjusted y vorticity"});
 }
 
 void WindSolver::solve_w() {

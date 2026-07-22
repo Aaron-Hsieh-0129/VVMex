@@ -11,13 +11,6 @@
 namespace VVM {
 namespace Core {
 
-enum class GridPlacement {
-    Unknown, NotApplicable, CellCenter,
-    XFace, YFace, ZFace,
-    XEdge, YEdge, ZEdge,
-    Surface
-};
-
 enum class GridStaggering {
     Unspecified, NotApplicable,
 
@@ -31,7 +24,8 @@ enum class GridStaggering {
     StaggeredXZ,    // (i+1/2, j,     k+1/2) : eta
     StaggeredXY,    // (i+1/2, j+1/2, k)     : zeta
 
-    StaggeredXYZ    // (i+1/2, j+1/2, k+1/2)
+    StaggeredXYZ,   // (i+1/2, j+1/2, k+1/2)
+    Surface         // At surface
 };
 
 struct FieldMetadata {

@@ -25,8 +25,8 @@ TurbulenceProcess::TurbulenceProcess(const Utils::ConfigurationManager& config,
           grid.get_local_total_points_y(),
           grid.get_local_total_points_x()
     };
-    if (!state.has_field("RKM")) state.add_field<3>("RKM", dims);
-    if (!state.has_field("RKH")) state.add_field<3>("RKH", dims);
+    if (!state.has_field("RKM")) state.add_field<3>("RKM", dims, Core::FieldMetadata{Core::GridStaggering::Centered, "m2 s-1", "turbulent eddy viscosity"});
+    if (!state.has_field("RKH")) state.add_field<3>("RKH", dims, Core::FieldMetadata{Core::GridStaggering::Centered, "m2 s-1", "turbulent eddy diffusivity"});
 
     dynamics_vars_ = {"xi", "eta", "zeta"};
     thermodynamics_vars_ = {"th", "qv"};
@@ -44,17 +44,34 @@ void TurbulenceProcess::initialize(Core::State& state) {
     int nx = grid_.get_local_total_points_x();
 
     auto dims = std::array<int, 3>{nz, ny, nx};
+    const auto tendency_metadata = [&state](const std::string& var_name) {
+        const auto& metadata = state.get_field<3>(var_name).get_metadata();
+        std::string units;
+        if (metadata.units == "1") {
+            units = "s-1";
+        }
+        else if (metadata.units == "s-1") {
+            units = "s-2";
+        }
+        else if (!metadata.units.empty()) {
+            units = metadata.units + " s-1";
+        }
+        const std::string long_name = metadata.long_name.empty()
+            ? var_name + " tendency"
+            : metadata.long_name + " tendency";
+        return Core::FieldMetadata{metadata.grid_staggering, units, long_name};
+    };
     for (const auto& var_name : thermodynamics_vars_) {
         std::string fe_tendency_name = "fe_tendency_" + var_name;
         if (!state.has_field(fe_tendency_name)) {
-            state.add_field<3>(fe_tendency_name, dims);
+            state.add_field<3>(fe_tendency_name, dims, tendency_metadata(var_name));
         }
     }
     for (const auto& var_name : dynamics_vars_) {
         std::string fe_tendency_name = "fe_tendency_" + var_name;
         if (!state.has_field(fe_tendency_name)) {
-            if (var_name == "zeta") state.add_field<2>(fe_tendency_name, {ny, nx});
-            else state.add_field<3>(fe_tendency_name, dims);
+            if (var_name == "zeta") state.add_field<2>(fe_tendency_name, {ny, nx}, tendency_metadata(var_name));
+            else state.add_field<3>(fe_tendency_name, dims, tendency_metadata(var_name));
         }
     }
     Kokkos::deep_copy(dx_, params_.dx);

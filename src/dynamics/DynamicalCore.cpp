@@ -117,6 +117,9 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
 
     if (!state.has_field("RKM")) state.add_field<3>("RKM", dims);
     if (!state.has_field("RKH")) state.add_field<3>("RKH", dims);
+    if (!state.has_field("tempu")) state.add_field<2>("tempu", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::StaggeredX, "m s-1", "temporary top-boundary x wind work field"});
+    if (!state.has_field("tempv")) state.add_field<2>("tempv", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::StaggeredY, "m s-1", "temporary top-boundary y wind work field"});
+
     Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), state_.get_field<0>("utopmn_m").get_mutable_device_data(), state_.get_field<0>("utopmn").get_mutable_device_data());
     Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), state_.get_field<0>("vtopmn_m").get_mutable_device_data(), state_.get_field<0>("vtopmn").get_mutable_device_data());
 }
