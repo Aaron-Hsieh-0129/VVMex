@@ -192,6 +192,12 @@ void OutputManager::define_adios_field_metadata(
     if (!metadata.comment.empty()) {
         io_.DefineAttribute<std::string>("comment", metadata.comment, field_name);
     }
+    if (metadata.grid_staggering != VVM::Core::GridStaggering::Unspecified) {
+        io_.DefineAttribute<std::string>(
+            "grid_staggering",
+            VVM::Core::grid_staggering_to_string(metadata.grid_staggering),
+            field_name);
+    }
 }
 
 void OutputManager::define_variables() {
@@ -519,6 +525,12 @@ void OutputManager::attach_hdf5_field_metadata(
                     write_attribute(dataset, "long_name", metadata.long_name);
                     write_attribute(dataset, "standard_name", metadata.standard_name);
                     write_attribute(dataset, "comment", metadata.comment);
+                    if (metadata.grid_staggering != VVM::Core::GridStaggering::Unspecified) {
+                        write_attribute(
+                            dataset,
+                            "grid_staggering",
+                            VVM::Core::grid_staggering_to_string(metadata.grid_staggering));
+                    }
                 }
             },
             it->second);

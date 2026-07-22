@@ -60,6 +60,7 @@ void cache_adios_field_metadata(
     copy_attribute("long_name");
     copy_attribute("standard_name");
     copy_attribute("comment");
+    copy_attribute("grid_staggering");
 }
 
 void write_hdf5_string_attribute(
