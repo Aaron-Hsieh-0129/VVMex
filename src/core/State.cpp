@@ -20,12 +20,13 @@ State::State(const Utils::ConfigurationManager& config, const Parameters& params
     int ny_total = grid.get_local_total_points_y();
     int nz_total = grid.get_local_total_points_z();
     // 0D field
-    add_field<0>("utopmn", {}); // This is the prediction of utop mean
-    add_field<0>("vtopmn", {}); // This is the prediction of vtop mean
-    add_field<0>("utop_mean", {}); // This is the temporary varaible of u top mean
-    add_field<0>("vtop_mean", {}); // This is the temporary varaible of u top mean
+    add_field<0>("utopmn", {}, FieldMetadata{"m s-1", "predicted domain-mean top-boundary x wind", "ubartop", ""});
+    add_field<0>("vtopmn", {}, FieldMetadata{"m s-1", "predicted domain-mean top-boundary y wind", "vbartop", ""});
 
     // 1D field
+    add_field<1>("Tbar", {nz_total}, FieldMetadata{"K", "reference-state air temperature profile", "", ""});
+    add_field<1>("Tvbar", {nz_total}, FieldMetadata{"K", "reference-state virtual temperature profile", "", ""});
+    add_field<1>("thbar", {nz_total}, FieldMetadata{"K", "reference-state air potential temperature profile", "", ""});
     add_field<1>("Tbar", {nz_total});
     add_field<1>("Tvbar", {nz_total});
     add_field<1>("thbar", {nz_total});
@@ -57,7 +58,7 @@ State::State(const Utils::ConfigurationManager& config, const Parameters& params
     add_field<2>("Tg", {ny_total, nx_total});
 
     // 3D field
-    add_field<3>("th", {nz_total, ny_total, nx_total});
+    add_field<3>("th", {nz_total, ny_total, nx_total}, FieldMetadata{"K", "air potential temperature", "air_potential_temperature", ""});
     add_field<3>("qv", {nz_total, ny_total, nx_total});
     add_field<3>("T", {nz_total, ny_total, nx_total});
     add_field<3>("T_m", {nz_total, ny_total, nx_total});

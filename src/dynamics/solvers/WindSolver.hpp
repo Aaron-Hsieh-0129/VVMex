@@ -22,20 +22,21 @@ enum class WSolverMethod {
 
 class WindSolver {
 public:
-    WindSolver(const Core::Grid& grid, const Utils::ConfigurationManager& config, const Core::Parameters& params, VVM::Core::HaloExchanger& halo_exchanger);
+    WindSolver(const Core::Grid& grid, const Utils::ConfigurationManager& config, const Core::Parameters& params, VVM::Core::HaloExchanger& halo_exchanger, VVM::Core::State& state);
     ~WindSolver();
 
     WindSolver(const WindSolver&) = delete;
     WindSolver& operator=(const WindSolver&) = delete;
 
-    void solve_w(Core::State& state);
-    void solve_uv(Core::State& state);
+    void solve_w();
+    void solve_uv();
     void relax_2d(Core::Field<2>& A_field, Core::Field<2>& ANM1_field, Core::Field<2>& RHSV_field, Core::Field<2>& AOUT_field);
 
 private:
     const Core::Grid& grid_;
     const Utils::ConfigurationManager& config_;
     const Core::Parameters& params_;
+    Core::State& state_;
     WSolverMethod w_solver_method_;
 
     mutable Core::Field<3> YTEM_field_;

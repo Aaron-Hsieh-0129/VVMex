@@ -51,19 +51,19 @@ public:
 #endif
 
     template<size_t Dim>
-    void add_field(const std::string& name, std::initializer_list<int> dims_list) {
+    void add_field(const std::string& name, std::initializer_list<int> dims_list, FieldMetadata metadata = {}) {
         if (dims_list.size() != Dim) {
             throw std::runtime_error("Dimension mismatch for field '" + name + "'");
         }
         std::array<int, Dim> dims;
         std::copy(dims_list.begin(), dims_list.end(), dims.begin());
-        auto [it, inserted] = fields_.try_emplace(name, std::in_place_type_t<Field<Dim>>(), name, dims);
+        auto [it, inserted] = fields_.try_emplace(name, std::in_place_type_t<Field<Dim>>(), name, dims, std::move(metadata));
         if (inserted) std::get<Field<Dim>>(it->second).set_to_zero();
     }
 
     template<size_t Dim>
-    void add_field(const std::string& name, const std::array<int, Dim>& dims) {
-        auto [it, inserted] = fields_.try_emplace(name, std::in_place_type_t<Field<Dim>>(), name, dims);
+    void add_field(const std::string& name, const std::array<int, Dim>& dims, FieldMetadata metadata = {}) {
+        auto [it, inserted] = fields_.try_emplace(name, std::in_place_type_t<Field<Dim>>(), name, dims, std::move(metadata));
         if (inserted) std::get<Field<Dim>>(it->second).set_to_zero();
     }
 
