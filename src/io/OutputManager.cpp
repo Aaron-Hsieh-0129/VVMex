@@ -1,4 +1,5 @@
 #include "OutputManager.hpp"
+#include "Hdf5DimensionScales.hpp"
 #include <sys/stat.h>
 #include <cerrno>
 #include <algorithm>
@@ -538,6 +539,8 @@ void OutputManager::attach_hdf5_field_metadata(
 
         H5Dclose(dataset);
     }
+
+    attach_hdf5_dimension_scales(file, fields_to_output_);
 
     H5Fclose(file);
 }

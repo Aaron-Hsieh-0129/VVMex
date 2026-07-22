@@ -3,6 +3,7 @@ set(VVM_IO_SOURCES
     OutputManager.cpp
     PnetcdfReader.cpp
     Hdf5RestartReader.cpp
+    Hdf5DimensionScales.cpp
     IOServer.cpp
 )
 
@@ -12,6 +13,7 @@ set(VVM_IO_HEADERS
     OutputManager.hpp
     PnetcdfReader.hpp
     Hdf5RestartReader.hpp
+    Hdf5DimensionScales.hpp
     IOServer.hpp
 )
 
@@ -25,7 +27,7 @@ target_link_libraries(vvm_io
         vvm_core
         Kokkos::kokkos
         adios2::adios2
-        HDF5::HDF5
+        HDF5::HL
         PnetCDF::pnetcdf
         NetCDF::netcdf
         MPI::MPI_CXX
