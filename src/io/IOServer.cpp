@@ -1,4 +1,5 @@
 #include "IOServer.hpp"
+#include "Hdf5DimensionScales.hpp"
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -113,6 +114,13 @@ void attach_sst_hdf5_field_metadata(
 
         H5Dclose(dataset);
     }
+
+    std::vector<std::string> field_names;
+    field_names.reserve(metadata_cache.size());
+    for (const auto& field_metadata : metadata_cache) {
+        field_names.push_back(field_metadata.first);
+    }
+    attach_hdf5_dimension_scales(file, field_names);
 
     H5Fclose(file);
 }
