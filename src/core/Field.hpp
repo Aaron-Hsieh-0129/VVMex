@@ -11,30 +11,76 @@
 namespace VVM {
 namespace Core {
 
+enum class GridPlacement {
+    Unknown, NotApplicable, CellCenter,
+    XFace, YFace, ZFace,
+    XEdge, YEdge, ZEdge,
+    Surface
+};
+
+enum class GridStaggering {
+    Unspecified, NotApplicable,
+
+    Centered,       // (i,     j,     k)
+
+    StaggeredX,     // (i+1/2, j,     k)     : u
+    StaggeredY,     // (i,     j+1/2, k)     : v
+    StaggeredZ,     // (i,     j,     k+1/2) : w
+
+    StaggeredYZ,    // (i,     j+1/2, k+1/2) : xi
+    StaggeredXZ,    // (i+1/2, j,     k+1/2) : eta
+    StaggeredXY,    // (i+1/2, j+1/2, k)     : zeta
+
+    StaggeredXYZ    // (i+1/2, j+1/2, k+1/2)
+};
+
 struct FieldMetadata {
     std::string units;
     std::string long_name;
     std::string standard_name;
     std::string comment;
-    // struct VariablePlace {
-    //     X,
-    //     Y,
-    //     Z
-    // };
+    GridStaggering grid_staggering = GridStaggering::Unspecified;
 
     FieldMetadata() = default;
 
     FieldMetadata(
+        GridStaggering grid_staggering_in,
         std::string units_in,
         std::string long_name_in,
-        // VariablePlace A = {},
         std::string standard_name_in = {},
         std::string comment_in = {})
-        : units(std::move(units_in)),
+        : grid_staggering(grid_staggering_in),
+          units(std::move(units_in)),
           long_name(std::move(long_name_in)),
           standard_name(std::move(standard_name_in)),
           comment(std::move(comment_in)) {}
 };
+
+inline const char* grid_staggering_to_string(GridStaggering staggering) noexcept {
+    switch (staggering) {
+        case GridStaggering::Unspecified:
+            return "unspecified";
+        case GridStaggering::NotApplicable:
+            return "not_applicable";
+        case GridStaggering::Centered:
+            return "centered";
+        case GridStaggering::StaggeredX:
+            return "staggered_x";
+        case GridStaggering::StaggeredY:
+            return "staggered_y";
+        case GridStaggering::StaggeredZ:
+            return "staggered_z";
+        case GridStaggering::StaggeredYZ:
+            return "staggered_yz";
+        case GridStaggering::StaggeredXZ:
+            return "staggered_xz";
+        case GridStaggering::StaggeredXY:
+            return "staggered_xy";
+        case GridStaggering::StaggeredXYZ:
+            return "staggered_xyz";
+    }
+    return "unspecified";
+}
 
 // Helper to create Kokkos::View of varying dimensions
 template<size_t Dim, typename ScalarType = VVM::Real>
