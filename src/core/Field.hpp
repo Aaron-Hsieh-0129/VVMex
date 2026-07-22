@@ -11,6 +11,31 @@
 namespace VVM {
 namespace Core {
 
+struct FieldMetadata {
+    std::string units;
+    std::string long_name;
+    std::string standard_name;
+    std::string comment;
+    // struct VariablePlace {
+    //     X,
+    //     Y,
+    //     Z
+    // };
+
+    FieldMetadata() = default;
+
+    FieldMetadata(
+        std::string units_in,
+        std::string long_name_in,
+        // VariablePlace A = {},
+        std::string standard_name_in = {},
+        std::string comment_in = {})
+        : units(std::move(units_in)),
+          long_name(std::move(long_name_in)),
+          standard_name(std::move(standard_name_in)),
+          comment(std::move(comment_in)) {}
+};
+
 // Helper to create Kokkos::View of varying dimensions
 template<size_t Dim, typename ScalarType = VVM::Real>
 struct ViewTypeHelper;
@@ -34,8 +59,8 @@ public:
     using HostMirrorType = typename ViewType::HostMirror;
 
     // Constructor
-    explicit Field(const std::string& field_name, const std::array<int, Dim>& dims)
-        : name_(field_name) {
+    explicit Field(const std::string& field_name, const std::array<int, Dim>& dims, FieldMetadata metadata = {})
+        : name_(field_name), metadata_(std::move(metadata)) {
         
         if constexpr (Dim == 0) data_ = ViewType(name_);
         else if constexpr (Dim == 1) data_ = ViewType(name_, dims[0]);
@@ -74,6 +99,8 @@ public:
 
     const std::string& get_name() const { return name_; }
 
+    const FieldMetadata& get_metadata() const noexcept { return metadata_; }
+
     // --- Printing/Debugging Methods ---
     void print_field_info() const;
     void print_slice_z_at_k(const Grid& grid, int N_idx, int k_local_idx, int halo=-1) const;
@@ -83,6 +110,7 @@ public:
 private:
     std::string name_; // Name of the field for identification
     ViewType data_;
+    FieldMetadata metadata_;
 };
 
 template<size_t Dim>

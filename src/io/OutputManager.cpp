@@ -10,6 +10,7 @@
 #include <iomanip>
 #include <sstream>
 #include <unordered_set>
+#include <hdf5.h>
 
 namespace VVM {
 namespace IO {
@@ -232,6 +233,18 @@ void OutputManager::define_variables() {
                         const size_t dim4 = field.get_device_data().extent(0);
                         field_variables_[field_name] = io_.DefineVariable<VVM::Real>(field_name, {dim4, gnz, gny, gnx}, {0, actual_out_z_start, actual_out_y_start, actual_out_x_start}, {dim4, local_nz, local_ny, local_nx});
                     }
+
+                    if (rank_ == 0) {
+                        const auto& metadata = field.get_metadata();
+
+                        std::cout
+                            << "[OutputManager] " << field_name
+                            << ": units='" << metadata.units
+                            << "', long_name='" << metadata.long_name
+                            << "', standard_name='" << metadata.standard_name
+                            << "', comment='" << metadata.comment
+                            << "'\n";
+                    }
                 }
             }, it->second);
         }
@@ -244,14 +257,15 @@ void OutputManager::write(int step, VVM::Real time) {
         variables_defined_ = true;
     }
 
+    std::string filename;
     if (engine_type_ == "HDF5") {
-        std::string filename = output_dir_ + "/" + filename_prefix_ + "_" + format_to_six_digits((int) (time/output_interval_s_)) + ".h5";
+        filename = output_dir_ + "/" + filename_prefix_ + "_" + format_to_six_digits((int) (time/output_interval_s_)) + ".h5";
         if (rank_ == 0) std::cout << "  [OutputManager] HDF5 Writing: " << filename << std::endl;
         writer_ = io_.Open(filename, adios2::Mode::Write, comm_);
     } 
     else if (engine_type_ == "SST") {
         if (!writer_) {
-            std::string filename = output_dir_ + "/" + filename_prefix_;
+            filename = output_dir_ + "/" + filename_prefix_;
             if (rank_ == 0) std::cout << "  [OutputManager] SST Streaming: " << filename << std::endl;
             writer_ = io_.Open(filename, adios2::Mode::Write, comm_);
         }
@@ -387,6 +401,10 @@ void OutputManager::write(int step, VVM::Real time) {
     
     if (engine_type_ == "HDF5") {
         writer_.Close();
+
+        MPI_Barrier(comm_);
+        attach_hdf5_field_metadata(filename);
+        MPI_Barrier(comm_);
     }
 }
 
@@ -421,6 +439,76 @@ void OutputManager::write_static_data() {
     }
     writer_.Put<VVM::Real>(var_z_mid, z_mid_physical.data(), adios2::Mode::Sync);
 }
+
+void OutputManager::attach_hdf5_field_metadata(
+    const std::string& filename)
+{
+    if (rank_ != 0) return;
+
+    hid_t file = H5Fopen(filename.c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+
+    if (file < 0) {
+        std::cerr << "[OutputManager] Failed to reopen HDF5 file '"
+                  << filename << "' for metadata output.\n";
+        return;
+    }
+
+    const auto write_attribute = [](hid_t dataset, const std::string& name, const std::string& value)
+    {
+        if (value.empty()) return;
+
+        hid_t space = H5Screate(H5S_SCALAR);
+        hid_t type = H5Tcopy(H5T_C_S1);
+
+        H5Tset_size(type, value.size() + 1);
+        H5Tset_strpad(type, H5T_STR_NULLTERM);
+
+        hid_t attribute = H5Acreate2(dataset, name.c_str(), type, space, H5P_DEFAULT, H5P_DEFAULT);
+
+        if (attribute >= 0) {
+            H5Awrite(attribute, type, value.c_str());
+            H5Aclose(attribute);
+        }
+
+        H5Tclose(type);
+        H5Sclose(space);
+    };
+
+    for (const auto& field_name : fields_to_output_) {
+        const std::string dataset_path = "/Step0/" + field_name;
+
+        hid_t dataset = H5Dopen2(file, dataset_path.c_str(), H5P_DEFAULT);
+
+        if (dataset < 0) continue;
+
+        auto it = state_.begin();
+        while (it != state_.end() && it->first != field_name) ++it;
+
+        if (it != state_.end()) {
+            std::visit([&](const auto& field)
+            {
+                using T = std::decay_t<decltype(field)>;
+
+                if constexpr (
+                    !std::is_same_v<T, std::monostate>) {
+
+                    const auto& metadata = field.get_metadata();
+
+                    write_attribute(dataset, "units", metadata.units);
+                    write_attribute(dataset, "long_name", metadata.long_name);
+                    write_attribute(dataset, "standard_name", metadata.standard_name);
+                    write_attribute(dataset, "comment", metadata.comment);
+                }
+            },
+            it->second);
+        }
+
+        H5Dclose(dataset);
+    }
+
+    H5Fclose(file);
+}
+
 
 OutputManager::LinearAxis OutputManager::centered_lonlat_axis(int points, VVM::Real spacing) const {
     LinearAxis axis;

@@ -16,10 +16,10 @@ void TracerSource::apply(Core::State& state, VVM::Real dt) const {
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
     const int h = grid_.get_halo_cells();
-    const auto fluid = state.get_field<3>("ITYPEW").get_device_data();
+    const auto ITYPEW = state.get_field<3>("ITYPEW").get_device_data();
 
     for (const auto& tracer_name : target_vars_) {
-        auto tracer = state.get_field<3>(tracer_name).get_mutable_device_data();
+        auto& tracer = state.get_field<3>(tracer_name).get_mutable_device_data();
         const auto source = state.get_field<3>(tracer_name + "_source").get_device_data();
 
         // Source values are concentration per second, so each forcing call
@@ -27,7 +27,7 @@ void TracerSource::apply(Core::State& state, VVM::Real dt) const {
         Kokkos::parallel_for("apply_tracer_source_" + tracer_name,
             Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {nz - h, ny - h, nx - h}),
             KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                if (fluid(k, j, i) == VVM::real(1.0)) {
+                if (ITYPEW(k, j, i) == VVM::real(1.0)) {
                     tracer(k, j, i) += dt * source(k, j, i);
                 }
             });

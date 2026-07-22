@@ -21,7 +21,7 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
                              Core::HaloExchanger& halo_exchanger, 
                              const Core::BoundaryConditionManager& bc_manager)
     : config_(config), grid_(grid), params_(params), state_(state), 
-      wind_solver_(std::make_unique<WindSolver>(grid, config, params, halo_exchanger)), 
+      wind_solver_(std::make_unique<WindSolver>(grid, config, params, halo_exchanger, state)), 
       halo_exchanger_(halo_exchanger), bc_manager_(bc_manager) {
 
     int rank = grid_.get_mpi_rank();
@@ -284,8 +284,8 @@ void DynamicalCore::compute_wind_fields() {
     bc_manager_.apply_horizontal_bcs(state_.get_field<3>("xi_topo"));
     bc_manager_.apply_horizontal_bcs(state_.get_field<3>("eta_topo"));
 
-    wind_solver_->solve_w(state_);
-    wind_solver_->solve_uv(state_);
+    wind_solver_->solve_w();
+    wind_solver_->solve_uv();
 }
 
 void DynamicalCore::compute_uvtopmn() {

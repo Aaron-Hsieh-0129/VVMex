@@ -23,8 +23,8 @@ WindSolver::~WindSolver() {
 #endif
 }
 
-WindSolver::WindSolver(const Core::Grid& grid, const Utils::ConfigurationManager& config, const Core::Parameters& params, VVM::Core::HaloExchanger& halo_exchanger)
-    : grid_(grid), config_(config), halo_exchanger_(halo_exchanger), params_(params),
+WindSolver::WindSolver(const Core::Grid& grid, const Utils::ConfigurationManager& config, const Core::Parameters& params, VVM::Core::HaloExchanger& halo_exchanger, VVM::Core::State& state)
+    : grid_(grid), config_(config), halo_exchanger_(halo_exchanger), params_(params), state_(state),
       YTEM_field_("YTEM", {grid.get_local_total_points_z(), grid.get_local_total_points_y(), grid.get_local_total_points_x()}),
       W3DNP1_field_("W3DNP1", {grid.get_local_total_points_z(), grid.get_local_total_points_y(), grid.get_local_total_points_x()}),
       W3DN_field_("W3DN", {grid.get_local_total_points_z(), grid.get_local_total_points_y(), grid.get_local_total_points_x()}),
@@ -51,9 +51,11 @@ WindSolver::WindSolver(const Core::Grid& grid, const Utils::ConfigurationManager
     Kokkos::deep_copy(h_rdy2,  params_.rdy2);
     h_inv_C0_ = real(1.0) / (h_WRXMU + real(2.0) * h_rdx2 + real(2.0) * h_rdy2);
 
+    if (!state_.has_field("utop_mean_tmp")) state_.add_field<0>("utop_mean_tmp", {});
+    if (!state_.has_field("vtop_mean_tmp")) state_.add_field<0>("vtop_mean_tmp", {});
 }
 
-void WindSolver::solve_w(Core::State& state) {
+void WindSolver::solve_w() {
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
@@ -72,11 +74,11 @@ void WindSolver::solve_w(Core::State& state) {
     const auto& BGAU = params_.BGAU.get_device_data();
     const auto& CGAU = params_.CGAU.get_device_data();
 
-    const auto& rhobar_up = state.get_field<1>("rhobar_up").get_device_data();
-    const auto& xi = state.get_field<3>("xi_topo").get_device_data();
-    const auto& eta = state.get_field<3>("eta_topo").get_device_data();
+    const auto& rhobar_up = state_.get_field<1>("rhobar_up").get_device_data();
+    const auto& xi = state_.get_field<3>("xi_topo").get_device_data();
+    const auto& eta = state_.get_field<3>("eta_topo").get_device_data();
 
-    auto& w = state.get_field<3>("w").get_mutable_device_data();
+    auto& w = state_.get_field<3>("w").get_mutable_device_data();
 
     auto& YTEM = YTEM_field_.get_mutable_device_data();
     auto& W3DNP1 = W3DNP1_field_.get_mutable_device_data();
@@ -93,7 +95,7 @@ void WindSolver::solve_w(Core::State& state) {
     );
 
     // Linear extrapolation of initial guess
-    auto& W3DNM1 = state.get_field<3>("W3DNM1").get_mutable_device_data();
+    auto& W3DNM1 = state_.get_field<3>("W3DNM1").get_mutable_device_data();
     Kokkos::parallel_for("W3DNP1", Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0,0,0}, {nz,ny,nx}),
         KOKKOS_LAMBDA(int k, int j, int i) {
             VVM::Real w_val = w(k,j,i);
@@ -172,7 +174,7 @@ void WindSolver::solve_w(Core::State& state) {
                     else w(k,j,i) = pm(k,j,i) / rhobar_up(k);
                 }
             );
-            halo_exchanger_.exchange_halos(state.get_field<3>("w"), 1);
+            halo_exchanger_.exchange_halos(state_.get_field<3>("w"), 1);
         }
     }
     else {
@@ -194,7 +196,7 @@ void WindSolver::solve_w(Core::State& state) {
                     }
                 }
             );
-            halo_exchanger_.exchange_halos(state.get_field<3>("w"));
+            halo_exchanger_.exchange_halos(state_.get_field<3>("w"));
         }
     }
     if (iter_num % 2 != 0) {
@@ -219,28 +221,28 @@ void WindSolver::solve_w(Core::State& state) {
 }
 
 
-void WindSolver::solve_uv(Core::State& state) {
+void WindSolver::solve_uv() {
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
     const int h = grid_.get_halo_cells();
     const auto& flex_height_coef_mid = params_.flex_height_coef_mid.get_device_data();
     const auto& flex_height_coef_up = params_.flex_height_coef_up.get_device_data();
-    const auto& rhobar = state.get_field<1>("rhobar").get_device_data();
-    const auto& rhobar_up = state.get_field<1>("rhobar_up").get_device_data();
+    const auto& rhobar = state_.get_field<1>("rhobar").get_device_data();
+    const auto& rhobar_up = state_.get_field<1>("rhobar_up").get_device_data();
     const auto& rdz = params_.rdz;
 
-    auto& psi_field = state.get_field<2>("psi");
-    auto& psinm1_field = state.get_field<2>("psinm1");
+    auto& psi_field = state_.get_field<2>("psi");
+    auto& psinm1_field = state_.get_field<2>("psinm1");
     auto& psi = psi_field.get_mutable_device_data();
-    const auto& zeta = state.get_field<3>("zeta").get_device_data();
+    const auto& zeta = state_.get_field<3>("zeta").get_device_data();
     const auto& zeta_slice = Kokkos::subview(zeta, nz-h-1, Kokkos::ALL(), Kokkos::ALL());
     auto& RIP1 = RIP1_field_.get_mutable_device_data();
 
-    auto& w = state.get_field<3>("w").get_mutable_device_data();
-    auto& chi_field = state.get_field<2>("chi");
+    auto& w = state_.get_field<3>("w").get_mutable_device_data();
+    auto& chi_field = state_.get_field<2>("chi");
     auto& chi = chi_field.get_mutable_device_data();
-    auto& chinm1_field = state.get_field<2>("chinm1");
+    auto& chinm1_field = state_.get_field<2>("chinm1");
     auto& RIP2 = RIP2_field_.get_mutable_device_data();
 
     // Solve psi
@@ -267,8 +269,8 @@ void WindSolver::solve_uv(Core::State& state) {
     Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), chi, ROP2_field_.get_mutable_device_data());
 
     // Calculate utop, vtop
-    auto& utop_field = state.get_field<2>("utop");
-    auto& vtop_field = state.get_field<2>("vtop");
+    auto& utop_field = state_.get_field<2>("utop");
+    auto& vtop_field = state_.get_field<2>("vtop");
     auto& utop = utop_field.get_mutable_device_data();
     auto& vtop = vtop_field.get_mutable_device_data();
     const auto& rdx = params_.rdx;
@@ -281,23 +283,23 @@ void WindSolver::solve_uv(Core::State& state) {
     );
     
     // calculate u
-    auto& u_field = state.get_field<3>("u");
+    auto& u_field = state_.get_field<3>("u");
     auto& u = u_field.get_mutable_device_data();
-    auto& v_field = state.get_field<3>("v");
+    auto& v_field = state_.get_field<3>("v");
     auto& v = v_field.get_mutable_device_data();
 
-    auto& utopm = state.get_field<0>("utop_mean").get_mutable_device_data();
-    auto& vtopm = state.get_field<0>("vtop_mean").get_mutable_device_data();
+    auto& utopm = state_.get_field<0>("utop_mean_tmp").get_mutable_device_data();
+    auto& vtopm = state_.get_field<0>("vtop_mean_tmp").get_mutable_device_data();
 #if defined(ENABLE_NCCL)
-    state.calculate_horizontal_mean(utop_field, utopm);
-    state.calculate_horizontal_mean(vtop_field, vtopm);
+    state_.calculate_horizontal_mean(utop_field, utopm);
+    state_.calculate_horizontal_mean(vtop_field, vtopm);
 #else
-    auto utopm = state.calculate_horizontal_mean(utop_field);
-    auto vtopm = state.calculate_horizontal_mean(vtop_field);
+    auto utopm = state_.calculate_horizontal_mean(utop_field);
+    auto vtopm = state_.calculate_horizontal_mean(vtop_field);
 #endif
 
-    auto& utopmn = state.get_field<0>("utopmn").get_device_data();
-    auto& vtopmn = state.get_field<0>("vtopmn").get_device_data();
+    auto& utopmn = state_.get_field<0>("utopmn").get_device_data();
+    auto& vtopmn = state_.get_field<0>("vtopmn").get_device_data();
 
     // Note: this data clipping is necessary to prevent too small values and this makes CPU and GPU VVM same.
     Kokkos::parallel_for("DataClipZero", 1, KOKKOS_LAMBDA(const int i) {
@@ -317,8 +319,8 @@ void WindSolver::solve_uv(Core::State& state) {
         }
     );
 
-    const auto& xi = state.get_field<3>("xi_topo").get_mutable_device_data();
-    const auto& eta = state.get_field<3>("eta_topo").get_mutable_device_data();
+    const auto& xi = state_.get_field<3>("xi_topo").get_mutable_device_data();
+    const auto& eta = state_.get_field<3>("eta_topo").get_mutable_device_data();
     const auto& dz = params_.dz;
     Kokkos::parallel_for("u_downward_integration",
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny-h, nx-h}),
@@ -339,7 +341,7 @@ void WindSolver::solve_uv(Core::State& state) {
                       + ((w(nz-h-1,j+1,i) - w(nz-h-1,j,i))*rdy() -  xi(nz-h-1,j,i)) * dz() / flex_height_coef_up(nz-h-1); 
         }
     );
-    halo_exchanger_.exchange_multiple_halos({"u", "v"}, state);
+    halo_exchanger_.exchange_multiple_halos({"u", "v"}, state_);
     return;
 }
 
