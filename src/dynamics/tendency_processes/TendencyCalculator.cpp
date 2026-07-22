@@ -22,9 +22,6 @@ void TendencyCalculator::calculate_tendencies(Core::State& state, const Core::Gr
     const int& nz = grid.get_local_total_points_z();
     const int& ny = grid.get_local_total_points_y();
     const int& nx = grid.get_local_total_points_x();
-    const int h = grid.get_halo_cells();
-    const auto& rhobar_up = state.get_field<1>("rhobar_up").get_device_data();
-    const auto& rhobar = state.get_field<1>("rhobar").get_device_data();
 
     auto& field_to_update = state.get_field<3>(variable_name_);
     auto& field_current_view = field_to_update.get_mutable_device_data();

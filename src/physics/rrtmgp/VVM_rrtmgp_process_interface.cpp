@@ -84,7 +84,7 @@ RRTMGPRadiation::RRTMGPRadiation(const VVM::Utils::ConfigurationManager& config,
 
     int nx = m_grid.get_local_total_points_x();
     int ny = m_grid.get_local_total_points_y();
-    if (!state.has_field("albedo")) state.add_field<2>("albedo", {ny, nx});
+    if (!state.has_field("albedo")) state.add_field<2>("albedo", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "%", "surface albedo"});
 }
 
 RRTMGPRadiation::~RRTMGPRadiation() {}
@@ -94,24 +94,24 @@ void RRTMGPRadiation::initialize(VVM::Core::State& state) {
     int ny_total = m_grid.get_local_total_points_y();
     int nz_total = m_grid.get_local_total_points_z();
 
-    if (!state.has_field("sw_heating")) state.add_field<3>("sw_heating", {nz_total, ny_total, nx_total});
-    if (!state.has_field("lw_heating")) state.add_field<3>("lw_heating", {nz_total, ny_total, nx_total});
-    if (!state.has_field("net_heating")) state.add_field<3>("net_heating", {nz_total, ny_total, nx_total});
-    if (!state.has_field("net_sw_flux")) state.add_field<3>("net_sw_flux", {nz_total, ny_total, nx_total});
-    if (!state.has_field("net_lw_flux")) state.add_field<3>("net_lw_flux", {nz_total, ny_total, nx_total});
-    if (!state.has_field("swdn")) state.add_field<3>("swdn", {nz_total, ny_total, nx_total});
-    if (!state.has_field("lwdn")) state.add_field<3>("lwdn", {nz_total, ny_total, nx_total});
-    if (!state.has_field("lwup")) state.add_field<3>("lwup", {nz_total, ny_total, nx_total});
+    if (!state.has_field("sw_heating")) state.add_field<3>("sw_heating", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "K s-1", "shortwave radiative heating rate"});
+    if (!state.has_field("lw_heating")) state.add_field<3>("lw_heating", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "K s-1", "longwave radiative heating rate"});
+    if (!state.has_field("net_heating")) state.add_field<3>("net_heating", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "K s-1", "net radiative heating rate"});
+    if (!state.has_field("net_sw_flux")) state.add_field<3>("net_sw_flux", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::StaggeredZ, "W m-2", "net downward shortwave radiative flux"});
+    if (!state.has_field("net_lw_flux")) state.add_field<3>("net_lw_flux", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::StaggeredZ, "W m-2", "net downward longwave radiative flux"});
+    if (!state.has_field("swdn")) state.add_field<3>("swdn", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::StaggeredZ, "W m-2", "downward shortwave radiative flux"});
+    if (!state.has_field("lwdn")) state.add_field<3>("lwdn", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::StaggeredZ, "W m-2", "downward longwave radiative flux"});
+    if (!state.has_field("lwup")) state.add_field<3>("lwup", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::StaggeredZ, "W m-2", "upward longwave radiative flux"});
 
-    if (!state.has_field("swup_toa")) state.add_field<2>("swup_toa", {ny_total, nx_total});
-    if (!state.has_field("swdn_toa")) state.add_field<2>("swdn_toa", {ny_total, nx_total});
-    if (!state.has_field("lwup_toa")) state.add_field<2>("lwup_toa", {ny_total, nx_total});
-    if (!state.has_field("lwdn_toa")) state.add_field<2>("lwdn_toa", {ny_total, nx_total});
+    if (!state.has_field("swup_toa")) state.add_field<2>("swup_toa", {ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::StaggeredZ, "W m-2", "top-of-atmosphere upward shortwave radiative flux"});
+    if (!state.has_field("swdn_toa")) state.add_field<2>("swdn_toa", {ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::StaggeredZ, "W m-2", "top-of-atmosphere downward shortwave radiative flux"});
+    if (!state.has_field("lwup_toa")) state.add_field<2>("lwup_toa", {ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::StaggeredZ, "W m-2", "top-of-atmosphere upward longwave radiative flux"});
+    if (!state.has_field("lwdn_toa")) state.add_field<2>("lwdn_toa", {ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::StaggeredZ, "W m-2", "top-of-atmosphere downward longwave radiative flux"});
 
-    if (!state.has_field("swup_sfc")) state.add_field<2>("swup_sfc", {ny_total, nx_total});
-    if (!state.has_field("swdn_sfc")) state.add_field<2>("swdn_sfc", {ny_total, nx_total});
-    if (!state.has_field("lwup_sfc")) state.add_field<2>("lwup_sfc", {ny_total, nx_total});
-    if (!state.has_field("lwdn_sfc")) state.add_field<2>("lwdn_sfc", {ny_total, nx_total});
+    if (!state.has_field("swup_sfc")) state.add_field<2>("swup_sfc", {ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Surface, "W m-2", "surface upward shortwave radiative flux"});
+    if (!state.has_field("swdn_sfc")) state.add_field<2>("swdn_sfc", {ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Surface, "W m-2", "surface downward shortwave radiative flux"});
+    if (!state.has_field("lwup_sfc")) state.add_field<2>("lwup_sfc", {ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Surface, "W m-2", "surface upward longwave radiative flux"});
+    if (!state.has_field("lwdn_sfc")) state.add_field<2>("lwdn_sfc", {ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Surface, "W m-2", "surface downward longwave radiative flux"});
 
     using PC = scream::physics::Constants<RadReal>;
 
