@@ -263,16 +263,6 @@ void OutputManager::define_variables() {
                     if (field_variables_.count(field_name)) {
                         define_adios_field_metadata(field_name, metadata);
                     }
-
-                    if (rank_ == 0) {
-                        std::cout
-                            << "[OutputManager] " << field_name
-                            << ": units='" << metadata.units
-                            << "', long_name='" << metadata.long_name
-                            << "', standard_name='" << metadata.standard_name
-                            << "', comment='" << metadata.comment
-                            << "'\n";
-                    }
                 }
             }, it->second);
         }
