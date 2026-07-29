@@ -152,6 +152,11 @@ void Model::run_step(VVM::Real dt) {
         lateral_boundary_nudging_->update_large_scale_forcing(state_, current_time);
     }
 
+    if (area_mean_nudging_) {
+        VVM::Utils::Timer timer("area_mean_nudging");
+        area_mean_nudging_->update_forcing_target(state_, current_time);
+    }
+
     // Caculate tendencies of thermodynamics variables
     {
         VVM::Utils::Timer timer("dynamics_thermo");
