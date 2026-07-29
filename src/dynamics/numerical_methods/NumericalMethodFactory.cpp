@@ -2,6 +2,7 @@
 
 #include "dynamics/spatial_schemes/MUSCL.hpp"
 #include "dynamics/spatial_schemes/Takacs.hpp"
+#include "dynamics/spatial_schemes/WENO5.hpp"
 #include "dynamics/temporal_schemes/SSPRK2.hpp"
 #include "dynamics/tendency_processes/AdvectionTerm.hpp"
 #include "dynamics/tendency_processes/BuoyancyTerm.hpp"
@@ -54,6 +55,17 @@ NumericalMethodFactory::create_spatial_scheme(
     if (scheme_name == "MUSCL") {
         return std::make_unique<MUSCL>(
             variable_name, term_config, grid_);
+    }
+    if (scheme_name == "weno5") {
+        if (!is_tracer || term_name != "advection") {
+            throw std::runtime_error(
+                "Spatial scheme 'weno5' is limited to passive-tracer "
+                "advection; field '" + variable_name + "', tendency term '" +
+                term_name + "' is not supported.");
+        }
+        return std::make_unique<WENO5>(
+            variable_name, term_config, config_, grid_,
+            halo_exchanger_, bc_manager_);
     }
 
     if (is_tracer) {
@@ -144,8 +156,9 @@ std::unique_ptr<NumericalMethod> NumericalMethodFactory::create(
             }
 
             const bool requests_muscl = spatial_scheme_name == "MUSCL";
+            const bool requests_weno5 = spatial_scheme_name == "weno5";
             const bool requests_ssprk2 = temporal_scheme == TemporalSchemeType::Multistage;
-            if (requests_muscl || requests_ssprk2) {
+            if (requests_muscl) {
                 if (!is_thermodynamic || term_name != "advection") {
                     throw std::runtime_error(
                         "Field '" + variable_name +
@@ -160,6 +173,26 @@ std::unique_ptr<NumericalMethod> NumericalMethodFactory::create(
                     variable_name, spatial_scheme_name,
                     temporal_scheme_name, term_config,
                     enabled_tendency_count, grid_.get_halo_cells());
+            }
+            else if (requests_weno5) {
+                if (!is_tracer || term_name != "advection") {
+                    throw std::runtime_error(
+                        "Field '" + variable_name +
+                        "' requested spatial scheme 'weno5'; WENO5 is "
+                        "limited to passive-tracer advection.");
+                }
+                (void) WENO5::validate_configuration(
+                    variable_name, spatial_scheme_name,
+                    temporal_scheme_name, term_config,
+                    enabled_tendency_count, grid_.get_halo_cells());
+            }
+            else if (requests_ssprk2) {
+                throw std::runtime_error(
+                    "Field '" + variable_name +
+                    "' requested temporal scheme 'SSPRK2' with spatial "
+                    "scheme '" + spatial_scheme_name +
+                    "'; supported SSPRK2 spatial schemes are 'MUSCL' and "
+                    "'weno5'.");
             }
             if (requests_ssprk2 && !multistage_scheme) {
                 multistage_scheme =
