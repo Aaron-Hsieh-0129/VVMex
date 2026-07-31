@@ -287,8 +287,9 @@ endif()
 # ------------------------------
 find_path(HDF5_INCLUDE_DIR hdf5.h HINTS ${HDF5_DIR}/include NO_DEFAULT_PATH)
 find_library(HDF5_LIBRARY NAMES hdf5 HINTS ${HDF5_DIR}/lib NO_DEFAULT_PATH)
+find_library(HDF5_HL_LIBRARY NAMES hdf5_hl HINTS ${HDF5_DIR}/lib NO_DEFAULT_PATH)
 
-if(HDF5_INCLUDE_DIR AND HDF5_LIBRARY)
+if(HDF5_INCLUDE_DIR AND HDF5_LIBRARY AND HDF5_HL_LIBRARY)
     add_library(HDF5::HDF5 UNKNOWN IMPORTED)
     set_target_properties(HDF5::HDF5 PROPERTIES
                           IMPORTED_LOCATION "${HDF5_LIBRARY}"
@@ -297,6 +298,12 @@ if(HDF5_INCLUDE_DIR AND HDF5_LIBRARY)
     find_library(DL_LIBRARY dl)
     find_library(M_LIBRARY m)
     target_link_libraries(HDF5::HDF5 INTERFACE ${Z_LIBRARY} ${DL_LIBRARY} ${M_LIBRARY} MPI::MPI_CXX)
+
+    add_library(HDF5::HL UNKNOWN IMPORTED)
+    set_target_properties(HDF5::HL PROPERTIES
+                          IMPORTED_LOCATION "${HDF5_HL_LIBRARY}"
+                          INTERFACE_INCLUDE_DIRECTORIES "${HDF5_INCLUDE_DIR}")
+    target_link_libraries(HDF5::HL INTERFACE HDF5::HDF5)
 endif()
 
 # ------------------------------

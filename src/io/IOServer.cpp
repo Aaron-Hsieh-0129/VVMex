@@ -1,4 +1,5 @@
 #include "IOServer.hpp"
+#include "Hdf5DimensionScales.hpp"
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -10,6 +11,7 @@
 #include <cctype>
 #include <cmath>
 #include <adios2.h>
+#include <hdf5.h>
 #include <sys/stat.h>
 
 namespace VVM {
@@ -24,6 +26,103 @@ std::string uppercase_transport_name(std::string value) {
         [](unsigned char c) { return static_cast<char>(std::toupper(c)); }
     );
     return value;
+}
+
+using FieldMetadataCache =
+    std::map<std::string, std::map<std::string, std::string>>;
+
+void cache_adios_field_metadata(
+    adios2::IO& input_io,
+    const std::string& field_name,
+    FieldMetadataCache& metadata_cache)
+{
+    auto& metadata = metadata_cache[field_name];
+    const auto copy_attribute = [&](const std::string& attribute_name)
+    {
+        if (metadata.count(attribute_name)) {
+            return;
+        }
+
+        const auto input_attribute =
+            input_io.InquireAttribute<std::string>(attribute_name, field_name);
+        if (!input_attribute) {
+            return;
+        }
+
+        const auto values = input_attribute.Data();
+        if (values.empty() || values.front().empty()) {
+            return;
+        }
+
+        metadata[attribute_name] = values.front();
+    };
+
+    copy_attribute("units");
+    copy_attribute("long_name");
+    copy_attribute("standard_name");
+    copy_attribute("comment");
+    copy_attribute("grid_staggering");
+}
+
+void write_hdf5_string_attribute(
+    hid_t dataset,
+    const std::string& name,
+    const std::string& value)
+{
+    if (value.empty()) return;
+
+    hid_t space = H5Screate(H5S_SCALAR);
+    hid_t type = H5Tcopy(H5T_C_S1);
+
+    H5Tset_size(type, value.size() + 1);
+    H5Tset_strpad(type, H5T_STR_NULLTERM);
+
+    hid_t attribute =
+        H5Acreate2(dataset, name.c_str(), type, space, H5P_DEFAULT, H5P_DEFAULT);
+
+    if (attribute >= 0) {
+        H5Awrite(attribute, type, value.c_str());
+        H5Aclose(attribute);
+    }
+
+    H5Tclose(type);
+    H5Sclose(space);
+}
+
+void attach_sst_hdf5_field_metadata(
+    const std::string& filename,
+    const FieldMetadataCache& metadata_cache)
+{
+    hid_t file = H5Fopen(filename.c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+    if (file < 0) {
+        std::cerr << "[IO-Server] Failed to reopen HDF5 file '"
+                  << filename << "' for metadata output.\n";
+        return;
+    }
+
+    for (const auto& field_metadata : metadata_cache) {
+        const std::string dataset_path = "/Step0/" + field_metadata.first;
+        hid_t dataset = H5Dopen2(file, dataset_path.c_str(), H5P_DEFAULT);
+        if (dataset < 0) continue;
+
+        for (const auto& attribute : field_metadata.second) {
+            write_hdf5_string_attribute(
+                dataset,
+                attribute.first,
+                attribute.second);
+        }
+
+        H5Dclose(dataset);
+    }
+
+    std::vector<std::string> field_names;
+    field_names.reserve(metadata_cache.size());
+    for (const auto& field_metadata : metadata_cache) {
+        field_names.push_back(field_metadata.first);
+    }
+    attach_hdf5_dimension_scales(file, field_names);
+
+    H5Fclose(file);
 }
 } // namespace
 
@@ -51,6 +150,8 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
         config.get_value<std::string>("output.output_dir");
     const std::string filename_prefix =
         config.get_value<std::string>("output.output_filename_prefix");
+    const std::vector<std::string> fields_to_output =
+        config.get_value<std::vector<std::string>>("output.fields_to_output");
     const VVM::Real output_interval_s =
         config.get_value<VVM::Real>("simulation.output_interval_s");
 
@@ -121,6 +222,7 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
         MPI_Abort(MPI_COMM_WORLD, 10);
     }
 
+    FieldMetadataCache field_metadata_cache;
     while (true) {
         std::map<std::string, std::vector<VVM::Real>> data_buffers;
         std::vector<std::string> current_step_vars;
@@ -173,6 +275,11 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
                         adios2::Dims count = shape;
                         outIO.DefineVariable<VVM::Real>(name, shape, start, count);
                     }
+                }
+
+                if (std::find(fields_to_output.begin(), fields_to_output.end(), name) !=
+                    fields_to_output.end()) {
+                    cache_adios_field_metadata(inIO, name, field_metadata_cache);
                 }
 
                 // Scalar
@@ -297,6 +404,12 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
             }
             MPI_Abort(MPI_COMM_WORLD, 13);
         }
+
+        MPI_Barrier(io_comm);
+        if (rank == 0) {
+            attach_sst_hdf5_field_metadata(h5_name, field_metadata_cache);
+        }
+        MPI_Barrier(io_comm);
     }
 
     try {

@@ -25,24 +25,24 @@ void SurfaceProcess::initialize(Core::State& state) {
     int ny = grid_.get_local_total_points_y();
     int nx = grid_.get_local_total_points_x();
     
-    if (!state.has_field("qc")) state.add_field<3>("qc", {nz, ny, nx});
-    if (!state.has_field("qi")) state.add_field<3>("qi", {nz, ny, nx});
+    if (!state.has_field("qc")) state.add_field<3>("qc", {nz, ny, nx}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "cloud liquid water mass mixing ratio"});
+    if (!state.has_field("qi")) state.add_field<3>("qi", {nz, ny, nx}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "total ice mass mixing ratio"});
 
-    if (!state.has_field("sfc_flux_th")) state.add_field<2>("sfc_flux_th", {ny, nx});
-    if (!state.has_field("sfc_flux_qv")) state.add_field<2>("sfc_flux_qv", {ny, nx});
-    if (!state.has_field("sfc_flux_u"))  state.add_field<2>("sfc_flux_u", {ny, nx});
-    if (!state.has_field("sfc_flux_v"))  state.add_field<2>("sfc_flux_v", {ny, nx});
+    if (!state.has_field("sfc_flux_th")) state.add_field<2>("sfc_flux_th", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "kg K m-2 s-1", "density-weighted surface potential-temperature flux"});
+    if (!state.has_field("sfc_flux_qv")) state.add_field<2>("sfc_flux_qv", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "kg m-2 s-1", "surface water-vapor mass flux"});
+    if (!state.has_field("sfc_flux_u"))  state.add_field<2>("sfc_flux_u", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "kg m-1 s-2", "surface x-momentum flux"});
+    if (!state.has_field("sfc_flux_v"))  state.add_field<2>("sfc_flux_v", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "kg m-1 s-2", "surface y-momentum flux"});
     
-    if (!state.has_field("gwet")) state.add_field<2>("gwet", {ny, nx}); // Surface Wetness
-    if (!state.has_field("zrough")) state.add_field<2>("zrough", {ny, nx}); // Roughness Length
-    if (!state.has_field("VEN2D")) state.add_field<2>("VEN2D", {ny, nx}); // Roughness Length
+    if (!state.has_field("gwet")) state.add_field<2>("gwet", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "1", "surface wetness"}); // Surface Wetness
+    if (!state.has_field("zrough")) state.add_field<2>("zrough", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m", "surface roughness length"}); // Roughness Length
+    if (!state.has_field("VEN2D")) state.add_field<2>("VEN2D", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m s-1", "surface momentum exchange coefficient"}); // Roughness Length
     Kokkos::deep_copy(state.get_field<2>("gwet").get_mutable_device_data(), -1.);
     Kokkos::deep_copy(state.get_field<2>("zrough").get_mutable_device_data(), 2e-4);
     
-    if (!state.has_field("ustar")) state.add_field<2>("ustar", {ny, nx});
-    if (!state.has_field("molen")) state.add_field<2>("molen", {ny, nx});
+    if (!state.has_field("ustar")) state.add_field<2>("ustar", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m s-1", "surface friction velocity"});
+    if (!state.has_field("molen")) state.add_field<2>("molen", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m", "Monin-Obukhov length"});
 
-    if (!state.has_field("sea_land_ice_mask")) state.add_field<2>("sea_land_ice_mask", {ny, nx});
+    if (!state.has_field("sea_land_ice_mask")) state.add_field<2>("sea_land_ice_mask", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "Mask", "sea-land-ice surface classification"});
 
     mode_ = config_.get_value<std::string>("physics.surface_process.ocean_scheme", "none");
     land_scheme_ = config_.get_value<std::string>("physics.surface_process.land_scheme", "none");

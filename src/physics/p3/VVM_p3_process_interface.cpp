@@ -69,31 +69,31 @@ VVM_P3_Interface::VVM_P3_Interface(const VVM::Utils::ConfigurationManager &confi
     int ny_total = grid.get_local_total_points_y();
     int nz_total = grid.get_local_total_points_z();
 
-    if (!state.has_field("qc")) state.add_field<3>("qc", {nz_total, ny_total, nx_total});
-    if (!state.has_field("qr")) state.add_field<3>("qr", {nz_total, ny_total, nx_total});
-    if (!state.has_field("qi")) state.add_field<3>("qi", {nz_total, ny_total, nx_total});
-    if (!state.has_field("qm")) state.add_field<3>("qm", {nz_total, ny_total, nx_total});
-    if (!state.has_field("nc")) state.add_field<3>("nc", {nz_total, ny_total, nx_total});
-    if (!state.has_field("nr")) state.add_field<3>("nr", {nz_total, ny_total, nx_total});
-    if (!state.has_field("ni")) state.add_field<3>("ni", {nz_total, ny_total, nx_total});
-    if (!state.has_field("bm")) state.add_field<3>("bm", {nz_total, ny_total, nx_total});
+    if (!state.has_field("qc")) state.add_field<3>("qc", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "cloud liquid water mass mixing ratio"});
+    if (!state.has_field("qr")) state.add_field<3>("qr", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "rain water mass mixing ratio"});
+    if (!state.has_field("qi")) state.add_field<3>("qi", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "total ice mass mixing ratio"});
+    if (!state.has_field("qm")) state.add_field<3>("qm", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "ice rime mass mixing ratio"});
+    if (!state.has_field("nc")) state.add_field<3>("nc", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg-1", "cloud droplet number mixing ratio"});
+    if (!state.has_field("nr")) state.add_field<3>("nr", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg-1", "rain drop number mixing ratio"});
+    if (!state.has_field("ni")) state.add_field<3>("ni", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg-1", "ice particle number mixing ratio"});
+    if (!state.has_field("bm")) state.add_field<3>("bm", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "m3 kg-1", "ice rime volume mixing ratio"});
 
 
     std::string source_file = config.get_value<std::string>("initial_conditions.source_file");
     declare_p3_diag_ = source_file == "./rundata/initial_conditions/profiles/default_cases/p3_bubble_shear.txt" ? true : false;
     if (declare_p3_diag_) {
-        if (!state.has_field("th_m_diag")) state.add_field<3>("th_m_diag", {nz_total, ny_total, nx_total});
-        if (!state.has_field("qv_m_diag")) state.add_field<3>("qv_m_diag", {nz_total, ny_total, nx_total});
-        if (!state.has_field("qv_after_p3")) state.add_field<3>("qv_after_p3", {nz_total, ny_total, nx_total});
-        if (!state.has_field("qc_after_p3")) state.add_field<3>("qc_after_p3", {nz_total, ny_total, nx_total});
-        if (!state.has_field("qi_after_p3")) state.add_field<3>("qi_after_p3", {nz_total, ny_total, nx_total});
-        if (!state.has_field("qr_after_p3")) state.add_field<3>("qr_after_p3", {nz_total, ny_total, nx_total});
-        if (!state.has_field("nc_after_p3")) state.add_field<3>("nc_after_p3", {nz_total, ny_total, nx_total});
-        if (!state.has_field("nr_after_p3")) state.add_field<3>("nr_after_p3", {nz_total, ny_total, nx_total});
-        if (!state.has_field("ni_after_p3")) state.add_field<3>("ni_after_p3", {nz_total, ny_total, nx_total});
-        if (!state.has_field("qm_after_p3")) state.add_field<3>("qm_after_p3", {nz_total, ny_total, nx_total});
-        if (!state.has_field("bm_after_p3")) state.add_field<3>("bm_after_p3", {nz_total, ny_total, nx_total});
-        if (!state.has_field("th_after_p3")) state.add_field<3>("th_after_p3", {nz_total, ny_total, nx_total});
+        if (!state.has_field("th_m_diag")) state.add_field<3>("th_m_diag", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "K", "previous-step air potential temperature for P3 diagnostics"});
+        if (!state.has_field("qv_m_diag")) state.add_field<3>("qv_m_diag", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "previous-step water vapor mixing ratio for P3 diagnostics"});
+        if (!state.has_field("qv_after_p3")) state.add_field<3>("qv_after_p3", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "water vapor mixing ratio after P3"});
+        if (!state.has_field("qc_after_p3")) state.add_field<3>("qc_after_p3", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "cloud liquid water mass mixing ratio after P3"});
+        if (!state.has_field("qi_after_p3")) state.add_field<3>("qi_after_p3", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "total ice mass mixing ratio after P3"});
+        if (!state.has_field("qr_after_p3")) state.add_field<3>("qr_after_p3", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "rain water mass mixing ratio after P3"});
+        if (!state.has_field("nc_after_p3")) state.add_field<3>("nc_after_p3", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg-1", "cloud droplet number mixing ratio after P3"});
+        if (!state.has_field("nr_after_p3")) state.add_field<3>("nr_after_p3", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg-1", "rain drop number mixing ratio after P3"});
+        if (!state.has_field("ni_after_p3")) state.add_field<3>("ni_after_p3", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg-1", "ice particle number mixing ratio after P3"});
+        if (!state.has_field("qm_after_p3")) state.add_field<3>("qm_after_p3", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "ice rime mass mixing ratio after P3"});
+        if (!state.has_field("bm_after_p3")) state.add_field<3>("bm_after_p3", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "m3 kg-1", "ice rime volume mixing ratio after P3"});
+        if (!state.has_field("th_after_p3")) state.add_field<3>("th_after_p3", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "K", "air potential temperature after P3"});
     }
 }
 
@@ -250,15 +250,15 @@ void VVM_P3_Interface::initialize(VVM::Core::State& state) {
     int ny_total = grid_.get_local_total_points_y();
     int nz_total = grid_.get_local_total_points_z();
 
-    if (!state.has_field("precip_liq_surf_mass")) state.add_field<2>("precip_liq_surf_mass", {ny_total, nx_total});
-    if (!state.has_field("precip_ice_surf_mass")) state.add_field<2>("precip_ice_surf_mass", {ny_total, nx_total});
-    if (!state.has_field("precip_liq_surf_flux")) state.add_field<2>("precip_liq_surf_flux", {ny_total, nx_total});
-    if (!state.has_field("precip_ice_surf_flux")) state.add_field<2>("precip_ice_surf_flux", {ny_total, nx_total});
-    if (!state.has_field("qp")) state.add_field<3>("qp", {nz_total, ny_total, nx_total}); // qc+qr+qi
-    if (!state.has_field("diag_eff_radius_qc")) state.add_field<3>("diag_eff_radius_qc", {nz_total, ny_total, nx_total}); // qc+qr+qi
-    if (!state.has_field("diag_eff_radius_qi")) state.add_field<3>("diag_eff_radius_qi", {nz_total, ny_total, nx_total}); // qc+qr+qi
-    if (!state.has_field("diag_eff_radius_qr")) state.add_field<3>("diag_eff_radius_qr", {nz_total, ny_total, nx_total}); // qc+qr+qi
-    if (!state.has_field("P_wet")) state.add_field<3>("P_wet", {nz_total, ny_total, nx_total});
+    if (!state.has_field("precip_liq_surf_mass")) state.add_field<2>("precip_liq_surf_mass", {ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Surface, "kg m-2 s-1", "time-averaged surface liquid precipitation flux"});
+    if (!state.has_field("precip_ice_surf_mass")) state.add_field<2>("precip_ice_surf_mass", {ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Surface, "kg m-2 s-1", "time-averaged surface ice precipitation flux"});
+    if (!state.has_field("precip_liq_surf_flux")) state.add_field<2>("precip_liq_surf_flux", {ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Surface, "kg m-2 s-1", "surface liquid precipitation flux"});
+    if (!state.has_field("precip_ice_surf_flux")) state.add_field<2>("precip_ice_surf_flux", {ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Surface, "kg m-2 s-1", "surface ice precipitation flux"});
+    if (!state.has_field("qp")) state.add_field<3>("qp", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "total hydrometeor mass mixing ratio"}); // qc+qr+qi
+    if (!state.has_field("diag_eff_radius_qc")) state.add_field<3>("diag_eff_radius_qc", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "um", "cloud droplet effective radius"});
+    if (!state.has_field("diag_eff_radius_qi")) state.add_field<3>("diag_eff_radius_qi", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "um", "ice particle effective radius"});
+    if (!state.has_field("diag_eff_radius_qr")) state.add_field<3>("diag_eff_radius_qr", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "um", "rain drop effective radius"});
+    if (!state.has_field("P_wet")) state.add_field<3>("P_wet", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "Pa", "wet-air pressure used by P3"});
 
     // Gather runtime options
     

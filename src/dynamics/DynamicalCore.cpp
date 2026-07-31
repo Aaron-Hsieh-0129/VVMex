@@ -1,10 +1,5 @@
 #include "DynamicalCore.hpp"
-#include "temporal_schemes/TimeIntegrator.hpp"
-#include "tendency_processes/AdvectionTerm.hpp"
-#include "tendency_processes/StretchingTerm.hpp"
-#include "tendency_processes/TwistingTerm.hpp"
-#include "tendency_processes/BuoyancyTerm.hpp"
-#include "tendency_processes/CoriolisTerm.hpp"
+#include "numerical_methods/NumericalMethodFactory.hpp"
 #include "spatial_schemes/Takacs.hpp"
 #include "core/HaloExchanger.hpp"
 #include <stdexcept>
@@ -26,7 +21,7 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
                              Core::HaloExchanger& halo_exchanger, 
                              const Core::BoundaryConditionManager& bc_manager)
     : config_(config), grid_(grid), params_(params), state_(state), 
-      wind_solver_(std::make_unique<WindSolver>(grid, config, params, halo_exchanger)), 
+      wind_solver_(std::make_unique<WindSolver>(grid, config, params, halo_exchanger, state)), 
       halo_exchanger_(halo_exchanger), bc_manager_(bc_manager) {
 
     int rank = grid_.get_mpi_rank();
@@ -62,6 +57,13 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
     }
     else common_thermo.insert(common_thermo.end(), {"qc", "qr", "qi", "nc", "nr", "ni", "qm", "bm"});
 
+    if (config_.has_key("dynamics.tracers")) {
+        const auto tracer_config = config_.get_value<nlohmann::json>("dynamics.tracers");
+        for (const auto& tracer_name : state_.get_tracer_names()) {
+            prognostic_config[tracer_name] = tracer_config.at(tracer_name);
+        }
+    }
+
     bool coriolis_xi = config.get_value<bool>("dynamics.prognostic_variables.xi.tendency_terms.coriolis.enable", false);
     bool coriolis_eta = config.get_value<bool>("dynamics.prognostic_variables.eta.tendency_terms.coriolis.enable", false);
     bool coriolis_zeta = config.get_value<bool>("dynamics.prognostic_variables.zeta.tendency_terms.coriolis.enable", false);
@@ -70,89 +72,41 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
 
     diagnostic_scheme_ = std::make_unique<Takacs>(config_, grid_, halo_exchanger_, bc_manager_);
     
+    NumericalMethodFactory method_factory(config_, grid_, halo_exchanger_, bc_manager_);
+
     for (auto& [var_name, var_conf] : prognostic_config.items()) {
         if (rank == 0) {
-            std::cout << "  * Loading prognostic variable: " << var_name << std::endl;
-        }
-        bool has_ab2 = false;
-        bool has_fe = false;
-
-        if (var_name == "th" && config.get_value<bool>("physics.rrtmgp.enable_rrtmgp", false)) {
-            has_fe = true;
-            if (rank == 0) {
-                std::cout << "    - Enabled radiation forcing integration. " << std::endl;
-            }
+            std::cout << "  * Loading prognostic variable: "
+                      << var_name << std::endl;
         }
 
-        bool is_thermo = std::find(common_thermo.begin(), common_thermo.end(), var_name) != common_thermo.end();
+        const bool has_external_forward_euler = var_name == "th" && config.get_value<bool>("physics.rrtmgp.enable_rrtmgp", false);
+        if (has_external_forward_euler && rank == 0) {
+            std::cout << "    - Enabled radiation forcing integration. " << std::endl;
+        }
+
+        const bool is_tracer = state_.is_tracer(var_name);
+        const bool is_thermo = is_tracer || std::find(common_thermo.begin(), common_thermo.end(), var_name) != common_thermo.end();
 
         if (is_thermo) thermo_vars_.push_back(var_name);
         else vorticity_vars_.push_back(var_name);
 
-        if (!state_.has_field(var_name)) {
-            state_.add_field<3>(var_name, dims);
+        if (!state_.has_field(var_name)) state_.add_field<3>(var_name, dims);
+
+        auto numerical_method = method_factory.create(var_name, var_conf, is_tracer, is_thermo, dims, has_external_forward_euler);
+        const auto requirements = numerical_method->state_requirements();
+
+        if (requirements.previous_state) {
+            state_.add_field<3>(var_name + "_m", dims);
+        }
+        if (requirements.ab2_tendency_history) {
+            state_.add_field<4>("d_" + var_name, {2, nz, ny, nx});
+        }
+        if (requirements.forward_euler_tendency) {
+            state_.add_field<3>("fe_tendency_" + var_name, dims);
         }
 
-        std::vector<std::unique_ptr<TendencyTerm>> ab2_terms;
-        std::vector<std::unique_ptr<TendencyTerm>> fe_terms;
-
-        if (var_conf.contains("tendency_terms")) {
-            for (auto& [term_name, term_conf] : var_conf.at("tendency_terms").items()) {
-                bool is_enabled = term_conf.value("enable", true);
-                if (!is_enabled) {
-                    if (rank == 0) {
-                        std::cout << "    - [Disabled] Tendency term: " << term_name << " is skipped." << std::endl;
-                    }
-                    continue;
-                }
-
-                std::string spatial_scheme_name = term_conf.at("spatial_scheme");
-                std::string time_scheme_name = term_conf.value("temporal_scheme", "AdamsBashforth2");
-
-                if (rank == 0) {
-                    std::cout << "    - Tendency term: " << term_name 
-                              << " | Temporal Scheme: " << time_scheme_name 
-                              << " | Spatial Scheme: " << spatial_scheme_name << std::endl;
-                }
-
-                std::unique_ptr<SpatialScheme> spatial_scheme;
-                if (spatial_scheme_name == "Takacs") {
-                    spatial_scheme = std::make_unique<Takacs>(config_, grid_, halo_exchanger_, bc_manager_);
-                } 
-                else {
-                    throw std::runtime_error("Unknown spatial scheme: " + spatial_scheme_name);
-                }
-                
-                std::unique_ptr<TendencyTerm> term;
-                if (term_name == "advection") term = std::make_unique<AdvectionTerm>(std::move(spatial_scheme), var_name, halo_exchanger_, bc_manager_);
-                else if (term_name == "stretching") term = std::make_unique<StretchingTerm>(std::move(spatial_scheme), var_name, halo_exchanger_);
-                else if (term_name == "twisting") term = std::make_unique<TwistingTerm>(std::move(spatial_scheme), var_name, halo_exchanger_);
-                else if (term_name == "buoyancy") term = std::make_unique<BuoyancyTerm>(std::move(spatial_scheme), var_name, halo_exchanger_);
-                else if (term_name == "coriolis") term = std::make_unique<CoriolisTerm>(std::move(spatial_scheme), var_name, halo_exchanger_);
-
-                if (time_scheme_name == "AdamsBashforth2") {
-                    ab2_terms.push_back(std::move(term));
-                    has_ab2 = true;
-                } 
-                else {
-                    fe_terms.push_back(std::move(term));
-                    has_fe = true;
-                }
-            }
-        }
-        
-        tendency_calculators_[var_name] = std::make_unique<TendencyCalculator>(var_name, std::move(ab2_terms), std::move(fe_terms));
-        time_integrators_[var_name] = std::make_unique<TimeIntegrator>(var_name, has_ab2, has_fe);
-        
-        if (has_ab2 || has_fe) {
-             state_.add_field<3>(var_name + "_m", dims);
-        }
-        if (has_ab2) {
-             state_.add_field<4>("d_" + var_name, {2, nz, ny, nx});
-        }
-        if (has_fe) {
-             state_.add_field<3>("fe_tendency_" + var_name, dims);
-        }
+        numerical_methods_[var_name] = std::move(numerical_method);
     }
     // This is for predict utopmn and vtopmn
     state_.add_field<1>("d_utopmn", {2});
@@ -163,6 +117,9 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
 
     if (!state.has_field("RKM")) state.add_field<3>("RKM", dims);
     if (!state.has_field("RKH")) state.add_field<3>("RKH", dims);
+    if (!state.has_field("tempu")) state.add_field<2>("tempu", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::StaggeredX, "m s-1", "temporary top-boundary x wind work field"});
+    if (!state.has_field("tempv")) state.add_field<2>("tempv", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::StaggeredY, "m s-1", "temporary top-boundary y wind work field"});
+
     Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), state_.get_field<0>("utopmn_m").get_mutable_device_data(), state_.get_field<0>("utopmn").get_mutable_device_data());
     Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), state_.get_field<0>("vtopmn_m").get_mutable_device_data(), state_.get_field<0>("vtopmn").get_mutable_device_data());
 }
@@ -185,7 +142,7 @@ void DynamicalCore::initialize_restart_history() {
         std::cout << "  [DynamicalCore] Seeding two-step history from restart state." << std::endl;
     }
 
-    for (const auto& item : tendency_calculators_) {
+    for (const auto& item : numerical_methods_) {
         const std::string& var_name = item.first;
 
         if (state_.has_field(var_name + "_m")) {
@@ -330,8 +287,8 @@ void DynamicalCore::compute_wind_fields() {
     bc_manager_.apply_horizontal_bcs(state_.get_field<3>("xi_topo"));
     bc_manager_.apply_horizontal_bcs(state_.get_field<3>("eta_topo"));
 
-    wind_solver_->solve_w(state_);
-    wind_solver_->solve_uv(state_);
+    wind_solver_->solve_w();
+    wind_solver_->solve_uv();
 }
 
 void DynamicalCore::compute_uvtopmn() {
@@ -522,8 +479,8 @@ void DynamicalCore::calculate_thermo_tendencies() {
     }
 
     for (const auto& var_name : thermo_vars_) {
-        if (tendency_calculators_.count(var_name)) {
-            tendency_calculators_.at(var_name)->calculate_tendencies(state_, grid_, params_);
+        if (numerical_methods_.count(var_name)) {
+            numerical_methods_.at(var_name)->calculate_tendencies(state_, grid_, params_);
         }
     }
 }
@@ -535,42 +492,66 @@ void DynamicalCore::update_thermodynamics(VVM::Real dt) {
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
 
+    auto apply_topographic_mask = [&](const std::string& var_name) {
+        const auto& ITYPEW = state_.get_field<3>("ITYPEW").get_device_data();
+        auto& var = state_.get_field<3>(var_name).get_mutable_device_data();
+
+        if (var_name == "th") {
+            const auto thbar = state_.get_field<1>("thbar").get_device_data();
+            Kokkos::parallel_for("topo_bc_th",
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {max_topo_idx + 1, ny - h, nx - h}),
+                KOKKOS_LAMBDA(const int k, const int j, const int i) {
+                    if (ITYPEW(k, j, i) != VVM::real(1.0)) {
+                        var(k, j, i) = thbar(k);
+                    }
+                });
+        } 
+        else {
+            Kokkos::parallel_for("topo_thermodynamic",
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {max_topo_idx + 1, ny - h, nx - h}),
+                KOKKOS_LAMBDA(const int k, const int j, const int i) {
+                    if (ITYPEW(k, j, i) != VVM::real(1.0)) {
+                        var(k, j, i) = VVM::real(0.0);
+                    }
+                });
+        }
+    };
+
+    auto process_stage_field = [&](const std::string& var_name) {
+        apply_topographic_mask(var_name);
+        // Preserve the established final-update ordering: exchange physical
+        // values first, then fill global horizontal and vertical boundaries.
+        halo_exchanger_.exchange_halos(state_.get_field<3>(var_name));
+        bc_manager_.apply_horizontal_bcs(state_.get_field<3>(var_name));
+        if (var_name == "th" || var_name == "qv") bc_manager_.apply_zero_gradient(state_.get_field<3>(var_name));
+        else bc_manager_.apply_zero_gradient_bottom_zero_top(state_.get_field<3>(var_name));
+    };
+
+    std::vector<std::string> single_stage_final_fields;
     for (const auto& var_name : thermo_vars_) {
-        if (time_integrators_.count(var_name)) {
-            // var += dt * (AB2 + FE)
-            time_integrators_.at(var_name)->step(state_, grid_, params_, dt);
-            
-            const auto& ITYPEW = state_.get_field<3>("ITYPEW").get_device_data();
-            auto& var = state_.get_field<3>(var_name).get_mutable_device_data();
-            // Topography for theta
-            if (var_name == "th") {
-                const auto& thbar = state_.get_field<1>("thbar").get_device_data();
-                Kokkos::parallel_for("topo_bc_th",
-                    Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {max_topo_idx+1, ny-h, nx-h}),
-                    KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                        if (ITYPEW(k,j,i) != 1) {
-                            var(k,j,i) = thbar(k);
-                        }
-                    }
-                );
-            }
-            else {
-                Kokkos::parallel_for("topo",
-                    Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {max_topo_idx+1, ny-h, nx-h}),
-                    KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                        if (ITYPEW(k,j,i) != 1) {
-                            var(k,j,i) = real(0.);
-                        }
-                    }
-                );
-            }
+        const auto method_it = numerical_methods_.find(var_name);
+        if (method_it == numerical_methods_.end()) continue;
+
+        auto& numerical_method = *method_it->second;
+        if (numerical_method.uses_multistage_scheme()) {
+            numerical_method.advance(
+                state_, grid_, params_, dt,
+                [&]() { process_stage_field(var_name); });
+        }
+        else {
+            numerical_method.advance(state_, grid_, params_, dt);
+            apply_topographic_mask(var_name);
+            single_stage_final_fields.push_back(var_name);
         }
     }
 
-    halo_exchanger_.exchange_multiple_halos(thermo_vars_, state_);
-    for (const auto& var_name : thermo_vars_) {
+    // Single-stage fields retain the established batched halo path.
+    if (!single_stage_final_fields.empty()) {
+        halo_exchanger_.exchange_multiple_halos(
+            single_stage_final_fields, state_);
+    }
+    for (const auto& var_name : single_stage_final_fields) {
         bc_manager_.apply_horizontal_bcs(state_.get_field<3>(var_name));
-
         if (var_name == "th" || var_name == "qv") {
             bc_manager_.apply_zero_gradient(state_.get_field<3>(var_name));
         }
@@ -609,8 +590,8 @@ void DynamicalCore::calculate_vorticity_tendencies() {
 
     // Calculate vorticity tendency
     for (const auto& var_name : vorticity_vars_) {
-        if (tendency_calculators_.count(var_name)) {
-            tendency_calculators_.at(var_name)->calculate_tendencies(state_, grid_, params_);
+        if (numerical_methods_.count(var_name)) {
+            numerical_methods_.at(var_name)->calculate_tendencies(state_, grid_, params_);
         }
     }
 }
@@ -647,8 +628,8 @@ void DynamicalCore::update_vorticity(VVM::Real dt) {
     );
 
     for (const auto& var_name : vorticity_vars_) {
-        if (time_integrators_.count(var_name)) {
-            time_integrators_.at(var_name)->step(state_, grid_, params_, dt);
+        if (numerical_methods_.count(var_name)) {
+            numerical_methods_.at(var_name)->advance(state_, grid_, params_, dt);
 
             auto& var_data = state_.get_field<3>(var_name).get_mutable_device_data();
             const auto& max_topo_idx = params_.max_topo_idx;

@@ -66,10 +66,18 @@ Model::Model(const Utils::ConfigurationManager& config,
     if (config_.get_value<bool>("dynamics.forcings.random_perturbation.enable", false)) {
         random_forcing_ = std::make_unique<Dynamics::RandomForcing>(config_, grid_, params_);
     }
+    if (!state_.get_tracer_source_targets().empty()) {
+        tracer_source_ = std::make_unique<Dynamics::TracerSource>(
+            grid_, state_);
+    }
+
     dynamics_vars_ = {"xi", "eta", "zeta"};
     thermodynamics_vars_ = {"th", "qv"};
     if (config.get_value<bool>("physics.p3.enable_p3", false)) {
         thermodynamics_vars_.insert(thermodynamics_vars_.end(), {"qc", "qr", "qi", "nc", "nr", "ni", "bm", "qm"});
+    }
+    if (turbulence_) {
+        thermodynamics_vars_ = turbulence_->get_thermodynamics_vars();
     }
 
     sfc_thermodynamics_vars_ = {"th", "qv"};
@@ -126,9 +134,10 @@ void Model::init() {
         predict_uvtopmn_ = false;
     }
 
-    // if (config_.get_value<bool>("restart.enable", false)) {
-    //     dycore_->compute_wind_fields();
-    // }
+    if (config_.get_value<bool>(
+            "initial_conditions.diagnose_wind_from_vorticity", false)) {
+        dycore_->compute_wind_fields();
+    }
     dycore_->compute_diagnostic_fields();
     if (config_.get_value<bool>("restart.enable", false)) {
         dycore_->initialize_restart_history();
@@ -142,6 +151,11 @@ void Model::run_step(VVM::Real dt) {
     if (lateral_boundary_nudging_) {
         VVM::Utils::Timer timer("lateral_boundary_nudging");
         lateral_boundary_nudging_->update_large_scale_forcing(state_, current_time);
+    }
+
+    if (area_mean_nudging_) {
+        VVM::Utils::Timer timer("area_mean_nudging");
+        area_mean_nudging_->update_forcing_target(state_, current_time);
     }
 
     // Caculate tendencies of thermodynamics variables
@@ -169,6 +183,17 @@ void Model::run_step(VVM::Real dt) {
     {
         VVM::Utils::Timer timer("dynamics_thermo");
         dycore_->update_thermodynamics(dt);
+    }
+
+    if (tracer_source_) {
+        VVM::Utils::Timer timer("tracer_source");
+        tracer_source_->apply(state_, dt);
+        const auto& target_vars = tracer_source_->get_target_vars();
+        halo_exchanger_.exchange_multiple_halos(target_vars, state_);
+        for (const auto& tracer_name : target_vars) {
+            bc_manager_.apply_horizontal_bcs(state_.get_field<3>(tracer_name));
+            bc_manager_.apply_zero_gradient_bottom_zero_top(state_.get_field<3>(tracer_name));
+        }
     }
 
     if (random_forcing_) {

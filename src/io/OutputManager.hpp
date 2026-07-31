@@ -45,6 +45,8 @@ private:
     bool use_taiwanvvm_coordinates_ = false;
     int grads_start_hour_ = 0;
 
+    std::vector<std::pair<std::string, VVM::Core::FieldMetadata>> output_field_metadata_;
+
     VVM::Real output_interval_s_;
     VVM::Real total_time_;
     std::string engine_type_;
@@ -70,6 +72,11 @@ private:
     };
 
     void define_variables();
+    void define_adios_field_metadata(
+        const std::string& field_name,
+        const VVM::Core::FieldMetadata& metadata);
+    void attach_hdf5_field_metadata(const std::string& filename);
+
     void grads_ctl_file();
     LinearAxis centered_lonlat_axis(int points, VVM::Real spacing) const;
     std::pair<LinearAxis, LinearAxis> grads_horizontal_axes() const;

@@ -1,6 +1,7 @@
 #include "PnetcdfReader.hpp"
 #include "core/Field.hpp"
 #include <iostream>
+#include <algorithm>
 #include <sstream>
 #include <vector>
 
@@ -17,6 +18,12 @@ std::string join_variable_names(const std::vector<std::string>& names) {
         oss << names[i];
     }
     return oss.str();
+}
+
+void append_unique(std::vector<std::string>& names, const std::string& name) {
+    if (std::find(names.begin(), names.end(), name) == names.end()) {
+        names.push_back(name);
+    }
 }
 } // namespace
 
@@ -42,7 +49,10 @@ PnetcdfReader::PnetcdfReader(const std::string& filepath,
       params_(params), 
       config_(config),
       config_prefix_(config_prefix),
-      strict_missing_variables_(config_prefix == "restart"),
+      strict_missing_variables_(
+          config_prefix == "restart" ||
+          (config_prefix == "netcdf_reader" &&
+           config.get_value<std::string>("simulation.idealized_test", "none") == "none")),
       comm_(grid.get_cart_comm()),
       ncid_(-1), 
       halo_exchanger_(halo_exchanger) {
@@ -72,29 +82,64 @@ std::map<std::string, MPI_Offset> PnetcdfReader::get_file_dimensions(int ncid) c
 void PnetcdfReader::validate_dimensions(const std::map<std::string, MPI_Offset>& file_dims) const {
     const auto& it_z = file_dims.find("nz");
     if (it_z == file_dims.end()) {
-        throw std::runtime_error("NetCDF file is missing 'nz' dimension.");
+        throw std::runtime_error("NetCDF file '" + source_file_ + "' is missing 'nz' dimension.");
     }
     if (it_z->second != grid_.get_global_points_z()) {
-        throw std::runtime_error("NetCDF 'nz' dimension (" + std::to_string(it_z->second) + 
+        throw std::runtime_error("NetCDF file '" + source_file_ + "' 'nz' dimension (" + std::to_string(it_z->second) +
                                ") does not match grid configuration (" + std::to_string(grid_.get_global_points_z()) + ").");
     }
 
     const auto& it_y = file_dims.find("ny");
     if (it_y == file_dims.end()) {
-        throw std::runtime_error("NetCDF file is missing 'ny' dimension.");
+        throw std::runtime_error("NetCDF file '" + source_file_ + "' is missing 'ny' dimension.");
     }
     if (it_y->second != grid_.get_global_points_y()) {
-        throw std::runtime_error("NetCDF 'ny' dimension (" + std::to_string(it_y->second) + 
+        throw std::runtime_error("NetCDF file '" + source_file_ + "' 'ny' dimension (" + std::to_string(it_y->second) +
                                ") does not match grid configuration (" + std::to_string(grid_.get_global_points_y()) + ").");
     }
 
     const auto& it_x = file_dims.find("nx");
     if (it_x == file_dims.end()) {
-        throw std::runtime_error("NetCDF file is missing 'nx' dimension.");
+        throw std::runtime_error("NetCDF file '" + source_file_ + "' is missing 'nx' dimension.");
     }
     if (it_x->second != grid_.get_global_points_x()) {
-        throw std::runtime_error("NetCDF 'nx' dimension (" + std::to_string(it_x->second) + 
+        throw std::runtime_error("NetCDF file '" + source_file_ + "' 'nx' dimension (" + std::to_string(it_x->second) +
                                ") does not match grid configuration (" + std::to_string(grid_.get_global_points_x()) + ").");
+    }
+}
+
+void PnetcdfReader::validate_variable_dimensions(
+    int ncid, int varid, const std::string& variable,
+    const std::vector<std::string>& expected_names,
+    const std::vector<MPI_Offset>& expected_sizes) const {
+    if (expected_names.size() != expected_sizes.size()) {
+        throw std::logic_error("Internal NetCDF schema error for '" + variable + "'.");
+    }
+    int ndims = 0;
+    check_ncmpi_error(ncmpi_inq_varndims(ncid, varid, &ndims),
+                      "Failed to inspect variable '" + variable + "' in '" + source_file_ + "'");
+    if (static_cast<size_t>(ndims) != expected_names.size()) {
+        std::ostringstream message;
+        message << "NetCDF file '" << source_file_ << "' variable '" << variable
+                << "' has " << ndims << " dimensions; expected " << expected_names.size() << ".";
+        throw std::runtime_error(message.str());
+    }
+    std::vector<int> dimids(ndims);
+    check_ncmpi_error(ncmpi_inq_vardimid(ncid, varid, dimids.data()),
+                      "Failed to inspect dimensions for '" + variable + "' in '" + source_file_ + "'");
+    for (int index = 0; index < ndims; ++index) {
+        char name[NC_MAX_NAME + 1];
+        MPI_Offset size = 0;
+        check_ncmpi_error(ncmpi_inq_dim(ncid, dimids[index], name, &size),
+                          "Failed to inspect dimension for '" + variable + "'");
+        if (name != expected_names[index] || size != expected_sizes[index]) {
+            std::ostringstream message;
+            message << "NetCDF file '" << source_file_ << "' variable '" << variable
+                    << "' dimension " << index << " must be '" << expected_names[index]
+                    << "' of size " << expected_sizes[index] << "; found '" << name
+                    << "' of size " << size << ".";
+            throw std::runtime_error(message.str());
+        }
     }
 }
 
@@ -105,11 +150,13 @@ void PnetcdfReader::read_variable_1d(int ncid, const std::string& var_name, VVM:
     int varid;
     int status = ncmpi_inq_varid(ncid, var_name.c_str(), &varid);
     if (status != NC_NOERR) {
-        std::string msg = "Cannot find 1D variable '" + var_name + "' in NetCDF file.";
+        std::string msg = "Cannot find 1D variable '" + var_name + "' in NetCDF file '" + source_file_ + "'.";
         if (strict_missing_variables_) throw std::runtime_error(msg);
         if (rank_ == 0) std::cerr << "Warning: " << msg << " Skipping." << std::endl;
         return;
     }
+
+    validate_variable_dimensions(ncid, varid, var_name, {"nz"}, {static_cast<MPI_Offset>(grid_.get_global_points_z())});
 
     MPI_Offset start[1] = {0};
     MPI_Offset count[1] = { static_cast<MPI_Offset>(grid_.get_global_points_z()) };
@@ -143,11 +190,13 @@ void PnetcdfReader::read_variable_2d(int ncid, const std::string& var_name, VVM:
     int varid;
     int status = ncmpi_inq_varid(ncid, var_name.c_str(), &varid);
     if (status != NC_NOERR) {
-        std::string msg = "Cannot find 2D variable '" + var_name + "' in NetCDF file.";
+        std::string msg = "Cannot find 2D variable '" + var_name + "' in NetCDF file '" + source_file_ + "'.";
         if (strict_missing_variables_) throw std::runtime_error(msg);
         if (rank_ == 0) std::cerr << "Warning: " << msg << " Skipping." << std::endl;
         return;
     }
+
+    validate_variable_dimensions(ncid, varid, var_name, {"ny", "nx"}, {static_cast<MPI_Offset>(grid_.get_global_points_y()), static_cast<MPI_Offset>(grid_.get_global_points_x())});
 
     MPI_Offset start[2];
     MPI_Offset count[2];
@@ -189,16 +238,61 @@ void PnetcdfReader::read_variable_2d(int ncid, const std::string& var_name, VVM:
 
 
 template<size_t Dim>
-void PnetcdfReader::read_variable_3d(int ncid, const std::string& var_name, VVM::Core::Field<Dim>& field) {
+void PnetcdfReader::read_variable_3d(int ncid, const std::string& var_name,
+                                    VVM::Core::Field<Dim>& field, bool required_tracer) {
     static_assert(Dim == 3, "read_variable_3d only works for 3D fields");
 
     int varid;
     int status = ncmpi_inq_varid(ncid, var_name.c_str(), &varid);
     if (status != NC_NOERR) {
-        std::string msg = "Cannot find 3D variable '" + var_name + "' in NetCDF file.";
+        if (required_tracer) {
+            throw std::runtime_error(
+                "Enabled tracer '" + var_name + "' is missing from initial NetCDF file '" +
+                source_file_ + "'. Regenerate the initial file with tools/generate_init_nc.py.");
+        }
+        std::string msg = "Cannot find 3D variable '" + var_name + "' in NetCDF file '" + source_file_ + "'.";
         if (strict_missing_variables_) throw std::runtime_error(msg);
         if (rank_ == 0) std::cerr << "Warning: " << msg << " Skipping." << std::endl;
         return;
+    }
+
+    validate_variable_dimensions(ncid, varid, var_name, {"nz", "ny", "nx"}, {static_cast<MPI_Offset>(grid_.get_global_points_z()), static_cast<MPI_Offset>(grid_.get_global_points_y()), static_cast<MPI_Offset>(grid_.get_global_points_x())});
+
+    if (required_tracer) {
+        int ndims = 0;
+        status = ncmpi_inq_varndims(ncid, varid, &ndims);
+        if (status != NC_NOERR || ndims != 3) {
+            throw std::runtime_error(
+                "Enabled tracer '" + var_name + "' in initial NetCDF file '" + source_file_ +
+                "' must be three-dimensional with dimensions (nz, ny, nx). "
+                "Regenerate the initial file with tools/generate_init_nc.py.");
+        }
+
+        int dimids[3];
+        status = ncmpi_inq_vardimid(ncid, varid, dimids);
+        if (status != NC_NOERR) {
+            throw std::runtime_error("Failed to inspect dimensions for enabled tracer '" +
+                                     var_name + "' in initial NetCDF file '" + source_file_ + "'.");
+        }
+
+        const char* expected_names[3] = {"nz", "ny", "nx"};
+        const MPI_Offset expected_sizes[3] = {
+            static_cast<MPI_Offset>(grid_.get_global_points_z()),
+            static_cast<MPI_Offset>(grid_.get_global_points_y()),
+            static_cast<MPI_Offset>(grid_.get_global_points_x())
+        };
+        for (int d = 0; d < 3; ++d) {
+            char dim_name[NC_MAX_NAME + 1];
+            MPI_Offset dim_size = 0;
+            status = ncmpi_inq_dim(ncid, dimids[d], dim_name, &dim_size);
+            if (status != NC_NOERR || std::string(dim_name) != expected_names[d] ||
+                dim_size != expected_sizes[d]) {
+                throw std::runtime_error(
+                    "Enabled tracer '" + var_name + "' in initial NetCDF file '" + source_file_ +
+                    "' has incompatible dimensions; expected (nz, ny, nx) matching the configured grid. "
+                    "Regenerate the initial file with tools/generate_init_nc.py.");
+            }
+        }
     }
 
     // (nz, ny, nx) input 
@@ -279,18 +373,34 @@ void PnetcdfReader::read_and_initialize(VVM::Core::State& state) {
 
     std::vector<std::string> vars_3d;
     std::string key_3d = config_prefix_ + ".variables_to_read.3d";
-    if (config_.has_key(key_3d)) {
+    const bool has_explicit_3d_list = config_.has_key(key_3d);
+    if (has_explicit_3d_list) {
         vars_3d = config_.get_value<std::vector<std::string>>(key_3d);
-    } else if (strict_missing_variables_) {
+    } else if (config_prefix_ == "restart") {
         auto prognostic_config = config_.get_value<nlohmann::json>("dynamics.prognostic_variables");
         for (const auto& item : prognostic_config.items()) {
             const std::string& var_name = item.key();
-            if (state.has_field(var_name)) vars_3d.push_back(var_name);
+            if (state.has_field(var_name)) append_unique(vars_3d, var_name);
+        }
+    }
+
+    // Initial-condition reads always include enabled tracers. Restart reads add
+    // them only when the restart variable list is inferred, preserving an
+    // explicitly configured restart list exactly.
+    if (config_prefix_ == "netcdf_reader" ||
+        (strict_missing_variables_ && !has_explicit_3d_list)) {
+        for (const auto& tracer_name : state.get_tracer_names()) {
+            append_unique(vars_3d, tracer_name);
+        }
+    }
+    if (config_prefix_ == "netcdf_reader") {
+        for (const auto& source_name : state.get_tracer_source_names()) {
+            append_unique(vars_3d, source_name);
         }
     }
 
     if (strict_missing_variables_ && rank_ == 0) {
-        std::cout << "  [PnetcdfReader] Restart variables to read from " << source_file_ << ":" << std::endl;
+        std::cout << "  [PnetcdfReader] Required variables to read from " << source_file_ << ":" << std::endl;
         std::cout << "    1D: " << join_variable_names(vars_1d) << std::endl;
         std::cout << "    2D: " << join_variable_names(vars_2d) << std::endl;
         std::cout << "    3D: " << join_variable_names(vars_3d) << std::endl;
@@ -333,12 +443,15 @@ void PnetcdfReader::read_and_initialize(VVM::Core::State& state) {
     if (!vars_3d.empty()) {
         if (rank_ == 0 && !strict_missing_variables_) std::cout << "  - Attempting to load 3D variables from config key '" << key_3d << "'..." << std::endl;
         for (const auto& var_name : vars_3d) {
+            const bool required_tracer =
+                config_prefix_ == "netcdf_reader" &&
+                (state.is_tracer(var_name) || state.is_tracer_source(var_name));
             try {
-                read_variable_3d(ncid_, var_name, state.get_field<3>(var_name));
+                read_variable_3d(ncid_, var_name, state.get_field<3>(var_name), required_tracer);
                 if (rank_ == 0) std::cout << "    - Loaded 3D variable: " << var_name << std::endl;
             } 
             catch (const std::runtime_error& e) {
-                if (strict_missing_variables_) throw;
+                if (strict_missing_variables_ || required_tracer) throw;
                 if (rank_ == 0) std::cerr << "    - Warning for 3D var '" << var_name << "': " << e.what() << std::endl;
             }
         }
@@ -346,7 +459,7 @@ void PnetcdfReader::read_and_initialize(VVM::Core::State& state) {
     else if (!strict_missing_variables_) {
          if (rank_ == 0) std::cerr << "Warning: Config key '" << key_3d << "' not found. No 3D variables will be read by PnetcdfReader." << std::endl;
     }
-    else {
+    else if (config_prefix_ == "restart") {
         throw std::runtime_error("Restart mode did not find any 3D prognostic variables to read.");
     }
 

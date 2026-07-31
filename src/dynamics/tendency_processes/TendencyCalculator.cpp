@@ -1,15 +1,18 @@
 #include "TendencyCalculator.hpp"
 #include "core/Field.hpp"
+#include <stdexcept>
 
 namespace VVM {
 namespace Dynamics {
 
 TendencyCalculator::TendencyCalculator(std::string var_name,
                                        std::vector<std::unique_ptr<TendencyTerm>> ab2_terms,
-                                       std::vector<std::unique_ptr<TendencyTerm>> fe_terms)
+                                       std::vector<std::unique_ptr<TendencyTerm>> fe_terms,
+                                       std::vector<std::unique_ptr<TendencyTerm>> multistage_terms)
     : variable_name_(std::move(var_name)),
       ab2_tendency_terms_(std::move(ab2_terms)),
-      fe_tendency_terms_(std::move(fe_terms)) {}
+      fe_tendency_terms_(std::move(fe_terms)),
+      multistage_tendency_terms_(std::move(multistage_terms)) {}
 
 void TendencyCalculator::calculate_tendencies(Core::State& state, const Core::Grid& grid, const Core::Parameters& params) {
     if (ab2_tendency_terms_.empty() && fe_tendency_terms_.empty()) {
@@ -19,9 +22,6 @@ void TendencyCalculator::calculate_tendencies(Core::State& state, const Core::Gr
     const int& nz = grid.get_local_total_points_z();
     const int& ny = grid.get_local_total_points_y();
     const int& nx = grid.get_local_total_points_x();
-    const int h = grid.get_halo_cells();
-    const auto& rhobar_up = state.get_field<1>("rhobar_up").get_device_data();
-    const auto& rhobar = state.get_field<1>("rhobar").get_device_data();
 
     auto& field_to_update = state.get_field<3>(variable_name_);
     auto& field_current_view = field_to_update.get_mutable_device_data();
@@ -56,6 +56,31 @@ void TendencyCalculator::calculate_tendencies(Core::State& state, const Core::Gr
             term->compute_tendency(state, grid, params, fe_tendency_field);
         }
     }
+}
+
+Core::Field<3>& TendencyCalculator::calculate_multistage_tendency(
+    Core::State& state,
+    const Core::Grid& grid,
+    const Core::Parameters& params,
+    VVM::Real stage_dt) {
+    if (multistage_tendency_terms_.empty()) {
+        throw std::runtime_error(
+            "No multistage tendency terms are configured for '" +
+            variable_name_ + "'.");
+    }
+    if (!multistage_tendency_field_) {
+        multistage_tendency_field_ = std::make_unique<Core::Field<3>>(
+            "multistage_tendency_" + variable_name_,
+            std::array<int, 3>{
+                grid.get_local_total_points_z(),
+                grid.get_local_total_points_y(),
+                grid.get_local_total_points_x()});
+    }
+    multistage_tendency_field_->set_to_zero();
+    for (const auto& term : multistage_tendency_terms_) {
+        term->compute_stage_tendency(state, grid, params, *multistage_tendency_field_, stage_dt);
+    }
+    return *multistage_tendency_field_;
 }
 
 } // namespace Dynamics

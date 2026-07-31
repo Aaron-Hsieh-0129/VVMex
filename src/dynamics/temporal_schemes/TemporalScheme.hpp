@@ -7,6 +7,7 @@
 #include "dynamics/tendency_processes/TendencyTerm.hpp"
 #include <vector>
 #include <memory>
+#include <stdexcept>
 
 namespace VVM {
 namespace Dynamics {
@@ -24,6 +25,25 @@ public:
 
     virtual std::vector<std::string> get_required_state_suffixes() const {
         return {};
+    }
+
+    virtual bool requires_tendency_recomputation() const { return false; }
+
+    virtual int stage_count() const { return 1; }
+
+    virtual VVM::Real stage_timestep(VVM::Real dt, int) const { return dt; }
+
+    virtual void begin_multistage_step(
+        Core::State&, const Core::Grid&, const Core::Parameters&) const {
+        throw std::runtime_error(
+            "Temporal scheme does not implement multistage initialization.");
+    }
+
+    virtual void advance_multistage(
+        Core::State&, const Core::Grid&, const Core::Parameters&,
+        const Core::Field<3>&, VVM::Real, int) const {
+        throw std::runtime_error(
+            "Temporal scheme does not implement multistage advancement.");
     }
 };
 

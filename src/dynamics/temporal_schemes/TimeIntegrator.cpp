@@ -1,12 +1,16 @@
 #include "TimeIntegrator.hpp"
 #include "core/Field.hpp"
+#include <stdexcept>
 
 namespace VVM {
 namespace Dynamics {
 
-TimeIntegrator::TimeIntegrator(std::string var_name, bool has_ab2, bool has_fe)
+TimeIntegrator::TimeIntegrator(
+    std::string var_name, bool has_ab2, bool has_fe,
+    std::unique_ptr<TemporalScheme> multistage_scheme)
     : variable_name_(std::move(var_name)), has_ab2_terms_(has_ab2),
-      has_fe_terms_(has_fe) {}
+      has_fe_terms_(has_fe),
+      multistage_scheme_(std::move(multistage_scheme)) {}
 
 TimeIntegrator::~TimeIntegrator() = default; 
 
@@ -15,6 +19,12 @@ void TimeIntegrator::step(
     const Core::Grid& grid,
     const Core::Parameters& params,
     VVM::Real dt) const {
+
+    if (multistage_scheme_) {
+        throw std::runtime_error(
+            "Multistage integration for '" + variable_name_ +
+            "' requires a tendency evaluator and stage processor.");
+    }
 
     auto& field_to_update = state.get_field<3>(variable_name_);
     auto& field_new_view = field_to_update.get_mutable_device_data();
@@ -153,6 +163,42 @@ void TimeIntegrator::step(
                 field_new_view(k, j, i) += dt * fe_tendency_data(k, j, i);
             }
         );
+    }
+}
+
+void TimeIntegrator::step(
+    Core::State& state,
+    const Core::Grid& grid,
+    const Core::Parameters& params,
+    VVM::Real dt,
+    const TendencyEvaluator& evaluate_tendency,
+    const StageProcessor& process_stage) const {
+    if (!multistage_scheme_) {
+        step(state, grid, params, dt);
+        return;
+    }
+    if (!evaluate_tendency || !process_stage) {
+        throw std::runtime_error(
+            "Multistage integration callbacks are missing for '" +
+            variable_name_ + "'.");
+    }
+
+    multistage_scheme_->begin_multistage_step(state, grid, params);
+
+    const int stage_count = multistage_scheme_->stage_count();
+    if (stage_count < 1) {
+        throw std::runtime_error(
+            "Multistage integration for '" + variable_name_ +
+            "' configured an invalid stage count.");
+    }
+
+    for (int stage = 0; stage < stage_count; ++stage) {
+        const VVM::Real stage_dt =
+            multistage_scheme_->stage_timestep(dt, stage);
+        Core::Field<3>& tendency = evaluate_tendency(stage_dt);
+        multistage_scheme_->advance_multistage(
+            state, grid, params, tendency, stage_dt, stage);
+        process_stage();
     }
 }
 

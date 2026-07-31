@@ -1,5 +1,13 @@
 #include "AreaMeanNudging.hpp"
+#include <netcdf.h>
+#include <algorithm>
+#include <cmath>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
+#include <stdexcept>
+#include <utility>
+#include <vector>
 
 namespace VVM {
 namespace Dynamics {
@@ -14,6 +22,28 @@ AreaMeanNudging::AreaMeanNudging(const Utils::ConfigurationManager& config,
     if (enable_) {
         uvtau_ = config_.get_value<VVM::Real>("dynamics.forcings.areamn.uvtau", 0.0);
         nudgelim_ = config_.get_value<VVM::Real>("dynamics.forcings.areamn.nudge_start_m", 0.0);
+
+        const std::string target_source = config_.get_value<std::string>("dynamics.forcings.areamn.target_source", "initial");
+        if (target_source == "netcdf") {
+            use_netcdf_target_ = true;
+            forcing_directory_ = config_.get_value<std::string>("dynamics.forcings.areamn.forcing_data.directory");
+            forcing_file_prefix_ = config_.get_value<std::string>("dynamics.forcings.areamn.forcing_data.file_prefix", "ls_forcing_");
+            forcing_interval_s_ = config_.get_value<VVM::Real>("dynamics.forcings.areamn.forcing_data.update_interval_s", 3600.0);
+            if (forcing_interval_s_ <= real(0.0)) {
+                throw std::runtime_error("AreaMeanNudging forcing update interval must be positive.");
+            }
+            if (!forcing_directory_.empty() && forcing_directory_.back() != '/') {
+                forcing_directory_ += '/';
+            }
+
+            constant_upper_wind_ = config_.get_value<bool>("initial_conditions.constant_upper_wind.enable", false);
+            constant_upper_wind_threshold_Pa_ = config_.get_value<VVM::Real>("initial_conditions.constant_upper_wind.pressure_threshold_Pa", 3000.0);
+        }
+        else if (target_source != "initial") {
+            throw std::runtime_error(
+                "Unsupported dynamics.forcings.areamn.target_source '" +
+                target_source + "'. Expected 'initial' or 'netcdf'.");
+        }
         
         VVM::Real total_pts = static_cast<VVM::Real>(grid_.get_global_points_x() * grid_.get_global_points_y());
         inv_total_xy_pts_ = 1.0 / total_pts;
@@ -21,8 +51,150 @@ AreaMeanNudging::AreaMeanNudging(const Utils::ConfigurationManager& config,
         if (grid_.get_mpi_rank() == 0) {
             std::cout << "--- Initializing Area Mean Nudging (AREAMN) ---" << std::endl;
             std::cout << "  * UVTAU: " << uvtau_ << " s, Nudge Limit: " << nudgelim_ << " m" << std::endl;
+            std::cout << "  * Target source: " << target_source << std::endl;
         }
     }
+}
+
+void AreaMeanNudging::check_nc_error(
+    int status,
+    const std::string& message) const
+{
+    if (status == NC_NOERR) return;
+
+    if (grid_.get_mpi_rank() == 0) {
+        std::cerr << "NetCDF error in AreaMeanNudging: "
+                  << message << ": " << nc_strerror(status) << std::endl;
+    }
+    MPI_Abort(grid_.get_cart_comm(), 21);
+    throw std::runtime_error(message + ": " + nc_strerror(status));
+}
+
+std::string AreaMeanNudging::forcing_filename(VVM::Real time) const {
+    std::ostringstream filename;
+    filename << forcing_directory_ << forcing_file_prefix_
+             << std::setfill('0') << std::setw(6)
+             << static_cast<long long>(std::llround(time)) << ".nc";
+    return filename.str();
+}
+
+void AreaMeanNudging::load_wind_profiles(
+    const std::string& filename,
+    VVM::Real expected_time,
+    Kokkos::View<VVM::Real*>& u_target,
+    Kokkos::View<VVM::Real*>& v_target) const
+{
+    const int global_nz = grid_.get_global_points_z();
+    std::vector<double> u_profile(global_nz);
+    std::vector<double> v_profile(global_nz);
+
+    if (grid_.get_mpi_rank() == 0) {
+        int ncid = -1;
+        check_nc_error(nc_open(filename.c_str(), NC_NOWRITE, &ncid), "Failed to open " + filename);
+
+        int nz_dimid = -1;
+        check_nc_error(nc_inq_dimid(ncid, "nz", &nz_dimid), "Missing nz dimension in " + filename);
+
+        size_t file_nz = 0;
+        check_nc_error(nc_inq_dimlen(ncid, nz_dimid, &file_nz), "Failed to read nz dimension in " + filename);
+        if (file_nz != static_cast<size_t>(global_nz)) {
+            nc_close(ncid);
+            check_nc_error(NC_EINVAL, "Forcing nz in " + filename + " does not match the VVM grid");
+        }
+
+        long long file_time = 0;
+        check_nc_error(nc_get_att_longlong(ncid, NC_GLOBAL, "time_seconds", &file_time), "Missing time_seconds in " + filename);
+        const long long expected_seconds = static_cast<long long>(std::llround(expected_time));
+        if (file_time != expected_seconds) {
+            nc_close(ncid);
+            check_nc_error(NC_EINVAL, "time_seconds in " + filename + " does not match its requested forcing time");
+        }
+
+        int u_varid = -1;
+        int v_varid = -1;
+        int pbar_varid = -1;
+        check_nc_error(nc_inq_varid(ncid, "U", &u_varid), "Missing U in " + filename);
+        check_nc_error(nc_inq_varid(ncid, "V", &v_varid), "Missing V in " + filename);
+        check_nc_error(nc_inq_varid(ncid, "pbar", &pbar_varid), "Missing pbar in " + filename);
+
+        std::vector<double> pbar_profile(global_nz);
+        check_nc_error(nc_get_var_double(ncid, u_varid, u_profile.data()), "Failed to read U from " + filename);
+        check_nc_error(nc_get_var_double(ncid, v_varid, v_profile.data()), "Failed to read V from " + filename);
+        check_nc_error(nc_get_var_double(ncid, pbar_varid, pbar_profile.data()), "Failed to read pbar from " + filename);
+        check_nc_error(nc_close(ncid), "Failed to close " + filename);
+
+        if (constant_upper_wind_) {
+            size_t first_upper_level = pbar_profile.size();
+            for (size_t k = 0; k < pbar_profile.size(); ++k) {
+                if (pbar_profile[k] <= constant_upper_wind_threshold_Pa_) {
+                    first_upper_level = k;
+                    break;
+                }
+            }
+            if (first_upper_level < pbar_profile.size()) {
+                for (size_t k = first_upper_level + 1; k < pbar_profile.size(); ++k) {
+                    u_profile[k] = u_profile[first_upper_level];
+                    v_profile[k] = v_profile[first_upper_level];
+                }
+            }
+        }
+
+        std::cout << "  - AREAMN loaded wind profiles: " << filename << std::endl;
+    }
+
+    const int h = grid_.get_halo_cells();
+    const int nz = grid_.get_local_total_points_z();
+    auto u_host = Kokkos::create_mirror_view(u_target);
+    auto v_host = Kokkos::create_mirror_view(v_target);
+
+    const auto fill_host_profiles = [&]() {
+        for (int k = 0; k < global_nz; ++k) {
+            u_host(k + h) = static_cast<VVM::Real>(u_profile[k]);
+            v_host(k + h) = static_cast<VVM::Real>(v_profile[k]);
+        }
+        for (int k = 0; k < h; ++k) {
+            u_host(k) = static_cast<VVM::Real>(u_profile.front());
+            v_host(k) = static_cast<VVM::Real>(v_profile.front());
+            u_host(nz - 1 - k) = static_cast<VVM::Real>(u_profile.back());
+            v_host(nz - 1 - k) = static_cast<VVM::Real>(v_profile.back());
+        }
+    };
+
+#if defined(ENABLE_NCCL)
+    if (grid_.get_mpi_rank() == 0) {
+        fill_host_profiles();
+        Kokkos::deep_copy(u_target, u_host);
+        Kokkos::deep_copy(v_target, v_host);
+    }
+    Kokkos::fence();
+
+    ncclResult_t result = ncclBroadcast(u_target.data(), u_target.data(), nz, VVM_NCCL_REAL, 0, nccl_comm_, stream_);
+    if (result != ncclSuccess) {
+        throw std::runtime_error(
+            "AreaMeanNudging NCCL U-profile broadcast failed: " +
+            std::string(ncclGetErrorString(result)));
+    }
+
+    result = ncclBroadcast(v_target.data(), v_target.data(), nz, VVM_NCCL_REAL, 0, nccl_comm_, stream_);
+    if (result != ncclSuccess) {
+        throw std::runtime_error(
+            "AreaMeanNudging NCCL V-profile broadcast failed: " +
+            std::string(ncclGetErrorString(result)));
+    }
+
+    const cudaError_t sync_result = cudaStreamSynchronize(stream_);
+    if (sync_result != cudaSuccess) {
+        throw std::runtime_error(
+            "AreaMeanNudging NCCL broadcast synchronization failed: " +
+            std::string(cudaGetErrorString(sync_result)));
+    }
+#else
+    MPI_Bcast(u_profile.data(), global_nz, MPI_DOUBLE, 0, grid_.get_comm());
+    MPI_Bcast(v_profile.data(), global_nz, MPI_DOUBLE, 0, grid_.get_comm());
+    fill_host_profiles();
+    Kokkos::deep_copy(u_target, u_host);
+    Kokkos::deep_copy(v_target, v_host);
+#endif
 }
 
 void AreaMeanNudging::initialize(Core::State& state) {
@@ -34,8 +206,25 @@ void AreaMeanNudging::initialize(Core::State& state) {
     int h  = grid_.get_halo_cells();
     int top_k = nz - h - 1;
 
-    if (!state.has_field("areamn_xi0")) state.add_field<1>("areamn_xi0", {nz});
-    if (!state.has_field("areamn_eta0")) state.add_field<1>("areamn_eta0", {nz});
+    if (!state.has_field("areamn_xi0")) {
+        state.add_field<1>(
+            "areamn_xi0",
+            {nz},
+            Core::FieldMetadata{
+                Core::GridStaggering::StaggeredYZ,
+                "s-1",
+                "area-mean nudging x-vorticity target"});
+    }
+    if (!state.has_field("areamn_eta0")) {
+        state.add_field<1>(
+            "areamn_eta0",
+            {nz},
+            Core::FieldMetadata{
+                Core::GridStaggering::StaggeredXZ,
+                "s-1",
+                "area-mean nudging y-vorticity target"});
+    }
+
     if (!state.has_field("areamn_zeta0_top")) state.add_field<0>("areamn_zeta0_top", {});
     if (!state.has_field("areamn_local_sum_xi")) state.add_field<1>("areamn_local_sum_xi", {nz});
     if (!state.has_field("areamn_global_sum_xi")) state.add_field<1>("areamn_global_sum_xi", {nz});
@@ -45,6 +234,24 @@ void AreaMeanNudging::initialize(Core::State& state) {
     if (!state.has_field("areamn_global_sum_zeta_top")) state.add_field<0>("areamn_global_sum_zeta_top", {});
     if (!state.has_field("areamn_utopmn0")) state.add_field<0>("areamn_utopmn0", {});
     if (!state.has_field("areamn_vtopmn0")) state.add_field<0>("areamn_vtopmn0", {});
+    if (!state.has_field("areamn_u_target")) {
+        state.add_field<1>(
+            "areamn_u_target",
+            {nz},
+            Core::FieldMetadata{
+                Core::GridStaggering::StaggeredX,
+                "m s-1",
+                "area-mean nudging x-wind target"});
+    }
+    if (!state.has_field("areamn_v_target")) {
+        state.add_field<1>(
+            "areamn_v_target",
+            {nz},
+            Core::FieldMetadata{
+                Core::GridStaggering::StaggeredY,
+                "m s-1",
+                "area-mean nudging y-wind target"});
+    }
 
     const auto& xi   = state.get_field<3>("xi").get_device_data();
     const auto& eta  = state.get_field<3>("eta").get_device_data();
@@ -127,6 +334,90 @@ void AreaMeanNudging::initialize(Core::State& state) {
             vtopmn() = vtopmn0();
         }
     });
+
+    if (use_netcdf_target_) {
+#if defined(ENABLE_NCCL)
+        nccl_comm_ = state.get_nccl_comm();
+        stream_ = state.get_cuda_stream();
+#endif
+
+        u_T1_ = Kokkos::View<VVM::Real*>("areamn_u_T1", nz);
+        u_T2_ = Kokkos::View<VVM::Real*>("areamn_u_T2", nz);
+        v_T1_ = Kokkos::View<VVM::Real*>("areamn_v_T1", nz);
+        v_T2_ = Kokkos::View<VVM::Real*>("areamn_v_T2", nz);
+
+        const VVM::Real current_time = state.get_time();
+        time_T1_ = std::floor(current_time / forcing_interval_s_) * forcing_interval_s_;
+        time_T2_ = time_T1_ + forcing_interval_s_;
+
+        load_wind_profiles(forcing_filename(time_T1_), time_T1_, u_T1_, v_T1_);
+        load_wind_profiles(forcing_filename(time_T2_), time_T2_, u_T2_, v_T2_);
+        update_forcing_target(state, current_time);
+    }
+}
+
+void AreaMeanNudging::update_forcing_target(
+    Core::State& state,
+    VVM::Real current_time)
+{
+    if (!enable_ || !use_netcdf_target_) return;
+
+    while (current_time >= time_T2_) {
+        std::swap(u_T1_, u_T2_);
+        std::swap(v_T1_, v_T2_);
+        time_T1_ = time_T2_;
+        time_T2_ += forcing_interval_s_;
+        load_wind_profiles(forcing_filename(time_T2_), time_T2_, u_T2_, v_T2_);
+    }
+
+    VVM::Real weight =
+        (current_time - time_T1_) / (time_T2_ - time_T1_);
+    weight = std::max(real(0.0), std::min(real(1.0), weight));
+
+    const int nz = grid_.get_local_total_points_z();
+    const int h = grid_.get_halo_cells();
+    const int top_k = nz - h - 1;
+
+    auto& xi_target = state.get_field<1>("areamn_xi0").get_mutable_device_data();
+    auto& eta_target = state.get_field<1>("areamn_eta0").get_mutable_device_data();
+    auto& utop_target = state.get_field<0>("areamn_utopmn0").get_mutable_device_data();
+    auto& vtop_target = state.get_field<0>("areamn_vtopmn0").get_mutable_device_data();
+    auto& u_target = state.get_field<1>("areamn_u_target").get_mutable_device_data();
+    auto& v_target = state.get_field<1>("areamn_v_target").get_mutable_device_data();
+
+    const auto u_T1 = u_T1_;
+    const auto u_T2 = u_T2_;
+    const auto v_T1 = v_T1_;
+    const auto v_T2 = v_T2_;
+    const auto rdz = params_.rdz;
+    const auto flex_height_coef_up = params_.flex_height_coef_up.get_device_data();
+
+    Kokkos::parallel_for(
+        "AREAMN_Update_NetCDF_Target",
+        Kokkos::RangePolicy<>(h, top_k),
+        KOKKOS_LAMBDA(const int k) {
+            const VVM::Real u_k = (real(1.0) - weight) * u_T1(k) + weight * u_T2(k);
+            const VVM::Real u_kp1 = (real(1.0) - weight) * u_T1(k + 1) + weight * u_T2(k + 1);
+            const VVM::Real v_k = (real(1.0) - weight) * v_T1(k) + weight * v_T2(k);
+            const VVM::Real v_kp1 = (real(1.0) - weight) * v_T1(k + 1) + weight * v_T2(k + 1);
+
+            u_target(k) = u_k;
+            v_target(k) = v_k;
+            eta_target(k) = -(u_kp1 - u_k) * rdz() * flex_height_coef_up(k);
+            xi_target(k) = -(v_kp1 - v_k) * rdz() * flex_height_coef_up(k);
+        });
+
+    Kokkos::parallel_for(
+        "AREAMN_Update_NetCDF_Top_Target",
+        1,
+        KOKKOS_LAMBDA(const int) {
+            xi_target(top_k) = real(0.0);
+            eta_target(top_k) = real(0.0);
+            u_target(top_k) = (real(1.0) - weight) * u_T1(top_k) + weight * u_T2(top_k);
+            v_target(top_k) = (real(1.0) - weight) * v_T1(top_k) + weight * v_T2(top_k);
+            utop_target() = u_target(top_k);
+            vtop_target() = v_target(top_k);
+        });
 }
 
 void AreaMeanNudging::apply_vorticity(Core::State& state, VVM::Real dt) {
