@@ -53,3 +53,10 @@ tags
 
 .agents
 .codex
+
+rundata/input_configs/*.json
+rundata/initial_conditions/spatial/*.nc
+rundata/initial_conditions/spatial/*.ctl
+rundata/initial_conditions/profiles/*.txt
+__pycache__
+*.ipynb

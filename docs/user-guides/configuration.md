@@ -240,6 +240,36 @@ Each prognostic variable lists enabled tendency terms and the numerical schemes 
 
 Common prognostic variables include `th`, `xi`, `eta`, `zeta`, `qv`, `qc`, `qr`, `qi`, `qm`, `nc`, `nr`, `ni`, and `bm`. P3-related fields should be present when P3 is enabled. Typical terms are `advection`, `buoyancy`, `stretching`, `twisting`, and `coriolis`; unsupported combinations should not be invented in the JSON because the dynamical core constructs tendency objects from these names.
 
+#### Passive-tracer WENO5
+
+Passive tracers may select fifth-order WENO-JS horizontal reconstruction with
+`"spatial_scheme": "weno5"`. WENO5 currently pairs with `SSPRK2`, requires
+three halo cells, and accepts a configurable nonlinear-weight epsilon:
+
+```json
+"tracer1": {
+  "enable": true,
+  "tendency_terms": {
+    "advection": {
+      "enable": true,
+      "temporal_scheme": "SSPRK2",
+      "spatial_scheme": "weno5",
+      "scheme_options": {
+        "epsilon": 1.0e-6
+      }
+    }
+  }
+}
+```
+
+The WENO5 coefficients assume uniform spacing, so only the uniform horizontal
+x and y directions use WENO reconstruction. Vertical tracer transport retains
+the existing Takacs scheme, including its stretched-grid metric and boundary
+handling. The default epsilon is the reference value used for regression
+testing; because it is dimensional, simulations with very different tracer
+magnitudes or floating-point precision may need to configure it. WENO5 is not
+available for vorticity or other dynamical-core advection.
+
 ### `physics`
 
 `physics` enables packages and sets their call frequencies.

@@ -30,8 +30,7 @@ print(f"[Info] Change to VVM_ROOT: {VVM_ROOT}")
 # Set to False: Enter "Idealized Simulation" mode for user-defined ridge & land types
 USE_TAIWAN_TOPO = False
 
-# CONFIG_PATH = './rundata/input_configs/tracer_muscl_w.json'
-CONFIG_PATH = './rundata/input_configs/2dbubble_move.json'
+CONFIG_PATH = os.environ.get('VVM_CONFIG_PATH', './rundata/input_configs/tracer_weno.json')
 SOURCE_TW_DATA = './rundata/land/topolsm_TW.nc'
 
 # ==============================================================================
@@ -50,7 +49,7 @@ DZ1 = config['grid']['dz1']
 HALO = config['grid']['n_halo_cells']
 NSOIL = 4
 
-FILENAME = config['netcdf_reader']['source_file']
+FILENAME = os.environ.get('VVM_INIT_OUTPUT', config['netcdf_reader']['source_file'])
 os.makedirs(os.path.dirname(FILENAME), exist_ok=True)
 
 # Initialize 1D longitude and latitude arrays
@@ -114,6 +113,13 @@ else:
     for k in range(0, NZ):
         z_up[k] = z_up[k] * (cz1 + cz2 * z_up[k])
 
+if NZ < 2 or not np.all(np.isfinite(z_up)) or not np.all(np.diff(z_up) > 0):
+    raise ValueError("The configured vertical grid must contain at least two finite, increasing levels")
+
+z_mid = np.empty(NZ, dtype='f8')
+z_mid[:-1] = 0.5 * (z_up[:-1] + z_up[1:])
+z_mid[-1] = z_up[-1] + 0.5 * (z_up[-1] - z_up[-2])
+
 # ==============================================================================
 # Helper Functions for Idealized Simulation
 # ==============================================================================
@@ -147,26 +153,57 @@ RESERVED_MODEL_FIELD_NAMES = {
 }
 
 
+# width=32000. #meter, 1/8*256km
+# height=1000.
+# width_idx = width//DX
+# idx_coastal = NX - int(width_idx*4)
+# idx_start   = NX - int(width_idx*2)
+# idx_top     = int(NX - width_idx)
+# idx_end     = NX
+# #shift_x     = int( - ( NX - idx_start) )
+# shift_x     = int( - (NX//2 + idx_start) )
+#
+# mountain_start = NX//2
 def define_tracer_initial_fields(nz, ny, nx):
-    """User-editable tracer fields, keyed by the names declared in the JSON."""
-    tracer1 = np.zeros((nz, ny, nx), dtype='f8')
-    tracer1[nz//2, ny//4:ny//4*3, ny//4:ny//4*3] = 50
-    tracer2 = np.zeros((nz, ny, nx), dtype='f8')
-    tracer2[nz//2, ny//4:ny//4*3, ny//4:ny//4*3] = 50
-    tracer3 = np.zeros((nz, ny, nx), dtype='f8')
-    tracer3[nz//4:nz//4*3, ny//4:ny//4*3, ny//4:ny//4*3] = 50
-    tracer_tri = np.zeros((nz, ny, nx), dtype='f8')
-    # tracer_tri[nz//4:nz//4*3, ny//4:ny//4*3, ny//4:ny//4*3] = 50
-    tracer_tri[nz//4:nz//2, ny//4:ny//4*3, ny//4:ny//4*3] = 50 * np.linspace(0, 1, nz//2-nz//4).reshape(nz//2-nz//4,1,1)
-    tracer_tri[nz//2:nz//4*3, ny//4:ny//4*3, ny//4:ny//4*3] = 50 * np.linspace(1, 0, nz//4*3-nz//2).reshape(nz//4*3-nz//2,1,1)
-    # tmp = np.arange(0, 1)
+    """Return identical centered square pulses for the scheme comparison."""
+    square = np.zeros((nz, ny, nx), dtype="f8")
+    square[
+        nz // 2,
+        ny // 4:3 * ny // 4,
+        nx // 4:3 * nx // 4
+    ] = 1.0
 
     return {
-        'tracer1': tracer1,
-        'tracer2': tracer2,
-        'tracer3': tracer3,
-        'tracer_tri': tracer_tri
+        "tracer1": square.copy(),
+        "tracer2": square.copy(),
+        "tracer3": square.copy()
     }
+
+
+def define_tracer_source_fields(nz, ny, nx):
+    """Return no source fields for the source-free advection comparison."""
+    return {}
+
+
+def validate_tracer_source_field(tracer_name, field, nz, ny, nx):
+    """Validate and normalize one user-defined tracer source field."""
+    try:
+        field = np.asarray(field)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            f"Tracer '{tracer_name}' returned by define_tracer_source_fields must be "
+            "a rectangular numeric three-dimensional array") from error
+
+    expected_shape = (nz, ny, nx)
+    if field.shape != expected_shape:
+        raise ValueError(
+            f"Tracer '{tracer_name}' returned by define_tracer_source_fields has shape "
+            f"{field.shape}; expected {expected_shape} in (nz, ny, nx) ordering")
+    if field.dtype.kind not in ('i', 'u', 'f'):
+        raise ValueError(
+            f"Tracer '{tracer_name}' returned by define_tracer_source_fields "
+            "must contain only numeric values")
+    return field.astype('f8', copy=False)
 
 
 def validate_tracer_initial_field(tracer_name, field, nz, ny, nx):
@@ -199,10 +236,17 @@ def build_tracer_variables(experiment_config, nz, ny, nx, reserved_names):
     tracers = dynamics.get('tracers', {})
     if not isinstance(tracers, dict):
         raise ValueError("Invalid 'dynamics.tracers' option: expected an object")
+    prognostic_variables = dynamics.get('prognostic_variables', {})
+    if not isinstance(prognostic_variables, dict):
+        raise ValueError(
+            "Invalid 'dynamics.prognostic_variables' option: expected an object")
 
     user_defined_fields = define_tracer_initial_fields(nz, ny, nx)
     if not isinstance(user_defined_fields, dict):
         raise ValueError("define_tracer_initial_fields must return a dictionary")
+    user_defined_sources = define_tracer_source_fields(nz, ny, nx)
+    if not isinstance(user_defined_sources, dict):
+        raise ValueError("define_tracer_source_fields must return a dictionary")
 
     tracer_variables = {}
     for tracer_name, tracer_options in tracers.items():
@@ -225,6 +269,17 @@ def build_tracer_variables(experiment_config, nz, ny, nx, reserved_names):
         if not enabled:
             continue
 
+        source_options = tracer_options.get('source')
+        source_enabled = False
+        if source_options is not None:
+            if not isinstance(source_options, dict):
+                raise ValueError(
+                    f"Tracer '{tracer_name}': source options must be an object")
+            source_enabled = source_options.get('enable', True)
+            if not isinstance(source_enabled, bool):
+                raise ValueError(
+                    f"Tracer '{tracer_name}': source option 'enable' must be boolean")
+
         if tracer_name not in user_defined_fields:
             raise ValueError(
                 f"Enabled tracer '{tracer_name}' has no field in "
@@ -239,24 +294,56 @@ def build_tracer_variables(experiment_config, nz, ny, nx, reserved_names):
             'long_name': f'Passive tracer: {tracer_name}'
         }
 
+        if source_enabled:
+            source_name = f'{tracer_name}_source'
+            colliding_tracer = tracers.get(source_name)
+            if (source_name in reserved_names or
+                    source_name in prognostic_variables or
+                    (isinstance(colliding_tracer, dict) and
+                     colliding_tracer.get('enable', True) is True)):
+                raise ValueError(
+                    f"Tracer '{tracer_name}': source field '{source_name}' collides "
+                    "with an enabled tracer or reserved NetCDF name")
+            if tracer_name not in user_defined_sources:
+                raise ValueError(
+                    f"Enabled source for tracer '{tracer_name}' has no field in "
+                    "define_tracer_source_fields in tools/generate_init_nc.py")
+            tracer_variables[source_name] = {
+                'data': validate_tracer_source_field(
+                    tracer_name, user_defined_sources[tracer_name], nz, ny, nx),
+                'dims': ('nz', 'ny', 'nx'),
+                'units': 's-1',
+                'dtype': 'f8',
+                'long_name': f'Passive tracer source: {tracer_name}'
+            }
+
     return tracer_variables
 
 
 def get_ideal_topo_data(ny, nx):
     topo_idx = np.zeros((ny, nx), dtype='i4')
     
-    # MI_GLOB = nx
-    # I = np.arange(1, MI_GLOB + 1)
-    #
-    # profile_h = np.zeros(MI_GLOB, dtype='f8')
-    # cond = I < (MI_GLOB * 7 / 8)
-    #
-    # profile_h[cond] = (I[cond] - MI_GLOB * 3 / 4) * 1000.0 / (MI_GLOB / 8.0)
-    # profile_h[~cond] = 1000.0 + (MI_GLOB * 7 / 8 - I[~cond]) * 1000.0 / (MI_GLOB / 8.0)
-    #
-    # profile_h = np.maximum(profile_h, 0.0)
+    MI_GLOB = nx
+    I = np.arange(1, MI_GLOB + 1)
+
+    profile_h = np.zeros(MI_GLOB, dtype='f8')
+    cond = I < (MI_GLOB * 7 / 8)
+
+    profile_h[cond] = (I[cond] - MI_GLOB * 3 / 4) * 1000.0 / (MI_GLOB / 8.0)
+    profile_h[~cond] = 1000.0 + (MI_GLOB * 7 / 8 - I[~cond]) * 1000.0 / (MI_GLOB / 8.0)
+
+    profile_h = np.maximum(profile_h, 0.0)
+    profile_idx = np.argmin(np.abs(profile_h[:, None] - z_up[None, :]), axis=1)
+    topo_idx[:] = profile_idx
+
+    # profile_h = np.zeros(nx, dtype='f8')
+    # print(idx_start, idx_top, idx_end)
+    # profile_h[idx_start:idx_top] = np.arange(0,width,DX)*height/width
+    # profile_h[idx_top:idx_end]   = height - np.arange(0,width,DX)*(height)/width
     # profile_idx = np.argmin(np.abs(profile_h[:, None] - z_up[None, :]), axis=1)
-    # topo_idx[:] = profile_idx
+    # topo_idx[:] = profile_idx[None, :]
+    # print(topo_idx[1,idx_start:idx_end])
+    # topo_idx = np.roll(topo_idx,shift=shift_x,axis=1)
     
     return topo_idx
 
@@ -268,21 +355,27 @@ def get_ideal_vegtype_data(ny, nx):
     # vegtype[:, nx//4*3:] = 2        # IGBP 2 = Evergreen Broadleaf
 
     # sea_grass_mountain
-    # vegtype[:, :nx//2] = 17         # IGBP 17 = Water Bodies (Aligned with standard)
-    # vegtype[:, nx//2:nx//4*3] = 10  # IGBP 10 = Grass
-    # vegtype[:, nx//4*3:] = 2        # IGBP 2 = Evergreen Broadleaf
+    vegtype[:, :nx//2] = 17         # IGBP 17 = Water Bodies (Aligned with standard)
+    vegtype[:, nx//2:nx//4*3] = 10  # IGBP 10 = Grass
+    vegtype[:, nx//4*3:] = 2        # IGBP 2 = Evergreen Broadleaf
 
     # rcemip
     # vegtype[:, :] = 17         # IGBP 17 = Water Bodies (Aligned with standard)
 
     # grass
-    vegtype[:, :] = 10         # IGBP 10 = Grass
+    # vegtype[:, :] = 10         # IGBP 10 = Grass
 
     # urban
     # vegtype[:, :] = 13         # IGBP 13 = Urban
 
     # evergreen
     # vegtype[:, :] = 2         # IGBP 2 = evergreen
+
+    # vegtype = np.ones((ny, nx), dtype='i4')
+    # vegtype[:,:] = 17
+    # vegtype[:, idx_coastal:idx_start] = 10
+    # vegtype[:, idx_start:] = 2
+    # vegtype = np.roll(vegtype,shift=shift_x,axis=1)
 
     return vegtype
 
@@ -294,15 +387,19 @@ def get_ideal_soiltype_data(ny, nx):
     # soiltype[:, nx//4*3:] = 13               # STATSGO 13 = Organic Material
 
     # sea_grass_mountain
-    # soiltype[:, :nx//2] = 14                 # STATSGO 14 = Water
-    # soiltype[:, nx//2:nx//4*3] = 13          # STATSGO 13 = Organic Material
-    # soiltype[:, nx//4*3:] = 13               # STATSGO 13 = Organic Material
+    soiltype[:, :nx//2] = 14                 # STATSGO 14 = Water
+    soiltype[:, nx//2:nx//4*3] = 13          # STATSGO 13 = Organic Material
+    soiltype[:, nx//4*3:] = 13               # STATSGO 13 = Organic Material
 
     # rcemip
     # soiltype[:, :] = 14                 # STATSGO 14 = Water
 
     # organic material
-    soiltype[:, :] = 13
+    # soiltype[:, :] = 13
+
+    # soiltype = np.ones((ny, nx), dtype='i4')*14
+    # soiltype[:, idx_coastal:] = 13
+    # soiltype = np.roll(soiltype,shift=shift_x,axis=1)
     return soiltype
 
 def get_ideal_slopetype_data(ny, nx):
@@ -321,21 +418,26 @@ def get_albedo_data(ny, nx):
     # albedo[:, nx//4*3:] = 12
 
     # sea_grass_mountain
-    # albedo[:, :nx//2] = 8
-    # albedo[:, nx//2:nx//4*3] = 19
-    # albedo[:, nx//4*3:] = 12
+    albedo[:, :nx//2] = 8
+    albedo[:, nx//2:nx//4*3] = 19
+    albedo[:, nx//4*3:] = 12
 
     # rcemip
     # albedo[:, :] = 8
 
     # grass
-    albedo[:, :] = 19
+    # albedo[:, :] = 19
 
     # urban
     # albedo[:, :] = 15
 
     # evergreen
     # albedo[:, :] = 12
+
+    # albedo[:,:] = 30
+    # albedo[:, idx_coastal:idx_start] = 19
+    # albedo[:, idx_start:] = 12
+    # albedo = np.roll(albedo,shift=shift_x,axis=1)
     return albedo
 
 def get_gvf_data(ny, nx):
@@ -346,21 +448,24 @@ def get_gvf_data(ny, nx):
     # gvf[:, nx//4*3:] = 95
 
     # sea_grass_mountain
-    # gvf[:, :nx//2] = 0
-    # gvf[:, nx//2:nx//4*3] = 80
-    # gvf[:, nx//4*3:] = 95
+    gvf[:, :nx//2] = 0
+    gvf[:, nx//2:nx//4*3] = 80
+    gvf[:, nx//4*3:] = 95
 
     # rcemip
     # gvf[:, :] = 0
 
     # grass
-    gvf[:, :] = 80
+    # gvf[:, :] = 80
 
     # urban
     # gvf[:, :] = 10
 
     # evergreen
     # gvf[:, :] = 95
+    # gvf[:, idx_coastal:idx_start] = 80
+    # gvf[:, idx_start:] = 95
+    # gvf = np.roll(gvf,shift=shift_x,axis=1)
     return gvf
 
 def get_lai_data(ny, nx):
@@ -371,21 +476,25 @@ def get_lai_data(ny, nx):
     # lai[:, nx//4*3:] = 6.48
 
     # sea_grass_mountain
-    # lai[:, :nx//2] = 0
-    # lai[:, nx//2:nx//4*3] = 4
-    # lai[:, nx//4*3:] = 6.48
+    lai[:, :nx//2] = 0
+    lai[:, nx//2:nx//4*3] = 4
+    lai[:, nx//4*3:] = 6.48
 
     # rcemip
     # lai[:, :] = 0
 
     # grass
-    lai[:, :] = 4
+    # lai[:, :] = 4
 
     # urban
     # lai[:, :] = 1
 
     # evergreen
     # lai[:, :] = 6.48
+
+    # lai[:, idx_coastal:idx_start] = 4
+    # lai[:, idx_start:] = 6.48
+    # lai = np.roll(lai,shift=shift_x,axis=1)
     return lai
 
 SM_INIT = [0.3054033, 0.3054033, 0.3054033, 0.3054033] # soil moisture for winter
@@ -599,97 +708,100 @@ lon_2d, lat_2d = np.meshgrid(lon_1d, lat_1d)
 # ==============================================================================
 # Output to NetCDF
 # ==============================================================================
+roll_idx_x = NX//4
+roll_idx_y = NY//4
+
 variables_config = {
     'lon': {
-        'data': lon_2d, 'dims': ('ny', 'nx'), 'units': 'degrees_east', 'dtype': 'f8',  
+        'data': lon_2d+DX*NX//4/111000, 'dims': ('ny', 'nx'), 'units': 'degrees_east', 'dtype': 'f8',
         'long_name': 'Longitude (2D matrix)'
     },
     'lat': {
-        'data': lat_2d, 'dims': ('ny', 'nx'), 'units': 'degrees_north', 'dtype': 'f8',  
+        'data': lat_2d+DY*NY//4/111000, 'dims': ('ny', 'nx'), 'units': 'degrees_north', 'dtype': 'f8',
         'long_name': 'Latitude (2D matrix)'
     },
     'topo': {
-        'data': topo.astype('f8'), 'dims': ('ny', 'nx'), 'units': 'grid', 'dtype': 'f8',  
+        'data': np.roll(topo.astype('f8'), (roll_idx_y, roll_idx_x), axis=(0,1)), 'dims': ('ny', 'nx'), 'units': 'grid', 'dtype': 'f8',
         'long_name': 'Topography index (Vertical level index of the surface)'
     },
     'mask': {
-        'data': mask, 'dims': ('nz', 'ny', 'nx'), 'units': 'T/F', 'dtype': 'i1',  
+        'data': np.roll(mask, (roll_idx_y, roll_idx_x), axis=(1,2)), 'dims': ('nz', 'ny', 'nx'), 'units': 'T/F', 'dtype': 'i1',
         'long_name': '3D atmospheric mask (0 = terrain inside, 1 = free atmosphere)'
     },
     'height': {
-        'data': height, 'dims': ('ny', 'nx'), 'units': 'km', 'dtype': 'f8',  
+        'data': np.roll(height, (roll_idx_y, roll_idx_x), axis=(0,1)), 'dims': ('ny', 'nx'), 'units': 'km', 'dtype': 'f8',
         'long_name': 'Physical terrain height above sea level'
     },
     'sea_land_ice_mask': {
-        'data': sea_land_ice_mask, 'dims': ('ny', 'nx'), 'units': 'flag', 'dtype': 'i4',  
+        'data': np.roll(sea_land_ice_mask, (roll_idx_y, roll_idx_x), axis=(0,1)), 'dims': ('ny', 'nx'), 'units': 'flag', 'dtype': 'i4',
         'long_name': 'Sea/Land/Ice mask (0 = water bodies, 1 = land or ice)'
     },
     'vegtype': {
-        'data': lu, 'dims': ('ny', 'nx'), 'units': 'category', 'dtype': 'i4',  
+        'data': np.roll(lu, (roll_idx_y, roll_idx_x), axis=(0,1)), 'dims': ('ny', 'nx'), 'units': 'category', 'dtype': 'i4',
         'long_name': 'Vegetation / Land-use category (IGBP / MODIS NOAH 20-category)'
     },
     'soiltype': {
-        'data': soil, 'dims': ('ny', 'nx'), 'units': 'category', 'dtype': 'i4',  
+        'data': np.roll(soil, (roll_idx_y, roll_idx_x), axis=(0,1)), 'dims': ('ny', 'nx'), 'units': 'category', 'dtype': 'i4',
         'long_name': 'Soil texture category (STATSGO 19-category)'
     },
     'slopetype': {
-        'data': slope, 'dims': ('ny', 'nx'), 'units': 'category', 'dtype': 'i4',  
+        'data': np.roll(slope, (roll_idx_y, roll_idx_x), axis=(0,1)), 'dims': ('ny', 'nx'), 'units': 'category', 'dtype': 'i4',
         'long_name': 'Slope category'
     },
     'Tg': {
-        'data': Tg, 'dims': ('ny', 'nx'), 'units': 'K', 'dtype': 'f8',  
+        'data': np.roll(Tg, (roll_idx_y, roll_idx_x), axis=(0,1)), 'dims': ('ny', 'nx'), 'units': 'K', 'dtype': 'f8',
         'long_name': 'Deep soil temperature / Ground temperature'
     },
     'albedo': {
-        'data': albedo, 'dims': ('ny', 'nx'), 'units': '%', 'dtype': 'f8',  
+        'data': np.roll(albedo, (roll_idx_y, roll_idx_x), axis=(0,1)), 'dims': ('ny', 'nx'), 'units': '%', 'dtype': 'f8',
         'long_name': 'Surface background snow-free albedo'
     },
     'gvf': {
-        'data': gvf, 'dims': ('ny', 'nx'), 'units': '%', 'dtype': 'f8',  
+        'data': np.roll(gvf, (roll_idx_y, roll_idx_x), axis=(0,1)), 'dims': ('ny', 'nx'), 'units': '%', 'dtype': 'f8',
         'long_name': 'Green vegetation fraction'
     },
     'lai': {
-        'data': lai, 'dims': ('ny', 'nx'), 'units': 'm2/m2', 'dtype': 'f8',  
+        'data': np.roll(lai, (roll_idx_y, roll_idx_x), axis=(0,1)), 'dims': ('ny', 'nx'), 'units': 'm2/m2', 'dtype': 'f8',
         'long_name': 'Leaf area index'
     },
     'shdmax': {
-        'data': shdmax, 'dims': ('ny', 'nx'), 'units': '%', 'dtype': 'f8',  
+        'data': np.roll(shdmax, (roll_idx_y, roll_idx_x), axis=(0,1)), 'dims': ('ny', 'nx'), 'units': '%', 'dtype': 'f8',
         'long_name': 'Maximum areal fractional coverage of green vegetation'
     },
     'shdmin': {
-        'data': shdmin, 'dims': ('ny', 'nx'), 'units': '%', 'dtype': 'f8',  
+        'data': np.roll(shdmin, (roll_idx_y, roll_idx_x), axis=(0,1)), 'dims': ('ny', 'nx'), 'units': '%', 'dtype': 'f8',
         'long_name': 'Minimum areal fractional coverage of green vegetation'
     },
     'sm1': {
-        'data': sm1, 'dims': ('ny', 'nx'), 'units': 'm3/m3', 'dtype': 'f8',
+        'data': np.roll(sm1, (roll_idx_y, roll_idx_x), axis=(0,1)), 'dims': ('ny', 'nx'), 'units': 'm3/m3', 'dtype': 'f8',
         'long_name': 'Noah layer 1 volumetric soil moisture'
     },
     'sm2': {
-        'data': sm2, 'dims': ('ny', 'nx'), 'units': 'm3/m3', 'dtype': 'f8',
+        'data': np.roll(sm2, (roll_idx_y, roll_idx_x), axis=(0,1)), 'dims': ('ny', 'nx'), 'units': 'm3/m3', 'dtype': 'f8',
         'long_name': 'Noah layer 2 volumetric soil moisture'
     },
     'sm3': {
-        'data': sm3, 'dims': ('ny', 'nx'), 'units': 'm3/m3', 'dtype': 'f8',
+        'data': np.roll(sm3, (roll_idx_y, roll_idx_x), axis=(0,1)), 'dims': ('ny', 'nx'), 'units': 'm3/m3', 'dtype': 'f8',
         'long_name': 'Noah layer 3 volumetric soil moisture'
     },
     'sm4': {
-        'data': sm4, 'dims': ('ny', 'nx'), 'units': 'm3/m3', 'dtype': 'f8',
+        'data': np.roll(sm4, (roll_idx_y, roll_idx_x), axis=(0,1)), 'dims': ('ny', 'nx'), 'units': 'm3/m3', 'dtype': 'f8',
         'long_name': 'Noah layer 4 volumetric soil moisture'
     },
     'sl1': {
-        'data': sl1, 'dims': ('ny', 'nx'), 'units': 'm3/m3', 'dtype': 'f8',
+        'data': np.roll(sl1, (roll_idx_y, roll_idx_x), axis=(0,1)), 'dims': ('ny', 'nx'), 'units': 'm3/m3', 'dtype': 'f8',
         'long_name': 'Noah layer 1 liquid soil moisture'
     },
     'sl2': {
-        'data': sl2, 'dims': ('ny', 'nx'), 'units': 'm3/m3', 'dtype': 'f8',
+        'data': np.roll(sl2, (roll_idx_y, roll_idx_x), axis=(0,1)), 'dims': ('ny', 'nx'), 'units': 'm3/m3', 'dtype': 'f8',
         'long_name': 'Noah layer 2 liquid soil moisture'
     },
     'sl3': {
-        'data': sl3, 'dims': ('ny', 'nx'), 'units': 'm3/m3', 'dtype': 'f8',
+        'data': np.roll(sl3, (roll_idx_y, roll_idx_x), axis=(0,1)), 'dims': ('ny', 'nx'), 'units': 'm3/m3', 'dtype': 'f8',
         'long_name': 'Noah layer 3 liquid soil moisture'
     },
     'sl4': {
-        'data': sl4, 'dims': ('ny', 'nx'), 'units': 'm3/m3', 'dtype': 'f8',
+        'data': np.roll(sl4, (roll_idx_y, roll_idx_x), axis=(0,1)), 'dims': ('ny', 'nx'), 'units': 'm3/m3', 'dtype': 'f8',
         'long_name': 'Noah layer 4 liquid soil moisture'
     }
 }
@@ -697,12 +809,65 @@ variables_config = {
 variables_config.update(build_tracer_variables(
     config, NZ, NY, NX, RESERVED_MODEL_FIELD_NAMES.union(variables_config)))
 
+dimension_sizes = {'nx': NX, 'ny': NY, 'nz': NZ}
+for var_name, info in variables_config.items():
+    unknown_dimensions = set(info['dims']).difference(dimension_sizes)
+    if unknown_dimensions:
+        raise ValueError(
+            f"Variable '{var_name}' uses unknown dimensions {sorted(unknown_dimensions)}")
+    expected_shape = tuple(dimension_sizes[dim] for dim in info['dims'])
+    if np.shape(info['data']) != expected_shape:
+        raise ValueError(
+            f"Variable '{var_name}' has shape {np.shape(info['data'])}; "
+            f"expected {expected_shape}")
+
+requested_variables = config.get('netcdf_reader', {}).get('variables_to_read', {})
+if not isinstance(requested_variables, dict):
+    raise ValueError("netcdf_reader.variables_to_read must be an object")
+requested_spatial = set()
+for dimension in ('2d', '3d'):
+    names = requested_variables.get(dimension, [])
+    if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+        raise ValueError(
+            f"netcdf_reader.variables_to_read.{dimension} must be a list of names")
+    requested_spatial.update(names)
+missing_requested = sorted(requested_spatial.difference(variables_config))
+if missing_requested:
+    raise ValueError(
+        "The spatial generator does not define configured NetCDF variables: "
+        f"{missing_requested}")
+
 with nc.Dataset(FILENAME, 'w', format='NETCDF4') as ds:
     print(f"\nWriting Initialization Data to: {FILENAME} ...")
     
     ds.createDimension('nx', NX)
     ds.createDimension('ny', NY)
     ds.createDimension('nz', NZ)
+    ds.createDimension('time', 1)
+    ds.Conventions = 'CF-1.8'
+    ds.title = 'VVMex spatial initial conditions'
+    ds.source = 'tools/generate_init_nc.py'
+    ds.history = 'Generated from the model JSON; vertical profiles remain external text inputs'
+
+    for name, data, units, standard_name, axis in (
+            ('nx', variables_config['lon']['data'][0, :], 'degrees_east', 'longitude', 'X'),
+            ('ny', variables_config['lat']['data'][:, 0], 'degrees_north', 'latitude', 'Y'),
+            ('nz', z_mid, 'm', 'altitude', 'Z')):
+        coordinate = ds.createVariable(name, 'f8', (name,))
+        coordinate[:] = data
+        coordinate.units = units
+        coordinate.standard_name = standard_name
+        coordinate.axis = axis
+        if name == 'nz':
+            coordinate.positive = 'up'
+
+    time = ds.createVariable('time', 'f8', ('time',))
+    time[0] = 0.0
+    time.units = 'seconds since 1970-01-01 00:00:00 UTC'
+    time.calendar = 'proleptic_gregorian'
+    time.standard_name = 'time'
+    time.axis = 'T'
+
 
     for var_name, info in variables_config.items():
         var = ds.createVariable(var_name, info['dtype'], info['dims'])
@@ -714,8 +879,22 @@ with nc.Dataset(FILENAME, 'w', format='NETCDF4') as ds:
             var.long_name = info['long_name']
             
         var[:] = info['data']
+    required = {'lon', 'lat', 'topo'}.union(requested_spatial)
+    missing = sorted(required.difference(ds.variables))
+    if missing:
+        raise ValueError(
+            f"Generated spatial file '{FILENAME}' is missing required variables: {missing}")
+    for coordinate_name in ('nx', 'ny', 'nz'):
+        values = np.asarray(ds.variables[coordinate_name][:])
+        if values.size < 2 or not np.all(np.isfinite(values)) or not np.all(np.diff(values) > 0):
+            raise ValueError(
+                f"Coordinate '{coordinate_name}' must be finite and strictly increasing")
+    if not np.all((-90.0 <= ds.variables['ny'][:]) & (ds.variables['ny'][:] <= 90.0)):
+        raise ValueError("Latitude coordinate is outside the valid -90..90 degree range")
+    if not np.all((-180.0 <= ds.variables['nx'][:]) & (ds.variables['nx'][:] <= 360.0)):
+        raise ValueError("Longitude coordinate is outside the supported -180..360 degree range")
 
-print("Initialization file generated successfully with detailed variable names!")
+print("Spatial initialization file generated successfully!")
 
 
 # ==============================================================================

@@ -22,24 +22,64 @@ bool ends_with(const std::string& value, const std::string& suffix) {
     return value.size() >= suffix.size() &&
            value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
+
+bool is_standard_test(const Utils::ConfigurationManager& config) {
+    return config.get_value<std::string>(
+               "simulation.idealized_test", "none") != "none";
+}
 } // namespace
 
 Initializer::Initializer(const Utils::ConfigurationManager& config, const Grid& grid, Parameters& parameters, State &state, HaloExchanger& halo_exchanger) 
     : config_(config), grid_(grid), parameters_(parameters), state_(state), halo_exchanger_(halo_exchanger) {
     initialize_grid();
 
-    if (!config.has_key("initial_conditions") && !config.has_key("netcdf_reader")) {
-        return;
+    const bool standard_test = is_standard_test(config);
+    if (!standard_test) {
+        if (!config.has_key("initial_conditions.format") ||
+            !config.has_key("initial_conditions.source_file")) {
+            throw std::runtime_error(
+                "[Initializer] Nonstandard cases require a text profile at "
+                "'initial_conditions.source_file'.");
+        }
+        if (config.get_value<std::string>("initial_conditions.format") != "txt") {
+            throw std::runtime_error(
+                "[Initializer] Nonstandard cases require "
+                "'initial_conditions.format' to be 'txt' so vertical profiles "
+                "remain separate from the spatial NetCDF file.");
+        }
+        if (!config.has_key("netcdf_reader.source_file")) {
+            throw std::runtime_error(
+                "[Initializer] Nonstandard cases require a spatial "
+                "initial-condition NetCDF at 'netcdf_reader.source_file'.");
+        }
     }
 
-    std::string format = config.get_value<std::string>("initial_conditions.format");
-    std::string source_file = config.get_value<std::string>("initial_conditions.source_file");
-    std::string pnetcdf_source_file = config.get_value<std::string>("netcdf_reader.source_file");
+    if (config.has_key("initial_conditions.format")) {
+        const std::string format =
+            config.get_value<std::string>("initial_conditions.format");
+        if (format == "txt") {
+            if (!config.has_key("initial_conditions.source_file")) {
+                throw std::runtime_error(
+                    "[Initializer] Missing profile path at "
+                    "'initial_conditions.source_file'.");
+            }
+            const std::string source_file =
+                config.get_value<std::string>("initial_conditions.source_file");
+            reader_ = std::make_unique<VVM::IO::TxtReader>(
+                source_file, grid, parameters_, config_);
+        } else if (format != "netcdf") {
+            throw std::runtime_error(
+                "[Initializer] Unsupported initial_conditions.format '" +
+                format + "'. Expected 'txt' or 'netcdf'.");
+        }
+    }
 
-    if (format == "txt") {
-        reader_ = std::make_unique<VVM::IO::TxtReader>(source_file, grid, parameters_, config_);
-    } 
-    pnetcdf_reader_ = std::make_unique<VVM::IO::PnetcdfReader>(pnetcdf_source_file, grid, parameters_, config_, halo_exchanger_);
+    if (config.has_key("netcdf_reader.source_file")) {
+        const std::string source_file =
+            config.get_value<std::string>("netcdf_reader.source_file");
+        pnetcdf_reader_ = std::make_unique<VVM::IO::PnetcdfReader>(
+            source_file, grid, parameters_, config_, halo_exchanger_);
+    }
     if (config.get_value<bool>("restart.enable", false)) {
         std::string restart_source_file = config.get_value<std::string>("restart.source_file");
         if (ends_with(restart_source_file, ".h5")) {
@@ -64,6 +104,9 @@ void Initializer::initialize_state() const {
     }
     initialize_topo();
     assign_vars();
+    if (pnetcdf_reader_ && config_.get_value<bool>("initial_conditions.reapply_spatial_initial_conditions", false)) {
+        pnetcdf_reader_->read_and_initialize(state_);
+    }
     if (restart_reader_) {
         load_restart();
     } else {
@@ -631,19 +674,34 @@ void Initializer::assign_vars() const {
         Kokkos::deep_copy(lat, real(23.458));
     }
 
-    // TODO: This is tcvvm setting. It needs to be user friendly.
+    // A configured reference value selects constant f by default. An optional
+    // beta adds a linear north-south gradient while preserving the same
+    // Coriolis tendency implementation. Preserve the legacy initialization
+    // when the reference value is absent so existing configurations remain
+    // unchanged.
     VVM::Real OMEGA = config_.get_value<VVM::Real>("constants.OMEGA", real(7.292e-5));
-    VVM::Real PI = config_.get_value<VVM::Real>("constants.PI", real(3.14159265));
+    const bool use_constant_coriolis = config_.has_key("constants.coriolis_parameter");
+    const VVM::Real constant_coriolis = config_.get_value<VVM::Real>("constants.coriolis_parameter", real(0.0));
+    const VVM::Real coriolis_beta = config_.get_value<VVM::Real>("constants.coriolis_beta", real(0.0));
+    const VVM::Real coriolis_reference_y = config_.get_value<VVM::Real>("constants.coriolis_reference_y_m", real(0.5) * grid_.get_global_points_y() * grid_.get_dy());
     auto& f = state_.get_field<1>("f").get_mutable_device_data();
     auto& f_2d = state_.get_field<2>("f_2d").get_mutable_device_data();
     const int global_start_j = grid_.get_local_physical_start_y();
+    const VVM::Real grid_dy = grid_.get_dy();
     const auto& dy = parameters_.dy;
     Kokkos::parallel_for("Init_Coriolis", 
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0}, {ny, nx}),
         KOKKOS_LAMBDA(const int j, const int i) {
-            const int global_j = global_start_j + j;
-            f(j) = real(2.) * OMEGA * Kokkos::sin((global_j - real(1540.)/real(2.) - real(0.5))*dy()/real(6.37e6));
-            f_2d(j,i) = real(2.) * OMEGA * Kokkos::sin((global_j - real(1540.)/real(2.) - real(0.5))*dy()/real(6.37e6));
+            const int global_j = global_start_j + j - h;
+            const VVM::Real y = (static_cast<VVM::Real>(global_j) + real(0.5)) * grid_dy;
+            const VVM::Real coriolis = use_constant_coriolis
+                ? constant_coriolis +
+                      coriolis_beta * (y - coriolis_reference_y)
+                : real(2.) * OMEGA * Kokkos::sin(
+                      (global_j - real(1540.) / real(2.) - real(0.5))
+                      * dy() / real(6.37e6));
+            f(j) = coriolis;
+            f_2d(j,i) = coriolis;
         }
     );
     halo_exchanger_.exchange_halos(state_.get_field<2>("f_2d"));
