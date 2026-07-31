@@ -57,10 +57,10 @@ extra_javascript:
 
 nav:
   - Home: index.md
+  - Environment Installation: environment.md
   - Quick Start: quick-start.md
   - User Guides:
       - Overview: user-guides/index.md
-      - Environment Installation: user-guides/environment.md
       - Model Configuration: user-guides/configuration.md
       - I/O Management: user-guides/io-management.md
   - Developer Guides:
