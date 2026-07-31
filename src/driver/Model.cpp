@@ -134,9 +134,10 @@ void Model::init() {
         predict_uvtopmn_ = false;
     }
 
-    // if (config_.get_value<bool>("restart.enable", false)) {
-    //     dycore_->compute_wind_fields();
-    // }
+    if (config_.get_value<bool>(
+            "initial_conditions.diagnose_wind_from_vorticity", false)) {
+        dycore_->compute_wind_fields();
+    }
     dycore_->compute_diagnostic_fields();
     if (config_.get_value<bool>("restart.enable", false)) {
         dycore_->initialize_restart_history();

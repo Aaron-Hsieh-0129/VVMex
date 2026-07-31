@@ -34,13 +34,23 @@ void TxtReader::read_and_initialize(VVM::Core::State& state) {
 
 void TxtReader::read_file() {
     std::ifstream infile(source_file_);
-    if (!infile.is_open()) throw std::runtime_error("Failed to open file: " + source_file_);
+    if (!infile.is_open()) {
+        throw std::runtime_error(
+            "[TxtReader] Failed to open profile file '" + source_file_ + "'.");
+    }
 
     std::string line;
+    size_t line_number = 0;
     // Skip comments
     while (std::getline(infile, line)) {
+        ++line_number;
         if (line.empty() || line[0] == '#' || line.find("===") != std::string::npos) continue;
         break; 
+    }
+
+    if (line.empty()) {
+        throw std::runtime_error(
+            "[TxtReader] Profile file '" + source_file_ + "' has no header.");
     }
 
     // Parse Header
@@ -48,26 +58,60 @@ void TxtReader::read_file() {
     std::string col_name;
     std::vector<std::string> headers;
     while (ss_header >> col_name) {
+        if (raw_data_.count(col_name) != 0) {
+            throw std::runtime_error(
+                "[TxtReader] Profile file '" + source_file_ +
+                "' contains duplicate column '" + col_name + "'.");
+        }
         headers.push_back(col_name);
         raw_data_[col_name] = std::vector<VVM::Real>();
+    }
+    if (headers.empty()) {
+        throw std::runtime_error(
+            "[TxtReader] Profile file '" + source_file_ + "' has an empty header.");
     }
 
     // Parse Data
     while (std::getline(infile, line)) {
-        if (line.empty()) continue;
+        ++line_number;
+        if (line.empty() || line[0] == '#') continue;
         std::stringstream ss_data(line);
         VVM::Real val;
         for (const auto& h : headers) {
-            if (ss_data >> val) raw_data_[h].push_back(val);
+            if (!(ss_data >> val)) {
+                throw std::runtime_error(
+                    "[TxtReader] Profile file '" + source_file_ + "', line " +
+                    std::to_string(line_number) + ", is missing or has an invalid value "
+                    "for column '" + h + "'.");
+            }
+            raw_data_[h].push_back(val);
+        }
+        std::string extra;
+        if (ss_data >> extra) {
+            throw std::runtime_error(
+                "[TxtReader] Profile file '" + source_file_ + "', line " +
+                std::to_string(line_number) +
+                ", has more values than the header defines.");
         }
     }
     
     // Check essential columns
     if (raw_data_.find("pbar") == raw_data_.end()) 
-        throw std::runtime_error("Missing required column 'pbar' in input file.");
+        throw std::runtime_error("[TxtReader] Profile file '" + source_file_ +
+                                 "' is missing required column 'pbar'.");
+
+    if (raw_data_.find("qvbar") == raw_data_.end())
+        throw std::runtime_error("[TxtReader] Profile file '" + source_file_ +
+                                 "' is missing required column 'qvbar'.");
 
     if (raw_data_.find("Tbar") == raw_data_.end() && raw_data_.find("thbar") == raw_data_.end()) 
-        throw std::runtime_error("Missing required column 'Tbar' or 'thbar' in input file.");
+        throw std::runtime_error("[TxtReader] Profile file '" + source_file_ +
+                                 "' is missing required column 'Tbar' or 'thbar'.");
+
+    if (raw_data_.at("pbar").size() < 2) {
+        throw std::runtime_error("[TxtReader] Profile file '" + source_file_ +
+                                 "' must contain at least two data rows.");
+    }
 
     bool enable_constant_wind = config_.get_value<bool>("initial_conditions.constant_upper_wind.enable", false);
     if (enable_constant_wind) {
@@ -240,14 +284,13 @@ void TxtReader::initialize_thermodynamics(VVM::Core::State& state) {
         for (int k = h; k < nz; ++k) {
             VVM::Real z = z_mid(k);
             qvbar(k) = interpolate(z, input_z_, raw_data_.at("qvbar"));
-            
-            if (has_tbar) {
-                Tbar(k) = interpolate(z, input_z_, T_in);
-            } 
-            else {
-                thbar(k) = interpolate(z, input_z_, th_in);
-                Tbar(k) = interpolate(z, input_z_, T_in);
-            }
+
+            // Temperature is the interpolation variable for both supported
+            // input formats. If the profile supplies potential temperature,
+            // T_in was converted at the source pressure levels above. Do not
+            // independently interpolate thbar here: interpolation and the
+            // pressure-dependent Exner conversion do not commute.
+            Tbar(k) = interpolate(z, input_z_, T_in);
         }
 
         std::vector<VVM::Real> pilog(nz);
@@ -269,19 +312,9 @@ void TxtReader::initialize_thermodynamics(VVM::Core::State& state) {
             for (int k = h; k < nz; ++k) {
                 pibar(k) = std::exp(pilog[k]);
                 pbar(k) = P0 * std::pow(pibar(k), Cp/Rd);
-                if (has_tbar) {
-                    thbar(k) = Tbar(k) / pibar(k);
-                } 
-                else {
-                    Tbar(k) = thbar(k) * pibar(k);
-                }
+                thbar(k) = Tbar(k) / pibar(k);
             }
-            if (has_tbar) {
-                thbar(h-1) = Tbar(h-1) / pibar(h-1);
-            } 
-            else {
-                Tbar(h-1) = thbar(h-1) * pibar(h-1);
-            }
+            thbar(h-1) = Tbar(h-1) / pibar(h-1);
         }
 
         for (int k = h; k < nz; k++) {

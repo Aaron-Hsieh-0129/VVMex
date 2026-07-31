@@ -47,6 +47,10 @@ private:
 
     std::map<std::string, MPI_Offset> get_file_dimensions(int ncid) const;
     void validate_dimensions(const std::map<std::string, MPI_Offset>& file_dims) const;
+    void validate_variable_dimensions(
+        int ncid, int varid, const std::string& variable,
+        const std::vector<std::string>& expected_names,
+        const std::vector<MPI_Offset>& expected_sizes) const;
 
     std::string source_file_;
     const VVM::Core::Grid& grid_;

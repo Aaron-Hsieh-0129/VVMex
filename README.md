@@ -111,6 +111,44 @@ cmake --build build -j<core_number>
         
     - The spatial NetCDF files can be generated with `tools/generate_init_nc.py`; the script writes the path configured in `netcdf_reader.source_file`.
 
+    - Initialization keeps the original split design: `initial_conditions.source_file`
+      supplies the vertical text profile, while `netcdf_reader.source_file` supplies
+      spatial, surface, and tracer fields.
+
+    - Nonstandard cases (`simulation.idealized_test: "none"`) require both inputs.
+      Missing profile columns, configured NetCDF variables, and incompatible spatial
+      dimensions fail with diagnostics that name the input file and field.
+
+- **ERA5 nudging/large-scale forcing**:
+
+    Edit the user-settings section near the top of
+    `tools/generate_ls_forcing.py`: select the case JSON, local ERA5 dynamics
+    and humidity files, UTC start/end times, target geographic bounds, and the
+    separate `WIND_MEAN_*` bounds used for the U/V profile average. Then run:
+
+    ```bash
+    python tools/generate_ls_forcing.py
+    ```
+
+    `VVM_CONFIG_PATH` may override the configured JSON path. The script reads
+    `nx`, `ny`, output naming, and forcing cadence from that JSON. It also reads
+    the external `initial_conditions.source_file` profile and reproduces
+    VVMex's hydrostatic initialization to obtain the actual physical-layer
+    pressure grid; target pressure levels are not hard-coded.
+
+    The tool uses `numpy`, `xarray`, and `netCDF4`. Reading GRIB additionally
+    requires the `cfgrib` backend and ecCodes; NetCDF inputs do not. ERA5
+    downloading, inspection plots, and profile generation are intentionally
+    outside this script. Timestamp generation uses `PROCESS_COUNT = 16` worker
+    processes by default; set it to `1` to run serially.
+
+    Like `generate_init_nc.py`, the forcing generator also retains an
+    idealized mode. Set `USE_ERA5_FORCING = False` to skip ERA5 input and call
+    `define_idealized_forcing(...)`. Its default fields are horizontally
+    uniform profiles derived from `initial_conditions.source_file`; edit that
+    helper to define idealized spatial structure or time dependence.
+
+
 ### Step 6: Execute
 
 We provide a user-friendly wrapper script (submit.py) located in the root directory to handle both local execution and SLURM job submission. It automatically manages MPI tasks, GPU allocations, and directory creation.
