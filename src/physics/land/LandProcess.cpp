@@ -70,60 +70,60 @@ LandProcess::LandProcess(const Utils::ConfigurationManager& config,
     int ny = m_ny+2*m_halo_y;
     int nx = m_nx+2*m_halo_x;
 
-    if (!state.has_field("hfx")) state.add_field<2>("hfx", {ny, nx});
-    if (!state.has_field("le")) state.add_field<2>("le", {ny, nx});
-    if (!state.has_field("gfx")) state.add_field<2>("gfx", {ny, nx});
-    if (!state.has_field("sea_land_ice_mask")) state.add_field<2>("sea_land_ice_mask", {ny, nx});
-    if (!state.has_field("canopy")) state.add_field<2>("canopy", {ny, nx});
-    if (!state.has_field("snwdph")) state.add_field<2>("snwdph", {ny, nx});
-    if (!state.has_field("sneqv")) state.add_field<2>("sneqv", {ny, nx});
-    if (!state.has_field("zorl")) state.add_field<2>("zorl", {ny, nx});
-    if (!state.has_field("cmx")) state.add_field<2>("cmx", {ny, nx});
-    if (!state.has_field("chx")) state.add_field<2>("chx", {ny, nx});
-    if (!state.has_field("vegtype")) state.add_field<2>("vegtype", {ny, nx});
-    if (!state.has_field("soiltype")) state.add_field<2>("soiltype", {ny, nx});
-    if (!state.has_field("slopetype")) state.add_field<2>("slopetype", {ny, nx});
-    if (!state.has_field("shdmin")) state.add_field<2>("shdmin", {ny, nx});
-    if (!state.has_field("shdmax")) state.add_field<2>("shdmax", {ny, nx});
-    if (!state.has_field("albedo")) state.add_field<2>("albedo", {ny, nx});
-    if (!state.has_field("gvf")) state.add_field<2>("gvf", {ny, nx});
-    if (!state.has_field("lai")) state.add_field<2>("lai", {ny, nx});
-    if (!state.has_field("st1")) state.add_field<2>("st1", {ny, nx});
-    if (!state.has_field("st2")) state.add_field<2>("st2", {ny, nx});
-    if (!state.has_field("st3")) state.add_field<2>("st3", {ny, nx});
-    if (!state.has_field("st4")) state.add_field<2>("st4", {ny, nx});
-    if (!state.has_field("sm1")) state.add_field<2>("sm1", {ny, nx});
-    if (!state.has_field("sm2")) state.add_field<2>("sm2", {ny, nx});
-    if (!state.has_field("sm3")) state.add_field<2>("sm3", {ny, nx});
-    if (!state.has_field("sm4")) state.add_field<2>("sm4", {ny, nx});
-    if (!state.has_field("sl1")) state.add_field<2>("sl1", {ny, nx});
-    if (!state.has_field("sl2")) state.add_field<2>("sl2", {ny, nx});
-    if (!state.has_field("sl3")) state.add_field<2>("sl3", {ny, nx});
-    if (!state.has_field("sl4")) state.add_field<2>("sl4", {ny, nx});
-    if (!state.has_field("sfemis")) state.add_field<2>("sfemis", {ny, nx});
+    if (!state.has_field("hfx")) state.add_field<2>("hfx", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "kg K m-2 s-1", "density-weighted potential-temperature flux"});
+    if (!state.has_field("le")) state.add_field<2>("le", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "kg m-2 s-1", "water-vapor mass flux"});
+    if (!state.has_field("gfx")) state.add_field<2>("gfx", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "W m-2", "ground heat flux"});
+    if (!state.has_field("sea_land_ice_mask")) state.add_field<2>("sea_land_ice_mask", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "1", "sea-land-ice surface classification"});
+    if (!state.has_field("canopy")) state.add_field<2>("canopy", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m", "canopy water content"});
+    if (!state.has_field("snwdph")) state.add_field<2>("snwdph", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "mm", "snow depth"});
+    if (!state.has_field("sneqv")) state.add_field<2>("sneqv", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "mm", "snow water equivalent"});
+    if (!state.has_field("zorl")) state.add_field<2>("zorl", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m", "surface roughness length"});
+    if (!state.has_field("cmx")) state.add_field<2>("cmx", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m s-1", "surface exchange coefficient for momentum"});
+    if (!state.has_field("chx")) state.add_field<2>("chx", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m s-1", "surface exchange coefficient for heat and moisture"});
+    if (!state.has_field("vegtype")) state.add_field<2>("vegtype", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "Category", "vegetation type index"});
+    if (!state.has_field("soiltype")) state.add_field<2>("soiltype", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "Category", "soil type index"});
+    if (!state.has_field("slopetype")) state.add_field<2>("slopetype", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "Category", "surface slope type index"});
+    if (!state.has_field("shdmin")) state.add_field<2>("shdmin", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "%", "minimum green vegetation fraction"});
+    if (!state.has_field("shdmax")) state.add_field<2>("shdmax", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "%", "maximum green vegetation fraction"});
+    if (!state.has_field("albedo")) state.add_field<2>("albedo", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "%", "surface albedo"});
+    if (!state.has_field("gvf")) state.add_field<2>("gvf", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "%", "green vegetation fraction"});
+    if (!state.has_field("lai")) state.add_field<2>("lai", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m2 m-2", "leaf area index"});
+    if (!state.has_field("st1")) state.add_field<2>("st1", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "K", "soil temperature in layer 1"});
+    if (!state.has_field("st2")) state.add_field<2>("st2", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "K", "soil temperature in layer 2"});
+    if (!state.has_field("st3")) state.add_field<2>("st3", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "K", "soil temperature in layer 3"});
+    if (!state.has_field("st4")) state.add_field<2>("st4", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "K", "soil temperature in layer 4"});
+    if (!state.has_field("sm1")) state.add_field<2>("sm1", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m3 m-3", "total soil moisture in layer 1"});
+    if (!state.has_field("sm2")) state.add_field<2>("sm2", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m3 m-3", "total soil moisture in layer 2"});
+    if (!state.has_field("sm3")) state.add_field<2>("sm3", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m3 m-3", "total soil moisture in layer 3"});
+    if (!state.has_field("sm4")) state.add_field<2>("sm4", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m3 m-3", "total soil moisture in layer 4"});
+    if (!state.has_field("sl1")) state.add_field<2>("sl1", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m3 m-3", "liquid soil moisture in layer 1"});
+    if (!state.has_field("sl2")) state.add_field<2>("sl2", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m3 m-3", "liquid soil moisture in layer 2"});
+    if (!state.has_field("sl3")) state.add_field<2>("sl3", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m3 m-3", "liquid soil moisture in layer 3"});
+    if (!state.has_field("sl4")) state.add_field<2>("sl4", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m3 m-3", "liquid soil moisture in layer 4"});
+    if (!state.has_field("sfemis")) state.add_field<2>("sfemis", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "1", "surface longwave emissivity"});
 
 
-    if (!state.has_field("swdn_sfc")) state.add_field<2>("swdn_sfc", {ny, nx});
-    if (!state.has_field("swup_sfc")) state.add_field<2>("swup_sfc", {ny, nx});
-    if (!state.has_field("lwdn_sfc")) state.add_field<2>("lwdn_sfc", {ny, nx});
+    if (!state.has_field("swdn_sfc")) state.add_field<2>("swdn_sfc", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "W m-2", "surface downward shortwave radiative flux"});
+    if (!state.has_field("swup_sfc")) state.add_field<2>("swup_sfc", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "W m-2", "surface upward shortwave radiative flux"});
+    if (!state.has_field("lwdn_sfc")) state.add_field<2>("lwdn_sfc", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "W m-2", "surface downward longwave radiative flux"});
 
     m_use_tco_ocean = (ocean_scheme == "tco_ocean") ? 1 : 0; // false/true: 0/1 
 }
 
 void LandProcess::init() {
-    auto& th_v = state_.get_field<3>("th").get_device_data();
-    auto& pibar_v = state_.get_field<1>("pibar").get_device_data();
-    auto& topo_v = state_.get_field<2>("topo").get_device_data();
+    const auto& th_v = state_.get_field<3>("th").get_device_data();
+    const auto& pibar_v = state_.get_field<1>("pibar").get_device_data();
+    const auto& topo_v = state_.get_field<2>("topo").get_device_data();
     auto& Tg = state_.get_field<2>("Tg").get_mutable_device_data(); 
-    auto& sm1_v = state_.get_field<2>("sm1").get_device_data();
-    auto& sm2_v = state_.get_field<2>("sm2").get_device_data();
-    auto& sm3_v = state_.get_field<2>("sm3").get_device_data();
-    auto& sm4_v = state_.get_field<2>("sm4").get_device_data();
+    const auto& sm1_v = state_.get_field<2>("sm1").get_device_data();
+    const auto& sm2_v = state_.get_field<2>("sm2").get_device_data();
+    const auto& sm3_v = state_.get_field<2>("sm3").get_device_data();
+    const auto& sm4_v = state_.get_field<2>("sm4").get_device_data();
 
-    auto& sl1_v = state_.get_field<2>("sl1").get_device_data();
-    auto& sl2_v = state_.get_field<2>("sl2").get_device_data();
-    auto& sl3_v = state_.get_field<2>("sl3").get_device_data();
-    auto& sl4_v = state_.get_field<2>("sl4").get_device_data();
+    const auto& sl1_v = state_.get_field<2>("sl1").get_device_data();
+    const auto& sl2_v = state_.get_field<2>("sl2").get_device_data();
+    const auto& sl3_v = state_.get_field<2>("sl3").get_device_data();
+    const auto& sl4_v = state_.get_field<2>("sl4").get_device_data();
     
     Kokkos::parallel_for("InitLandStates", 
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {m_nx, m_ny}),

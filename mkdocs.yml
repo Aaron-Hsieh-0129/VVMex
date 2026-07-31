@@ -1,7 +1,7 @@
 site_name: VVMex Documentation
-site_description: Documentation for VVMex, a modular GPU-capable implementation of the Vector Vorticity cloud-resolving Model using C++, Kokkos, MPI, and ADIOS2.
-site_author: VVMex Development Team
-site_url: https://aaron-hsieh-0129.github.io/VVMex/
+site_description: GPU-accelerated Vector Vorticity Model
+site_author: Chin-Wei Hsieh
+site_url: https://Aaron-Hsieh-0129.github.io/VVMex/
 repo_url: https://github.com/Aaron-Hsieh-0129/VVMex
 repo_name: VVMex
 edit_uri: edit/main/docs/
@@ -57,10 +57,10 @@ extra_javascript:
 
 nav:
   - Home: index.md
+  - Environment Installation: environment.md
   - Quick Start: quick-start.md
   - User Guides:
       - Overview: user-guides/index.md
-      - Environment Installation: user-guides/environment.md
       - Model Configuration: user-guides/configuration.md
       - I/O Management: user-guides/io-management.md
   - Developer Guides:

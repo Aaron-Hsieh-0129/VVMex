@@ -8,10 +8,12 @@
 #include "utils/ConfigurationManager.hpp"
 #include "Parameters.hpp"
 #include "vvm_types.hpp"
+#include <algorithm>
 #include <map>
 #include <string>
 #include <memory>
 #include <variant>
+#include <vector>
 #include <cuda_runtime.h>
 #if defined(ENABLE_NCCL)
     #include <nccl.h>
@@ -49,19 +51,19 @@ public:
 #endif
 
     template<size_t Dim>
-    void add_field(const std::string& name, std::initializer_list<int> dims_list) {
+    void add_field(const std::string& name, std::initializer_list<int> dims_list, FieldMetadata metadata = {}) {
         if (dims_list.size() != Dim) {
             throw std::runtime_error("Dimension mismatch for field '" + name + "'");
         }
         std::array<int, Dim> dims;
         std::copy(dims_list.begin(), dims_list.end(), dims.begin());
-        auto [it, inserted] = fields_.try_emplace(name, std::in_place_type_t<Field<Dim>>(), name, dims);
+        auto [it, inserted] = fields_.try_emplace(name, std::in_place_type_t<Field<Dim>>(), name, dims, std::move(metadata));
         if (inserted) std::get<Field<Dim>>(it->second).set_to_zero();
     }
 
     template<size_t Dim>
-    void add_field(const std::string& name, const std::array<int, Dim>& dims) {
-        auto [it, inserted] = fields_.try_emplace(name, std::in_place_type_t<Field<Dim>>(), name, dims);
+    void add_field(const std::string& name, const std::array<int, Dim>& dims, FieldMetadata metadata = {}) {
+        auto [it, inserted] = fields_.try_emplace(name, std::in_place_type_t<Field<Dim>>(), name, dims, std::move(metadata));
         if (inserted) std::get<Field<Dim>>(it->second).set_to_zero();
     }
 
@@ -260,11 +262,35 @@ public:
         return fields_.find(name) != fields_.end();
     }
 
+    const std::vector<std::string>& get_tracer_names() const {
+        return tracer_names_;
+    }
+
+    const std::vector<std::string>& get_tracer_source_targets() const {
+        return tracer_source_targets_;
+    }
+
+    const std::vector<std::string>& get_tracer_source_names() const {
+        return tracer_source_names_;
+    }
+
+    bool is_tracer(const std::string& name) const {
+        return std::find(tracer_names_.begin(), tracer_names_.end(), name) != tracer_names_.end();
+    }
+
+    bool is_tracer_source(const std::string& name) const {
+        return std::find(tracer_source_names_.begin(), tracer_source_names_.end(), name) !=
+               tracer_source_names_.end();
+    }
+
 private:
     const Utils::ConfigurationManager& config_ref_;
     const Grid& grid_;
     const Parameters& parameters_;
     std::map<std::string, AnyField> fields_;
+    std::vector<std::string> tracer_names_;
+    std::vector<std::string> tracer_source_targets_;
+    std::vector<std::string> tracer_source_names_;
 
     size_t step_ = 0;
     VVM::Real time_ = 0.0;

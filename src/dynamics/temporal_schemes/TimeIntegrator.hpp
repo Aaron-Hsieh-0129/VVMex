@@ -4,13 +4,21 @@
 #include "TemporalScheme.hpp"
 #include <string>
 #include <vector>
+#include <functional>
+#include <memory>
 
 namespace VVM {
 namespace Dynamics {
 
 class TimeIntegrator : public TemporalScheme {
 public:
-    explicit TimeIntegrator(std::string var_name, bool has_ab2, bool has_fe);
+    using TendencyEvaluator =
+        std::function<Core::Field<3>&(VVM::Real)>;
+    using StageProcessor = std::function<void()>;
+
+    explicit TimeIntegrator(
+        std::string var_name, bool has_ab2, bool has_fe,
+        std::unique_ptr<TemporalScheme> multistage_scheme = nullptr);
     ~TimeIntegrator() override;
 
     void step(
@@ -19,6 +27,18 @@ public:
         const Core::Parameters& params,
         VVM::Real dt
     ) const override;
+
+    void step(
+        Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        VVM::Real dt,
+        const TendencyEvaluator& evaluate_tendency,
+        const StageProcessor& process_stage) const;
+
+    bool uses_multistage_scheme() const {
+        return multistage_scheme_ != nullptr;
+    }
 
     std::vector<std::string> get_required_state_suffixes() const override {
         // Only AB2 needs a previous state (_m)
@@ -70,6 +90,7 @@ private:
     std::string variable_name_;
     bool has_ab2_terms_;
     bool has_fe_terms_;
+    std::unique_ptr<TemporalScheme> multistage_scheme_;
 };
 
 } // namespace Dynamics

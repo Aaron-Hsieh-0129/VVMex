@@ -162,6 +162,15 @@ std::vector<std::string> Hdf5RestartReader::get_variables_to_read(const Core::St
         result.push_back(var_name);
     }
 
+    // User tracers are prognostic even though they are deliberately not
+    // duplicated under dynamics.prognostic_variables. In inferred mode they
+    // are therefore always required from the restart file.
+    for (const auto& tracer_name : state.get_tracer_names()) {
+        if (std::find(result.begin(), result.end(), tracer_name) == result.end()) {
+            result.push_back(tracer_name);
+        }
+    }
+
     // u/v/w are diagnostic rather than prognostic,
     // but they are still needed for a physically consistent restart.
     // They are written to the restart/output file, so include them explicitly.

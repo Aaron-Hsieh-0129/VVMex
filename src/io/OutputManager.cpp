@@ -1,4 +1,5 @@
 #include "OutputManager.hpp"
+#include "Hdf5DimensionScales.hpp"
 #include <sys/stat.h>
 #include <cerrno>
 #include <algorithm>
@@ -10,6 +11,7 @@
 #include <iomanip>
 #include <sstream>
 #include <unordered_set>
+#include <hdf5.h>
 
 namespace VVM {
 namespace IO {
@@ -54,6 +56,31 @@ OutputManager::OutputManager(const Utils::ConfigurationManager& config, const VV
     output_dir_ = config.get_value<std::string>("output.output_dir");
     filename_prefix_ = config.get_value<std::string>("output.output_filename_prefix");
     fields_to_output_ = config.get_value<std::vector<std::string>>("output.fields_to_output");
+    if (config.has_key("dynamics.tracers")) {
+        const auto tracer_config = config.get_value<nlohmann::json>("dynamics.tracers");
+        static const std::unordered_set<std::string> optional_builtin_output_fields = {
+            "qc", "qr", "qi", "qm", "nc", "nr", "ni", "bm",
+            "sw_heating", "lw_heating", "swdn", "lwdn", "lwup",
+            "swup_toa", "swdn_toa", "lwup_toa", "lwdn_toa",
+            "swup_sfc", "swdn_sfc", "lwup_sfc", "lwdn_sfc",
+            "precip_liq_surf_mass", "precip_ice_surf_mass",
+            "sfc_flux_th", "sfc_flux_qv", "sfc_flux_u", "sfc_flux_v",
+            "le", "hfx", "st1", "st2", "st3", "st4", "gfx",
+            "slc1", "slc2", "slc3", "slc4", "sfemis", "zorl",
+            "chx", "cmx", "albedo"
+        };
+        for (const auto& field_name : fields_to_output_) {
+            if (tracer_config.contains(field_name) && !state_.is_tracer(field_name)) {
+                throw std::runtime_error("Output field '" + field_name +
+                                         "' names a disabled or unregistered tracer.");
+            }
+            if (!state_.has_field(field_name) &&
+                optional_builtin_output_fields.count(field_name) == 0) {
+                throw std::runtime_error("Output field '" + field_name +
+                                         "' is not registered. If this is a tracer, check its name and enable setting.");
+            }
+        }
+    }
     output_interval_s_ = config.get_value<VVM::Real>("simulation.output_interval_s");
     total_time_ = config.get_value<VVM::Real>("simulation.total_time_s");
     use_taiwanvvm_coordinates_ = (config.get_value<std::string>("grid.vertical_coordinate_type", "default") == "taiwanvvm");
@@ -150,6 +177,30 @@ OutputManager::~OutputManager() {
     if (writer_) writer_.Close();
 }
 
+void OutputManager::define_adios_field_metadata(
+    const std::string& field_name,
+    const VVM::Core::FieldMetadata& metadata)
+{
+    if (!metadata.units.empty()) {
+        io_.DefineAttribute<std::string>("units", metadata.units, field_name);
+    }
+    if (!metadata.long_name.empty()) {
+        io_.DefineAttribute<std::string>("long_name", metadata.long_name, field_name);
+    }
+    if (!metadata.standard_name.empty()) {
+        io_.DefineAttribute<std::string>("standard_name", metadata.standard_name, field_name);
+    }
+    if (!metadata.comment.empty()) {
+        io_.DefineAttribute<std::string>("comment", metadata.comment, field_name);
+    }
+    if (metadata.grid_staggering != VVM::Core::GridStaggering::Unspecified) {
+        io_.DefineAttribute<std::string>(
+            "grid_staggering",
+            VVM::Core::grid_staggering_to_string(metadata.grid_staggering),
+            field_name);
+    }
+}
+
 void OutputManager::define_variables() {
     const size_t gnx = grid_.get_global_points_x();
     const size_t gny = grid_.get_global_points_y();
@@ -207,6 +258,11 @@ void OutputManager::define_variables() {
                         const size_t dim4 = field.get_device_data().extent(0);
                         field_variables_[field_name] = io_.DefineVariable<VVM::Real>(field_name, {dim4, gnz, gny, gnx}, {0, actual_out_z_start, actual_out_y_start, actual_out_x_start}, {dim4, local_nz, local_ny, local_nx});
                     }
+
+                    const auto& metadata = field.get_metadata();
+                    if (field_variables_.count(field_name)) {
+                        define_adios_field_metadata(field_name, metadata);
+                    }
                 }
             }, it->second);
         }
@@ -219,14 +275,15 @@ void OutputManager::write(int step, VVM::Real time) {
         variables_defined_ = true;
     }
 
+    std::string filename;
     if (engine_type_ == "HDF5") {
-        std::string filename = output_dir_ + "/" + filename_prefix_ + "_" + format_to_six_digits((int) (time/output_interval_s_)) + ".h5";
+        filename = output_dir_ + "/" + filename_prefix_ + "_" + format_to_six_digits((int) (time/output_interval_s_)) + ".h5";
         if (rank_ == 0) std::cout << "  [OutputManager] HDF5 Writing: " << filename << std::endl;
         writer_ = io_.Open(filename, adios2::Mode::Write, comm_);
     } 
     else if (engine_type_ == "SST") {
         if (!writer_) {
-            std::string filename = output_dir_ + "/" + filename_prefix_;
+            filename = output_dir_ + "/" + filename_prefix_;
             if (rank_ == 0) std::cout << "  [OutputManager] SST Streaming: " << filename << std::endl;
             writer_ = io_.Open(filename, adios2::Mode::Write, comm_);
         }
@@ -362,6 +419,10 @@ void OutputManager::write(int step, VVM::Real time) {
     
     if (engine_type_ == "HDF5") {
         writer_.Close();
+
+        MPI_Barrier(comm_);
+        attach_hdf5_field_metadata(filename);
+        MPI_Barrier(comm_);
     }
 }
 
@@ -396,6 +457,84 @@ void OutputManager::write_static_data() {
     }
     writer_.Put<VVM::Real>(var_z_mid, z_mid_physical.data(), adios2::Mode::Sync);
 }
+
+void OutputManager::attach_hdf5_field_metadata(
+    const std::string& filename)
+{
+    if (rank_ != 0) return;
+
+    hid_t file = H5Fopen(filename.c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+
+    if (file < 0) {
+        std::cerr << "[OutputManager] Failed to reopen HDF5 file '"
+                  << filename << "' for metadata output.\n";
+        return;
+    }
+
+    const auto write_attribute = [](hid_t dataset, const std::string& name, const std::string& value)
+    {
+        if (value.empty()) return;
+
+        hid_t space = H5Screate(H5S_SCALAR);
+        hid_t type = H5Tcopy(H5T_C_S1);
+
+        H5Tset_size(type, value.size() + 1);
+        H5Tset_strpad(type, H5T_STR_NULLTERM);
+
+        hid_t attribute = H5Acreate2(dataset, name.c_str(), type, space, H5P_DEFAULT, H5P_DEFAULT);
+
+        if (attribute >= 0) {
+            H5Awrite(attribute, type, value.c_str());
+            H5Aclose(attribute);
+        }
+
+        H5Tclose(type);
+        H5Sclose(space);
+    };
+
+    for (const auto& field_name : fields_to_output_) {
+        const std::string dataset_path = "/Step0/" + field_name;
+
+        hid_t dataset = H5Dopen2(file, dataset_path.c_str(), H5P_DEFAULT);
+
+        if (dataset < 0) continue;
+
+        auto it = state_.begin();
+        while (it != state_.end() && it->first != field_name) ++it;
+
+        if (it != state_.end()) {
+            std::visit([&](const auto& field)
+            {
+                using T = std::decay_t<decltype(field)>;
+
+                if constexpr (
+                    !std::is_same_v<T, std::monostate>) {
+
+                    const auto& metadata = field.get_metadata();
+
+                    write_attribute(dataset, "units", metadata.units);
+                    write_attribute(dataset, "long_name", metadata.long_name);
+                    write_attribute(dataset, "standard_name", metadata.standard_name);
+                    write_attribute(dataset, "comment", metadata.comment);
+                    if (metadata.grid_staggering != VVM::Core::GridStaggering::Unspecified) {
+                        write_attribute(
+                            dataset,
+                            "grid_staggering",
+                            VVM::Core::grid_staggering_to_string(metadata.grid_staggering));
+                    }
+                }
+            },
+            it->second);
+        }
+
+        H5Dclose(dataset);
+    }
+
+    attach_hdf5_dimension_scales(file, fields_to_output_);
+
+    H5Fclose(file);
+}
+
 
 OutputManager::LinearAxis OutputManager::centered_lonlat_axis(int points, VVM::Real spacing) const {
     LinearAxis axis;

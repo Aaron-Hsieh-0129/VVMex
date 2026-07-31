@@ -70,17 +70,18 @@ void LateralBoundaryNudging::initialize(Core::State& state) {
     VVM::Real ysize = grid_.get_global_points_y() * dy;
 
     if (!state.has_field("lbn_weight")) {
-        state.add_field<2>("lbn_weight", {ny, nx});
+        state.add_field<2>("lbn_weight", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Centered, "1", "lateral boundary nudging weight"});
     }
 
     for (const auto& var_name : target_vars_) {
-        state.add_field<3>(var_name + "_ls", {nz, ny, nx});
+        const auto metadata = state.get_field<3>(var_name).get_metadata();
+        state.add_field<3>(var_name + "_ls", {nz, ny, nx}, metadata);
         
         if (time_varying_) {
             name_T1_[var_name] = var_name + "_ls_T1";
             name_T2_[var_name] = var_name + "_ls_T2";
-            state.add_field<3>(name_T1_[var_name], {nz, ny, nx});
-            state.add_field<3>(name_T2_[var_name], {nz, ny, nx});
+            state.add_field<3>(name_T1_[var_name], {nz, ny, nx}, metadata);
+            state.add_field<3>(name_T2_[var_name], {nz, ny, nx}, metadata);
         }
     }
 
@@ -137,7 +138,7 @@ void LateralBoundaryNudging::initialize(Core::State& state) {
                 if (nN) f += Kokkos::exp(-0.5 * ((y - (ysize - offset)) / width) * ((y - (ysize - offset)) / width));
             }
 
-            if (f < 1e-10) f = 0.0;
+            if (f < 1e-3) f = 0.0;
             if (f > 1.0) f = 1.0;
 
             weight(j, i) = f;
@@ -152,6 +153,7 @@ void LateralBoundaryNudging::initialize(Core::State& state) {
         load_forcing_data(state, file_t1.str(), false); // load to T2
         for (const auto& var : target_vars_) { std::swap(name_T1_[var], name_T2_[var]); } // swap to T1
         load_forcing_data(state, file_t2.str(), false); // load to T2
+        update_large_scale_forcing(state, state.get_time());
     } 
     else {
         std::string full_filepath = data_dir_ + file_name_;
@@ -207,11 +209,7 @@ void LateralBoundaryNudging::update_large_scale_forcing(Core::State& state, VVM:
 
     if (current_time >= time_T2_) {
         for (const auto& var : target_vars_) {
-            auto& t1_view = state.get_field<3>(var + "_ls_T1").get_mutable_device_data();
-            auto& t2_view = state.get_field<3>(var + "_ls_T2").get_mutable_device_data();
-            auto temp = t1_view;
-            t1_view = t2_view;
-            t2_view = temp;
+            std::swap(name_T1_[var], name_T2_[var]);
         }
 
         time_T1_ = time_T2_;
@@ -234,8 +232,8 @@ void LateralBoundaryNudging::update_large_scale_forcing(Core::State& state, VVM:
     int nx = grid_.get_local_total_points_x();
 
     for (const auto& var : target_vars_) {
-        const auto& t1_data = state.get_field<3>(var + "_ls_T1").get_device_data();
-        const auto& t2_data = state.get_field<3>(var + "_ls_T2").get_device_data();
+        const auto& t1_data = state.get_field<3>(name_T1_.at(var)).get_device_data();
+        const auto& t2_data = state.get_field<3>(name_T2_.at(var)).get_device_data();
         auto& current_ls = state.get_field<3>(var + "_ls").get_mutable_device_data();
 
         Kokkos::parallel_for("Time_Interpolation_" + var,

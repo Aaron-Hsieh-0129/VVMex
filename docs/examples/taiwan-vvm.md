@@ -27,7 +27,22 @@ Edit the constants at the top of the tool and run it from the `tools/` directory
 
 ## Large-scale forcing (optional)
 
-For lateral boundary forcing, `tools/generate_ls_forcing.py` can prepare forcing files; `dynamics.forcings.lateral_boundary_nudging` in JSON points to directories and file naming under `rundata/LS_forcings/` when enabled.
+For lateral boundary forcing, edit the input files, UTC time range, and
+target and wind-average geographic bounds in the user-settings section of
+`tools/generate_ls_forcing.py`, then run the script without arguments. The
+script reads the case selected by `VVM_CONFIG_PATH` (or its default), obtains
+the grid, forcing cadence, and output naming from the JSON, and calculates the
+target pressure layers from the case's external sounding using the same
+hydrostatic procedure as VVMex. The JSON block
+`dynamics.forcings.lateral_boundary_nudging` points VVMex to the generated
+files.
+The wind profile uses the notebook's cosine-latitude-weighted mean over the
+independent `WIND_MEAN_*` box. For time-varying forcing, timestamps are
+processed in parallel using `PROCESS_COUNT` workers (16 by default).
+Set `USE_ERA5_FORCING = False` to create idealized forcing without opening
+ERA5. The default idealized fields use the external VVMex sounding; customize
+`define_idealized_forcing(...)` for experiment-specific gradients or temporal
+changes.
 
 ## Operational notes
 

@@ -5,7 +5,7 @@ type: software
 title: "VVMex v1.0.0: GPU-capable refactoring of the Vector Vorticity cloud-resolving Model"
 
 authors:
-  - name: "VVMex development team"
+  - name: "Chin-Wei Hsieh"
 
 abstract: "VVMex is a GPU-capable, object-oriented C++ refactoring of the Vector Vorticity cloud-resolving Model for large-eddy and cloud-resolving simulations on heterogeneous high-performance computing systems."
 

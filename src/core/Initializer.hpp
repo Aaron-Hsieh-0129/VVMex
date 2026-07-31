@@ -26,6 +26,7 @@ public:
     void assign_vars() const;
     void initialize_perturbation() const;
     void initialize_zeta_factor_for_twisting() const;
+    void apply_tracer_boundary_conditions() const;
     void load_restart() const;
     VVM::Real get_restart_time_from_filename(const std::string& source_file) const;
 
