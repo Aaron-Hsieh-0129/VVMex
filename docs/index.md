@@ -19,6 +19,7 @@ The source code is at [VVMex](https://github.com/Aaron-Hsieh-0129/VVMex).
 
 | Section | Description |
 | -------- | ----------- |
+| [Environment Installation](environment.md) | Building the full dependency stack from source |
 | [Quick Start](quick-start.md) | Dependencies, build, first run through `submit.py` |
 | [Job submission](user-guides/job-submission.md) | Local and SLURM workflows, CPU/GPU allocation, asynchronous I/O ranks |
 | [User guides](user-guides/index.md) | JSON configuration and I/O |

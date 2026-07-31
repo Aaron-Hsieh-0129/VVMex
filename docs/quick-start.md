@@ -16,7 +16,7 @@ This guide covers dependencies, building VVMex, and running jobs through the rec
 
 ### Libraries
 
-This guide covers dependencies, building VVMex, and running the `vvm` executable. For detailed instructions on building the full dependency stack from source, please refer to the **[Environment Installation Guide](user-guides/environment.md)**.
+This guide covers dependencies, building VVMex, and running the `vvm` executable. For detailed instructions on building the full dependency stack from source, please refer to the **[Environment Installation Guide](environment.md)**.
 
 | Library | Minimum (tested) | Role |
 | ------- | ------------------ | ---- |
