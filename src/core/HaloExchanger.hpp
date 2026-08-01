@@ -18,6 +18,8 @@
 #include <map>
 #include <string>
 #include <set>
+#include <cassert>
+#include <stdexcept>
 
 namespace VVM {
 namespace Core {
@@ -34,8 +36,8 @@ public:
 
     void exchange_halos(State& state);
 
-    template<size_t Dim>
-    void exchange_halos(Field<Dim>& field, int depth = -1) const {
+    template<typename FieldT>
+    void exchange_halos(FieldT& field, int depth = -1) const {
         exchange_halos_impl(field, depth);
         
         cudaStreamCaptureStatus capture_status;
@@ -45,8 +47,8 @@ public:
         }
     }
 
-    template<size_t Dim>
-    void exchange_halos_impl(Field<Dim>& field, int depth = -1) const;
+    template<typename FieldT>
+    void exchange_halos_impl(FieldT& field, int depth = -1) const;
 
     void exchange_halos_slice(Field<3>& field, int k_layer) const;
     
@@ -57,6 +59,10 @@ public:
     }
 
     void exchange_multiple_halos(const std::vector<std::string>& field_names, State& state) const;
+
+    // Batched exchange for fields not registered in State (e.g. solver-private work
+    // arrays). All fields must share the same halo width and extents.
+    void exchange_multiple_halos(const std::vector<Field<2>*>& fields, int depth = -1) const;
 
 private:
     const Grid& grid_ref_;
@@ -339,8 +345,172 @@ inline void HaloExchanger::exchange_multiple_halos(const std::vector<std::string
     cudaStreamSynchronize(stream_);
 }
 
+// Batched exchange of 2-D fields that are not registered in State. Used for the
+// psi/chi relaxation, where both fields share an operator and can ride in one NCCL
+// group. All fields must share halo width and extents.
+inline void HaloExchanger::exchange_multiple_halos(const std::vector<Field<2>*>& fields, int depth) const {
+    if (fields.empty()) return;
+
+    const int halo_start_offset = grid_ref_.get_halo_cells();
+    const int h = (depth == -1) ? halo_start_offset : depth;
+    if (h == 0) return;
+
+    const size_t num_fields = fields.size();
+    const int nx_phys = grid_ref_.get_local_physical_points_x();
+    const int ny_phys = grid_ref_.get_local_physical_points_y();
+    const int ny = fields[0]->get_mutable_device_data().extent(0);
+    const int nx = fields[0]->get_mutable_device_data().extent(1);
+
+    // Strides are the exact packed size, so no padding is sent.
+    const size_t stride_x = static_cast<size_t>(h) * ny;
+    const size_t stride_y = static_cast<size_t>(h) * nx;
+    const size_t count_x_total = num_fields * stride_x;
+    const size_t count_y_total = num_fields * stride_y;
+
+    assert(count_x_total * 2 <= send_x_left_.extent(0) && "2-D batch exceeds pre-sized halo buffer");
+    assert(count_y_total * 2 <= send_y_bottom_.extent(0) && "2-D batch exceeds pre-sized halo buffer");
+
+    if (is_single_rank_) {
+        for (size_t f = 0; f < num_fields; ++f) {
+            auto data = fields[f]->get_mutable_device_data();
+            Kokkos::parallel_for("local_copy_x_2d_multi", Kokkos::MDRangePolicy<Kokkos::Rank<2>, ExecSpace>(exec_space_, {0,0}, {ny, h}),
+                KOKKOS_LAMBDA(int j, int i_h) {
+                    data(j, halo_start_offset - h + i_h) = data(j, halo_start_offset + nx_phys - h + i_h);
+                    data(j, halo_start_offset + nx_phys + i_h) = data(j, halo_start_offset + i_h);
+            });
+            Kokkos::parallel_for("local_copy_y_2d_multi", Kokkos::MDRangePolicy<Kokkos::Rank<2>, ExecSpace>(exec_space_, {0,0}, {nx, h}),
+                KOKKOS_LAMBDA(int i, int j_h) {
+                    data(halo_start_offset - h + j_h, i) = data(halo_start_offset + ny_phys - h + j_h, i);
+                    data(halo_start_offset + ny_phys + j_h, i) = data(halo_start_offset + j_h, i);
+            });
+        }
+        return;
+    }
+
+    const int my_rank = grid_ref_.get_mpi_rank();
+    const int neighbor_left = neighbor_left_;
+    const int neighbor_right = neighbor_right_;
+    const int neighbor_bottom = neighbor_bottom_;
+    const int neighbor_top = neighbor_top_;
+    const bool same_remote_x =
+        neighbor_left != MPI_PROC_NULL && neighbor_left == neighbor_right && neighbor_left != my_rank;
+    const bool same_remote_y =
+        neighbor_bottom != MPI_PROC_NULL && neighbor_bottom == neighbor_top && neighbor_bottom != my_rank;
+
+    if (count_x_total > 0) {
+        for (size_t f = 0; f < num_fields; ++f) {
+            auto data = fields[f]->get_mutable_device_data();
+            const size_t offset = f * stride_x;
+            auto send_l = Kokkos::subview(send_x_left_, std::make_pair(offset, offset + stride_x));
+            auto send_r = Kokkos::subview(send_x_right_, std::make_pair(offset, offset + stride_x));
+            Kokkos::parallel_for("pack_multi_x_2d", Kokkos::MDRangePolicy<Kokkos::Rank<2>, ExecSpace>(exec_space_, {0,0}, {ny, h}),
+                KOKKOS_LAMBDA(int j, int i_h) {
+                    const size_t idx = static_cast<size_t>(j) * h + i_h;
+                    send_l(idx) = data(j, halo_start_offset + i_h);
+                    send_r(idx) = data(j, halo_start_offset + nx_phys - h + i_h);
+            });
+        }
+
+        if (neighbor_left == my_rank && neighbor_right == my_rank) {
+            Kokkos::deep_copy(exec_space_, Kokkos::subview(recv_x_left_, std::make_pair((size_t)0, count_x_total)), Kokkos::subview(send_x_right_, std::make_pair((size_t)0, count_x_total)));
+            Kokkos::deep_copy(exec_space_, Kokkos::subview(recv_x_right_, std::make_pair((size_t)0, count_x_total)), Kokkos::subview(send_x_left_, std::make_pair((size_t)0, count_x_total)));
+        } else if (same_remote_x) {
+            Kokkos::deep_copy(exec_space_,
+                Kokkos::subview(send_x_right_, std::make_pair(count_x_total, 2 * count_x_total)),
+                Kokkos::subview(send_x_left_, std::make_pair((size_t)0, count_x_total)));
+            ncclGroupStart();
+            ncclSend(send_x_right_.data(), 2 * count_x_total, VVM_NCCL_REAL, neighbor_right, nccl_comm_, stream_);
+            ncclRecv(recv_x_right_.data(), 2 * count_x_total, VVM_NCCL_REAL, neighbor_left, nccl_comm_, stream_);
+            ncclGroupEnd();
+            Kokkos::deep_copy(exec_space_,
+                Kokkos::subview(recv_x_left_, std::make_pair((size_t)0, count_x_total)),
+                Kokkos::subview(recv_x_right_, std::make_pair((size_t)0, count_x_total)));
+            Kokkos::deep_copy(exec_space_,
+                Kokkos::subview(recv_x_right_, std::make_pair((size_t)0, count_x_total)),
+                Kokkos::subview(recv_x_right_, std::make_pair(count_x_total, 2 * count_x_total)));
+        } else {
+            ncclGroupStart();
+            if (neighbor_right != MPI_PROC_NULL) ncclSend(send_x_right_.data(), count_x_total, VVM_NCCL_REAL, neighbor_right, nccl_comm_, stream_);
+            if (neighbor_left  != MPI_PROC_NULL) ncclRecv(recv_x_left_.data(),  count_x_total, VVM_NCCL_REAL, neighbor_left,  nccl_comm_, stream_);
+            if (neighbor_left  != MPI_PROC_NULL) ncclSend(send_x_left_.data(),  count_x_total, VVM_NCCL_REAL, neighbor_left,  nccl_comm_, stream_);
+            if (neighbor_right != MPI_PROC_NULL) ncclRecv(recv_x_right_.data(), count_x_total, VVM_NCCL_REAL, neighbor_right, nccl_comm_, stream_);
+            ncclGroupEnd();
+        }
+
+        for (size_t f = 0; f < num_fields; ++f) {
+            auto data = fields[f]->get_mutable_device_data();
+            const size_t offset = f * stride_x;
+            auto recv_l = Kokkos::subview(recv_x_left_, std::make_pair(offset, offset + stride_x));
+            auto recv_r = Kokkos::subview(recv_x_right_, std::make_pair(offset, offset + stride_x));
+            Kokkos::parallel_for("unpack_multi_x_2d", Kokkos::MDRangePolicy<Kokkos::Rank<2>, ExecSpace>(exec_space_, {0,0}, {ny, h}),
+                KOKKOS_LAMBDA(int j, int i_h) {
+                    const size_t idx = static_cast<size_t>(j) * h + i_h;
+                    if (neighbor_left  != MPI_PROC_NULL) data(j, halo_start_offset - h + i_h) = recv_l(idx);
+                    if (neighbor_right != MPI_PROC_NULL) data(j, halo_start_offset + nx_phys + i_h) = recv_r(idx);
+            });
+        }
+    }
+
+    if (count_y_total > 0) {
+        for (size_t f = 0; f < num_fields; ++f) {
+            auto data = fields[f]->get_mutable_device_data();
+            const size_t offset = f * stride_y;
+            auto send_b = Kokkos::subview(send_y_bottom_, std::make_pair(offset, offset + stride_y));
+            auto send_t = Kokkos::subview(send_y_top_,    std::make_pair(offset, offset + stride_y));
+            Kokkos::parallel_for("pack_multi_y_2d", Kokkos::MDRangePolicy<Kokkos::Rank<2>, ExecSpace>(exec_space_, {0,0}, {nx, h}),
+                KOKKOS_LAMBDA(int i, int j_h) {
+                    const size_t idx = static_cast<size_t>(j_h) * nx + i;
+                    send_b(idx) = data(halo_start_offset + j_h, i);
+                    send_t(idx) = data(halo_start_offset + ny_phys - h + j_h, i);
+            });
+        }
+
+        if (neighbor_bottom == my_rank && neighbor_top == my_rank) {
+            Kokkos::deep_copy(exec_space_, Kokkos::subview(recv_y_bottom_, std::make_pair((size_t)0, count_y_total)), Kokkos::subview(send_y_top_,    std::make_pair((size_t)0, count_y_total)));
+            Kokkos::deep_copy(exec_space_, Kokkos::subview(recv_y_top_,    std::make_pair((size_t)0, count_y_total)), Kokkos::subview(send_y_bottom_, std::make_pair((size_t)0, count_y_total)));
+        } else if (same_remote_y) {
+            Kokkos::deep_copy(exec_space_,
+                Kokkos::subview(send_y_top_, std::make_pair(count_y_total, 2 * count_y_total)),
+                Kokkos::subview(send_y_bottom_, std::make_pair((size_t)0, count_y_total)));
+            ncclGroupStart();
+            ncclSend(send_y_top_.data(), 2 * count_y_total, VVM_NCCL_REAL, neighbor_top, nccl_comm_, stream_);
+            ncclRecv(recv_y_top_.data(), 2 * count_y_total, VVM_NCCL_REAL, neighbor_bottom, nccl_comm_, stream_);
+            ncclGroupEnd();
+            Kokkos::deep_copy(exec_space_,
+                Kokkos::subview(recv_y_bottom_, std::make_pair((size_t)0, count_y_total)),
+                Kokkos::subview(recv_y_top_, std::make_pair((size_t)0, count_y_total)));
+            Kokkos::deep_copy(exec_space_,
+                Kokkos::subview(recv_y_top_, std::make_pair((size_t)0, count_y_total)),
+                Kokkos::subview(recv_y_top_, std::make_pair(count_y_total, 2 * count_y_total)));
+        } else {
+            ncclGroupStart();
+            if (neighbor_top    != MPI_PROC_NULL) ncclSend(send_y_top_.data(),    count_y_total, VVM_NCCL_REAL, neighbor_top,    nccl_comm_, stream_);
+            if (neighbor_bottom != MPI_PROC_NULL) ncclRecv(recv_y_bottom_.data(), count_y_total, VVM_NCCL_REAL, neighbor_bottom, nccl_comm_, stream_);
+            if (neighbor_bottom != MPI_PROC_NULL) ncclSend(send_y_bottom_.data(), count_y_total, VVM_NCCL_REAL, neighbor_bottom, nccl_comm_, stream_);
+            if (neighbor_top    != MPI_PROC_NULL) ncclRecv(recv_y_top_.data(),    count_y_total, VVM_NCCL_REAL, neighbor_top,    nccl_comm_, stream_);
+            ncclGroupEnd();
+        }
+
+        for (size_t f = 0; f < num_fields; ++f) {
+            auto data = fields[f]->get_mutable_device_data();
+            const size_t offset = f * stride_y;
+            auto recv_b = Kokkos::subview(recv_y_bottom_, std::make_pair(offset, offset + stride_y));
+            auto recv_t = Kokkos::subview(recv_y_top_,    std::make_pair(offset, offset + stride_y));
+            Kokkos::parallel_for("unpack_multi_y_2d", Kokkos::MDRangePolicy<Kokkos::Rank<2>, ExecSpace>(exec_space_, {0,0}, {nx, h}),
+                KOKKOS_LAMBDA(int i, int j_h) {
+                    const size_t idx = static_cast<size_t>(j_h) * nx + i;
+                    if (neighbor_bottom != MPI_PROC_NULL) data(halo_start_offset - h + j_h, i) = recv_b(idx);
+                    if (neighbor_top    != MPI_PROC_NULL) data(halo_start_offset + ny_phys + j_h, i) = recv_t(idx);
+            });
+        }
+    }
+
+    // No stream sync here: this is called from inside CUDA graph capture, where a
+    // sync is illegal. Callers outside capture must fence themselves.
+}
+
 inline void HaloExchanger::exchange_halos(State& state) {
-    // Kokkos::fence(); 
+    // Kokkos::fence();
 
     for (auto& field_pair : state) {
         std::visit([this](auto& field) {
@@ -380,8 +550,9 @@ inline void HaloExchanger::exchange_halos(State& state) {
     cudaStreamIsCapturing(stream_, &capture_status);
 }
 
-template<size_t Dim>
-void HaloExchanger::exchange_halos_impl(Field<Dim>& field, int depth) const {
+template<typename FieldT>
+void HaloExchanger::exchange_halos_impl(FieldT& field, int depth) const {
+    constexpr size_t Dim = FieldT::DimValue;
     const int halo_start_offset = grid_ref_.get_halo_cells();
     int h = (depth == -1) ? grid_ref_.get_halo_cells() : depth;
     if (h == 0) return;
@@ -832,6 +1003,8 @@ inline void HaloExchanger::exchange_halos_slice(Field<3>& field, int k_layer) co
 #ifndef VVM_CORE_HALOEXCHANGER_HPP
 #define VVM_CORE_HALOEXCHANGER_HPP
 
+#include <stdexcept>
+#include <string>
 
 namespace VVM {
 namespace Core {
@@ -860,8 +1033,9 @@ public:
 
     void exchange_halos(State& state) const;
 
-    template<size_t Dim>
-    void exchange_halos(Field<Dim>& field, int depth = -1) const {
+    template<typename FieldT>
+    void exchange_halos(FieldT& field, int depth = -1) const {
+        static constexpr size_t Dim = FieldT::DimValue;
         if constexpr (Dim >= 2) {
             auto reqs_y = post_exchange_halo_y(field, depth);
             wait_exchange_halo_y(field, reqs_y, depth);
@@ -871,18 +1045,26 @@ public:
         }
     }
 
+    // Interface parity with the NCCL implementation. Not batched here: without NCCL
+    // groups there is nothing to gain from packing the fields together.
+    void exchange_multiple_halos(const std::vector<Field<2>*>& fields, int depth = -1) const {
+        for (Field<2>* field : fields) {
+            if (field) exchange_halos(*field, depth);
+        }
+    }
+
     // --- Asynchronous Halo Exchange Functions ---
-    template<size_t Dim>
-    HaloExchangeRequests post_exchange_halo_x(Field<Dim>& field, int depth = -1) const;
+    template<typename FieldT>
+    HaloExchangeRequests post_exchange_halo_x(FieldT& field, int depth = -1) const;
 
-    template<size_t Dim>
-    void wait_exchange_halo_x(Field<Dim>& field, HaloExchangeRequests& reqs, int depth = -1) const;
+    template<typename FieldT>
+    void wait_exchange_halo_x(FieldT& field, HaloExchangeRequests& reqs, int depth = -1) const;
 
-    template<size_t Dim>
-    HaloExchangeRequests post_exchange_halo_y(Field<Dim>& field, int depth = -1) const;
+    template<typename FieldT>
+    HaloExchangeRequests post_exchange_halo_y(FieldT& field, int depth = -1) const;
 
-    template<size_t Dim>
-    void wait_exchange_halo_y(Field<Dim>& field, HaloExchangeRequests& reqs, int depth = -1) const;
+    template<typename FieldT>
+    void wait_exchange_halo_y(FieldT& field, HaloExchangeRequests& reqs, int depth = -1) const;
 
     void exchange_halos_slice(Field<3>& field, int k_layer) const;
     void exchange_halos_top_slice(Field<3>& field) const {
@@ -983,8 +1165,9 @@ inline void HaloExchanger::exchange_halos(State& state) const {
     }
 }
 
-template<size_t Dim>
-HaloExchangeRequests HaloExchanger::post_exchange_halo_x(Field<Dim>& field, int depth) const {
+template<typename FieldT>
+HaloExchangeRequests HaloExchanger::post_exchange_halo_x(FieldT& field, int depth) const {
+    constexpr size_t Dim = FieldT::DimValue;
     const int halo_start_offset = grid_ref_.get_halo_cells();
     int h = grid_ref_.get_halo_cells();
 
@@ -1064,8 +1247,9 @@ HaloExchangeRequests HaloExchanger::post_exchange_halo_x(Field<Dim>& field, int 
     return req_obj;
 }
 
-template<size_t Dim>
-void HaloExchanger::wait_exchange_halo_x(Field<Dim>& field, HaloExchangeRequests& reqs, int depth) const {
+template<typename FieldT>
+void HaloExchanger::wait_exchange_halo_x(FieldT& field, HaloExchangeRequests& reqs, int depth) const {
+    constexpr size_t Dim = FieldT::DimValue;
     if (reqs.count == 0) return;
 
     MPI_Waitall(reqs.count, reqs.requests.data(), MPI_STATUSES_IGNORE);
@@ -1128,8 +1312,9 @@ void HaloExchanger::wait_exchange_halo_x(Field<Dim>& field, HaloExchangeRequests
     }
 }
 
-template<size_t Dim>
-HaloExchangeRequests HaloExchanger::post_exchange_halo_y(Field<Dim>& field, int depth) const {
+template<typename FieldT>
+HaloExchangeRequests HaloExchanger::post_exchange_halo_y(FieldT& field, int depth) const {
+    constexpr size_t Dim = FieldT::DimValue;
     const int halo_start_offset = grid_ref_.get_halo_cells();
     int h = grid_ref_.get_halo_cells();
     if (depth == -1) h = 1;
@@ -1208,8 +1393,9 @@ HaloExchangeRequests HaloExchanger::post_exchange_halo_y(Field<Dim>& field, int 
     return req_obj;
 }
 
-template<size_t Dim>
-void HaloExchanger::wait_exchange_halo_y(Field<Dim>& field, HaloExchangeRequests& reqs, int depth) const {
+template<typename FieldT>
+void HaloExchanger::wait_exchange_halo_y(FieldT& field, HaloExchangeRequests& reqs, int depth) const {
+    constexpr size_t Dim = FieldT::DimValue;
     if (reqs.count == 0) return;
 
     MPI_Waitall(reqs.count, reqs.requests.data(), MPI_STATUSES_IGNORE);
