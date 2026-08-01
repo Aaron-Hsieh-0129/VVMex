@@ -35,17 +35,14 @@ void TendencyCalculator::calculate_tendencies(Core::State& state, const Core::Gr
              );
         }
 
-        auto& current_tendency_field = *temp_tendency_field_;
+        const size_t now_idx = state.get_step() % 2;
+        auto& current_tendency_field =
+            state.get_field<3>("d_" + variable_name_ + (now_idx == 0 ? "_0" : "_1"));
         current_tendency_field.set_to_zero();
 
-        size_t now_idx = state.get_step() % 2;
-        auto& tendency_history = state.get_field<4>("d_" + variable_name_);
-        auto total_current_tendency_view = Kokkos::subview(tendency_history.get_mutable_device_data(), now_idx, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL);
-        
         for (const auto& term : ab2_tendency_terms_) {
             term->compute_tendency(state, grid, params, current_tendency_field);
         }
-        Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), total_current_tendency_view, current_tendency_field.get_device_data());
     }
 
     // Calculate Forward Euler tendencies
