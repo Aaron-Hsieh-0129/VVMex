@@ -756,6 +756,13 @@ void Initializer::initialize_perturbation() const {
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
+    // Domain centre for the bubble perturbations. nx/ny above are this RANK's local
+    // totals, so deriving the centre from them moved the bubble whenever the
+    // decomposition changed. Take it from the global extent instead, in the same
+    // halo-shifted frame as global_i/global_j (on one rank this is identical to the
+    // old (int)(nx/2), so existing baselines are unchanged).
+    const int global_center_i = static_cast<int>(grid_.get_global_points_x() / 2) + h;
+    const int global_center_j = static_cast<int>(grid_.get_global_points_y() / 2) + h;
     VVM::Real PI = config_.get_value<VVM::Real>("constants.PI");
 
     auto& th = state_.get_field<3>("th").get_mutable_device_data();
@@ -781,7 +788,12 @@ void Initializer::initialize_perturbation() const {
         Kokkos::parallel_for("test_init", 
             Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0,0,0}, {nz, ny, nx}),
             KOKKOS_LAMBDA(int k, int j, int i) {
-                if (k == h+16 && (h+3 <= j && h+11 >= j) && (h+3 <= i && h+11 >= i)) {
+                // Global indices: with local j/i every rank stamped its own blob, so a
+                // 2-D decomposition produced one blob per rank instead of one per domain.
+                const int global_j = global_start_j + j;
+                const int global_i = global_start_i + i;
+
+                if (k == h+16 && (h+3 <= global_j && h+11 >= global_j) && (h+3 <= global_i && h+11 >= global_i)) {
                     th(k,j,i) += real(50.);
                     xi(k,j,i) += real(50.);
                     eta(k,j,i) += real(50.);
@@ -810,7 +822,7 @@ void Initializer::initialize_perturbation() const {
                     const int global_j = global_start_j + j; 
                     const int global_i = global_start_i + i; 
 
-                    if (k == nz-h-1 && (h+3 <= j && h+11 >= j) && (h+3 <= i && h+11 >= i)) {
+                    if (k == nz-h-1 && (h+3 <= global_j && h+11 >= global_j) && (h+3 <= global_i && h+11 >= global_i)) {
                         xi(k,j,i) += real(50.);
                         eta(k,j,i) += real(50.);
                     }
@@ -828,7 +840,7 @@ void Initializer::initialize_perturbation() const {
                 const int global_i = global_start_i + i;
 
                 VVM::Real radius_norm = Kokkos::sqrt(
-                                      Kokkos::pow(((global_i + 1) - (int) (nx/2)) * dx() / real(1000.), 2) +
+                                      Kokkos::pow(((global_i + 1) - global_center_i) * dx() / real(1000.), 2) +
                                       Kokkos::pow((z_mid(k) - real(5000.)) / real(1000.), 2)
                                      );
                 if (radius_norm <= real(1.)) {
@@ -844,8 +856,8 @@ void Initializer::initialize_perturbation() const {
                 const int global_j = global_start_j + j;
 
                 VVM::Real radius_norm = Kokkos::sqrt(
-                                      Kokkos::pow(((global_i + 1) - (int) (nx/2)) * dx() / real(1000.), 2) +
-                                      Kokkos::pow(((global_j + 1) - (int) (ny/2)) * dy() / real(1000.), 2) +
+                                      Kokkos::pow(((global_i + 1) - global_center_i) * dx() / real(1000.), 2) +
+                                      Kokkos::pow(((global_j + 1) - global_center_j) * dy() / real(1000.), 2) +
                                       Kokkos::pow((z_mid(k) - real(5000.)) / real(1000.), 2)
                                      );
                 if (radius_norm <= real(1.)) {
@@ -868,7 +880,7 @@ void Initializer::initialize_perturbation() const {
                 const int global_i = global_start_i + i;
 
                 VVM::Real radius_norm = Kokkos::sqrt(
-                                      Kokkos::pow(((global_i + 1) - (int) (nx/2)) * dx() / real(5000.), 2) +
+                                      Kokkos::pow(((global_i + 1) - global_center_i) * dx() / real(5000.), 2) +
                                       Kokkos::pow((z_mid(k) - real(1000.)) / real(2000.), 2)
                                      );
                 if (radius_norm <= real(1.)) {
@@ -884,8 +896,8 @@ void Initializer::initialize_perturbation() const {
                 const int global_i = global_start_i + i;
 
                 VVM::Real radius_norm = Kokkos::sqrt(
-                                      Kokkos::pow(((global_i + 1) - (int) (nx/2)) * dx() / real(2000.), 2) +
-                                      Kokkos::pow(((global_j + 1) - (int) (ny/2)) * dy() / real(2000.), 2) +
+                                      Kokkos::pow(((global_i + 1) - global_center_i) * dx() / real(2000.), 2) +
+                                      Kokkos::pow(((global_j + 1) - global_center_j) * dy() / real(2000.), 2) +
                                       Kokkos::pow((z_mid(k) - real(3000.)) / real(2000.), 2)
                                      );
                 if (radius_norm <= real(1.)) {
