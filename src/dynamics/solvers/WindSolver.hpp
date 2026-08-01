@@ -30,7 +30,12 @@ public:
 
     void solve_w();
     void solve_uv();
-    void relax_2d(Core::Field<2>& A_field, Core::Field<2>& ANM1_field, Core::Field<2>& RHSV_field, Core::Field<2>& AOUT_field);
+
+    // psi and chi are relaxed together: same operator, same iteration count,
+    // independent right-hand sides, so one batched exchange per sweep covers both
+    // instead of two. Public because CUDA extended lambdas may not appear in a
+    // private member.
+    void relax_2d_batched();
 
 private:
     const Core::Grid& grid_;
@@ -39,18 +44,24 @@ private:
     Core::State& state_;
     WSolverMethod w_solver_method_;
 
-    mutable Core::Field<3> YTEM_field_;
-    mutable Core::Field<3> W3DNP1_field_;
-    mutable Core::Field<3> W3DN_field_;
-    mutable Core::Field<3> RHSV_field_;
-    mutable Core::Field<3> pm_temp_field_;
-    mutable Core::Field<3> pm_field_;
+    // LayoutRight (x contiguous), not the Kokkos default. The per-sweep kernel puts
+    // consecutive threads on consecutive i; under the default LayoutLeft that is a
+    // stride of nz*ny -- ~300 KB apart at 2048^2/8 ranks -- so a warp scattered its
+    // accesses across 32 cache lines per array, five of them for the stencil. With x
+    // contiguous a warp reads 32 consecutive doubles instead. These three arrays are
+    // solver-private, so nothing outside WindSolver sees the layout.
+    using DeepField = Core::Field<3, Kokkos::LayoutRight>;
+    mutable DeepField YTEM_field_;
+    mutable DeepField w_deep_field_;
+    mutable DeepField W3DN_field_;
 
-    mutable Core::Field<2> RIP1_field_;
-    mutable Core::Field<2> ROP1_field_;
-    mutable Core::Field<2> RIP2_field_;
-    mutable Core::Field<2> ROP2_field_;
-    mutable Core::Field<2> ATEMP_field_;
+    // Default layout: these are threaded (j,i) with j fastest, already coalesced.
+    mutable Core::Field<2> rhs_psi_field_;   // was RIP1
+    mutable Core::Field<2> rhs_chi_field_;   // was RIP2
+    mutable Core::Field<2> psi_out_field_;   // was ROP1
+    mutable Core::Field<2> chi_out_field_;   // was ROP2
+    mutable Core::Field<2> psi_tmp_field_;   // was ATEMP, now one per field
+    mutable Core::Field<2> chi_tmp_field_;
 
     Core::HaloExchanger& halo_exchanger_;
 
@@ -59,8 +70,10 @@ private:
 #if defined(ENABLE_NCCL)
     bool solve_w_graph_created_ = false;
     cudaGraphExec_t solve_w_graph_exec_ = nullptr;
-    
-    std::map<std::string, cudaGraphExec_t> relax_2d_graphs_;
+
+    // One graph now, not one per field name: psi and chi share a single batched loop.
+    bool relax_2d_graph_created_ = false;
+    cudaGraphExec_t relax_2d_graph_exec_ = nullptr;
 #endif
 };
 

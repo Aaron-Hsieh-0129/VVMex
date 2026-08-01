@@ -6,6 +6,7 @@
 #define VVM_CORE_FIELD_HPP
 
 #include <Kokkos_Core.hpp>
+#include <type_traits>
 #include "Grid.hpp"
 
 namespace VVM {
@@ -86,22 +87,28 @@ template<typename ScalarType> struct ViewTypeHelper<2, ScalarType> { using type 
 template<typename ScalarType> struct ViewTypeHelper<3, ScalarType> { using type = Kokkos::View<ScalarType***>; };
 template<typename ScalarType> struct ViewTypeHelper<4, ScalarType> { using type = Kokkos::View<ScalarType****>; };
 
-template<size_t Dim>
+// Layout = void means "let Kokkos pick" (LayoutLeft on the CUDA backend), which is
+// what every State field uses. Solver-private work arrays may pin a layout instead:
+// a kernel threaded over (j,i) with a serial k loop wants x contiguous, the opposite
+// of what the default gives, and those arrays are not shared with the rest of the model.
+template<size_t Dim, typename Layout = void>
 class Field {
 public:
     static constexpr size_t DimValue = Dim;
 
     // Kokkos::View to store the field data
     // The dimensions will be (total_z_points, total_y_points, total_x_points)
-    // Here we don't specify the layout, because it can be determined by Kokkos default. 
-    // LayoutRight is often used for CPU and LayoutLeft for GPU.
-    using ViewType = typename ViewTypeHelper<Dim>::type;
+    using DefaultViewType = typename ViewTypeHelper<Dim>::type;
+    using ViewType = std::conditional_t<
+        std::is_void_v<Layout>,
+        DefaultViewType,
+        Kokkos::View<typename DefaultViewType::data_type, Layout>>;
     using HostMirrorType = typename ViewType::HostMirror;
 
     // Constructor
     explicit Field(const std::string& field_name, const std::array<int, Dim>& dims, FieldMetadata metadata = {})
         : name_(field_name), metadata_(std::move(metadata)) {
-        
+
         if constexpr (Dim == 0) data_ = ViewType(name_);
         else if constexpr (Dim == 1) data_ = ViewType(name_, dims[0]);
         else if constexpr (Dim == 2) data_ = ViewType(name_, dims[0], dims[1]);
@@ -153,8 +160,8 @@ private:
     FieldMetadata metadata_;
 };
 
-template<size_t Dim>
-inline void Field<Dim>::print_slice_z_at_k(const Grid& grid, int N_idx, int k_local_idx, int halo) const {
+template<size_t Dim, typename Layout>
+inline void Field<Dim, Layout>::print_slice_z_at_k(const Grid& grid, int N_idx, int k_local_idx, int halo) const {
     int rank;
     MPI_Comm_rank(grid.get_comm(), &rank);
 
@@ -223,8 +230,8 @@ inline void Field<Dim>::print_slice_z_at_k(const Grid& grid, int N_idx, int k_lo
 }
 
 
-template<size_t Dim>
-inline void Field<Dim>::print_profile(const Grid& grid, int N_idx, int j_local_idx, int i_local_idx) const {
+template<size_t Dim, typename Layout>
+inline void Field<Dim, Layout>::print_profile(const Grid& grid, int N_idx, int j_local_idx, int i_local_idx) const {
     int rank;
     MPI_Comm_rank(grid.get_comm(), &rank);
 
@@ -264,8 +271,8 @@ inline void Field<Dim>::print_profile(const Grid& grid, int N_idx, int j_local_i
     std::cout << "--------------------------------------" << std::endl;
 }
 
-template<size_t Dim>
-inline void Field<Dim>::print_xz_cross_at_j(const Grid& grid, int N_idx, int j_local_idx, int halo) const {
+template<size_t Dim, typename Layout>
+inline void Field<Dim, Layout>::print_xz_cross_at_j(const Grid& grid, int N_idx, int j_local_idx, int halo) const {
     int rank;
     MPI_Comm_rank(grid.get_comm(), &rank);
 
