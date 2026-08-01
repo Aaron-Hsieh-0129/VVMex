@@ -100,7 +100,8 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
             state_.add_field<3>(var_name + "_m", dims);
         }
         if (requirements.ab2_tendency_history) {
-            state_.add_field<4>("d_" + var_name, {2, nz, ny, nx});
+            state_.add_field<3>("d_" + var_name + "_0", dims);
+            state_.add_field<3>("d_" + var_name + "_1", dims);
         }
         if (requirements.forward_euler_tendency) {
             state_.add_field<3>("fe_tendency_" + var_name, dims);
@@ -153,13 +154,13 @@ void DynamicalCore::initialize_restart_history() {
 
         item.second->calculate_tendencies(state_, grid_, params_);
 
-        if (state_.has_field("d_" + var_name)) {
-            auto history = state_.get_field<4>("d_" + var_name).get_mutable_device_data();
+        if (state_.has_field("d_" + var_name + "_0")) {
             const size_t now_idx = state_.get_step() % 2;
-            const size_t prev_idx = (state_.get_step() + 1) % 2;
-            auto now = Kokkos::subview(history, now_idx, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL);
-            auto prev = Kokkos::subview(history, prev_idx, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL);
-            Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), prev, now);
+            const std::string now_name  = "d_" + var_name + (now_idx == 0 ? "_0" : "_1");
+            const std::string prev_name = "d_" + var_name + (now_idx == 0 ? "_1" : "_0");
+            Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+                              state_.get_field<3>(prev_name).get_mutable_device_data(),
+                              state_.get_field<3>(now_name).get_device_data());
         }
     }
 
