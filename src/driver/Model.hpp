@@ -56,8 +56,10 @@ private:
     std::unique_ptr<Physics::LandProcess> land_;
     std::unique_ptr<Dynamics::AreaMeanNudging> area_mean_nudging_;
 
-    int rad_freq_in_steps_;
-    int surface_process_steps_;
+    // Only read when the matching process is enabled; 1 (every step) is the
+    // harmless value if that ever stops being true.
+    int rad_freq_in_steps_ = 1;
+    int surface_process_steps_ = 1;
     double surface_process_s_;
     // int surface_freq_in_steps_;
     // int land_freq_in_steps_;

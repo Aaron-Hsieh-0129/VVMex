@@ -6,6 +6,7 @@ set(VVM_UTILS_SOURCES
 
 set(VVM_UTILS_HEADERS
     ConfigurationManager.hpp
+    ProcessScheduling.hpp
     TimingManager.hpp
     Timer.hpp
 )

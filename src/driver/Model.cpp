@@ -1,4 +1,5 @@
 #include "Model.hpp"
+#include "utils/ProcessScheduling.hpp"
 #include "utils/Timer.hpp"
 
 namespace VVM {
@@ -19,7 +20,6 @@ Model::Model(const Utils::ConfigurationManager& config,
     std::string y_bc = config.get_value<std::string>("grid.boundary_condition.y", "periodic");
     bc_manager_.initialize_bc_types(x_bc, y_bc);
     VVM::Real dt_s = params_.get_value_host(params_.dt);
-    VVM::Real epsilon = real(1e-6);
 
     std::string mode = config_.get_value<std::string>("simulation.idealized_test", "none");
     std::vector<std::string> no_solver_mode = {"advection_u", "advection_v", "advection_w", "stretching", "twisting"};
@@ -41,13 +41,8 @@ Model::Model(const Utils::ConfigurationManager& config,
         radiation_ = std::make_unique<Physics::RRTMGP::RRTMGPRadiation>(config_, grid_, params_, state_);
 
         VVM::Real rad_freq_s = config_.get_value<VVM::Real>("physics.rrtmgp.rad_frequency_s", 1.0);
-        VVM::Real remainder = std::fmod(rad_freq_s, dt_s);
 
-        if (remainder > epsilon && (dt_s - remainder) > epsilon) {
-            throw std::runtime_error("Error: RRTMGP radiation calling frequency can't be evenly divided by dt.");
-        }
-
-        rad_freq_in_steps_ = static_cast<int>(std::round(rad_freq_s / dt_s));
+        rad_freq_in_steps_ = Utils::interval_steps_from_frequency(rad_freq_s, dt_s, "RRTMGP radiation");
     }
 
     if (config_.get_value<bool>("dynamics.forcings.sponge_layer.enable", false)) {
@@ -94,13 +89,7 @@ Model::Model(const Utils::ConfigurationManager& config,
 
         surface_process_s_ = config_.get_value<VVM::Real>("physics.surface_process.frequency_s", 1);
 
-        VVM::Real remainder = std::fmod(surface_process_s_, dt_s);
-
-        if (remainder > epsilon && (dt_s - remainder) > epsilon) {
-            throw std::runtime_error("Error: surface process calling frequency can't be evenly divided by dt.");
-        }
-
-        surface_process_steps_ = static_cast<int>(std::round(surface_process_s_ / dt_s));
+        surface_process_steps_ = Utils::interval_steps_from_frequency(surface_process_s_, dt_s, "surface process");
     }
 }
 
@@ -170,8 +159,8 @@ void Model::run_step(VVM::Real dt) {
 
         // Update net heating used for calculating th tendency
         // WARNING: If the grid size (nx, ny) can't be divided by core number, it will cause kokkos copy errors here.
-        if (state_.get_step() % rad_freq_in_steps_ == 0) {
-            radiation_->run(state_, dt); 
+        if (Utils::is_process_step(current_step, rad_freq_in_steps_)) {
+            radiation_->run(state_, dt);
         }
         
         // Update forward th tendency
@@ -221,7 +210,20 @@ void Model::run_step(VVM::Real dt) {
 
     // Surface process (sea/land/ice)
     if (enable_surface_process_) {
-        bool is_compute_step = (state_.get_step()-1) % surface_process_steps_ == 0;
+        // FIXME: (surface-scheduling): this is the v1.0.0 schedule, kept on purpose
+        // so results stay reproducible for the paper under review. It is wrong:
+        // it fires at 1, N+1, 2N+1, ... and skips step 0 for N of 24 and 120, so
+        // the first step runs with zero surface fluxes -- calculate_tendencies()
+        // below reads sfc_flux_*, and compute_coefficients() is their only writer.
+        //
+        // The fix is to swap this one line for
+        //     Utils::is_process_step(current_step, surface_process_steps_)
+        // which gives 0, N, 2N, ... and matches radiation above. It changes every
+        // surface case's answers, so regenerate tests/references/ in the same
+        // commit (check_output.py --update). See utils/ProcessScheduling.hpp.
+        // So do this in the furture:
+        // const bool is_compute_step = Utils::is_process_step(current_step, surface_process_steps_);
+        const bool is_compute_step = Utils::is_legacy_surface_compute_step(current_step, surface_process_steps_);
         if (is_compute_step) {
             // NOTE: Even the configuration specified tco_ocean model which is not from surface_, surface_ stil calculates surface friction for xi and eta. 
             // note that the dt for land module should be calling time step because the soil T needs to be updated
