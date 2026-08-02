@@ -30,7 +30,7 @@ public:
     OutputManager(OutputManager&&) = delete;
     OutputManager& operator=(OutputManager&&) = delete;
 
-    void write(int step, VVM::Real time);
+    void write(size_t step, VVM::Real time);
     void write_static_data();
     void write_static_topo_file();
 

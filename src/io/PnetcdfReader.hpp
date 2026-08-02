@@ -32,6 +32,11 @@ public:
 
     void read_and_initialize(VVM::Core::State& state) override;
 
+    // Restart clock stored in the file. NetCDF restart sources are produced
+    // outside this model, so only unambiguous metadata is accepted -- see
+    // io/PnetcdfRestartMetadata.hpp. Collective: call it on every rank.
+    VVM::Utils::RestartFileMetadata read_restart_metadata() override;
+
 private:
     void check_ncmpi_error(int status, const std::string& msg) const;
 

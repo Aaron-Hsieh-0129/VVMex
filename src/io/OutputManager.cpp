@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <array>
 #include <cctype>
+#include <cstdint>
 #include <cmath>
 #include <filesystem>
 #include <system_error>
@@ -226,11 +227,28 @@ void OutputManager::define_variables() {
     const size_t gnz = grid_.get_global_points_z();
 
     io_.DefineVariable<VVM::Real>("time");
+
+    // Restart clock. "time" has always held elapsed seconds and analysis tools
+    // read it, so it keeps its name and meaning; these two are the unambiguous,
+    // self-describing pair a restart is recovered from -- a double so long runs
+    // keep full precision in single-precision builds, and an exact integer step
+    // so the resumed run does not have to re-derive it from dt.
+    io_.DefineVariable<double>("model_time_s");
+    io_.DefineVariable<int64_t>("model_step");
+
     io_.DefineVariable<VVM::Real>("coordinates/x", {gnx}, {0}, {rank_ == 0 ? gnx : 0});
     io_.DefineVariable<VVM::Real>("coordinates/y", {gny}, {0}, {rank_ == 0 ? gny : 0});
     io_.DefineVariable<VVM::Real>("coordinates/z_mid", {gnz}, {0}, {rank_ == 0 ? gnz : 0});
 
-    io_.DefineAttribute<std::string>("units", "hours since 2025-10-07 00:00:00", "time");
+    // The value written here is elapsed simulation seconds, not a calendar date.
+    // It used to be labelled "hours since 2025-10-07 00:00:00", which was wrong
+    // in both unit and origin.
+    io_.DefineAttribute<std::string>("units", "s", "time");
+    io_.DefineAttribute<std::string>("long_name", "elapsed simulation time", "time");
+    io_.DefineAttribute<std::string>("units", "s", "model_time_s");
+    io_.DefineAttribute<std::string>("long_name", "elapsed simulation time", "model_time_s");
+    io_.DefineAttribute<std::string>("units", "1", "model_step");
+    io_.DefineAttribute<std::string>("long_name", "integration step count", "model_step");
     io_.DefineAttribute<std::string>("units", "meter", "coordinates/z_mid");
     io_.DefineAttribute<std::string>("units", "meter", "coordinates/y");
     io_.DefineAttribute<std::string>("units", "meter", "coordinates/x");
@@ -288,7 +306,7 @@ void OutputManager::define_variables() {
     }
 }
 
-void OutputManager::write(int step, VVM::Real time) {
+void OutputManager::write(size_t step, VVM::Real time) {
     if (!variables_defined_) {
         define_variables();
         variables_defined_ = true;
@@ -312,6 +330,14 @@ void OutputManager::write(int step, VVM::Real time) {
 
     auto var_time = io_.InquireVariable<VVM::Real>("time");
     writer_.Put<VVM::Real>(var_time, &time, adios2::Mode::Sync);
+
+    const double model_time_s = static_cast<double>(time);
+    const int64_t model_step = static_cast<int64_t>(step);
+    auto var_model_time_s = io_.InquireVariable<double>("model_time_s");
+    writer_.Put<double>(var_model_time_s, &model_time_s, adios2::Mode::Sync);
+    auto var_model_step = io_.InquireVariable<int64_t>("model_step");
+    writer_.Put<int64_t>(var_model_step, &model_step, adios2::Mode::Sync);
+
     write_static_data();
 
     const size_t h = grid_.get_halo_cells();
@@ -546,6 +572,24 @@ void OutputManager::attach_hdf5_field_metadata(
             it->second);
         }
 
+        H5Dclose(dataset);
+    }
+
+    // The scalar clock variables are not State fields, so the loop above never
+    // reaches them. Label them in the file itself: a reader that opens
+    // vvm_output_XXXXXX.h5 should be able to see that these are elapsed seconds
+    // and an exact step count, without consulting the source.
+    const std::array<std::array<const char*, 3>, 3> scalar_metadata = {{
+        {{"time",         "s", "elapsed simulation time"}},
+        {{"model_time_s", "s", "elapsed simulation time"}},
+        {{"model_step",   "1", "integration step count"}},
+    }};
+
+    for (const auto& entry : scalar_metadata) {
+        hid_t dataset = H5Dopen2(file, (std::string("/Step0/") + entry[0]).c_str(), H5P_DEFAULT);
+        if (dataset < 0) continue;
+        write_attribute(dataset, "units", entry[1]);
+        write_attribute(dataset, "long_name", entry[2]);
         H5Dclose(dataset);
     }
 

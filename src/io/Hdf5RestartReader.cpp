@@ -1,5 +1,6 @@
 #include "Hdf5RestartReader.hpp"
 
+#include "Hdf5RestartMetadata.hpp"
 #include "core/vvm_types.hpp"
 
 #include <Kokkos_Core.hpp>
@@ -138,6 +139,30 @@ void Hdf5RestartReader::read_and_initialize(Core::State& state) {
         if (state.has_field(var_name))
             halo_exchanger_.exchange_halos(state.get_field<3>(var_name));
     }
+}
+
+VVM::Utils::RestartFileMetadata Hdf5RestartReader::read_restart_metadata() {
+    hid_t file_id = H5Fopen(source_file_.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file_id < 0) {
+        throw std::runtime_error(
+            "[Hdf5RestartReader] Failed to open restart file for metadata: " + source_file_);
+    }
+
+    const VVM::Utils::RestartFileMetadata metadata = read_hdf5_restart_metadata(file_id);
+    H5Fclose(file_id);
+
+    if (rank_ == 0) {
+        if (!metadata.has_time && !metadata.has_step) {
+            std::cout << "  [Hdf5RestartReader] No restart clock stored in " << source_file_
+                      << " (looked for model_time_s, model_step, time)." << std::endl;
+        } else {
+            std::cout << "  [Hdf5RestartReader] Restart clock read from " << source_file_ << ":";
+            if (metadata.has_time) std::cout << " time=" << metadata.time_s << " s";
+            if (metadata.has_step) std::cout << " step=" << metadata.step;
+            std::cout << std::endl;
+        }
+    }
+    return metadata;
 }
 
 std::vector<std::string> Hdf5RestartReader::get_variables_to_read(const Core::State& state) const {

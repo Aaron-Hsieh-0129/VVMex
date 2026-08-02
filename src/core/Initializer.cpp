@@ -144,40 +144,64 @@ void Initializer::load_restart() const {
 
     restart_reader_->read_and_initialize(state_);
 
-    const VVM::Real restart_time = get_restart_time_from_filename(restart_source_file);
-    const VVM::Real dt = config_.get_value<VVM::Real>("simulation.dt_s");
-    const size_t restart_step = static_cast<size_t>(std::llround(restart_time / dt));
+    // The clock comes from the file's own metadata, never from its name. Every
+    // rank reads the same bytes, but rank 0's answer is broadcast anyway so the
+    // recovered time and step are bit-identical on every rank by construction.
+    VVM::Utils::RestartFileMetadata metadata = restart_reader_->read_restart_metadata();
+    broadcast_restart_metadata(metadata);
 
-    state_.set_time(restart_time);
-    state_.set_step(restart_step);
+    const auto resolution = Utils::resolve_restart_time(
+        metadata, restart_time_policy(), restart_source_file);
+
+    if (!resolution.ok) {
+        throw std::runtime_error("[Initializer] " + resolution.error);
+    }
 
     if (rank == 0) {
-        std::cout << "  [Initializer] Restart time set to " << state_.get_time()
-                  << " s, step " << state_.get_step() << std::endl;
+        for (const auto& warning : resolution.warnings) {
+            std::cout << "  " << warning << std::endl;
+        }
+    }
+
+    state_.set_time(static_cast<VVM::Real>(resolution.time_s));
+    state_.set_step(static_cast<size_t>(resolution.step));
+
+    if (rank == 0) {
+        std::cout << "  [Initializer] Restart metadata: time=" << resolution.time_s
+                  << " s, step=" << resolution.step
+                  << " (source: " << Utils::to_string(resolution.source) << ")" << std::endl;
     }
 }
 
-VVM::Real Initializer::get_restart_time_from_filename(const std::string& source_file) const {
-    const size_t dot_pos = source_file.find_last_of('.');
-    const size_t search_end = (dot_pos == std::string::npos) ? source_file.size() : dot_pos;
-    size_t digit_end = search_end;
-
-    while (digit_end > 0 && !std::isdigit(static_cast<unsigned char>(source_file[digit_end - 1]))) {
-        --digit_end;
+Utils::RestartTimePolicy Initializer::restart_time_policy() const {
+    Utils::RestartTimePolicy policy;
+    policy.dt_s = static_cast<double>(config_.get_value<VVM::Real>("simulation.dt_s"));
+    policy.has_legacy_time = config_.has_key("restart.legacy_time_s");
+    if (policy.has_legacy_time) {
+        policy.legacy_time_s = config_.get_value<double>("restart.legacy_time_s");
     }
+    // Filename parsing is what this whole path replaced: off unless a run asks
+    // for it by name, and loud when it is on.
+    policy.allow_filename_fallback =
+        config_.get_value<bool>("restart.allow_filename_time_fallback", false);
+    policy.filename_interval_s = config_.get_value<double>("restart.file_interval_s", 3600.0);
+    policy.ignore_stored_step = config_.get_value<bool>("restart.ignore_stored_step", false);
+    return policy;
+}
 
-    size_t digit_start = digit_end;
-    while (digit_start > 0 && std::isdigit(static_cast<unsigned char>(source_file[digit_start - 1]))) {
-        --digit_start;
-    }
+void Initializer::broadcast_restart_metadata(Utils::RestartFileMetadata& metadata) const {
+    int flags[2] = {metadata.has_time ? 1 : 0, metadata.has_step ? 1 : 0};
+    double time_s = metadata.time_s;
+    long long step = metadata.step;
 
-    if (digit_start == digit_end) {
-        throw std::runtime_error("[Initializer] Cannot derive restart time from source file name: " + source_file);
-    }
+    MPI_Bcast(flags, 2, MPI_INT, 0, grid_.get_comm());
+    MPI_Bcast(&time_s, 1, MPI_DOUBLE, 0, grid_.get_comm());
+    MPI_Bcast(&step, 1, MPI_LONG_LONG, 0, grid_.get_comm());
 
-    const int restart_file_index = std::stoi(source_file.substr(digit_start, digit_end - digit_start));
-    const VVM::Real restart_file_interval_s = config_.get_value<VVM::Real>("restart.file_interval_s", real(3600.0));
-    return static_cast<VVM::Real>(restart_file_index) * restart_file_interval_s;
+    metadata.has_time = (flags[0] != 0);
+    metadata.has_step = (flags[1] != 0);
+    metadata.time_s = time_s;
+    metadata.step = step;
 }
 
 void Initializer::initialize_grid() const {

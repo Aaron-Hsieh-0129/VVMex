@@ -121,12 +121,41 @@ The exact variable set must match what your preprocessing tool wrote. The defaul
 | --- | ---- |
 | `enable` | Enables restart loading when true. |
 | `source_file` | Restart source. Landfix supports `.h5` through the HDF5 restart reader and `.nc` through the PnetCDF reader. |
-| `file_interval_s` | Time represented by one numbered output index. For example, `vvm_output_000144.h5` with `file_interval_s = 600` starts at `144 * 600 = 86400 s`. |
+| `legacy_time_s` | Elapsed simulation seconds to resume from, for a restart file that stores no clock of its own. Explicit opt-in; warns when used. |
+| `allow_filename_time_fallback` | Restores the old behaviour of deriving the restart time from the digits in the file name (`index * file_interval_s`). Default `false`. Warns loudly when enabled. |
+| `file_interval_s` | Seconds represented by one numbered output index. Only consulted when `allow_filename_time_fallback` is true. |
+| `ignore_stored_step` | Discards the `model_step` stored in the file and re-derives the step from `simulation.dt_s`. Use when `dt` was deliberately changed on restart. |
 | `variables_to_read.1d`, `variables_to_read.2d`, `variables_to_read.3d` | Optional explicit restart variable lists. |
 
 If no explicit `restart.variables_to_read.3d` is supplied for HDF5 restart, the reader selects prognostic variables from `dynamics.prognostic_variables` and filters them through `output.fields_to_output`. That means fields needed after restart should either be listed explicitly under `restart.variables_to_read` or be included in `output.fields_to_output`.
 
-When restart is enabled, the restart state replaces the normal perturbation initialization. The restart filename must contain a trailing number before the extension so the model can recover the restart time.
+When restart is enabled, the restart state replaces the normal perturbation initialization.
+
+#### How the restart time and step are recovered
+
+The simulation clock comes from metadata stored **inside** the restart file, never from its name. Renaming a restart file does not change the time it resumes from. Output files carry two scalars for this:
+
+| Variable | Meaning |
+| --- | ---- |
+| `model_time_s` | Elapsed simulation time in seconds (`double`). |
+| `model_step` | Exact integration-step count (64-bit integer). |
+
+The model tries, in order:
+
+1. Stored time and stored step. They are cross-checked against `simulation.dt_s`; if `time` and `step * dt` disagree by more than a serialization tolerance the run stops and prints both values, the configured `dt`, the expected time and the source file. Neither value is silently preferred.
+2. Stored time alone, with `step = round(time / dt)`.
+3. `restart.legacy_time_s`, for files predating the metadata. Prints a rank-0 warning.
+4. The digits in the file name, only when `restart.allow_filename_time_fallback` is true. Prints a prominent rank-0 warning, because the file name then *is* the clock.
+
+Without one of these the run stops rather than guessing. The recovered values are broadcast from rank 0, so every rank resumes from an identical time and step, and rank 0 reports them:
+
+```text
+[Initializer] Restart metadata: time=7200 s, step=3600 (source: file model_time_s + model_step)
+```
+
+NetCDF restart sources are written outside this model, so only unambiguous metadata is accepted: `model_time_s` / `model_step` as scalar variables or as global attributes, or a `time` variable whose `units` attribute says plain seconds. A calendar `time` ("hours since ...") is deliberately *not* read as an elapsed time — such a file needs `restart.legacy_time_s`.
+
+Restart files are ordinary output files; there is no separate restart output path.
 
 ### `output`
 
@@ -340,7 +369,7 @@ Before submitting a long run, check:
 - `physics.rrtmgp.rad_frequency_s`, `physics.surface_process.frequency_s`, and `simulation.output_interval_s` are sensible multiples of `simulation.dt_s`.
 - Every `output.fields_to_output` name is allocated by the selected dynamics/physics configuration.
 - If `output.engine` is `SST`, submit with `submit.py --io N`.
-- If `restart.enable` is true, the restart filename contains a numeric output index and `restart.file_interval_s` matches the original output interval.
+- If `restart.enable` is true, the restart file stores `model_time_s`/`model_step` (or an elapsed-seconds `time`); otherwise set `restart.legacy_time_s` explicitly. The file *name* no longer affects the restart time.
 - The NetCDF variables listed in `netcdf_reader.variables_to_read.2d` exist in `netcdf_reader.source_file`.
 - P3 hydrometeor variables are present in `dynamics.prognostic_variables` when `physics.p3.enable_p3` is true.
 - CUDA graph field lists match the fields actually allocated in the run.

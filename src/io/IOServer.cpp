@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <adios2.h>
 #include <hdf5.h>
 #include <sys/stat.h>
@@ -225,6 +226,11 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
     FieldMetadataCache field_metadata_cache;
     while (true) {
         std::map<std::string, std::vector<VVM::Real>> data_buffers;
+        // Integer scalars travel separately from the float relay below: the
+        // restart step count must reach the HDF5 file as an exact integer, and
+        // rounding it through VVM::Real is exactly what the restart clock is
+        // not allowed to depend on.
+        std::map<std::string, int64_t> int_scalars;
         std::vector<std::string> current_step_vars;
 
         adios2::StepStatus status;
@@ -259,6 +265,20 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
                 if (typeIt == varPair.second.end()) continue;
 
                 const std::string& type = typeIt->second;
+
+                if (type == "int64_t") {
+                    auto intVarIn = inIO.InquireVariable<int64_t>(name);
+                    if (!intVarIn || !intVarIn.Shape().empty()) continue;
+
+                    if (!outIO.InquireVariable<int64_t>(name)) {
+                        outIO.DefineVariable<int64_t>(name);
+                    }
+                    current_step_vars.push_back(name);
+                    int_scalars[name] = 0;
+                    reader.Get(intVarIn, &int_scalars[name], adios2::Mode::Deferred);
+                    continue;
+                }
+
                 if (type != "double" && type != "float") continue;
 
                 auto varIn = inIO.InquireVariable<VVM::Real>(name);
@@ -358,6 +378,15 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
             writer.BeginStep();
 
             for (const auto& name : current_step_vars) {
+                const auto intIt = int_scalars.find(name);
+                if (intIt != int_scalars.end()) {
+                    auto intVarOut = outIO.InquireVariable<int64_t>(name);
+                    if (intVarOut) {
+                        writer.Put(intVarOut, &intIt->second, adios2::Mode::Deferred);
+                    }
+                    continue;
+                }
+
                 auto varOut = outIO.InquireVariable<VVM::Real>(name);
                 if (!varOut) continue;
 

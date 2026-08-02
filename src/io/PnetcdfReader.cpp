@@ -1,4 +1,5 @@
 #include "PnetcdfReader.hpp"
+#include "PnetcdfRestartMetadata.hpp"
 #include "core/Field.hpp"
 #include <iostream>
 #include <algorithm>
@@ -339,6 +340,35 @@ void PnetcdfReader::read_variable_3d(int ncid, const std::string& var_name,
     );
 
     Kokkos::deep_copy(field_view_dev, field_view_host);
+}
+
+VVM::Utils::RestartFileMetadata PnetcdfReader::read_restart_metadata() {
+    int ncid = -1;
+    check_ncmpi_error(ncmpi_open(comm_, source_file_.c_str(), NC_NOWRITE, MPI_INFO_NULL, &ncid),
+                      "Failed to open NetCDF file for restart metadata: " + source_file_);
+
+    VVM::Utils::RestartFileMetadata metadata;
+    try {
+        metadata = read_pnetcdf_restart_metadata(ncid);
+    } catch (...) {
+        ncmpi_close(ncid);
+        throw;
+    }
+    check_ncmpi_error(ncmpi_close(ncid), "Failed to close NetCDF file: " + source_file_);
+
+    if (rank_ == 0) {
+        if (!metadata.has_time && !metadata.has_step) {
+            std::cout << "  [PnetcdfReader] No restart clock stored in " << source_file_
+                      << " (looked for model_time_s / model_step variables or global "
+                         "attributes, and a 'time' variable in seconds)." << std::endl;
+        } else {
+            std::cout << "  [PnetcdfReader] Restart clock read from " << source_file_ << ":";
+            if (metadata.has_time) std::cout << " time=" << metadata.time_s << " s";
+            if (metadata.has_step) std::cout << " step=" << metadata.step;
+            std::cout << std::endl;
+        }
+    }
+    return metadata;
 }
 
 void PnetcdfReader::read_and_initialize(VVM::Core::State& state) {

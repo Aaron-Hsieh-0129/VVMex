@@ -255,7 +255,7 @@ int main(int argc, char *argv[]) {
             config.get_value<bool>("output.output_initial_step", true);
         if (output_initial_step) {
             VVM::Utils::Timer timer("io");
-            output_manager->write(0, 0.0);
+            output_manager->write(state.get_step(), state.get_time());
         } else if (split_rank == 0) {
             std::cout << "[Output] Skipping initial full output." << std::endl;
         }

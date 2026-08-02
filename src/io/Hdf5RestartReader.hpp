@@ -26,6 +26,10 @@ public:
 
     void read_and_initialize(Core::State& state) override;
 
+    // Restart clock stored in the file: /Step0/model_time_s + /Step0/model_step,
+    // falling back to the long-standing elapsed-seconds /Step0/time.
+    VVM::Utils::RestartFileMetadata read_restart_metadata() override;
+
 private:
     std::vector<std::string> get_variables_to_read(const Core::State& state) const;
     void print_variables_to_read(const std::vector<std::string>& vars_1d,
