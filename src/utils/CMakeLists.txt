@@ -7,6 +7,7 @@ set(VVM_UTILS_SOURCES
 set(VVM_UTILS_HEADERS
     ConfigurationManager.hpp
     ProcessScheduling.hpp
+    SstPath.hpp
     TimingManager.hpp
     Timer.hpp
 )

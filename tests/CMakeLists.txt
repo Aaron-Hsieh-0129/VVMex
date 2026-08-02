@@ -193,6 +193,11 @@ endfunction()
 # When radiation and the surface process recompute their coefficients.
 add_vvm_unit_test(test_process_scheduling)
 
+# What the stale-SST cleanup in main() is allowed to delete, and that it treats
+# every character in output_dir / output_filename_prefix as a filename character
+# rather than shell syntax.
+add_vvm_unit_test(test_sst_path)
+
 # --- unit, on the device: 1 GPU per rank, <10 s ----------------------------
 # Same shape as add_vvm_unit_test, but the code under test is a State method, so
 # the binary needs Kokkos, MPI and a GPU. Registered at one rank always and at
