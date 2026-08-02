@@ -12,6 +12,7 @@
 #include <map>
 #include <string>
 #include <memory>
+#include <stdexcept>
 #include <variant>
 #include <vector>
 #include <cuda_runtime.h>
@@ -23,6 +24,9 @@ namespace VVM { namespace Dynamics { class AdamsBashforth2; } }
 
 namespace VVM {
 namespace Core {
+
+// Device-resident scalar, the result type of the horizontal-mean reduction.
+using ScalarView = Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space>;
 
 // A variant that can hold a field of any supported dimension
 using AnyField = std::variant<
@@ -95,14 +99,25 @@ public:
     }
 
 
-// FIXME: Use class member and refine thie function
-#if defined(ENABLE_NCCL)
+    // Global horizontal mean over the physical (halo-free) cells of every rank:
+    //
+    //     mean = sum(phi over all physical horizontal cells) / (gnx * gny)
+    //
+    // One call-site API for both communication backends. Only the global sum
+    // differs: an NCCL all-reduce on the device, or a host MPI_Allreduce. The
+    // local reduction, the level convention and the normalization are shared.
+    //
+    // For 3D fields, k_level = -1 (the default) means the highest physical
+    // level, nz - h - 1. An explicit level inside the halo is an error.
     template<size_t Dim>
     void calculate_horizontal_mean(
-        const Field<Dim>& field, 
-        Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> d_mean_result, 
-        int k_level = -1) const 
+        const Field<Dim>& field,
+        ScalarView d_mean_result,
+        int k_level = -1) const
     {
+        static_assert(Dim == 2 || Dim == 3,
+                      "calculate_horizontal_mean supports 2D and 3D fields only.");
+
         auto view = field.get_device_data();
 
         const int ny_local = grid_.get_local_physical_points_y();
@@ -110,139 +125,126 @@ public:
         const int h = grid_.get_halo_cells();
         const int gnx = grid_.get_global_points_x();
         const int gny = grid_.get_global_points_y();
-        const VVM::Real total_points_horizontal = static_cast<VVM::Real>(gnx) * static_cast<VVM::Real>(gny);
+        // Multiplied as Real, not as int: gnx * gny overflows a 32-bit int past
+        // roughly 46k x 46k.
+        const VVM::Real total_points_horizontal =
+            static_cast<VVM::Real>(gnx) * static_cast<VVM::Real>(gny);
 
-        const int nz = grid_.get_local_total_points_z();
-        if (k_level == -1) k_level = nz-h-1;
+        if constexpr (Dim == 3) {
+            const int nz = grid_.get_local_total_points_z();
+            if (k_level == -1) k_level = nz - h - 1;
+            if (k_level < h || k_level >= nz - h) {
+                throw std::out_of_range(
+                    "calculate_horizontal_mean: k_level " + std::to_string(k_level) +
+                    " is outside the physical range [" + std::to_string(h) + ", " +
+                    std::to_string(nz - h - 1) + "] of the 3D field '" +
+                    field.get_name() + "'.");
+            }
+        }
 
-
-        if (total_points_horizontal == 0.0) {
-            Kokkos::parallel_for("set_zero_mean", 
-                Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, 1),
-                KOKKOS_LAMBDA(const int) {
-                    d_mean_result() = 0.0;
-                });
-            Kokkos::fence();
+        if (total_points_horizontal == VVM::real(0.0)) {
+            Kokkos::deep_copy(d_mean_result, VVM::real(0.0));
             return;
         }
 
-        Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> d_local_sum("local_sum");
+        ScalarView d_local_sum("horizontal_mean_local_sum");
 
         if constexpr (Dim == 3) {
-            if (k_level < h || k_level >= grid_.get_local_total_points_z() - h) {
-                Kokkos::parallel_for("set_halo_zero", 
-                    Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, 1),
-                    KOKKOS_LAMBDA(const int) {
-                        d_local_sum() = 0.0;
-                    });
-            } 
-            else {
-                Kokkos::parallel_reduce("calculate_3d_local_sum",
-                    Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny_local + h, nx_local + h}),
-                    KOKKOS_LAMBDA(const int j, const int i, VVM::Real& update_sum) {
-                        update_sum += view(k_level, j, i);
-                    }, d_local_sum);
-            }
-        } 
-        else if constexpr (Dim == 2) {
+            Kokkos::parallel_reduce("calculate_3d_local_sum",
+                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny_local + h, nx_local + h}),
+                KOKKOS_LAMBDA(const int j, const int i, VVM::Real& update_sum) {
+                    update_sum += view(k_level, j, i);
+                }, d_local_sum);
+        }
+        else {
             Kokkos::parallel_reduce("calculate_2d_local_sum",
                 Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny_local + h, nx_local + h}),
                 KOKKOS_LAMBDA(const int j, const int i, VVM::Real& update_sum) {
                     update_sum += view(j, i);
                 }, d_local_sum);
-        } 
-        else {
-             Kokkos::parallel_for("set_unsupported_zero", 
-                Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, 1),
-                KOKKOS_LAMBDA(const int) {
-                    d_local_sum() = 0.0;
-                });
         }
 
         Kokkos::fence();
 
-        ncclResult_t result = ncclAllReduce(
-            d_local_sum.data(), 
-            d_mean_result.data(), 
-            1, 
-            VVM_NCCL_REAL, 
-            ncclSum, 
-            nccl_comm_, 
+        // Both backends gather the per-rank partial sums and then add them in
+        // rank order in the same device kernel below.
+        //
+        // The point is that floating-point addition is not associative, so a
+        // reduction's answer depends on the order it combines the ranks --
+        // NCCL's ring and MPI_Allreduce's algorithm agree on most data but not
+        // all. Measured on a 2048^2 run over 8 ranks: they differed by one ULP
+        // in vtopmn, which shifted v by a constant everywhere and grew to ~1e-12
+        // over 120 steps. Rank order is an order both backends can commit to,
+        // and it also stops the answer depending on which algorithm the library
+        // picks for the current message size, topology or version.
+        int comm_size = 1;
+#if defined(ENABLE_NCCL)
+        const ncclResult_t count_result = ncclCommCount(nccl_comm_, &comm_size);
+        if (count_result != ncclSuccess) {
+            throw std::runtime_error(
+                "calculate_horizontal_mean could not query the NCCL communicator size: " +
+                std::string(ncclGetErrorString(count_result)));
+        }
+#else
+        MPI_Comm_size(grid_.get_comm(), &comm_size);
+#endif
+
+        if (static_cast<int>(rank_sums_.extent(0)) != comm_size) {
+            rank_sums_ = Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space>(
+                "horizontal_mean_rank_sums", comm_size);
+        }
+
+#if defined(ENABLE_NCCL)
+        const ncclResult_t result = ncclAllGather(
+            d_local_sum.data(),
+            rank_sums_.data(),
+            1,
+            VVM_NCCL_REAL,
+            nccl_comm_,
             nccl_stream_
         );
 
         if (result != ncclSuccess) {
-            printf("NCCL Error: %s\n", ncclGetErrorString(result));
+            throw std::runtime_error(
+                "calculate_horizontal_mean NCCL all-gather failed for '" +
+                field.get_name() + "': " + ncclGetErrorString(result));
         }
 
         cudaStreamSynchronize(nccl_stream_);
+#else
+        VVM::Real local_sum = VVM::real(0.0);
+        Kokkos::deep_copy(local_sum, d_local_sum);
 
-        Kokkos::parallel_for("scale_global_mean",
-            Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, 1),
-            KOKKOS_LAMBDA(const int) {
-                d_mean_result() /= total_points_horizontal;
-            });
-    }
+        std::vector<VVM::Real> host_rank_sums(static_cast<size_t>(comm_size), VVM::real(0.0));
+        const int mpi_result = MPI_Allgather(
+            &local_sum, 1, VVM_MPI_REAL,
+            host_rank_sums.data(), 1, VVM_MPI_REAL, grid_.get_comm());
+
+        if (mpi_result != MPI_SUCCESS) {
+            throw std::runtime_error(
+                "calculate_horizontal_mean MPI_Allgather failed for '" +
+                field.get_name() + "'.");
+        }
+
+        Kokkos::deep_copy(
+            rank_sums_,
+            Kokkos::View<const VVM::Real*, Kokkos::HostSpace>(host_rank_sums.data(), comm_size));
 #endif
 
-    template<size_t Dim>
-    Kokkos::View<VVM::Real> calculate_horizontal_mean(const Field<Dim>& field, int k_level = -1) const {
-        Kokkos::View<VVM::Real> ans("ans");
-        Kokkos::deep_copy(ans, 0);
-        auto view = field.get_device_data();
-
-        const int ny_local = grid_.get_local_physical_points_y();
-        const int nx_local = grid_.get_local_physical_points_x();
-        const int h = grid_.get_halo_cells();
-        const int gnx = grid_.get_global_points_x();
-        const int gny = grid_.get_global_points_y();
-        const VVM::Real total_points_horizontal = static_cast<VVM::Real>(gnx * gny);
-
-        if (total_points_horizontal == 0) {
-            return ans;
-        }
-
-        VVM::Real local_sum = 0.0;
-
-        if constexpr (Dim == 3) {
-            if (k_level < h || k_level >= grid_.get_local_total_points_z() - h) {
-                int rank;
-                MPI_Comm_rank(grid_.get_comm(), &rank);
-                if (rank == 0) {
-                    std::cerr << "Warning: k_level " << k_level << " is in the halo region for the 3D field '" << field.get_name() << "'. Returning 0." << std::endl;
-                }
-                return ans;
-            }
-
-            Kokkos::parallel_reduce("calculate_3d_local_sum",
-                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny_local + h, nx_local + h}),
-                KOKKOS_LAMBDA(const int j, const int i, VVM::Real& update_sum) {
-                    update_sum += view(k_level, j, i);
-                }, local_sum);
-
-        } 
-        else if constexpr (Dim == 2) {
-            Kokkos::parallel_reduce("calculate_2d_local_sum",
-                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny_local + h, nx_local + h}),
-                KOKKOS_LAMBDA(const int j, const int i, VVM::Real& update_sum) {
-                    update_sum += view(j, i);
-                }, local_sum);
-        } 
-        else {
-            int rank;
-            MPI_Comm_rank(grid_.get_comm(), &rank);
-            if (rank == 0) {
-                std::cerr << "Warning: calculate_horizontal_mean does not support " << Dim << "D fields. Returning 0." << std::endl;
-            }
-            return ans;
-        }
-
-        VVM::Real global_sum = 0.0;
-        MPI_Allreduce(&local_sum, &global_sum, 1, VVM_MPI_REAL, MPI_SUM, grid_.get_comm());
-
-        Kokkos::deep_copy(ans, global_sum / total_points_horizontal);
-
-        return ans;
+        // Shared by both backends, deliberately: summing and normalizing in one
+        // device kernel means the same additions in the same order and the same
+        // division, so the two builds cannot drift apart here. (Normalizing on
+        // the host in one backend would also risk differing under -use_fast_math
+        // whenever gnx*gny is not a power of two.)
+        auto rank_sums = rank_sums_;
+        const int num_ranks = comm_size;
+        Kokkos::parallel_for("horizontal_mean_finalize",
+            Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, 1),
+            KOKKOS_LAMBDA(const int) {
+                VVM::Real global_sum = VVM::real(0.0);
+                for (int r = 0; r < num_ranks; ++r) global_sum += rank_sums(r);
+                d_mean_result() = global_sum / total_points_horizontal;
+            });
     }
 
     // Provide iterators to loop over all fields
@@ -294,6 +296,10 @@ private:
 
     size_t step_ = 0;
     VVM::Real time_ = 0.0;
+
+    // Per-rank partial sums for calculate_horizontal_mean(), kept across calls
+    // so the mean does not allocate every time it is asked for.
+    mutable Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space> rank_sums_;
 
 #if defined(ENABLE_NCCL)
     ncclComm_t nccl_comm_;

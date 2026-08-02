@@ -324,13 +324,9 @@ void DynamicalCore::compute_uvtopmn() {
                        * (w(nz-h-2,j,i)+w(nz-h-2,j+1,i));
         }
     );
-#if defined(ENABLE_NCCL)
     state_.calculate_horizontal_mean(tempu_field, tempumn_);
     state_.calculate_horizontal_mean(tempv_field, tempvmn_);
-#else
-    auto tempumn = state_.calculate_horizontal_mean(tempu_field);
-    auto tempvmn = state_.calculate_horizontal_mean(tempv_field);
-#endif
+
     auto tempumn = tempumn_;
     auto tempvmn = tempvmn_;
     Kokkos::parallel_for("DataClipZero", 1, KOKKOS_LAMBDA(const int i) {
@@ -364,13 +360,8 @@ void DynamicalCore::compute_uvtopmn() {
                              *R_xi(NK1,j,i)*rhobar_up(NK1);
             }
         );
-#if defined(ENABLE_NCCL)
         state_.calculate_horizontal_mean(tempu_field, mean_u_turb_);
         state_.calculate_horizontal_mean(tempv_field, mean_v_turb_);
-#else
-        auto mean_u_turb = state_.calculate_horizontal_mean(tempu_field);
-        auto mean_v_turb = state_.calculate_horizontal_mean(tempv_field);
-#endif
         Kokkos::parallel_for("DataClipZero", 1, KOKKOS_LAMBDA(const int i) {
             if (Kokkos::abs(mean_u_turb()) < real(1e-15)) {
                 mean_u_turb() = real(0.0);
@@ -395,13 +386,8 @@ void DynamicalCore::compute_uvtopmn() {
                 tempv(j,i) = f(j) * u(NK2, j, i);
             }
         );
-#if defined(ENABLE_NCCL)
         state_.calculate_horizontal_mean(tempu_field, mean_u_coriolis_);
         state_.calculate_horizontal_mean(tempv_field, mean_v_coriolis_);
-#else
-        auto mean_u_coriolis = state_.calculate_horizontal_mean(tempu_field);
-        auto mean_v_coriolis = state_.calculate_horizontal_mean(tempv_field);
-#endif
         Kokkos::parallel_for("DataClipZero", 1, KOKKOS_LAMBDA(const int i) {
             if (Kokkos::abs(mean_u_coriolis()) < real(1e-15)) {
                 mean_u_coriolis() = real(0.0);

@@ -52,8 +52,11 @@ target_include_directories(eamxx_rrtmgp_interface PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(eamxx_rrtmgp_interface SYSTEM PUBLIC
     ${NETCDF_C_INCLUDE_DIR}
-    ${EAM_RRTMGP_DIR}/external
-    ${NCCL_INCLUDE_DIR})
+    ${EAM_RRTMGP_DIR}/external)
+
+if(ENABLE_NCCL)
+    target_include_directories(eamxx_rrtmgp_interface SYSTEM PUBLIC ${NCCL_INCLUDE_DIR})
+endif()
 
 
 ##################################

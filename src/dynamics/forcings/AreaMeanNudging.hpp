@@ -29,6 +29,18 @@ public:
     void apply_vorticity(Core::State& state, VVM::Real dt);
     void apply_uvtopmn(Core::State& state, VVM::Real dt);
 
+    // Global sum with a fixed, backend-independent summation order: gather the
+    // per-rank partial sums and add them in rank order. An MPI_Allreduce and an
+    // NCCL all-reduce do not combine the ranks in the same order, and floating
+    // point addition is not associative, so leaving it to the library made the
+    // two backends disagree in the last bit (and moved utopmn/vtopmn with it).
+    // Public only because a CUDA extended lambda may not appear in a private
+    // member, the same reason WindSolver::relax_2d_batched() is public.
+    void deterministic_global_sum(const Core::State& state,
+                                  const VVM::Real* local,
+                                  VVM::Real* global,
+                                  int count) const;
+
 private:
     const Utils::ConfigurationManager& config_;
     const Core::Grid& grid_;
@@ -61,6 +73,8 @@ private:
         Kokkos::View<VVM::Real*>& u_target,
         Kokkos::View<VVM::Real*>& v_target) const;
     void check_nc_error(int status, const std::string& message) const;
+    mutable Kokkos::View<VVM::Real*> gather_buffer_;
+
 
 #if defined(ENABLE_NCCL)
     ncclComm_t nccl_comm_; 

@@ -67,9 +67,23 @@ _report_test_tier("large    " ${VVM_TEST_LARGE}     "8 GPUs" "114 s" VVM_TEST_LA
 # The original hand-written regression cases, comparing against stored baseline
 # files. Small enough that a full baseline is practical.
 function(add_vvm_test TEST_NAME VARS_TO_TEST)
+    # The checked-in configs write to ./build/testing_output_<case>/, so the run
+    # and the verify step only agree when the binary directory happens to be
+    # named "build" -- in any other tree the run writes to ./build/... while the
+    # verify looks in ${CMAKE_BINARY_DIR}/... and reports "model produced no
+    # output". Stamp a copy of the config with this tree's output path instead,
+    # the same way add_case_test() does through make_test_config.py.
+    set(ODIR ${CMAKE_BINARY_DIR}/testing_output_${TEST_NAME})
+    set(CFG ${CMAKE_BINARY_DIR}/test_configs/${TEST_NAME}.json)
+    file(READ ${TEST_DIR}/configs/${TEST_NAME}.json VVM_TEST_CFG)
+    string(REGEX REPLACE "\"output_dir\"[ \t]*:[ \t]*\"[^\"]*\""
+                         "\"output_dir\": \"${ODIR}/\""
+                         VVM_TEST_CFG "${VVM_TEST_CFG}")
+    file(WRITE ${CFG} "${VVM_TEST_CFG}")
+
     add_test(NAME Run_${TEST_NAME}
              COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
-                     $<TARGET_FILE:vvm> ${TEST_DIR}/configs/${TEST_NAME}.json
+                     $<TARGET_FILE:vvm> ${CFG}
              WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
 
     separate_arguments(VARS_LIST UNIX_COMMAND "${VARS_TO_TEST}")
@@ -77,7 +91,7 @@ function(add_vvm_test TEST_NAME VARS_TO_TEST)
     add_test(NAME Verify_${TEST_NAME}
              COMMAND ${Python3_EXECUTABLE} ${TEST_DIR}/scripts/verify_output.py
              --baseline ${TEST_DIR}/baselines/${TEST_NAME}.h5
-             --test_out ${CMAKE_BINARY_DIR}/testing_output_${TEST_NAME}/vvm_output_000001.h5
+             --test_out ${ODIR}/vvm_output_000001.h5
              --vars ${VARS_LIST}
              --tol 1e-6)
 
@@ -178,6 +192,41 @@ endfunction()
 
 # When radiation and the surface process recompute their coefficients.
 add_vvm_unit_test(test_process_scheduling)
+
+# --- unit, on the device: 1 GPU per rank, <10 s ----------------------------
+# Same shape as add_vvm_unit_test, but the code under test is a State method, so
+# the binary needs Kokkos, MPI and a GPU. Registered at one rank always and at
+# RANKS ranks only when the multirank tier is on, since extra ranks need extra
+# physical GPUs (see one_gpu_per_rank.sh).
+#   add_vvm_device_unit_test(<name> <config> <ranks>)
+function(add_vvm_device_unit_test TEST_NAME CONFIG RANKS)
+    add_executable(${TEST_NAME} ${TEST_DIR}/unit/${TEST_NAME}.cpp)
+    target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(${TEST_NAME} PRIVATE vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX)
+
+    add_test(NAME ${TEST_NAME}_r1
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+                     ${GPU_WRAP} $<TARGET_FILE:${TEST_NAME}> ${CONFIG}
+             WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
+    set_tests_properties(${TEST_NAME}_r1 PROPERTIES LABELS unit RESOURCE_LOCK gpu)
+
+    if(VVM_TEST_MULTIRANK)
+        add_test(NAME ${TEST_NAME}_r${RANKS}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${RANKS}
+                         ${GPU_WRAP} $<TARGET_FILE:${TEST_NAME}> ${CONFIG}
+                 WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
+        set_tests_properties(${TEST_NAME}_r${RANKS}
+                             PROPERTIES LABELS "unit;multirank" RESOURCE_LOCK gpu)
+    endif()
+endfunction()
+
+# State::calculate_horizontal_mean(): the API shared by the NCCL and the
+# standard-MPI backend. The 2-rank run is what pins the global reduction.
+add_vvm_device_unit_test(test_horizontal_mean ${TEST_DIR}/configs/2dbubble.json 2)
+
+# HaloExchanger: the NCCL and the standard-MPI implementation are separate code,
+# and only a value-level check keeps them exchanging the same cells.
+add_vvm_device_unit_test(test_halo_exchange ${TEST_DIR}/configs/2dbubble.json 2)
 
 # --- default: 1 GPU, ~40 s -------------------------------------------------
 add_vvm_test(advection_u "u th xi eta zeta")

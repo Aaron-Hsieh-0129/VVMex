@@ -24,8 +24,13 @@ add_library(vvm_core STATIC
 target_include_directories(vvm_core
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/..
-        ${NCCL_INCLUDE_DIR}
 )
+
+# NCCL is only a dependency of the NCCL communication backend.
+if(ENABLE_NCCL)
+    target_include_directories(vvm_core PUBLIC ${NCCL_INCLUDE_DIR})
+    target_link_libraries(vvm_core PUBLIC ${NCCL_LIBRARY})
+endif()
 
 
 target_link_libraries(vvm_core
@@ -34,7 +39,6 @@ target_link_libraries(vvm_core
         MPI::MPI_CXX
         ${NVCPUMATH_LIBRARY}
         ${PNETCDF_LIBRARY}
-        ${NCCL_LIBRARY}
     PRIVATE
         Kokkos::kokkos
         ${OpenMP_LIBRARIES}
