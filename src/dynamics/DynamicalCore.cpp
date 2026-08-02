@@ -140,7 +140,9 @@ void DynamicalCore::compute_diagnostic_fields() const {
 void DynamicalCore::initialize_restart_history() {
     int rank = grid_.get_mpi_rank();
     if (rank == 0) {
-        std::cout << "  [DynamicalCore] Seeding two-step history from restart state." << std::endl;
+        std::cout << "  [WARNING] Restart files do not preserve the previous AB2 "
+                     "tendency. The first step after restart uses first-order history "
+                     "initialization and may differ from an uninterrupted run." << std::endl;
     }
 
     for (const auto& item : numerical_methods_) {
@@ -154,6 +156,12 @@ void DynamicalCore::initialize_restart_history() {
 
         item.second->calculate_tendencies(state_, grid_, params_);
 
+        // NOTE: Restart files currently store the prognostic state but not the
+        // previous AB2 tendency. The tendency evaluated from the restart state is
+        // therefore copied into both history slots. This makes the first resumed
+        // step equivalent to a first-order startup step; normal AB2 integration
+        // resumes afterward. Restart is intended for recovery, not bitwise-exact
+        // continuation.
         if (state_.has_field("d_" + var_name + "_0")) {
             const size_t now_idx = state_.get_step() % 2;
             const std::string now_name  = "d_" + var_name + (now_idx == 0 ? "_0" : "_1");
