@@ -166,6 +166,19 @@ function(add_rank_invariance_test CASE_NAME RANKS)
                          PROPERTIES LABELS multirank)
 endfunction()
 
+# --- unit: no GPU, no MPI, <1 s -------------------------------------------
+# Plain executables over header-only logic. No device, no ranks, no resource
+# lock, so they run alongside everything else and on any machine.
+function(add_vvm_unit_test TEST_NAME)
+    add_executable(${TEST_NAME} ${TEST_DIR}/unit/${TEST_NAME}.cpp)
+    target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
+    set_tests_properties(${TEST_NAME} PROPERTIES LABELS unit)
+endfunction()
+
+# When radiation and the surface process recompute their coefficients.
+add_vvm_unit_test(test_process_scheduling)
+
 # --- default: 1 GPU, ~40 s -------------------------------------------------
 add_vvm_test(advection_u "u th xi eta zeta")
 add_vvm_test(advection_v "v th xi eta zeta")
