@@ -198,6 +198,37 @@ add_vvm_unit_test(test_process_scheduling)
 # rather than shell syntax.
 add_vvm_unit_test(test_sst_path)
 
+# How a restart run recovers its clock: the metadata stored inside the file
+# decides, a stored time and step must agree, and a file with neither is only
+# usable through an explicit opt-in. Pure decision logic.
+add_vvm_unit_test(test_restart_time)
+
+# --- unit, on files: no GPU, 1-2 ranks, <1 s ------------------------------
+# Same idea as add_vvm_unit_test, but the code under test reads real HDF5 and
+# NetCDF files, and PnetCDF needs MPI. No device is involved, so the multi-rank
+# run needs no extra GPU and is registered unconditionally -- it is what checks
+# that every rank recovers the same clock.
+#   add_vvm_file_unit_test(<name> <ranks>)
+function(add_vvm_file_unit_test TEST_NAME RANKS)
+    add_executable(${TEST_NAME} ${TEST_DIR}/unit/${TEST_NAME}.cpp)
+    target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(${TEST_NAME} PRIVATE
+                          HDF5::HL PnetCDF::pnetcdf NetCDF::netcdf MPI::MPI_CXX)
+
+    foreach(N 1 ${RANKS})
+        add_test(NAME ${TEST_NAME}_r${N}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${N}
+                         $<TARGET_FILE:${TEST_NAME}>
+                 WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
+        set_tests_properties(${TEST_NAME}_r${N} PROPERTIES LABELS unit)
+    endforeach()
+endfunction()
+
+# Restart metadata in the files themselves, including the regression this all
+# exists for: write a restart file, rename it, load it, and the recovered time
+# and step do not move.
+add_vvm_file_unit_test(test_restart_metadata_io 2)
+
 # --- unit, on the device: 1 GPU per rank, <10 s ----------------------------
 # Same shape as add_vvm_unit_test, but the code under test is a State method, so
 # the binary needs Kokkos, MPI and a GPU. Registered at one rank always and at

@@ -28,9 +28,13 @@ public:
     void initialize_zeta_factor_for_twisting() const;
     void apply_tracer_boundary_conditions() const;
     void load_restart() const;
-    VVM::Real get_restart_time_from_filename(const std::string& source_file) const;
 
 private:
+    // Restart-clock policy assembled from the "restart" configuration block.
+    Utils::RestartTimePolicy restart_time_policy() const;
+    // Force every rank onto rank 0's reading of the file metadata.
+    void broadcast_restart_metadata(Utils::RestartFileMetadata& metadata) const;
+
     std::unique_ptr<VVM::IO::Reader> reader_;
     std::unique_ptr<VVM::IO::Reader> pnetcdf_reader_;
     std::unique_ptr<VVM::IO::Reader> restart_reader_;
