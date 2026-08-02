@@ -406,9 +406,25 @@ void PnetcdfReader::read_and_initialize(VVM::Core::State& state) {
         std::cout << "    3D: " << join_variable_names(vars_3d) << std::endl;
     }
 
+    // A variable listed in the config but absent from State is not a data error:
+    // it means this run does not enable the component that owns the field (e.g.
+    // sea_land_ice_mask exists only when SurfaceProcess/LandProcess is active).
+    // Skip those regardless of strictness, so strict mode keeps catching what it
+    // is for -- variables genuinely missing from the NetCDF file.
+    auto skip_unowned = [&](const char* dim, const std::string& var_name) {
+        if (state.has_field(var_name)) return false;
+        if (rank_ == 0) {
+            std::cerr << "    - Skipping " << dim << " var '" << var_name
+                      << "': no such field in State (owning component not enabled)."
+                      << std::endl;
+        }
+        return true;
+    };
+
     if (!vars_1d.empty()) {
         if (rank_ == 0 && !strict_missing_variables_) std::cout << "  - Attempting to load 1D variables from config key '" << key_1d << "'..." << std::endl;
         for (const auto& var_name : vars_1d) {
+            if (skip_unowned("1D", var_name)) continue;
             try {
                 read_variable_1d(ncid_, var_name, state.get_field<1>(var_name));
                 if (rank_ == 0) std::cout << "    - Loaded 1D variable: " << var_name << std::endl;
@@ -426,6 +442,7 @@ void PnetcdfReader::read_and_initialize(VVM::Core::State& state) {
     if (!vars_2d.empty()) {
         if (rank_ == 0 && !strict_missing_variables_) std::cout << "  - Attempting to load 2D variables from config key '" << key_2d << "'..." << std::endl;
         for (const auto& var_name : vars_2d) {
+            if (skip_unowned("2D", var_name)) continue;
             try {
                 read_variable_2d(ncid_, var_name, state.get_field<2>(var_name));
                 if (rank_ == 0) std::cout << "    - Loaded 2D variable: " << var_name << std::endl;
@@ -443,6 +460,7 @@ void PnetcdfReader::read_and_initialize(VVM::Core::State& state) {
     if (!vars_3d.empty()) {
         if (rank_ == 0 && !strict_missing_variables_) std::cout << "  - Attempting to load 3D variables from config key '" << key_3d << "'..." << std::endl;
         for (const auto& var_name : vars_3d) {
+            if (skip_unowned("3D", var_name)) continue;
             const bool required_tracer =
                 config_prefix_ == "netcdf_reader" &&
                 (state.is_tracer(var_name) || state.is_tracer_source(var_name));

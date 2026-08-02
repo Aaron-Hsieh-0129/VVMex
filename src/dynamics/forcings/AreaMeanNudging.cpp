@@ -277,19 +277,55 @@ void AreaMeanNudging::initialize(Core::State& state) {
     Kokkos::deep_copy(l_sum_u, 0.0);
     Kokkos::deep_copy(l_sum_v, 0.0);
 
-    Kokkos::parallel_for("AREAMN_Init_Local_Sum",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {nz - h, ny - h, nx - h}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            Kokkos::atomic_add(&l_sum_xi(k), xi(k, j, i));
-            Kokkos::atomic_add(&l_sum_eta(k), eta(k, j, i));
-            
-            if (k == top_k) {
-                Kokkos::atomic_add(&l_sum_zeta(), zeta(top_k, j, i));
-                Kokkos::atomic_add(&l_sum_u(), u(top_k, j, i));
-                Kokkos::atomic_add(&l_sum_v(), v(top_k, j, i));
+    // Deterministic reductions. These sums were previously accumulated with
+    // Kokkos::atomic_add: the order in which threads reach an atomic varies between
+    // runs, and floating-point addition is not associative, so the area means -- and
+    // therefore the whole solution -- were not reproducible run to run. A team
+    // reduction sums in a fixed order for a fixed launch configuration, which is what
+    // State::calculate_horizontal_mean already does.
+    {
+        using TeamPol = Kokkos::TeamPolicy<Kokkos::DefaultExecutionSpace>;
+        using Member  = TeamPol::member_type;
+        const int nj = ny - 2 * h, ni = nx - 2 * h;
+        const long ncol = static_cast<long>(nj) * ni;
+        // Pinned, not Kokkos::AUTO. AUTO derives the team size from the compiled
+        // kernel's occupancy, so it can change when compiler flags change -- and a
+        // different team size means a different reduction tree, which shifts the
+        // last bits of the sum. Results stay reproducible run to run either way,
+        // but only a fixed team size keeps them reproducible across builds.
+        constexpr int kTeamSize = 256;
+
+        Kokkos::parallel_for("AREAMN_Init_Local_Sum", TeamPol(nz - 2 * h, kTeamSize),
+            KOKKOS_LAMBDA(const Member& team) {
+                const int k = h + team.league_rank();
+                VVM::Real sxi = 0.0, seta = 0.0;
+                Kokkos::parallel_reduce(Kokkos::TeamThreadRange(team, ncol),
+                    [&](const long c, VVM::Real& acc) {
+                        acc += xi(k, h + static_cast<int>(c / ni), h + static_cast<int>(c % ni));
+                    }, sxi);
+                Kokkos::parallel_reduce(Kokkos::TeamThreadRange(team, ncol),
+                    [&](const long c, VVM::Real& acc) {
+                        acc += eta(k, h + static_cast<int>(c / ni), h + static_cast<int>(c % ni));
+                    }, seta);
+                Kokkos::single(Kokkos::PerTeam(team), [&]() {
+                    l_sum_xi(k)  = sxi;
+                    l_sum_eta(k) = seta;
+                });
             }
-        }
-    );
+        );
+
+        VVM::Real szeta = 0.0, su = 0.0, sv = 0.0;
+        Kokkos::parallel_reduce("AREAMN_Init_Local_Sum_top",
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
+            KOKKOS_LAMBDA(const int j, const int i, VVM::Real& az, VVM::Real& au, VVM::Real& av) {
+                az += zeta(top_k, j, i);
+                au += u(top_k, j, i);
+                av += v(top_k, j, i);
+            }, szeta, su, sv);
+        Kokkos::deep_copy(l_sum_zeta, szeta);
+        Kokkos::deep_copy(l_sum_u, su);
+        Kokkos::deep_copy(l_sum_v, sv);
+    }
 
 #if defined(ENABLE_NCCL)
     ncclComm_t comm = state.get_nccl_comm();
@@ -448,14 +484,46 @@ void AreaMeanNudging::apply_vorticity(Core::State& state, VVM::Real dt) {
     Kokkos::deep_copy(l_sum_zeta, 0.0);
 
     // NOTE: This might need to consider topography to do the average but now just follow Fortran VVM
-    Kokkos::parallel_for("AREAMN_Sum",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {nz - h, ny - h, nx - h}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            Kokkos::atomic_add(&l_sum_xi(k), xi(k, j, i));
-            Kokkos::atomic_add(&l_sum_eta(k), eta(k, j, i));
-            if (k == top_k) Kokkos::atomic_add(&l_sum_zeta(), zeta(top_k, j, i));
-        }
-    );
+    // Deterministic reductions -- see the note at AREAMN_Init_Local_Sum above.
+    {
+        using TeamPol = Kokkos::TeamPolicy<Kokkos::DefaultExecutionSpace>;
+        using Member  = TeamPol::member_type;
+        const int nj = ny - 2 * h, ni = nx - 2 * h;
+        const long ncol = static_cast<long>(nj) * ni;
+        // Pinned, not Kokkos::AUTO. AUTO derives the team size from the compiled
+        // kernel's occupancy, so it can change when compiler flags change -- and a
+        // different team size means a different reduction tree, which shifts the
+        // last bits of the sum. Results stay reproducible run to run either way,
+        // but only a fixed team size keeps them reproducible across builds.
+        constexpr int kTeamSize = 256;
+
+        Kokkos::parallel_for("AREAMN_Sum", TeamPol(nz - 2 * h, kTeamSize),
+            KOKKOS_LAMBDA(const Member& team) {
+                const int k = h + team.league_rank();
+                VVM::Real sxi = 0.0, seta = 0.0;
+                Kokkos::parallel_reduce(Kokkos::TeamThreadRange(team, ncol),
+                    [&](const long c, VVM::Real& acc) {
+                        acc += xi(k, h + static_cast<int>(c / ni), h + static_cast<int>(c % ni));
+                    }, sxi);
+                Kokkos::parallel_reduce(Kokkos::TeamThreadRange(team, ncol),
+                    [&](const long c, VVM::Real& acc) {
+                        acc += eta(k, h + static_cast<int>(c / ni), h + static_cast<int>(c % ni));
+                    }, seta);
+                Kokkos::single(Kokkos::PerTeam(team), [&]() {
+                    l_sum_xi(k)  = sxi;
+                    l_sum_eta(k) = seta;
+                });
+            }
+        );
+
+        VVM::Real szeta = 0.0;
+        Kokkos::parallel_reduce("AREAMN_Sum_top",
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
+            KOKKOS_LAMBDA(const int j, const int i, VVM::Real& az) {
+                az += zeta(top_k, j, i);
+            }, szeta);
+        Kokkos::deep_copy(l_sum_zeta, szeta);
+    }
 
 #if defined(ENABLE_NCCL)
     ncclComm_t comm = state.get_nccl_comm();
