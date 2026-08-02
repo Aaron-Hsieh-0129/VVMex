@@ -369,13 +369,8 @@ void WindSolver::solve_uv() {
 
     auto& utopm = state_.get_field<0>("utop_mean_tmp").get_mutable_device_data();
     auto& vtopm = state_.get_field<0>("vtop_mean_tmp").get_mutable_device_data();
-#if defined(ENABLE_NCCL)
     state_.calculate_horizontal_mean(utop_field, utopm);
     state_.calculate_horizontal_mean(vtop_field, vtopm);
-#else
-    auto utopm = state_.calculate_horizontal_mean(utop_field);
-    auto vtopm = state_.calculate_horizontal_mean(vtop_field);
-#endif
 
     auto& utopmn = state_.get_field<0>("utopmn").get_device_data();
     auto& vtopmn = state_.get_field<0>("vtopmn").get_device_data();

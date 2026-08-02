@@ -197,6 +197,76 @@ void AreaMeanNudging::load_wind_profiles(
 #endif
 }
 
+
+void AreaMeanNudging::deterministic_global_sum(
+    const Core::State& state, const VVM::Real* local, VVM::Real* global, int count) const {
+    int comm_size = 1;
+#if defined(ENABLE_NCCL)
+    const ncclResult_t count_result = ncclCommCount(state.get_nccl_comm(), &comm_size);
+    if (count_result != ncclSuccess) {
+        throw std::runtime_error(
+            "AreaMeanNudging could not query the NCCL communicator size: " +
+            std::string(ncclGetErrorString(count_result)));
+    }
+#else
+    MPI_Comm_size(grid_.get_comm(), &comm_size);
+#endif
+
+    const size_t needed = static_cast<size_t>(count) * static_cast<size_t>(comm_size);
+    if (gather_buffer_.extent(0) < needed) {
+        gather_buffer_ = Kokkos::View<VVM::Real*>("areamn_rank_sums", needed);
+    }
+
+#if defined(ENABLE_NCCL)
+    const ncclResult_t result = ncclAllGather(
+        local, gather_buffer_.data(), static_cast<size_t>(count), VVM_NCCL_REAL,
+        state.get_nccl_comm(), state.get_cuda_stream());
+    if (result != ncclSuccess) {
+        throw std::runtime_error(
+            "AreaMeanNudging NCCL all-gather failed: " +
+            std::string(ncclGetErrorString(result)));
+    }
+    const cudaError_t sync_result = cudaStreamSynchronize(state.get_cuda_stream());
+    if (sync_result != cudaSuccess) {
+        throw std::runtime_error(
+            "AreaMeanNudging all-gather synchronization failed: " +
+            std::string(cudaGetErrorString(sync_result)));
+    }
+#else
+    // Gathered over grid_.get_comm(), not the Cartesian communicator: the latter
+    // is created with reorder=1, so its rank order need not match the order the
+    // NCCL communicator was built with.
+    std::vector<VVM::Real> host_local(static_cast<size_t>(count), VVM::real(0.0));
+    std::vector<VVM::Real> host_gather(needed, VVM::real(0.0));
+    Kokkos::deep_copy(
+        Kokkos::View<VVM::Real*, Kokkos::HostSpace>(host_local.data(), count),
+        Kokkos::View<const VVM::Real*>(local, count));
+    const int mpi_result = MPI_Allgather(
+        host_local.data(), count, VVM_MPI_REAL,
+        host_gather.data(), count, VVM_MPI_REAL, grid_.get_comm());
+    if (mpi_result != MPI_SUCCESS) {
+        throw std::runtime_error("AreaMeanNudging MPI_Allgather failed.");
+    }
+    Kokkos::deep_copy(
+        Kokkos::subview(gather_buffer_, std::make_pair(static_cast<size_t>(0), needed)),
+        Kokkos::View<const VVM::Real*, Kokkos::HostSpace>(host_gather.data(), needed));
+#endif
+
+    auto gather = gather_buffer_;
+    const int num_ranks = comm_size;
+    Kokkos::View<VVM::Real*> out(global, count);
+    Kokkos::parallel_for("areamn_ordered_global_sum",
+        Kokkos::RangePolicy<>(0, count),
+        KOKKOS_LAMBDA(const int c) {
+            VVM::Real total = VVM::real(0.0);
+            for (int r = 0; r < num_ranks; ++r) {
+                total += gather(static_cast<size_t>(r) * static_cast<size_t>(count) + c);
+            }
+            out(c) = total;
+        });
+    Kokkos::fence();
+}
+
 void AreaMeanNudging::initialize(Core::State& state) {
     if (!enable_) return;
 
@@ -327,24 +397,11 @@ void AreaMeanNudging::initialize(Core::State& state) {
         Kokkos::deep_copy(l_sum_v, sv);
     }
 
-#if defined(ENABLE_NCCL)
-    ncclComm_t comm = state.get_nccl_comm();
-    cudaStream_t stream = state.get_cuda_stream();
-
-    ncclGroupStart();
-    ncclAllReduce(l_sum_xi.data(), g_sum_xi.data(), nz, VVM_NCCL_REAL, ncclSum, comm, stream);
-    ncclAllReduce(l_sum_eta.data(), g_sum_eta.data(), nz, VVM_NCCL_REAL, ncclSum, comm, stream);
-    ncclAllReduce(l_sum_zeta.data(), g_sum_zeta.data(), 1, VVM_NCCL_REAL, ncclSum, comm, stream);
-    ncclAllReduce(l_sum_u.data(), g_sum_u.data(), 1, VVM_NCCL_REAL, ncclSum, comm, stream);
-    ncclAllReduce(l_sum_v.data(), g_sum_v.data(), 1, VVM_NCCL_REAL, ncclSum, comm, stream);
-    ncclGroupEnd();
-#else
-    MPI_Allreduce(l_sum_xi.data(), g_sum_xi.data(), nz, VVM_MPI_REAL, MPI_SUM, grid_.get_cart_comm());
-    MPI_Allreduce(l_sum_eta.data(), g_sum_eta.data(), nz, VVM_MPI_REAL, MPI_SUM, grid_.get_cart_comm());
-    MPI_Allreduce(l_sum_zeta.data(), g_sum_zeta.data(), 1, VVM_MPI_REAL, MPI_SUM, grid_.get_cart_comm());
-    MPI_Allreduce(l_sum_u.data(), g_sum_u.data(), 1, VVM_MPI_REAL, MPI_SUM, grid_.get_cart_comm());
-    MPI_Allreduce(l_sum_v.data(), g_sum_v.data(), 1, VVM_MPI_REAL, MPI_SUM, grid_.get_cart_comm());
-#endif
+    deterministic_global_sum(state, l_sum_xi.data(), g_sum_xi.data(), nz);
+    deterministic_global_sum(state, l_sum_eta.data(), g_sum_eta.data(), nz);
+    deterministic_global_sum(state, l_sum_zeta.data(), g_sum_zeta.data(), 1);
+    deterministic_global_sum(state, l_sum_u.data(), g_sum_u.data(), 1);
+    deterministic_global_sum(state, l_sum_v.data(), g_sum_v.data(), 1);
 
     auto& xi0 = state.get_field<1>("areamn_xi0").get_mutable_device_data();
     auto& eta0 = state.get_field<1>("areamn_eta0").get_mutable_device_data();
@@ -525,20 +582,9 @@ void AreaMeanNudging::apply_vorticity(Core::State& state, VVM::Real dt) {
         Kokkos::deep_copy(l_sum_zeta, szeta);
     }
 
-#if defined(ENABLE_NCCL)
-    ncclComm_t comm = state.get_nccl_comm();
-    cudaStream_t stream = state.get_cuda_stream();
-
-    ncclGroupStart();
-    ncclAllReduce(l_sum_xi.data(), g_sum_xi.data(), nz, VVM_NCCL_REAL, ncclSum, comm, stream);
-    ncclAllReduce(l_sum_eta.data(), g_sum_eta.data(), nz, VVM_NCCL_REAL, ncclSum, comm, stream);
-    ncclAllReduce(l_sum_zeta.data(), g_sum_zeta.data(), 1, VVM_NCCL_REAL, ncclSum, comm, stream);
-    ncclGroupEnd();
-#else
-    MPI_Allreduce(l_sum_xi.data(), g_sum_xi.data(), nz, VVM_MPI_REAL, MPI_SUM, grid_.get_cart_comm());
-    MPI_Allreduce(l_sum_eta.data(), g_sum_eta.data(), nz, VVM_MPI_REAL, MPI_SUM, grid_.get_cart_comm());
-    MPI_Allreduce(l_sum_zeta.data(), g_sum_zeta.data(), 1, VVM_MPI_REAL, MPI_SUM, grid_.get_cart_comm());
-#endif
+    deterministic_global_sum(state, l_sum_xi.data(), g_sum_xi.data(), nz);
+    deterministic_global_sum(state, l_sum_eta.data(), g_sum_eta.data(), nz);
+    deterministic_global_sum(state, l_sum_zeta.data(), g_sum_zeta.data(), 1);
 
     const auto& xi0 = state.get_field<1>("areamn_xi0").get_device_data();
     const auto& eta0 = state.get_field<1>("areamn_eta0").get_device_data();

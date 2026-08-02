@@ -12,5 +12,8 @@ target_link_libraries(vvm_turbulence
 target_include_directories(vvm_turbulence
     PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${NCCL_INCLUDE_DIR}
 )
+
+if(ENABLE_NCCL)
+    target_include_directories(vvm_turbulence PUBLIC ${NCCL_INCLUDE_DIR})
+endif()

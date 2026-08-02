@@ -6,8 +6,10 @@
 #include <mpi.h>
 #include <omp.h>
 #include <memory>
-#include <nccl.h>
 #include <cuda_runtime.h>
+#if defined(ENABLE_NCCL)
+#include <nccl.h>
+#endif
 #include <unistd.h>
 
 #include "core/Field.hpp"

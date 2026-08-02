@@ -1045,6 +1045,10 @@ public:
         }
     }
 
+    // Same name-based batched exchange the NCCL implementation offers; the
+    // definition follows below.
+    void exchange_multiple_halos(const std::vector<std::string>& field_names, State& state) const;
+
     // Interface parity with the NCCL implementation. Not batched here: without NCCL
     // groups there is nothing to gain from packing the fields together.
     void exchange_multiple_halos(const std::vector<Field<2>*>& fields, int depth = -1) const {
@@ -1169,10 +1173,10 @@ template<typename FieldT>
 HaloExchangeRequests HaloExchanger::post_exchange_halo_x(FieldT& field, int depth) const {
     constexpr size_t Dim = FieldT::DimValue;
     const int halo_start_offset = grid_ref_.get_halo_cells();
-    int h = grid_ref_.get_halo_cells();
-
-    if (depth == -1) h = 1;
-    else h = depth;
+    // depth == -1 means the whole halo, exactly as in the NCCL implementation.
+    // Resolving it to a single layer leaves the outer halo stale, which shows up
+    // as a slow blow-up rather than as an obvious failure.
+    const int h = (depth == -1) ? grid_ref_.get_halo_cells() : depth;
 
     if (h == 0) return {};
 
@@ -1226,7 +1230,11 @@ HaloExchangeRequests HaloExchanger::post_exchange_halo_x(FieldT& field, int dept
                 send_r(idx) = data(w, k, j, halo_start_offset + nx_phys - h + i_h);
         });
     }
-    // Kokkos::fence();
+    // The pack kernels are asynchronous. CUDA-aware MPI reads these device
+    // buffers from its own engine, so without this fence it can send whatever
+    // the buffer held before the pack finished -- which showed up as run-to-run
+    // nondeterminism and, over a few hundred steps, as a blow-up.
+    Kokkos::fence();
 
     // Kokkos::deep_copy(send_l_h, send_l);
     // Kokkos::deep_copy(send_r_h, send_r);
@@ -1256,9 +1264,7 @@ void HaloExchanger::wait_exchange_halo_x(FieldT& field, HaloExchangeRequests& re
     // Kokkos::fence();
 
     const int halo_start_offset = grid_ref_.get_halo_cells();
-    int h = grid_ref_.get_halo_cells();
-    if (depth == -1) h = 1;
-    else h = depth;
+    const int h = (depth == -1) ? grid_ref_.get_halo_cells() : depth;
 
     auto data = field.get_mutable_device_data();
     const int nx_phys = grid_ref_.get_local_physical_points_x();
@@ -1316,9 +1322,7 @@ template<typename FieldT>
 HaloExchangeRequests HaloExchanger::post_exchange_halo_y(FieldT& field, int depth) const {
     constexpr size_t Dim = FieldT::DimValue;
     const int halo_start_offset = grid_ref_.get_halo_cells();
-    int h = grid_ref_.get_halo_cells();
-    if (depth == -1) h = 1;
-    else h = depth;
+    const int h = (depth == -1) ? grid_ref_.get_halo_cells() : depth;
     if (h == 0) return {};
 
     auto data = field.get_mutable_device_data();
@@ -1372,7 +1376,11 @@ HaloExchangeRequests HaloExchanger::post_exchange_halo_y(FieldT& field, int dept
                 send_t(idx) = data(w, k, halo_start_offset + ny_phys - h + j_h, i);
         });
     }
-    // Kokkos::fence();
+    // The pack kernels are asynchronous. CUDA-aware MPI reads these device
+    // buffers from its own engine, so without this fence it can send whatever
+    // the buffer held before the pack finished -- which showed up as run-to-run
+    // nondeterminism and, over a few hundred steps, as a blow-up.
+    Kokkos::fence();
 
     // Kokkos::deep_copy(send_b_h, send_b);
     // Kokkos::deep_copy(send_t_h, send_t);
@@ -1402,16 +1410,15 @@ void HaloExchanger::wait_exchange_halo_y(FieldT& field, HaloExchangeRequests& re
     // Kokkos::fence();
 
     const int halo_start_offset = grid_ref_.get_halo_cells();
-    int h = grid_ref_.get_halo_cells();
-    if (depth == -1) h = 1;
-    else h = depth;
+    const int h = (depth == -1) ? grid_ref_.get_halo_cells() : depth;
 
     auto data = field.get_mutable_device_data();
     const int ny_phys = grid_ref_.get_local_physical_points_y();
 
+    // Must match what post_exchange_halo_y() actually sent for this depth.
     size_t count = 0;
-    if constexpr (Dim == 2) count = buffer_size_y_2d_;
-    else if constexpr (Dim == 3) count = buffer_size_y_3d_;
+    if constexpr (Dim == 2) count = static_cast<size_t>(h) * data.extent(1);
+    else if constexpr (Dim == 3) count = static_cast<size_t>(h) * data.extent(2) * data.extent(0);
     else if constexpr (Dim == 4) count = static_cast<size_t>(h) * data.extent(3) * data.extent(1) * data.extent(0);
 
     auto recv_b = Kokkos::subview(recv_y_bottom_, std::make_pair((size_t)0, count));
@@ -1513,10 +1520,10 @@ inline void HaloExchanger::exchange_multiple_halos(const std::vector<std::string
         auto send_l = Kokkos::subview(send_x_left_, std::make_pair((size_t)0, count_x_total));
         auto send_r = Kokkos::subview(send_x_right_, std::make_pair((size_t)0, count_x_total));
 
-        if(neighbor_right != MPI_PROC_NULL) MPI_Irecv(recv_r.data(), count_x_total, VVM::RealUBLE, neighbor_right, static_cast<int>(HaloExchangeTags::SEND_TO_LEFT), cart_comm_, &req_obj.requests[req_obj.count++]);
-        if(neighbor_left  != MPI_PROC_NULL) MPI_Irecv(recv_l.data(), count_x_total, VVM::RealUBLE, neighbor_left, static_cast<int>(HaloExchangeTags::SEND_TO_RIGHT), cart_comm_, &req_obj.requests[req_obj.count++]);
-        if(neighbor_left  != MPI_PROC_NULL) MPI_Isend(send_l.data(), count_x_total, VVM::RealUBLE, neighbor_left, static_cast<int>(HaloExchangeTags::SEND_TO_LEFT), cart_comm_, &req_obj.requests[req_obj.count++]);
-        if(neighbor_right != MPI_PROC_NULL) MPI_Isend(send_r.data(), count_x_total, VVM::RealUBLE, neighbor_right, static_cast<int>(HaloExchangeTags::SEND_TO_RIGHT), cart_comm_, &req_obj.requests[req_obj.count++]);
+        if(neighbor_right != MPI_PROC_NULL) MPI_Irecv(recv_r.data(), count_x_total, VVM_MPI_REAL, neighbor_right, static_cast<int>(HaloExchangeTags::SEND_TO_LEFT), cart_comm_, &req_obj.requests[req_obj.count++]);
+        if(neighbor_left  != MPI_PROC_NULL) MPI_Irecv(recv_l.data(), count_x_total, VVM_MPI_REAL, neighbor_left, static_cast<int>(HaloExchangeTags::SEND_TO_RIGHT), cart_comm_, &req_obj.requests[req_obj.count++]);
+        if(neighbor_left  != MPI_PROC_NULL) MPI_Isend(send_l.data(), count_x_total, VVM_MPI_REAL, neighbor_left, static_cast<int>(HaloExchangeTags::SEND_TO_LEFT), cart_comm_, &req_obj.requests[req_obj.count++]);
+        if(neighbor_right != MPI_PROC_NULL) MPI_Isend(send_r.data(), count_x_total, VVM_MPI_REAL, neighbor_right, static_cast<int>(HaloExchangeTags::SEND_TO_RIGHT), cart_comm_, &req_obj.requests[req_obj.count++]);
 
         if (req_obj.count > 0) {
             MPI_Waitall(req_obj.count, req_obj.requests.data(), MPI_STATUSES_IGNORE);
@@ -1562,10 +1569,10 @@ inline void HaloExchanger::exchange_multiple_halos(const std::vector<std::string
         auto send_b = Kokkos::subview(send_y_bottom_, std::make_pair((size_t)0, count_y_total));
         auto send_t = Kokkos::subview(send_y_top_, std::make_pair((size_t)0, count_y_total));
 
-        if(neighbor_bottom != MPI_PROC_NULL) MPI_Irecv(recv_b.data(), count_y_total, VVM::RealUBLE, neighbor_bottom, static_cast<int>(HaloExchangeTags::SEND_TO_TOP), cart_comm_, &req_obj.requests[req_obj.count++]);
-        if(neighbor_top    != MPI_PROC_NULL) MPI_Irecv(recv_t.data(), count_y_total, VVM::RealUBLE, neighbor_top, static_cast<int>(HaloExchangeTags::SEND_TO_BOTTOM), cart_comm_, &req_obj.requests[req_obj.count++]);
-        if(neighbor_top    != MPI_PROC_NULL) MPI_Isend(send_t.data(), count_y_total, VVM::RealUBLE, neighbor_top, static_cast<int>(HaloExchangeTags::SEND_TO_TOP), cart_comm_, &req_obj.requests[req_obj.count++]);
-        if(neighbor_bottom != MPI_PROC_NULL) MPI_Isend(send_b.data(), count_y_total, VVM::RealUBLE, neighbor_bottom, static_cast<int>(HaloExchangeTags::SEND_TO_BOTTOM), cart_comm_, &req_obj.requests[req_obj.count++]);
+        if(neighbor_bottom != MPI_PROC_NULL) MPI_Irecv(recv_b.data(), count_y_total, VVM_MPI_REAL, neighbor_bottom, static_cast<int>(HaloExchangeTags::SEND_TO_TOP), cart_comm_, &req_obj.requests[req_obj.count++]);
+        if(neighbor_top    != MPI_PROC_NULL) MPI_Irecv(recv_t.data(), count_y_total, VVM_MPI_REAL, neighbor_top, static_cast<int>(HaloExchangeTags::SEND_TO_BOTTOM), cart_comm_, &req_obj.requests[req_obj.count++]);
+        if(neighbor_top    != MPI_PROC_NULL) MPI_Isend(send_t.data(), count_y_total, VVM_MPI_REAL, neighbor_top, static_cast<int>(HaloExchangeTags::SEND_TO_TOP), cart_comm_, &req_obj.requests[req_obj.count++]);
+        if(neighbor_bottom != MPI_PROC_NULL) MPI_Isend(send_b.data(), count_y_total, VVM_MPI_REAL, neighbor_bottom, static_cast<int>(HaloExchangeTags::SEND_TO_BOTTOM), cart_comm_, &req_obj.requests[req_obj.count++]);
 
         if (req_obj.count > 0) {
             MPI_Waitall(req_obj.count, req_obj.requests.data(), MPI_STATUSES_IGNORE);
@@ -1618,17 +1625,17 @@ inline void HaloExchanger::exchange_halos_slice(Field<3>& field, int k_layer) co
                     send_b(idx) = data(k_layer, h + j_h, i);
                     send_t(idx) = data(k_layer, h + ny_phys - h + j_h, i);
             });
-            // Kokkos::fence();
+            Kokkos::fence();  // pack must land before MPI reads the buffer
 
             // Kokkos::deep_copy(send_b_h, send_b);
             // Kokkos::deep_copy(send_t_h, send_t);
 
             MPI_Request reqs[4];
             int req_count = 0;
-            if(neighbor_bottom_ != MPI_PROC_NULL) MPI_Irecv(recv_b.data(), count, VVM::RealUBLE, neighbor_bottom_, static_cast<int>(HaloExchangeTags::SLICE_SEND_TO_TOP), cart_comm_, &reqs[req_count++]);
-            if(neighbor_top_    != MPI_PROC_NULL) MPI_Irecv(recv_t.data(), count, VVM::RealUBLE, neighbor_top_, static_cast<int>(HaloExchangeTags::SLICE_SEND_TO_BOTTOM), cart_comm_, &reqs[req_count++]);
-            if(neighbor_top_    != MPI_PROC_NULL) MPI_Isend(send_t.data(), count, VVM::RealUBLE, neighbor_top_, static_cast<int>(HaloExchangeTags::SLICE_SEND_TO_TOP), cart_comm_, &reqs[req_count++]);
-            if(neighbor_bottom_ != MPI_PROC_NULL) MPI_Isend(send_b.data(), count, VVM::RealUBLE, neighbor_bottom_, static_cast<int>(HaloExchangeTags::SLICE_SEND_TO_BOTTOM), cart_comm_, &reqs[req_count++]);
+            if(neighbor_bottom_ != MPI_PROC_NULL) MPI_Irecv(recv_b.data(), count, VVM_MPI_REAL, neighbor_bottom_, static_cast<int>(HaloExchangeTags::SLICE_SEND_TO_TOP), cart_comm_, &reqs[req_count++]);
+            if(neighbor_top_    != MPI_PROC_NULL) MPI_Irecv(recv_t.data(), count, VVM_MPI_REAL, neighbor_top_, static_cast<int>(HaloExchangeTags::SLICE_SEND_TO_BOTTOM), cart_comm_, &reqs[req_count++]);
+            if(neighbor_top_    != MPI_PROC_NULL) MPI_Isend(send_t.data(), count, VVM_MPI_REAL, neighbor_top_, static_cast<int>(HaloExchangeTags::SLICE_SEND_TO_TOP), cart_comm_, &reqs[req_count++]);
+            if(neighbor_bottom_ != MPI_PROC_NULL) MPI_Isend(send_b.data(), count, VVM_MPI_REAL, neighbor_bottom_, static_cast<int>(HaloExchangeTags::SLICE_SEND_TO_BOTTOM), cart_comm_, &reqs[req_count++]);
 
             // if(neighbor_bottom_ != MPI_PROC_NULL) MPI_Irecv(recv_b_h.data(), count, VVM_MPI_REAL, neighbor_bottom_, static_cast<int>(HaloExchangeTags::SLICE_SEND_TO_TOP), cart_comm_, &reqs[req_count++]);
             // if(neighbor_top_    != MPI_PROC_NULL) MPI_Irecv(recv_t_h.data(), count, VVM_MPI_REAL, neighbor_top_, static_cast<int>(HaloExchangeTags::SLICE_SEND_TO_BOTTOM), cart_comm_, &reqs[req_count++]);
@@ -1674,7 +1681,7 @@ inline void HaloExchanger::exchange_halos_slice(Field<3>& field, int k_layer) co
                     send_l(idx) = data(k_layer, j, h + i_h);
                     send_r(idx) = data(k_layer, j, h + nx_phys - h + i_h);
             });
-            // Kokkos::fence();
+            Kokkos::fence();  // pack must land before MPI reads the buffer
 
             // Kokkos::deep_copy(send_l_h, send_l);
             // Kokkos::deep_copy(send_r_h, send_r);
