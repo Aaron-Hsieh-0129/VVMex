@@ -7,6 +7,8 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <filesystem>
+#include <system_error>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -103,10 +105,27 @@ OutputManager::OutputManager(const Utils::ConfigurationManager& config, const VV
     output_y_end_    = config.get_value<size_t>("output.output_grid.y_end");
     output_z_end_    = config.get_value<size_t>("output.output_grid.z_end");
 
-    if (rank_ == 0) {
-        if (!output_dir_.empty()) {
-            std::string cmd = "mkdir -p " + output_dir_;
-            system(cmd.c_str());
+    // Create the output directory with std::filesystem rather than
+    // system("mkdir -p " + output_dir_): a space in output.output_dir split the
+    // shell command into two paths, and a metacharacter ran as a command.
+    // Rank 0 creates it and tells everyone the result, so it cannot fail alone
+    // while the other ranks wait in the barrier below.
+    if (!output_dir_.empty()) {
+        int mkdir_failed = 0;
+        if (rank_ == 0) {
+            std::error_code ec;
+            // Returns false when the directory already exists, which is not an
+            // error -- only ec is conclusive here.
+            std::filesystem::create_directories(std::filesystem::path(output_dir_), ec);
+            if (ec) {
+                std::cerr << "[OutputManager] ERROR: cannot create output.output_dir '"
+                          << output_dir_ << "': " << ec.message() << std::endl;
+                mkdir_failed = 1;
+            }
+        }
+        MPI_Bcast(&mkdir_failed, 1, MPI_INT, 0, comm_);
+        if (mkdir_failed != 0) {
+            MPI_Abort(MPI_COMM_WORLD, 4);
         }
     }
 

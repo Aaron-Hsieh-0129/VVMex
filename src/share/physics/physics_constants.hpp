@@ -24,6 +24,17 @@ struct Constants
 {
   using ci_string      = ekat::CaseInsensitiveString;
 
+  // FIXME: These EAMxx-derived compile-time constants duplicate physical
+  // constants provided by the VVMex runtime configuration ("constants" in the
+  // case JSON). In particular, LatVap may differ from constants.Lv in the JSON
+  // configuration. Do not update either value independently. Establish one
+  // authoritative source, or validate all duplicated constants during model
+  // initialization.
+  //
+  //   LatVap 2501000.0  <-> constants.Lv      2.5e6       (DIFFER by 1000 J/kg)
+  // The ones that agree do so only because they were hand-edited to match (see
+  // the "Aaron:" notes below); nothing keeps them in step.
+
   static constexpr Scalar Cpair         = 1004.5; // Aaron: modify from 1004.64 to 1004.5 to be same as VVM
   static constexpr Scalar Rair          = 287.04; // Aaron: modify from 287.042 to 287.04 to be same as VVM
   static constexpr Scalar RH2O          = 461.505;
@@ -36,6 +47,7 @@ struct Constants
   static constexpr Scalar o2mmr         = 0.23143;      // o2 mass mixing ratio
   static constexpr Scalar ep_2          = MWH2O/MWdry;  // ratio of molecular mass of water to the molecular mass of dry air !0.622
   static constexpr Scalar gravit        = 9.806; // Aaron: modify from 9.80616 to 9.806 to be same as VVM
+  // FIXME: Must remain consistent with runtime constants.Lv (see the note above). It's 2501034.5 in original Fortran P3
   static constexpr Scalar LatVap        = 2501000.0;
   static constexpr Scalar LatIce        = 333700.0;
   static constexpr Scalar CpLiq         = 4188.0;

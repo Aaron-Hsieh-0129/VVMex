@@ -247,7 +247,7 @@ If you use VVMex, please cite the archived software release:
 ```bibtex
 @software{vvmex_v1_0_0,
   title   = {{VVMex v1.0.0: GPU-capable refactoring of the Vector Vorticity cloud-resolving Model}},
-  author  = {{VVMex development team}},
+  author  = {{Chin-Wei Hsieh}},
   year    = {2026},
   version = {1.0.0},
   doi     = {10.5281/zenodo.21318987},

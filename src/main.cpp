@@ -19,6 +19,7 @@
 #include "core/State.hpp"
 #include "io/OutputManager.hpp"
 #include "utils/ConfigurationManager.hpp"
+#include "utils/SstPath.hpp"
 #include "utils/Timer.hpp"
 #include "utils/TimingManager.hpp"
 
@@ -63,16 +64,49 @@ int main(int argc, char *argv[]) {
     VVM::Utils::ConfigurationManager config(config_file_path);
 
     // clean existing SST file to prevent errors
-    if (world_rank == 0) {
-        std::string engine = config.get_value<std::string>("output.engine", "HDF5");
+    {
+        const std::string engine = config.get_value<std::string>("output.engine", "HDF5");
         if (engine == "SST") {
-            std::string output_dir = config.get_value<std::string>("output.output_dir");
-            std::string prefix = config.get_value<std::string>("output.output_filename_prefix");
-            std::string sst_path = output_dir + "/" + prefix + ".sst";
-            
-            std::cout << "[Main] Global Rank 0 cleaning stale SST: " << sst_path << std::endl;
-            std::string cmd = "rm -rf " + sst_path;
-            system(cmd.c_str());
+            int cleanup_failed = 0;
+            if (world_rank == 0) {
+                try {
+                    // Read with a default rather than the throwing overload, so
+                    // a config with no output_dir/prefix is rejected by the
+                    // path validation with a message that names the key.
+                    const std::string output_dir = config.get_value<std::string>("output.output_dir", std::string());
+                    const std::string prefix = config.get_value<std::string>("output.output_filename_prefix", std::string());
+
+                    const VVM::Utils::SstCleanupResult cleanup = VVM::Utils::remove_stale_sst_path(output_dir, prefix);
+
+                    switch (cleanup.outcome) {
+                        case VVM::Utils::SstCleanupOutcome::Removed:
+                            std::cout << "[Main] Removing stale SST path: "
+                                      << cleanup.path.string() << " ("
+                                      << cleanup.removed_entries << " entries)" << std::endl;
+                            break;
+                        case VVM::Utils::SstCleanupOutcome::NotPresent:
+                            // Nothing from a previous run. Say nothing.
+                            break;
+                        case VVM::Utils::SstCleanupOutcome::Rejected:
+                        case VVM::Utils::SstCleanupOutcome::Failed:
+                            std::cerr << "[Main] ERROR: stale SST cleanup: "
+                                      << cleanup.message << "\n"
+                                      << "  Check output.output_dir and "
+                                         "output.output_filename_prefix in the configuration."
+                                      << std::endl;
+                            cleanup_failed = 1;
+                            break;
+                    }
+                } 
+                catch (const std::exception& e) {
+                    std::cerr << "[Main] ERROR: stale SST cleanup: " << e.what() << std::endl;
+                    cleanup_failed = 1;
+                }
+            }
+            MPI_Bcast(&cleanup_failed, 1, MPI_INT, 0, MPI_COMM_WORLD);
+            if (cleanup_failed != 0) {
+                MPI_Abort(MPI_COMM_WORLD, 3);
+            }
         }
     }
     MPI_Barrier(MPI_COMM_WORLD);
