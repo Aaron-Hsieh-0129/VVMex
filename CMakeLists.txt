@@ -41,6 +41,21 @@ endif()
 # ------------------------------
 # Compiler-specific settings
 # ------------------------------
+# Add a flag to a FORCEd cache variable exactly once.
+#
+# These are FORCE cache writes that read their own previous value, so a plain
+# "${VAR} <flag>" append duplicates the flag on every reconfigure. That is not
+# cosmetic: it changes the compile line, which forces a full rebuild of every
+# object each time the project is reconfigured. Stripping any existing copies
+# first makes this idempotent and also repairs a cache that already accumulated
+# duplicates from earlier configures.
+macro(vvm_set_flag_once VAR FLAG DOC)
+    string(REPLACE "${FLAG}" "" _vvm_flags "${${VAR}}")
+    string(REGEX REPLACE "  +" " " _vvm_flags "${_vvm_flags}")
+    string(STRIP "${_vvm_flags}" _vvm_flags)
+    set(${VAR} "${_vvm_flags} ${FLAG}" CACHE STRING "${DOC}" FORCE)
+endmacro()
+
 if(CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
     message(STATUS "Applying NVHPC dependency flag workaround.")
     # Disable automatic dependency generation flags that NVHPC might set
@@ -48,11 +63,11 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
     set(CMAKE_C_DEPENDS "")
     set(CMAKE_DEPFILE_FLAGS_CXX "")
     set(CMAKE_DEPFILE_FLAGS_C "")
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -mp" CACHE STRING "CUDA OpenMP flags" FORCE)
 
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -use_fast_math" CACHE STRING "CUDA flags" FORCE)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fast" CACHE STRING "CXX flags" FORCE)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fast" CACHE STRING "C flags" FORCE)
+    vvm_set_flag_once(CMAKE_CUDA_FLAGS "-Xcompiler -mp"  "CUDA OpenMP flags")
+    vvm_set_flag_once(CMAKE_CUDA_FLAGS "-use_fast_math"  "CUDA flags")
+    vvm_set_flag_once(CMAKE_CXX_FLAGS  "-fast"           "CXX flags")
+    vvm_set_flag_once(CMAKE_C_FLAGS    "-fast"           "C flags")
 endif()
 
 option(VVM_USE_DOUBLE_PRECISION "Use double precision (double) instead of single precision (float)" ON)
