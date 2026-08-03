@@ -151,6 +151,19 @@ else()
     message(FATAL_ERROR "MPI not found.")
 endif()
 
+# Repair a cache poisoned by an older revision of this file, which blanked the
+# OpenMP flag variables with CACHE ... FORCE further down. find_package(Kokkos)
+# below calls find_dependency(OpenMP), and FindOpenMP fails outright on a blank
+# cached value -- so such a tree could be configured exactly once and never again.
+# Dropping the empty entries lets FindOpenMP re-detect them.
+foreach(_vvm_omp_lang CXX C Fortran)
+    if(DEFINED CACHE{OpenMP_${_vvm_omp_lang}_FLAGS}
+       AND "$CACHE{OpenMP_${_vvm_omp_lang}_FLAGS}" STREQUAL "")
+        message(STATUS "Clearing blank cached OpenMP_${_vvm_omp_lang}_FLAGS so it can be re-detected")
+        unset(OpenMP_${_vvm_omp_lang}_FLAGS CACHE)
+    endif()
+endforeach()
+
 # ------------------------------
 # Kokkos
 # ------------------------------
@@ -274,10 +287,21 @@ string(REGEX REPLACE " -mp( |$)" " " CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS}
 string(REGEX REPLACE "^-mp( |$)" " " CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 string(REGEX REPLACE "^-mp( |$)" " " CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
 string(REGEX REPLACE "^-mp( |$)" " " CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS}")
-# 3. Force-reset the OpenMP cache variables that ekat might have set
-set(OpenMP_CXX_FLAGS "" CACHE STRING "Reset OpenMP CXX flags" FORCE)
-set(OpenMP_C_FLAGS "" CACHE STRING "Reset OpenMP C flags" FORCE)
-set(OpenMP_Fortran_FLAGS "" CACHE STRING "Reset OpenMP Fortran flags" FORCE)
+# 3. Mask the OpenMP flag variables that ekat might have set.
+#
+# These are deliberately *normal* variables, not cache writes. A normal variable
+# shadows the cache entry of the same name for the rest of this directory and every
+# subdirectory added below, which is all the masking this needs.
+#
+# Writing "" into the cache instead breaks the *next* configure: find_package(Kokkos)
+# runs earlier in this file, KokkosConfig.cmake calls find_dependency(OpenMP), and
+# FindOpenMP reads the blanked cache entry back and fails with
+#   Could NOT find OpenMP_CXX (missing: OpenMP_CXX_FLAGS)
+# leaving the build tree configurable exactly once. Worse, `cmake --build` then
+# reports success while building nothing, so a stale binary silently survives.
+set(OpenMP_CXX_FLAGS "")
+set(OpenMP_C_FLAGS "")
+set(OpenMP_Fortran_FLAGS "")
 
 function(CLEAN_FLAG_VAR var_name flag_to_remove)
     string(REPLACE " " ";" flag_list "${${var_name}}")
@@ -293,6 +317,27 @@ clean_flag_var(CMAKE_CXX_FLAGS "-Wext-lambda-captures-this")
 # ADIOS2
 # ------------------------------
 find_package(ADIOS2 REQUIRED CXX MPI)
+message(STATUS "ADIOS2: ${ADIOS2_DIR}")
+
+# An ADIOS2 built with Kokkos support calls Kokkos::initialize() itself, from
+# adios2::helper::KokkosInit(). That defeats the host-only IO server: src/main.cpp
+# deliberately does not initialize Kokkos on IO ranks, but ADIOS2 does it moments
+# later and each IO rank opens a CUDA context (measured: 520 MiB) it never uses.
+#
+# Warn rather than fail: this only degrades IO ranks, the model itself is fine. It
+# is worth saying loudly because an ADIOS2_DIR pointing at a path that does not
+# exist makes CMake fall back to whatever else is on the search path *silently*,
+# so the feature would go missing with no other symptom.
+if(ADIOS2_HAVE_Kokkos)
+    message(WARNING
+        "ADIOS2 at ${ADIOS2_DIR} was built with Kokkos support.\n"
+        "   IO server ranks will each occupy a GPU even though they never compute.\n"
+        "   Rebuild ADIOS2 with -DADIOS2_USE_Kokkos=OFF and point ADIOS2_DIR at it.\n"
+        "   (VVM never passes ADIOS2 a Kokkos view, so nothing else is affected.)")
+else()
+    message(STATUS "ADIOS2 has no Kokkos support -- IO server ranks stay off the GPU")
+endif()
+
 if(TARGET adios2::cxx11_mpi)
     target_link_libraries(adios2::cxx11_mpi INTERFACE MPI::MPI_CXX)
 endif()

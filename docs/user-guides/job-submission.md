@@ -69,10 +69,16 @@ cd $VVM_ROOT
   --compute 16 \
   --io 4 \
   --nodes 4 \
-  --gpus 5 \
+  --gpus 4 \
   --cpus 1 \
+  --io-cpus 1 \
   -t 24:00:00
 ```
+
+This is 4 compute ranks and 1 I/O rank per node. `--gpus 4` covers the compute
+ranks only -- the I/O rank is host-only and needs no device, so the GPU count
+follows `ceil(compute / nodes)` and ignores `--io` entirely. Omitting `--gpus`
+infers the same number.
 
 ## Choosing resources
 
@@ -88,7 +94,20 @@ For GPU runs, request enough GPUs so compute ranks do not unexpectedly share dev
 GPUs per node >= ceil(compute tasks / nodes)
 ```
 
-I/O ranks are CPU-side SST readers/writers, but they still consume MPI ranks and CPU cores. If you use fewer GPUs than tasks per node, the wrapper will warn that MPI ranks may share GPUs.
+I/O ranks are host-only. They read and write SST streams and never initialize Kokkos, so they do **not** consume a GPU and are not counted when the wrapper sizes the GPU request. Two consequences:
+
+- **I/O ranks may outnumber the GPUs.** `--compute 1 --io 4` on a single GPU is a valid configuration. Only compute ranks are mapped onto devices.
+- **I/O ranks get their own core count,** set with `--io-cpus` (default 1). Under SLURM the wrapper reserves `io ranks x --io-cpus` cores per node and gives the remainder to the compute ranks, rather than splitting the node evenly across both roles. The launcher banner reports the split:
+
+```text
+Total Cores Used/Node: 128 | Cores/compute rank: 15 | Cores/IO rank: 1
+```
+
+The I/O server spends its time in ADIOS2 and HDF5 and is effectively single-threaded, so the default of one core per I/O rank is usually right. Raise it only if the I/O ranks are demonstrably the bottleneck.
+
+This requires ADIOS2 to be built without Kokkos support; see [Environment Installation](../environment.md). With a Kokkos-enabled ADIOS2, each I/O rank opens a CUDA context anyway and the wrapper's GPU accounting no longer matches reality. VVMex warns about this at configure time.
+
+If you use fewer GPUs than *compute* tasks per node, the wrapper will warn that MPI ranks may share GPUs.
 
 ## What the wrapper does
 
@@ -98,6 +117,7 @@ I/O ranks are CPU-side SST readers/writers, but they still consume MPI ranks and
 - Requires `--io` when the JSON uses `output.engine = "SST"`.
 - Runs `tools/core_run.sh` locally or submits it through `sbatch`.
 - Maps local MPI ranks to visible GPU IDs and exports runtime variables used by the executable.
+- Hides all GPUs from I/O server ranks, and gives them `--io-cpus` cores each.
 
 ## Direct MPI commands
 

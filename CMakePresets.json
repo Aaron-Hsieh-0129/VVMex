@@ -26,6 +26,8 @@
         "NETCDF_Fortran_DIR": "/home/mog/libs_GPUVVM",
         "PNETCDF_DIR": "/home/mog/libs_GPUVVM",
 
+        "ADIOS2_DIR": "/home/mog/libs_VVMex/lib/cmake/adios2",
+
         "VVM_USE_DOUBLE_PRECISION": "ON",
         "ENABLE_NCCL": "ON",
         "EAMXX_ENABLE_GPU": "ON",
@@ -56,6 +58,8 @@
         "NETCDF_C_DIR": "/work/aaron900129/netcdf-c_install",
         "NETCDF_Fortran_DIR": "/work/aaron900129/netcdf-fortran_install",
         "PNETCDF_DIR": "/work/aaron900129/pnetcdf_install",
+
+        "ADIOS2_DIR": "/work/aaron900129/libs_VVMex/lib/cmake/adios2",
 
         "VVM_USE_DOUBLE_PRECISION": "ON",
         "ENABLE_NCCL": "ON",
@@ -88,6 +92,8 @@
         "NETCDF_Fortran_DIR": "/home/mog/Aaron/libs_GPUVVM",
         "PNETCDF_DIR": "/home/mog/Aaron/libs_GPUVVM",
 
+        "ADIOS2_DIR": "/home/mog/Aaron/libs_VVMex/lib/cmake/adios2",
+
         "VVM_USE_DOUBLE_PRECISION": "ON",
         "ENABLE_NCCL": "ON",
         "EAMXX_ENABLE_GPU": "ON",
@@ -118,6 +124,8 @@
         "NETCDF_C_DIR": "/work/aaron900129/netcdf-c_install",
         "NETCDF_Fortran_DIR": "/work/aaron900129/netcdf-fortran_install",
         "PNETCDF_DIR": "/work/aaron900129/pnetcdf_install",
+
+        "ADIOS2_DIR": "/work/aaron900129/libs_VVMex/lib/cmake/adios2",
 
         "VVM_USE_DOUBLE_PRECISION": "ON",
         "ENABLE_NCCL": "ON",
@@ -150,6 +158,8 @@
         "NETCDF_Fortran_DIR": "/work/aaron900129/netcdf-fortran_install",
         "PNETCDF_DIR": "/work/aaron900129/pnetcdf_install",
 
+        "ADIOS2_DIR": "/work/aaron900129/libs_VVMex/lib/cmake/adios2",
+
         "VVM_USE_DOUBLE_PRECISION": "ON",
         "ENABLE_NCCL": "ON",
         "EAMXX_ENABLE_GPU": "ON",
@@ -180,6 +190,8 @@
         "NETCDF_C_DIR": "/work/aaron900129/VVM_libs",
         "NETCDF_Fortran_DIR": "/work/aaron900129/VVM_libs",
         "PNETCDF_DIR": "/work/aaron900129/VVM_libs",
+
+        "ADIOS2_DIR": "/work/aaron900129/libs_VVMex/lib/cmake/adios2",
 
         "VVM_USE_DOUBLE_PRECISION": "ON",
         "ENABLE_NCCL": "ON",
