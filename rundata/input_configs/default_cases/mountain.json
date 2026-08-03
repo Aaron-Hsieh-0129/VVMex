@@ -27,7 +27,7 @@
     },
     "initial_conditions": {
         "format": "txt",
-        "source_file": "./rundata/initial_conditions/profiles/mountain.txt",
+        "source_file": "./rundata/initial_conditions/profiles/default_cases/mountain.txt",
         "constant_upper_wind": {
             "enable": false,
             "pressure_threshold_Pa": 25000.0
@@ -36,7 +36,7 @@
         "__perturbation": "none, 2dbubble, 3dbubble"
     },
     "netcdf_reader": {
-        "source_file": "./rundata/initial_conditions/spatial/mountain.nc",
+        "source_file": "./rundata/initial_conditions/spatial/default_cases/mountain.nc",
         "Tg_source": "atmosphere",
         "__Tg_source_options": "atmosphere, netcdf",
         "variables_to_read": {

@@ -191,7 +191,7 @@
         "NETCDF_Fortran_DIR": "/work/aaron900129/VVM_libs",
         "PNETCDF_DIR": "/work/aaron900129/VVM_libs",
 
-        "ADIOS2_DIR": "/work/aaron900129/libs_VVMex/lib/cmake/adios2",
+        "ADIOS2_DIR": "/work/aaron900129/VVMex_libs/lib64/cmake/adios2",
 
         "VVM_USE_DOUBLE_PRECISION": "ON",
         "ENABLE_NCCL": "ON",
