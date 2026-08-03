@@ -4,6 +4,8 @@
 # Internal execution script called by submit.py.
 # ==============================================================================
 set -e
+export VVM_BACKEND="${VVM_BACKEND:-gpu}"
+export VVM_BINARY="${VVM_BINARY:-./build/vvm}"
 
 prepend_ld_library_path() {
     local paths="$1"
@@ -63,8 +65,33 @@ else
     RUN_MODE="Local Shared Mode"
 fi
 
-PE=$(( TOTAL_CORES / TASKS_PER_NODE ))
+# Cores per IO rank. The IO server is host-only: it never initializes Kokkos and
+# spends its time in ADIOS2/HDF5, so it does not need an equal share of the node.
+VVM_IO_CPUS="${VVM_IO_CPUS:-1}"
+if [ "$VVM_IO_CPUS" -lt 1 ]; then VVM_IO_CPUS=1; fi
+
+if [ -n "$SLURM_JOB_ID" ] && [ "${VVM_COMPUTE_PER_NODE:-0}" -gt 0 ]; then
+    # Real allocation: reserve a small slice for the IO ranks and give the rest to
+    # the compute ranks, instead of splitting the node evenly across both roles.
+    IO_CORES_PER_NODE=$(( VVM_IO_PER_NODE * VVM_IO_CPUS ))
+    PE=$(( (TOTAL_CORES - IO_CORES_PER_NODE) / VVM_COMPUTE_PER_NODE ))
+else
+    # Local mode: TOTAL_CORES was synthesized from the requested --cpus, so honour
+    # that number for compute ranks rather than redistributing it.
+    PE=$(( TOTAL_CORES / TASKS_PER_NODE ))
+fi
 if [ "$PE" -lt 1 ]; then PE=1; fi
+
+# PE is derived from the allocation, which ties the OpenMP thread count to the
+# core count. Those want tuning separately on a GPU-resident run: the compute
+# rank needs cores for the launch loop, the CUDA driver, NCCL and MPI progress,
+# but not necessarily an OpenMP thread on each one -- idle Kokkos/OpenMP workers
+# spin at barriers and become the contention they were given cores to avoid.
+#   VVM_OMP_THREADS=4 ./submit.py --cpus 6 ...
+if [ -n "${VVM_OMP_THREADS:-}" ] && [ "${VVM_OMP_THREADS}" -ge 1 ] 2>/dev/null; then
+    echo "[Info] OMP_NUM_THREADS overridden: $PE -> $VVM_OMP_THREADS (VVM_OMP_THREADS)"
+    PE="$VVM_OMP_THREADS"
+fi
 
 # Preserve original CPU/OpenMP behavior.
 # Do not add taskset, bind-to-core, or PE mapping here.
@@ -82,7 +109,7 @@ export VVM_GPU_LIST="${VVM_GPU_LIST:-}"
 echo "========================================================="
 echo "[$RUN_MODE]"
 echo " Nodes: ${SLURM_JOB_NUM_NODES:-1} | Tasks/Node: $TASKS_PER_NODE"
-echo " Total Cores Used/Node: $TOTAL_CORES | Allocated Cores/Task (PE): $PE"
+echo " Total Cores Used/Node: $TOTAL_CORES | Cores/compute rank: $PE | Cores/IO rank: $VVM_IO_CPUS"
 echo "========================================================="
 if [ -n "$VVM_GPU_LIST" ]; then
     echo "[GPUMap] Using explicit VVM_GPU_LIST=$VVM_GPU_LIST"
@@ -124,7 +151,7 @@ done
 IFS="${old_ifs}"
 export LD_LIBRARY_PATH="$deduped_ld_library_path"
 
-LDD_VVM_OUTPUT=$(LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" ldd ./build/vvm 2>&1 || true)
+LDD_VVM_OUTPUT=$(LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" ldd "$VVM_BINARY" 2>&1 || true)
 if printf "%s\n" "$LDD_VVM_OUTPUT" | grep -q "=> not found"; then
     if [ "${OMPI_COMM_WORLD_LOCAL_RANK:-0}" = "0" ]; then
         echo "[VVM launch] ERROR: unresolved shared libraries on host=$(hostname)." >&2
@@ -137,6 +164,9 @@ fi
 
 LOCAL_RANK="${OMPI_COMM_WORLD_LOCAL_RANK:-${SLURM_LOCALID:-0}}"
 GLOBAL_RANK="${OMPI_COMM_WORLD_RANK:-${SLURM_PROCID:-NA}}"
+if [ "$VVM_BACKEND" = "cpu" ]; then
+    exec "$VVM_BINARY" "$@"
+fi
 
 parse_gpu_list() {
     local spec="$1"
@@ -178,6 +208,7 @@ parse_gpu_list() {
 }
 
 pick_gpu_from_array() {
+    local rank="$1"
     local idx
     local selected
     local gpu_count
@@ -185,13 +216,67 @@ pick_gpu_from_array() {
     gpu_count="${#GPU_ARRAY[@]}"
     [ "$gpu_count" -gt 0 ] || return 1
 
-    idx=$(( LOCAL_RANK % gpu_count ))
+    idx=$(( rank % gpu_count ))
     selected="${GPU_ARRAY[$idx]}"
 
     [ -n "$selected" ] || return 1
 
-    export CUDA_VISIBLE_DEVICES="$selected"
+    SELECTED_GPU="$selected"
     return 0
+}
+
+expand_cpu_list() {
+    local spec="$1"
+    local old_ifs="$IFS"
+    local part start end i out=""
+
+    IFS=,
+    for part in $spec; do
+        [ -n "$part" ] || continue
+        case "$part" in
+            *-*)
+                start="${part%%-*}"
+                end="${part##*-}"
+                for (( i=start; i<=end; i++ )); do out="$out $i"; done
+                ;;
+            *)
+                out="$out $part"
+                ;;
+        esac
+    done
+    IFS="$old_ifs"
+
+    echo $out
+}
+
+# NUMA node of the Nth NVIDIA device in PCI bus order. This file forces
+# CUDA_DEVICE_ORDER=PCI_BUS_ID, so N is the index CUDA reports. Glob expansion
+# sorts, and PCI addresses are fixed width, so the order matches.
+gpu_numa_node() {
+    local want="$1"
+    local i=0
+    local dev vendor class node
+
+    for dev in /sys/bus/pci/devices/*; do
+        [ -r "$dev/vendor" ] || continue
+        read -r vendor < "$dev/vendor"
+        [ "$vendor" = "0x10de" ] || continue
+        [ -r "$dev/class" ] || continue
+        read -r class < "$dev/class"
+        case "$class" in
+            0x030000|0x030200) ;;
+            *) continue ;;
+        esac
+
+        if [ "$i" = "$want" ]; then
+            [ -r "$dev/numa_node" ] || return 1
+            read -r node < "$dev/numa_node"
+            echo "$node"
+            return 0
+        fi
+        i=$(( i + 1 ))
+    done
+    return 1
 }
 
 # ------------------------------------------------------------------------------
@@ -220,61 +305,279 @@ pick_gpu_from_array() {
 
 GPU_SOURCE="numeric_fallback"
 
-if [ -n "${VVM_GPU_LIST:-}" ]; then
-    if ! parse_gpu_list "$VVM_GPU_LIST"; then
-        echo "[VVM launch] ERROR: failed to parse VVM_GPU_LIST=${VVM_GPU_LIST}" >&2
-        exit 2
+# Resolve the GPU a given node-local compute rank will use, into SELECTED_GPU.
+# Parameterised by rank rather than reading LOCAL_RANK, so the affinity planner
+# below can ask the same question about this rank peers and get the answer they
+# will each reach for themselves.
+select_gpu_for_rank() {
+    local rank="$1"
+    SELECTED_GPU=""
+    SELECTED_GPU_SOURCE="numeric_fallback"
+
+    if [ -n "${VVM_GPU_LIST:-}" ]; then
+        parse_gpu_list "$VVM_GPU_LIST" || return 1
+        pick_gpu_from_array "$rank" || return 1
+        SELECTED_GPU_SOURCE="VVM_GPU_LIST"
+        return 0
     fi
 
-    if ! pick_gpu_from_array; then
-        echo "[VVM launch] ERROR: failed to select GPU from VVM_GPU_LIST=${VVM_GPU_LIST}" >&2
-        exit 2
-    fi
+    if [ -n "${SLURM_JOB_ID:-}" ] && \
+       [ -n "${VVM_PARENT_CUDA_VISIBLE_DEVICES:-}" ] && \
+       [ "${VVM_PARENT_CUDA_VISIBLE_DEVICES}" != "NoDevFiles" ] && \
+       [ "${VVM_PARENT_CUDA_VISIBLE_DEVICES}" != "void" ]; then
 
-    GPU_SOURCE="VVM_GPU_LIST"
-
-elif [ -n "${SLURM_JOB_ID:-}" ] && \
-     [ -n "${VVM_PARENT_CUDA_VISIBLE_DEVICES:-}" ] && \
-     [ "${VVM_PARENT_CUDA_VISIBLE_DEVICES}" != "NoDevFiles" ] && \
-     [ "${VVM_PARENT_CUDA_VISIBLE_DEVICES}" != "void" ]; then
-
-    if parse_gpu_list "$VVM_PARENT_CUDA_VISIBLE_DEVICES"; then
-        PARENT_GPU_COUNT="${#GPU_ARRAY[@]}"
-
-        if [ "$PARENT_GPU_COUNT" -ge "${VVM_GPUS:-1}" ]; then
-            if ! pick_gpu_from_array; then
-                echo "[VVM launch] ERROR: failed to select GPU from parent CUDA_VISIBLE_DEVICES=${VVM_PARENT_CUDA_VISIBLE_DEVICES}" >&2
-                exit 2
+        if parse_gpu_list "$VVM_PARENT_CUDA_VISIBLE_DEVICES"; then
+            if [ "${#GPU_ARRAY[@]}" -ge "${VVM_GPUS:-1}" ]; then
+                pick_gpu_from_array "$rank" || return 1
+                SELECTED_GPU_SOURCE="parent_CUDA_VISIBLE_DEVICES"
+                return 0
             fi
-
-            GPU_SOURCE="parent_CUDA_VISIBLE_DEVICES"
-        else
-            export CUDA_VISIBLE_DEVICES=$(( LOCAL_RANK % VVM_GPUS ))
-            GPU_SOURCE="numeric_fallback_parent_list_too_small"
+            SELECTED_GPU=$(( rank % VVM_GPUS ))
+            SELECTED_GPU_SOURCE="numeric_fallback_parent_list_too_small"
+            return 0
         fi
-    else
-        export CUDA_VISIBLE_DEVICES=$(( LOCAL_RANK % VVM_GPUS ))
-        GPU_SOURCE="numeric_fallback_parent_parse_failed"
+
+        SELECTED_GPU=$(( rank % VVM_GPUS ))
+        SELECTED_GPU_SOURCE="numeric_fallback_parent_parse_failed"
+        return 0
     fi
 
-else
-    export CUDA_VISIBLE_DEVICES=$(( LOCAL_RANK % VVM_GPUS ))
-    GPU_SOURCE="numeric_fallback"
+    SELECTED_GPU=$(( rank % VVM_GPUS ))
+    SELECTED_GPU_SOURCE="numeric_fallback"
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# CPU affinity
+#
+# Nothing here is machine-specific. The plan comes from the CPU set the batch
+# system actually granted this process -- Cpus_allowed_list, which reflects the
+# cgroup rather than what was requested -- and from the PCI/NUMA topology in
+# sysfs. Where any of that is missing or inconsistent the rank is left unbound,
+# which is the behaviour that existed before this did.
+#
+# The two roles want different things. A compute rank wants several cores on the
+# socket its GPU hangs off: one for the launch loop, plus the CUDA driver, NCCL
+# and MPI progress threads. An IO rank wants a small slice that compute ranks
+# stay out of. Reserving the tail of the CPU list for IO satisfies both, and
+# every rank derives the same partition independently, so nothing has to be
+# communicated between them.
+# ------------------------------------------------------------------------------
+CPU_BIND_LIST=""
+CPU_BIND_MODE="off"
+
+node_cpulist() {
+    local f="/sys/devices/system/node/node${1}/cpulist"
+    local spec
+    [ -r "$f" ] || return 1
+    read -r spec < "$f"
+    echo "$spec"
+}
+
+# The CPU set this process may actually run on. Reflects the batch system cgroup
+# and any launcher binding, which is the ground truth -- not what was requested.
+read_cpuset_spec() {
+    local key val
+    [ -r /proc/self/status ] || return 1
+    while read -r key val; do
+        if [ "$key" = "Cpus_allowed_list:" ]; then echo "$val"; return 0; fi
+    done < /proc/self/status
+    return 1
+}
+
+plan_cpu_affinity() {
+    local role="$1"
+    local spec="" c i r base
+    local -a allowed
+
+    command -v taskset >/dev/null 2>&1 || { CPU_BIND_MODE="off:no_taskset"; return; }
+
+    spec=$(read_cpuset_spec) || { CPU_BIND_MODE="off:no_cpuset"; return; }
+    [ -n "$spec" ] || { CPU_BIND_MODE="off:no_cpuset"; return; }
+
+    allowed=( $(expand_cpu_list "$spec") )
+    local n_allowed="${#allowed[@]}"
+
+    local cpn="${VVM_COMPUTE_PER_NODE:-0}"
+    local ipn="${VVM_IO_PER_NODE:-0}"
+    local iocpus="${VVM_IO_CPUS:-1}"
+    [ "$cpn" -gt 0 ] 2>/dev/null || { CPU_BIND_MODE="off:no_layout"; return; }
+
+    local io_total=$(( ipn * iocpus ))
+    local pool=$(( n_allowed - io_total ))
+    [ "$pool" -gt 0 ] || { CPU_BIND_MODE="off:too_few_cpus"; return; }
+    local per_compute=$(( pool / cpn ))
+
+    # Under two cores per compute rank, pinning is a net loss: it stops the
+    # kernel lending a blocked IO rank core to a busy compute rank and buys
+    # nothing back. That is the --cpus 1 case, which stays unbound.
+    [ "$per_compute" -ge 2 ] || { CPU_BIND_MODE="off:too_few_cpus"; return; }
+
+    if [ "$role" = "io" ]; then
+        local io_idx=$(( LOCAL_RANK - cpn ))
+        [ "$io_idx" -ge 0 ] 2>/dev/null || io_idx=$(( LOCAL_RANK % ipn ))
+        base=$(( pool + io_idx * iocpus ))
+        for (( i=0; i<iocpus; i++ )); do
+            c="${allowed[$(( base + i ))]}"
+            [ -n "$c" ] && CPU_BIND_LIST="${CPU_BIND_LIST:+${CPU_BIND_LIST},}${c}"
+        done
+        [ -n "$CPU_BIND_LIST" ] && CPU_BIND_MODE="io_reserved"
+        return
+    fi
+
+    # Compute ranks: place each one on the NUMA node its GPU is attached to.
+    local -a rank_node
+    local numa_ok=1
+    local nd
+    for (( r=0; r<cpn; r++ )); do
+        if ! select_gpu_for_rank "$r"; then numa_ok=0; break; fi
+        if ! nd=$(gpu_numa_node "$SELECTED_GPU"); then numa_ok=0; break; fi
+        [ -n "$nd" ] && [ "$nd" -ge 0 ] 2>/dev/null || { numa_ok=0; break; }
+        rank_node[$r]="$nd"
+    done
+
+    if [ "$numa_ok" = "1" ]; then
+        local my_node="${rank_node[$LOCAL_RANK]}"
+        local nspec=""
+        [ -n "$my_node" ] && nspec=$(node_cpulist "$my_node")
+        if [ -n "$nspec" ]; then
+            local -A on_node=()
+            for c in $(expand_cpu_list "$nspec"); do on_node[$c]=1; done
+
+            # Compute-pool CPUs that live on my node, kept in pool order.
+            local -a node_pool=()
+            for (( i=0; i<pool; i++ )); do
+                c="${allowed[$i]}"
+                [ -n "${on_node[$c]:-}" ] && node_pool+=("$c")
+            done
+
+            # My ordinal among the compute ranks sharing this node.
+            local ord=0 peers=0
+            for (( r=0; r<cpn; r++ )); do
+                if [ "${rank_node[$r]}" = "$my_node" ]; then
+                    [ "$r" -lt "$LOCAL_RANK" ] && ord=$(( ord + 1 ))
+                    peers=$(( peers + 1 ))
+                fi
+            done
+
+            local share=0
+            [ "$peers" -gt 0 ] && share=$(( ${#node_pool[@]} / peers ))
+            if [ "$share" -ge 2 ]; then
+                base=$(( ord * share ))
+                for (( i=0; i<share; i++ )); do
+                    c="${node_pool[$(( base + i ))]}"
+                    [ -n "$c" ] && CPU_BIND_LIST="${CPU_BIND_LIST:+${CPU_BIND_LIST},}${c}"
+                done
+                if [ -n "$CPU_BIND_LIST" ]; then
+                    CPU_BIND_MODE="numa${my_node}"
+                    return
+                fi
+            fi
+        fi
+    fi
+
+    # No usable topology: split the compute pool contiguously in local-rank
+    # order. With CUDA_DEVICE_ORDER=PCI_BUS_ID that already lands most layouts
+    # on the right socket, and where it does not it is no worse than unbound.
+    CPU_BIND_LIST=""
+    base=$(( LOCAL_RANK * per_compute ))
+    for (( i=0; i<per_compute; i++ )); do
+        c="${allowed[$(( base + i ))]}"
+        [ -n "$c" ] && CPU_BIND_LIST="${CPU_BIND_LIST:+${CPU_BIND_LIST},}${c}"
+    done
+    [ -n "$CPU_BIND_LIST" ] && CPU_BIND_MODE="contiguous"
+}
+
+# Reserving the IO slice out of one end of the CPU list can leave the NUMA nodes
+# holding unequal shares, so a rank can end up with fewer cores than the uniform
+# OMP_NUM_THREADS the launcher handed it. Clamping here means the OpenMP pool
+# never exceeds the cores the rank actually owns, whatever the split looked like.
+clamp_omp_to_binding() {
+    local n
+    [ -n "$CPU_BIND_LIST" ] || return 0
+    n=$(echo "$CPU_BIND_LIST" | tr , "\n" | grep -c .)
+    [ "$n" -ge 1 ] 2>/dev/null || return 0
+    if [ "${OMP_NUM_THREADS:-1}" -gt "$n" ] 2>/dev/null; then
+        export OMP_NUM_THREADS="$n"
+    fi
+}
+
+launch_vvm() {
+    if [ -n "$CPU_BIND_LIST" ]; then
+        exec taskset -c "$CPU_BIND_LIST" "$VVM_BINARY" "$@"
+    fi
+    exec "$VVM_BINARY" "$@"
+}
+
+# IO server ranks are host-only. main.cpp assigns the role by *global* rank
+# (color = world_rank < compute_tasks), so use the same test here.
+#
+# They must not take a GPU: src/main.cpp skips Kokkos initialization on these
+# ranks, but ADIOS2 is built with Kokkos support and still opens a CUDA context of
+# its own (measured: 520 MiB per IO rank) unless no device is visible. Hiding the
+# device is only safe because Kokkos is no longer initialized here -- a
+# CUDA-enabled Kokkos aborts when it finds no device.
+#
+# This is also what lets the IO server scale past the GPU count: IO ranks no longer
+# consume a slot in the local_rank % VVM_GPUS mapping.
+if [ "$GLOBAL_RANK" != "NA" ] && [ "${VVM_COMPUTE_TASKS:-0}" -gt 0 ] \
+   && [ "$GLOBAL_RANK" -ge "$VVM_COMPUTE_TASKS" ]; then
+    export CUDA_VISIBLE_DEVICES=""
+    export OMP_NUM_THREADS="${VVM_IO_CPUS:-1}"
+    # Yield only on this side. IO ranks block for whole model-init and whole
+    # output intervals, so spinning there is pure theft from the compute ranks
+    # sharing the node. Compute ranks keep spinning (set below): their MPI waits
+    # are short halo exchanges between kernel launches, and making those sleep
+    # would add wakeup latency to the step loop -- which is the GPU utilization
+    # this is meant to protect.
+    export OMPI_MCA_mpi_yield_when_idle=1
+    plan_cpu_affinity io
+    clamp_omp_to_binding
+    echo "[GPUMap] host=$(hostname) global_rank=${GLOBAL_RANK} local_rank=${LOCAL_RANK} role=io source=host_only_no_gpu omp=${OMP_NUM_THREADS} yield=1 cpus=${CPU_BIND_LIST:-all} bind=${CPU_BIND_MODE}" >&2
+    launch_vvm "$@"
 fi
 
-echo "[GPUMap] host=$(hostname) global_rank=${GLOBAL_RANK} local_rank=${LOCAL_RANK} source=${GPU_SOURCE} CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} parent_CVD=${VVM_PARENT_CUDA_VISIBLE_DEVICES:-<unset>}" >&2
+if ! select_gpu_for_rank "$LOCAL_RANK"; then
+    echo "[VVM launch] ERROR: failed to select a GPU for local_rank=${LOCAL_RANK}." >&2
+    echo "[VVM launch] VVM_GPU_LIST=${VVM_GPU_LIST:-<unset>} parent_CVD=${VVM_PARENT_CUDA_VISIBLE_DEVICES:-<unset>} VVM_GPUS=${VVM_GPUS:-<unset>}" >&2
+    exit 2
+fi
+export CUDA_VISIBLE_DEVICES="$SELECTED_GPU"
+GPU_SOURCE="$SELECTED_GPU_SOURCE"
 
-exec ./build/vvm "$@"
+# Compute ranks: spin rather than sleep in MPI waits. See the IO branch above.
+export OMPI_MCA_mpi_yield_when_idle=0
+
+# After GPU_SOURCE is captured: planning re-runs the resolver for peer ranks and
+# leaves SELECTED_GPU_SOURCE pointing at whichever it looked at last.
+plan_cpu_affinity compute
+clamp_omp_to_binding
+
+echo "[GPUMap] host=$(hostname) global_rank=${GLOBAL_RANK} local_rank=${LOCAL_RANK} source=${GPU_SOURCE} CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} parent_CVD=${VVM_PARENT_CUDA_VISIBLE_DEVICES:-<unset>} cpus=${CPU_BIND_LIST:-all} bind=${CPU_BIND_MODE}" >&2
+
+launch_vvm "$@"
 '
 
+if [ "$VVM_BACKEND" = "cpu" ]; then
+    if [ $(( TASKS_PER_NODE * PE )) -le "$TOTAL_CORES" ]; then
+        MPIRUN_MAP_ARGS=(--map-by "ppr:${TASKS_PER_NODE}:node:PE=${PE}" --bind-to core)
+    else
+        MPIRUN_MAP_ARGS=(--map-by "ppr:${TASKS_PER_NODE}:node" --bind-to none)
+    fi
+else
+    MPIRUN_MAP_ARGS=(--map-by "ppr:${TASKS_PER_NODE}:node" --rank-by node --bind-to none)
+fi
 mpirun -np $VVM_TOTAL_TASKS \
- --oversubscribe --map-by ppr:${TASKS_PER_NODE}:node --rank-by node --bind-to none \
+ --oversubscribe "${MPIRUN_MAP_ARGS[@]}" \
  -x OMP_NUM_THREADS=${PE} \
  -x OMP_PROC_BIND=false \
  -x CUDA_DEVICE_ORDER=${CUDA_DEVICE_ORDER} \
  -x NCCL_DEBUG=INFO \
  -x HDF5_USE_FILE_LOCKING=FALSE \
  -x VVM_GPUS \
+ -x VVM_BACKEND \
+ -x VVM_BINARY \
+ -x VVM_IO_CPUS \
  -x VVM_GPU_LIST \
  -x VVM_PARENT_CUDA_VISIBLE_DEVICES \
  -x VVM_COMPUTE_PER_NODE \

@@ -62,6 +62,7 @@ nav:
   - Quick Start: quick-start.md
   - User Guides:
       - Overview: user-guides/index.md
+      - Job Submission: user-guides/job-submission.md
       - Model Configuration: user-guides/configuration.md
       - I/O Management: user-guides/io-management.md
   - Developer Guides:

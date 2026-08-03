@@ -5,6 +5,7 @@ import glob
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -24,7 +25,8 @@ DEFAULT_COMPUTE = 1
 DEFAULT_IO = None                 # None means infer from output.engine
 DEFAULT_NODES = 1
 DEFAULT_GPUS = None               # None means infer from compute ranks per node
-DEFAULT_CPUS = 1                  # CLI option only; not asked in wizard
+DEFAULT_CPUS = None               # None means fill the node (see infer_cpus_per_task)
+DEFAULT_IO_CPUS = 1               # IO ranks are host-only and effectively single-threaded
 DEFAULT_TIME = "24:00:00"
 DEFAULT_OUT = "log/%j.out"
 DEFAULT_ERR = "log/%j.err"
@@ -156,33 +158,64 @@ def setup_environment(preset_name):
         # ----------------------------------------------------------------------
         lib_dirs = []
 
-        # Kokkos_DIR first, and it matters. A CPU build's libkokkoscore.so.4.7 has
-        # the same SONAME as the CUDA one in libs_GPUVVM/lib, which the user profile
-        # already puts on LD_LIBRARY_PATH. LD_LIBRARY_PATH beats the binary's
-        # RUNPATH, so without this the CPU binary would load the CUDA Kokkos.
+        # ADIOS2_DIR first, and the order matters. It may point at a prefix that
+        # layers over the main one (an ADIOS2 built without Kokkos, say, while the
+        # rest of the stack stays put). Both prefixes carry libadios2_*.so with the
+        # same SONAMEs, so whichever lands on LD_LIBRARY_PATH first is the one that
+        # loads -- the override has to precede the base stack.
         for key in [
+            "ADIOS2_DIR",
+            # CPU and CUDA Kokkos share a SONAME, so the preset-selected Kokkos
+            # must also precede inherited base-stack library paths.
             "Kokkos_DIR",
             "HDF5_DIR",
             "NETCDF_C_DIR",
             "NETCDF_Fortran_DIR",
             "PNETCDF_DIR",
-            "ADIOS2_DIR",
         ]:
             val = cache_vars.get(key, "")
             if not val:
                 continue
 
-            # These may be either an install prefix (HDF5_DIR=/opt/foo) or a CMake
-            # package directory (Kokkos_DIR=/opt/foo/lib/cmake/Kokkos).
+            # These may be an install prefix (HDF5_DIR=/opt/foo) or a CMake package
+            # directory (ADIOS2_DIR=/opt/foo/lib/cmake/adios2). Joining "lib" onto
+            # the latter yields a path that does not exist, and the library then
+            # silently resolves from whatever else is on LD_LIBRARY_PATH.
             marker = os.sep + "cmake" + os.sep
             if marker in val:
-                append_unique(lib_dirs, val.split(marker)[0])
+                cand = val.split(marker)[0]
+                # A preset may name lib/cmake/<pkg> while the install actually put
+                # the .so files in lib64 (CMake finds either, submit.py takes the
+                # literal string). Landing on the empty one is silent: the base
+                # stack further down LD_LIBRARY_PATH then supplies the library,
+                # which is exactly the override this list exists to prevent.
+                #
+                # Take the sibling as well, not just as a fallback: a prefix can
+                # split itself across both, as VVMex_libs does with ADIOS2 in lib64
+                # and the libfabric that its RDMA data plane needs in lib.
+                head, tail = os.path.split(cand)
+                sibling = os.path.join(head, "lib64" if tail == "lib" else "lib")
+                found = [d for d in (cand, sibling) if os.path.isdir(d)]
+                if not found:
+                    print(f"[Warning] {key}: neither {cand} nor {sibling} exists.")
+                for d in found:
+                    append_unique(lib_dirs, d)
             else:
                 append_unique(lib_dirs, os.path.join(val, "lib"))
                 append_unique(lib_dirs, os.path.join(val, "lib64"))
 
         if lib_dirs:
             extra_ld = ":".join(lib_dirs)
+
+            # Respect a caller-supplied VVM_EXTRA_LD_LIBRARY_PATH instead of
+            # discarding it. It goes first, so an operator can override one library
+            # of the preset's stack -- e.g. point at an ADIOS2 built without Kokkos
+            # -- without editing CMakePresets.json.
+            caller_extra = os.environ.get("VVM_EXTRA_LD_LIBRARY_PATH", "")
+            if caller_extra:
+                extra_ld = caller_extra + ":" + extra_ld
+                print(f"[Info] Honouring caller VVM_EXTRA_LD_LIBRARY_PATH: {caller_extra}")
+
             env["VVM_EXTRA_LD_LIBRARY_PATH"] = extra_ld
 
             old_ld = env.get("LD_LIBRARY_PATH", "")
@@ -301,6 +334,63 @@ def infer_gpus_per_node(compute_tasks, nodes, gpus):
     return max(1, math.ceil(compute_tasks / nodes))
 
 
+def query_cpus_per_node(partition):
+    """
+    Usable CPUs on a node of `partition`, or None if SLURM cannot say.
+
+    CPUEfctv, not CPUTot: a node can advertise more CPUs than a job is allowed
+    to hold, and asking for the difference gets the job rejected rather than
+    scheduled. sinfo has no field for the effective count, so this takes a node
+    name from the partition and asks scontrol about it.
+    """
+    try:
+        node = subprocess.run(
+            ["sinfo", "-h", "-p", partition, "-o", "%n"],
+            capture_output=True, text=True, timeout=15,
+        ).stdout.split()
+        if not node:
+            return None
+
+        detail = subprocess.run(
+            ["scontrol", "show", "node", node[0]],
+            capture_output=True, text=True, timeout=15,
+        ).stdout
+
+        for key in ("CPUEfctv", "CPUTot"):
+            m = re.search(rf"\b{key}=(\d+)", detail)
+            if m and int(m.group(1)) > 0:
+                return int(m.group(1))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    return None
+
+
+def infer_cpus_per_task(cpus, partition, tasks_per_node):
+    """
+    CPU request policy when --cpus is not given.
+
+    --cpus-per-task is the only thing that decides how much of a node the job
+    actually holds: SLURM allocates it times the tasks placed there. Defaulting
+    it to 1 quietly hands back most of the node -- on a 104-CPU node running 16
+    ranks that is 16 CPUs used and 88 idle, which starves the host side of every
+    compute rank and shows up as low GPU utilization.
+
+    So fill the node instead, and let the caller override.
+    """
+    if cpus is not None:
+        return cpus, "explicit"
+
+    if not partition or tasks_per_node <= 0:
+        return 1, "fallback (no partition to query)"
+
+    per_node = query_cpus_per_node(partition)
+    if not per_node:
+        return 1, "fallback (SLURM did not report CPUs per node)"
+
+    inferred = max(1, per_node // tasks_per_node)
+    return inferred, f"{per_node} usable CPUs/node / {tasks_per_node} tasks/node"
+
+
 # ==============================================================================
 # Snapshot
 # ==============================================================================
@@ -412,7 +502,8 @@ def interactive_wizard():
     print("--------------------------------------------------------------------")
     print(" Derived Defaults")
     print("--------------------------------------------------------------------")
-    print(f" --cpus           : CPUs per task / OMP_NUM_THREADS (default: {DEFAULT_CPUS})")
+    print(" --cpus           : CPUs per task / OMP_NUM_THREADS.")
+    print("                    Default fills the node: usable CPUs/node / tasks per node.")
     print("                    This is not asked in the wizard. Override with --cpus N.")
     print("")
     print(" --io             : IO MPI ranks")
@@ -494,7 +585,7 @@ def interactive_wizard():
     print("")
     print(f"[Info] Detected output engine: {io_engine}")
     print(f"[Info] IO ranks default: {inferred_io}")
-    print(f"[Info] CPUs per task default: {args.cpus}")
+    print("[Info] CPUs per task default: fill the node (reported before submit)")
     print(f"[Info] GPUs per node default: {inferred_gpus}")
     print("       This is derived from compute ranks per node.")
     print("       IO ranks do not increase the GPU request by default.")
@@ -588,6 +679,10 @@ def parse_args():
         default=DEFAULT_IO,
         help="IO MPI ranks. Default: same as compute for SST; 0 otherwise.",
     )
+    parser.add_argument(
+        "--io-cpus", type=int, default=DEFAULT_IO_CPUS,
+        help="CPU cores/threads per IO rank (default 1). IO ranks are host-only: "
+             "they never initialize Kokkos and do not consume a GPU.")
     parser.add_argument("--nodes", type=int, default=DEFAULT_NODES, help="Number of nodes")
     parser.add_argument(
         "--gpus",
@@ -698,8 +793,12 @@ def main():
         print("[Error] --io cannot be negative.")
         sys.exit(1)
 
-    if args.cpus <= 0:
+    if args.cpus is not None and args.cpus <= 0:
         print("[Error] --cpus must be positive.")
+        sys.exit(1)
+
+    if args.io_cpus <= 0:
+        print("[Error] --io-cpus must be positive.")
         sys.exit(1)
 
     # Derived defaults.
@@ -762,6 +861,13 @@ def main():
     # - GPU request is based only on compute ranks
     tasks_per_node = math.ceil(total_tasks / args.nodes)
 
+    # Needs tasks_per_node, so it cannot sit with the other derived defaults.
+    args.cpus, cpus_origin = infer_cpus_per_task(
+        args.cpus, None if args.local else args.partition, tasks_per_node
+    )
+    if cpus_origin != "explicit":
+        print(f"[Info] CPUs per task: {args.cpus}  ({cpus_origin})")
+
     env["VVM_CONFIG_FILE"] = config_path_user
     env["VVM_COMPUTE_TASKS"] = str(args.compute)
     env["VVM_IO_TASKS"] = str(args.io)
@@ -772,6 +878,7 @@ def main():
     env["VVM_OUTPUT_DIR"] = out_dir_abs
     env["OMP_NUM_THREADS"] = str(args.cpus)
     env["VVM_GPUS"] = str(args.gpus)
+    env["VVM_IO_CPUS"] = str(args.io_cpus)
 
     script_path = os.path.join(vvm_root, "tools", "core_run.sh")
     if not os.path.isfile(script_path):
@@ -805,7 +912,9 @@ def main():
             else:
                 print(" Local GPU list    : <unset; ranks map by local rank modulo GPUs/node>")
                 print("                     Set VVM_GPU_LIST=0,1,... before ./submit.py --local to choose GPU IDs.")
-    print(f" CPUs/task         : {args.cpus}")
+    print(f" CPUs/compute rank : {args.cpus}")
+    if args.io > 0:
+        print(f" CPUs/IO rank      : {args.io_cpus}  (host-only, no GPU)")
     if not args.local:
         print(f" Exclusive         : {args.exclusive}")
         print(f" Export            : {args.export}")

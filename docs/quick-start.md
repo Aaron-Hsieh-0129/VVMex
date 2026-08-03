@@ -127,6 +127,19 @@ If `output.engine` is `SST` in your JSON, `submit.py` sets the required I/O rank
 
 Use `--io N` only when you want to override the wrapper's inferred I/O rank count. More detail: [Job submission](user-guides/job-submission.md).
 
+### A note on `--cpus`
+
+None of the commands above pass `--cpus`, and that is the recommended way to run
+them. Left unset, the wrapper sizes it to fill the node and then pins each rank
+to its own cores, with compute ranks placed on the NUMA node of their GPU.
+
+`--cpus` maps to `--cpus-per-task`, so it decides how much of the node the job
+holds: `--cpus x tasks per node`. Passing a small value such as `--cpus 1` is
+valid but under-allocates badly on a many-core node -- one core per rank has to
+carry the CUDA launch loop, MPI, NCCL and the driver threads at once, which
+starves the GPU without producing any error. See
+[CPU allocation](user-guides/job-submission.md#cpu-allocation).
+
 ## Direct MPI (advanced)
 
 Manual MPI is useful for small debug sessions after the environment has already been prepared. It bypasses the wrapper's resource checks, so verify rank placement, GPU visibility, CPU binding, and OpenMP settings yourself.
