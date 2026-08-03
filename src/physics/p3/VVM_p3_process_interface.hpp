@@ -21,6 +21,10 @@
 #include <ekat_parameter_list.hpp>
 #include <ekat_assert.hpp>
 #include <ekat_pack_kokkos.hpp>
+// ekat::subview. On a GPU build this arrives transitively through the
+// p3_main_impl_*.hpp headers that p3_functions.hpp pulls in; the ETI path used by
+// CPU builds does not include those, so ask for it directly.
+#include <ekat_subview_utils.hpp>
 #include <ekat_workspace.hpp>
 // #include "ekat/ekat_workspace_impl.hpp"
 

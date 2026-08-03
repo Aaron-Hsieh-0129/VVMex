@@ -6,7 +6,9 @@
 #include <mpi.h>
 #include <omp.h>
 #include <memory>
+#if defined(KOKKOS_ENABLE_CUDA)
 #include <cuda_runtime.h>
+#endif
 #if defined(ENABLE_NCCL)
 #include <nccl.h>
 #endif
@@ -152,6 +154,7 @@ int main(int argc, char *argv[]) {
     omp_set_num_threads(threads_per_rank);
 
     int num_gpus = 0;
+#if defined(KOKKOS_ENABLE_CUDA)
     cudaError_t cuda_err = cudaGetDeviceCount(&num_gpus);
     if (cuda_err != cudaSuccess || num_gpus <= 0) {
         std::cerr << "[Rank " << world_rank
@@ -164,10 +167,13 @@ int main(int argc, char *argv[]) {
                   << std::endl;
         MPI_Abort(MPI_COMM_WORLD, 2);
     }
+#endif
 
     Kokkos::InitializationSettings args;
+#if defined(KOKKOS_ENABLE_CUDA)
     // core_run.sh constrains each process to one intended GPU.
     args.set_device_id(0);
+#endif
     Kokkos::initialize(args);
 
     if (world_rank == 0) {
@@ -227,7 +233,9 @@ int main(int argc, char *argv[]) {
         // if (rank == 0) config.print_config(); // Print loaded configuration
 
 
+#if defined(ENABLE_NCCL)
         cudaStream_t stream = Kokkos::Cuda().cuda_stream();
+#endif
 
         // Create a VVM model instance and run the simulation
         VVM::Core::Grid grid(config, split_comm);

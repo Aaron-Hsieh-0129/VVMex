@@ -1,6 +1,8 @@
 #include "WindSolver.hpp"
 #include "core/HaloExchanger.hpp"
+#if defined(KOKKOS_ENABLE_CUDA)
 #include <nvtx3/nvToolsExt.h>
+#endif
 #include <algorithm>
 #include <utility>
 #include <limits>
@@ -103,7 +105,13 @@ void WindSolver::solve_w() {
                                     Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
     constexpr size_t kScratchBudget = 48 * 1024;
     const int cols_that_fit = static_cast<int>(kScratchBudget / (sizeof(VVM::Real) * nz));
-    const int kTeamCols = std::max(1, std::min(32, cols_that_fit));
+    // Host backends cap a team at the thread-pool size, so clamp by concurrency or
+    // Kokkos aborts with "Requested Team Size is too large". On CUDA concurrency is
+    // orders of magnitude above 32, so the GPU team size is unchanged. Columns are
+    // independent -- team size only sets how they are grouped -- so this does not
+    // touch the per-column arithmetic.
+    const int max_team = std::max(1, Kokkos::DefaultExecutionSpace().concurrency());
+    const int kTeamCols = std::max(1, std::min(std::min(32, cols_that_fit), max_team));
 
     Kokkos::parallel_for("Poisson", Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h,h,h}, {nz-h-1,ny-h,nx-h}),
         KOKKOS_LAMBDA(int k, int j, int i) {

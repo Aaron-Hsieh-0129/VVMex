@@ -3,7 +3,38 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 set(TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(CASE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../rundata/input_configs/default_cases)
-set(GPU_WRAP ${TEST_DIR}/scripts/one_gpu_per_rank.sh)
+# one_gpu_per_rank.sh only assigns CUDA_VISIBLE_DEVICES, so it has nothing to do
+# in a CPU build.
+if(VVM_ENABLE_GPU)
+    set(GPU_WRAP ${TEST_DIR}/scripts/one_gpu_per_rank.sh)
+else()
+    set(GPU_WRAP "")
+endif()
+
+# Reference data is backend-specific. CPU and GPU agree only to a few ulp, which
+# the 1e-6 tolerance absorbs for the advection cases but not for 2dbubble (a
+# convective case amplifies it to ~2e-2 over 120 steps), and never for the
+# SHA-256 digests. So each backend is gated against references generated on that
+# backend; cross-backend agreement is a separate, looser question.
+if(VVM_ENABLE_GPU)
+    set(VVM_BASELINE_DIR  ${TEST_DIR}/baselines)
+    set(VVM_REFERENCE_DIR ${TEST_DIR}/references)
+else()
+    set(VVM_BASELINE_DIR  ${TEST_DIR}/baselines_cpu)
+    set(VVM_REFERENCE_DIR ${TEST_DIR}/references_cpu)
+endif()
+message(STATUS "Test reference data: ${VVM_BASELINE_DIR}, ${VVM_REFERENCE_DIR}")
+
+# OpenMPI binds each rank to a single core by default. On a CPU build that pins
+# every OpenMP thread of a rank onto one CPU, so raising OMP_NUM_THREADS makes
+# the run slower rather than faster (measured: advection_u 20 s -> 45 s at 16
+# threads, Cpus_allowed_list: 0). core_run.sh passes --bind-to none for the same
+# reason. The GPU path is one thread per rank, so leave its binding alone.
+if(VVM_ENABLE_GPU)
+    set(VVM_MPI_BIND_ARGS "")
+else()
+    set(VVM_MPI_BIND_ARGS --bind-to none)
+endif()
 
 # Use VVM_ROOT as the runtime working directory for CTest tests.
 # Root CMakeLists.txt already requires VVM_ROOT, so this should normally exist.
@@ -82,7 +113,7 @@ function(add_vvm_test TEST_NAME VARS_TO_TEST)
     file(WRITE ${CFG} "${VVM_TEST_CFG}")
 
     add_test(NAME Run_${TEST_NAME}
-             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
                      $<TARGET_FILE:vvm> ${CFG}
              WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
 
@@ -90,7 +121,7 @@ function(add_vvm_test TEST_NAME VARS_TO_TEST)
 
     add_test(NAME Verify_${TEST_NAME}
              COMMAND ${Python3_EXECUTABLE} ${TEST_DIR}/scripts/verify_output.py
-             --baseline ${TEST_DIR}/baselines/${TEST_NAME}.h5
+             --baseline ${VVM_BASELINE_DIR}/${TEST_NAME}.h5
              --test_out ${ODIR}/vvm_output_000001.h5
              --vars ${VARS_LIST}
              --tol 1e-6)
@@ -121,14 +152,14 @@ function(add_case_test CASE_NAME RANKS LABEL)
              WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
 
     add_test(NAME Run_${TAG}
-             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${RANKS}
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${RANKS} ${VVM_MPI_BIND_ARGS}
                      ${GPU_WRAP} $<TARGET_FILE:vvm> ${CFG}
              WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
 
     add_test(NAME Verify_${TAG}
              COMMAND ${Python3_EXECUTABLE} ${TEST_DIR}/scripts/check_output.py
                      --output ${ODIR}/vvm_output_000001.h5
-                     --reference ${TEST_DIR}/references/${CASE_NAME}.json)
+                     --reference ${VVM_REFERENCE_DIR}/${CASE_NAME}.json)
 
     set_tests_properties(Run_${TAG}    PROPERTIES DEPENDS Prep_${TAG} RESOURCE_LOCK gpu)
     set_tests_properties(Verify_${TAG} PROPERTIES DEPENDS Run_${TAG})
@@ -158,12 +189,12 @@ function(add_rank_invariance_test CASE_NAME RANKS)
              WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
 
     add_test(NAME Run_${TAG}_r1
-             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
                      ${GPU_WRAP} $<TARGET_FILE:vvm> ${CFG1}
              WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
 
     add_test(NAME Run_${TAG}_r${RANKS}
-             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${RANKS}
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${RANKS} ${VVM_MPI_BIND_ARGS}
                      ${GPU_WRAP} $<TARGET_FILE:vvm> ${CFGN}
              WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
 
@@ -217,7 +248,7 @@ function(add_vvm_file_unit_test TEST_NAME RANKS)
 
     foreach(N 1 ${RANKS})
         add_test(NAME ${TEST_NAME}_r${N}
-                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${N}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${N} ${VVM_MPI_BIND_ARGS}
                          $<TARGET_FILE:${TEST_NAME}>
                  WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
         set_tests_properties(${TEST_NAME}_r${N} PROPERTIES LABELS unit)
@@ -241,14 +272,14 @@ function(add_vvm_device_unit_test TEST_NAME CONFIG RANKS)
     target_link_libraries(${TEST_NAME} PRIVATE vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX)
 
     add_test(NAME ${TEST_NAME}_r1
-             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
                      ${GPU_WRAP} $<TARGET_FILE:${TEST_NAME}> ${CONFIG}
              WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
     set_tests_properties(${TEST_NAME}_r1 PROPERTIES LABELS unit RESOURCE_LOCK gpu)
 
     if(VVM_TEST_MULTIRANK)
         add_test(NAME ${TEST_NAME}_r${RANKS}
-                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${RANKS}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${RANKS} ${VVM_MPI_BIND_ARGS}
                          ${GPU_WRAP} $<TARGET_FILE:${TEST_NAME}> ${CONFIG}
                  WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
         set_tests_properties(${TEST_NAME}_r${RANKS}
@@ -302,4 +333,61 @@ if(VVM_TEST_LARGE)
     #   chunk   - default_cases still carries column_chunk_size 16384, which OOMs
     #             on 8 GPUs; 8192 is the working value.
     add_case_test(taiwanvvm_2048 8 large --fields u,v,w,th --rrtmgp-chunk 8192)
+endif()
+
+# ---------------------------------------------------------------------------
+# CPU builds: keep the tests off the GPU.
+#
+# ctest runs the binary directly, so it inherits the caller's LD_LIBRARY_PATH.
+# A CPU Kokkos install has the same SONAME (libkokkoscore.so.4.7) as the CUDA
+# one, and the shell environment here carries the CUDA prefix, so the CPU binary
+# loads the CUDA Kokkos and opens a GPU context: the tests occupy a GPU and stop
+# testing the CPU backend at all. RUNPATH cannot fix this -- it is searched after
+# LD_LIBRARY_PATH, and nvc++ discards -Wl,--disable-new-dtags -- so prepend the
+# CPU library directory for every test instead.
+# ---------------------------------------------------------------------------
+if(NOT VVM_ENABLE_GPU)
+    set(VVM_CPU_RUNTIME_DIRS "")
+    if(Kokkos_DIR)
+        string(REGEX REPLACE "/cmake/Kokkos/?$" "" _vvm_kokkos_libdir "${Kokkos_DIR}")
+        list(APPEND VVM_CPU_RUNTIME_DIRS "${_vvm_kokkos_libdir}")
+    endif()
+    if(ADIOS2_DIR)
+        string(REGEX REPLACE "/cmake/adios2/?$" "" _vvm_adios2_libdir "${ADIOS2_DIR}")
+        list(APPEND VVM_CPU_RUNTIME_DIRS "${_vvm_adios2_libdir}")
+    endif()
+    list(REMOVE_DUPLICATES VVM_CPU_RUNTIME_DIRS)
+
+    # OpenMP is the execution space for a CPU build, and ctest launches the binary
+    # directly rather than through submit.py/core_run.sh, so nothing else sets the
+    # thread count. Without this each rank inherits whatever OMP_NUM_THREADS the
+    # caller happens to have -- usually unset, which means "one thread per core"
+    # and makes multi-rank tests oversubscribe badly.
+    set(VVM_TEST_CPU_THREADS 16 CACHE STRING
+        "OMP_NUM_THREADS per rank for CPU tests")
+
+    set(VVM_TEST_ENV_MODS "OMP_NUM_THREADS=set:${VVM_TEST_CPU_THREADS}")
+
+    if(VVM_CPU_RUNTIME_DIRS)
+        string(REPLACE ";" ":" VVM_CPU_LD_PREPEND "${VVM_CPU_RUNTIME_DIRS}")
+        message(STATUS "CPU tests: prepending to LD_LIBRARY_PATH: ${VVM_CPU_LD_PREPEND}")
+        list(APPEND VVM_TEST_ENV_MODS
+             "LD_LIBRARY_PATH=path_list_prepend:${VVM_CPU_LD_PREPEND}")
+    endif()
+
+    cmake_host_system_information(RESULT VVM_HOST_CORES QUERY NUMBER_OF_LOGICAL_CORES)
+    message(STATUS "CPU tests: OMP_NUM_THREADS=${VVM_TEST_CPU_THREADS} per rank "
+                   "(host reports ${VVM_HOST_CORES} logical cores)")
+    if(VVM_TEST_CPU_THREADS GREATER VVM_HOST_CORES)
+        message(WARNING
+            "CPU tests are set to ${VVM_TEST_CPU_THREADS} threads/rank but this host has "
+            "only ${VVM_HOST_CORES} logical cores, so they will oversubscribe and run "
+            "slowly. Results stay correct. Override with -DVVM_TEST_CPU_THREADS=<n>.")
+    endif()
+
+    get_property(VVM_ALL_TESTS DIRECTORY PROPERTY TESTS)
+    if(VVM_ALL_TESTS)
+        set_tests_properties(${VVM_ALL_TESTS} PROPERTIES
+            ENVIRONMENT_MODIFICATION "${VVM_TEST_ENV_MODS}")
+    endif()
 endif()

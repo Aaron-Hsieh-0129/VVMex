@@ -37,4 +37,6 @@ target_link_libraries(vvm
         eamxx_physics
 )
 
-target_link_options(vvm PRIVATE -acc)
+if(VVM_ENABLE_GPU)
+    target_link_options(vvm PRIVATE -acc)
+endif()

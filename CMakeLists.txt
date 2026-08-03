@@ -16,6 +16,17 @@ endif()
 message(STATUS "Detected VVM_ROOT: $ENV{VVM_ROOT}")
 add_compile_definitions(VVM_ROOT_DIR="$ENV{VVM_ROOT}")
 
+# OFF builds the whole model for the CPU: Kokkos falls back to OpenMP, the MPI
+# communication path replaces NCCL, and the land model's OpenACC directives
+# degrade to comments. Every GPU-specific block below is gated on this, so the
+# default ON build is byte-for-byte the same as before this option existed.
+option(VVM_ENABLE_GPU "Build for GPU (Kokkos CUDA + NCCL). OFF builds a CPU-only model." ON)
+if(VVM_ENABLE_GPU)
+    message(STATUS "VVM Execution Backend: GPU (Kokkos CUDA)")
+else()
+    message(STATUS "VVM Execution Backend: CPU (Kokkos OpenMP)")
+endif()
+
 
 # ==========================================
 # Auto-setup Git Hooks
@@ -64,8 +75,10 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
     set(CMAKE_DEPFILE_FLAGS_CXX "")
     set(CMAKE_DEPFILE_FLAGS_C "")
 
-    vvm_set_flag_once(CMAKE_CUDA_FLAGS "-Xcompiler -mp"  "CUDA OpenMP flags")
-    vvm_set_flag_once(CMAKE_CUDA_FLAGS "-use_fast_math"  "CUDA flags")
+    if(VVM_ENABLE_GPU)
+        vvm_set_flag_once(CMAKE_CUDA_FLAGS "-Xcompiler -mp"  "CUDA OpenMP flags")
+        vvm_set_flag_once(CMAKE_CUDA_FLAGS "-use_fast_math"  "CUDA flags")
+    endif()
     vvm_set_flag_once(CMAKE_CXX_FLAGS  "-fast"           "CXX flags")
     vvm_set_flag_once(CMAKE_C_FLAGS    "-fast"           "C flags")
 endif()
@@ -93,9 +106,20 @@ if(RRTMGP_USE_DOUBLE_PRECISION)
 else()
     message(STATUS "RRTMGP Internal Precision: SINGLE (FP32)")
 endif()
-add_compile_definitions(EAMXX_ENABLE_GPU)
+# EAMXX_ENABLE_GPU selects between pulling the P3 / physics_functions impl headers
+# into every translation unit (GPU) and linking the ETI objects (CPU). The compile
+# definition and the option read by src/physics/p3 must agree, or P3 compiles
+# against headers whose symbols are never instantiated.
+if(VVM_ENABLE_GPU)
+    add_compile_definitions(EAMXX_ENABLE_GPU)
+else()
+    set(EAMXX_ENABLE_GPU OFF CACHE BOOL "Enable GPU kernels" FORCE)
+endif()
 add_compile_definitions(RRTMGP_ENABLE_KOKKOS)
-option(ENABLE_NCCL "Enable NCCL for communication" ON)
+option(ENABLE_NCCL "Enable NCCL for communication" ${VVM_ENABLE_GPU})
+if(ENABLE_NCCL AND NOT VVM_ENABLE_GPU)
+    message(FATAL_ERROR "ENABLE_NCCL=ON requires VVM_ENABLE_GPU=ON (NCCL has no CPU path).")
+endif()
 if(ENABLE_NCCL)
     add_compile_definitions(-DENABLE_NCCL)
     message(STATUS "Building with NCCL support")
@@ -112,18 +136,24 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
+if(VVM_ENABLE_GPU)
+    set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
+endif()
 
 # ------------------------------
 # Kokkos
 # ------------------------------
-set(Kokkos_ENABLE_CUDA ON CACHE BOOL "Enable CUDA backend for Kokkos" FORCE)
-set(Kokkos_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE ON CACHE BOOL "Enable Kokkos RDC")
+if(VVM_ENABLE_GPU)
+    set(Kokkos_ENABLE_CUDA ON CACHE BOOL "Enable CUDA backend for Kokkos" FORCE)
+    set(Kokkos_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE ON CACHE BOOL "Enable Kokkos RDC")
+else()
+    set(Kokkos_ENABLE_CUDA OFF CACHE BOOL "Enable CUDA backend for Kokkos" FORCE)
+    set(Kokkos_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE OFF CACHE BOOL "Enable Kokkos RDC" FORCE)
+endif()
 set(Kokkos_ENABLE_OPENMP ON CACHE BOOL "Enable OpenMP backend for Kokkos" FORCE)
-# set(EAMXX_ENABLE_GPU ON CACHE BOOL "Enable P3 GPU" FORCE)
 
 # NVHPC + Kokkos CUDA arch
-if(CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
+if(CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC" AND VVM_ENABLE_GPU)
     set(Kokkos_CUDA_OPTIONS "enable_lambda;enable_ldg" CACHE STRING "Kokkos CUDA options" FORCE)
 endif()
 
@@ -265,19 +295,25 @@ set(EKAT_ENABLE_CUDA ${Kokkos_ENABLE_CUDA} CACHE BOOL "Pass VVM CUDA setting to 
 set(Kokkos_DIR ${Kokkos_DIR} CACHE PATH "FORCE Ekat to use VVM's Kokkos" FORCE)
 
 
-message(STATUS "Aggressively cleaning global OpenMP flags set by subdirectories (e.g., EKAT)...")
-# 1. Use REGEX to remove '-mp' as a standalone word (handles spaces correctly)
-string(REGEX REPLACE " -mp( |$)" " " CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-string(REGEX REPLACE " -mp( |$)" " " CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
-string(REGEX REPLACE " -mp( |$)" " " CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS}")
-# 2. Handle if '-mp' is the *first* flag
-string(REGEX REPLACE "^-mp( |$)" " " CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-string(REGEX REPLACE "^-mp( |$)" " " CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
-string(REGEX REPLACE "^-mp( |$)" " " CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS}")
-# 3. Force-reset the OpenMP cache variables that ekat might have set
-set(OpenMP_CXX_FLAGS "" CACHE STRING "Reset OpenMP CXX flags" FORCE)
-set(OpenMP_C_FLAGS "" CACHE STRING "Reset OpenMP C flags" FORCE)
-set(OpenMP_Fortran_FLAGS "" CACHE STRING "Reset OpenMP Fortran flags" FORCE)
+# CPU builds need the OpenMP flags this block strips: Kokkos's OpenMP backend is
+# the execution space, and blanking the OpenMP_*_FLAGS cache entries makes the
+# *next* configure fail outright, because KokkosConfig.cmake re-runs
+# find_dependency(OpenMP) and FindOpenMP reads them back as empty.
+if(VVM_ENABLE_GPU)
+    message(STATUS "Aggressively cleaning global OpenMP flags set by subdirectories (e.g., EKAT)...")
+    # 1. Use REGEX to remove '-mp' as a standalone word (handles spaces correctly)
+    string(REGEX REPLACE " -mp( |$)" " " CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+    string(REGEX REPLACE " -mp( |$)" " " CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+    string(REGEX REPLACE " -mp( |$)" " " CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS}")
+    # 2. Handle if '-mp' is the *first* flag
+    string(REGEX REPLACE "^-mp( |$)" " " CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+    string(REGEX REPLACE "^-mp( |$)" " " CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+    string(REGEX REPLACE "^-mp( |$)" " " CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS}")
+    # 3. Force-reset the OpenMP cache variables that ekat might have set
+    set(OpenMP_CXX_FLAGS "" CACHE STRING "Reset OpenMP CXX flags" FORCE)
+    set(OpenMP_C_FLAGS "" CACHE STRING "Reset OpenMP C flags" FORCE)
+    set(OpenMP_Fortran_FLAGS "" CACHE STRING "Reset OpenMP Fortran flags" FORCE)
+endif()
 
 function(CLEAN_FLAG_VAR var_name flag_to_remove)
     string(REPLACE " " ";" flag_list "${${var_name}}")

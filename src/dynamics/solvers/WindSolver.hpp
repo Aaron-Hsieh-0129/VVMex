@@ -10,7 +10,9 @@
 #include "core/HaloExchanger.hpp"
 #include <memory>
 #include <map>
+#if defined(KOKKOS_ENABLE_CUDA)
 #include <cuda_runtime.h>
+#endif
 
 namespace VVM {
 namespace Dynamics {
