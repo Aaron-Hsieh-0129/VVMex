@@ -153,28 +153,36 @@ int main(int argc, char *argv[]) {
     }
     omp_set_num_threads(threads_per_rank);
 
+    // Only compute ranks touch the GPU. The IO server moves host buffers between
+    // ADIOS2 and HDF5 and never calls Kokkos, so initializing it there would open a
+    // CUDA context per IO rank that is then never used -- which costs device memory
+    // and, under CUDA exclusive mode, occupies a device a compute rank needs.
+    const bool is_compute_rank = (color == 0);
+
     int num_gpus = 0;
+    if (is_compute_rank) {
 #if defined(KOKKOS_ENABLE_CUDA)
-    cudaError_t cuda_err = cudaGetDeviceCount(&num_gpus);
-    if (cuda_err != cudaSuccess || num_gpus <= 0) {
-        std::cerr << "[Rank " << world_rank
-                  << "] ERROR: no visible CUDA device. CUDA_VISIBLE_DEVICES="
-                  << (std::getenv("CUDA_VISIBLE_DEVICES")
-                          ? std::getenv("CUDA_VISIBLE_DEVICES")
-                          : "<unset>")
-                  << " cudaGetDeviceCount error="
-                  << cudaGetErrorString(cuda_err)
-                  << std::endl;
-        MPI_Abort(MPI_COMM_WORLD, 2);
-    }
+        cudaError_t cuda_err = cudaGetDeviceCount(&num_gpus);
+        if (cuda_err != cudaSuccess || num_gpus <= 0) {
+            std::cerr << "[Rank " << world_rank
+                      << "] ERROR: no visible CUDA device. CUDA_VISIBLE_DEVICES="
+                      << (std::getenv("CUDA_VISIBLE_DEVICES")
+                              ? std::getenv("CUDA_VISIBLE_DEVICES")
+                              : "<unset>")
+                      << " cudaGetDeviceCount error="
+                      << cudaGetErrorString(cuda_err)
+                      << std::endl;
+            MPI_Abort(MPI_COMM_WORLD, 2);
+        }
 #endif
 
-    Kokkos::InitializationSettings args;
+        Kokkos::InitializationSettings args;
 #if defined(KOKKOS_ENABLE_CUDA)
-    // core_run.sh constrains each process to one intended GPU.
-    args.set_device_id(0);
+        // core_run.sh constrains each process to one intended GPU.
+        args.set_device_id(0);
 #endif
-    Kokkos::initialize(args);
+        Kokkos::initialize(args);
+    }
 
     if (world_rank == 0) {
         std::cout << "[System] CPU Threads per Rank set to: "
@@ -182,24 +190,25 @@ int main(int argc, char *argv[]) {
     }
     std::cout << "[KokkosInit]"
               << " world_rank=" << world_rank
-              << " role=" << ((color == 0) ? "compute" : "io")
+              << " role=" << (is_compute_rank ? "compute" : "io")
               << " CUDA_VISIBLE_DEVICES="
               << (std::getenv("CUDA_VISIBLE_DEVICES")
                       ? std::getenv("CUDA_VISIBLE_DEVICES")
                       : "<unset>")
               << " visible_num_gpus=" << num_gpus
-              << " kokkos_device_id=0"
+              << (is_compute_rank ? " kokkos_device_id=0" : " kokkos=skipped(host-only)")
               << std::endl;
 
-    // All ranks have now initialized Kokkos/CUDA before ADIOS2 starts SST.
+    // Compute ranks have now initialized Kokkos/CUDA before ADIOS2 starts SST. The
+    // barrier has to stay on this side of the IO branch: it stops the reader end
+    // opening the stream while the writers are still in CUDA init.
     MPI_Barrier(MPI_COMM_WORLD);
 
-    // Phase 2: IO server branch.
-    if (color == 1) {
+    // Phase 2: IO server branch. No Kokkos was initialized here, so none is
+    // finalized either.
+    if (!is_compute_rank) {
         VVM::IO::run_io_server(split_comm, config);
         MPI_Comm_free(&split_comm);
-        Kokkos::fence();
-        Kokkos::finalize();
         MPI_Finalize();
         return 0;
     }

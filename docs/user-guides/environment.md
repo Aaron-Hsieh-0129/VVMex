@@ -222,6 +222,20 @@ export LD_LIBRARY_PATH=$INSTALL_DIR/lib:$INSTALL_DIR/lib64:$LD_LIBRARY_PATH
 
 ### ADIOS2 2.11.0
 
+Build ADIOS2 **without** Kokkos support (`-DADIOS2_USE_Kokkos=OFF`).
+
+An ADIOS2 built with Kokkos calls `Kokkos::initialize()` itself, from
+`adios2::helper::KokkosInit()`. That matters for the SST IO server: VVMex
+deliberately does not initialize Kokkos on IO server ranks, because they only move
+host buffers between ADIOS2 and HDF5 and never compute. If ADIOS2 initializes
+Kokkos behind their back, every IO rank opens a CUDA context it never uses --
+measured at 520 MB per rank, plus a device slot that a compute rank could have had
+under CUDA exclusive mode.
+
+Turning it off costs nothing: VVMex never hands ADIOS2 a Kokkos view. Every
+`Put`/`Get` receives a raw host pointer, because `OutputManager` stages fields into
+`Kokkos::HostSpace` buffers first.
+
 ```bash
 git clone https://github.com/ornladios/ADIOS2.git
 cd ADIOS2
@@ -235,14 +249,47 @@ cmake .. \
     -DCMAKE_PREFIX_PATH=$INSTALL_DIR \
     -DADIOS2_USE_MPI=ON \
     -DADIOS2_USE_HDF5=ON \
-    -DADIOS2_USE_Kokkos=ON \
-    -DKokkos_ROOT=$INSTALL_DIR \
+    -DADIOS2_USE_Kokkos=OFF \
+    -DADIOS2_USE_CUDA=OFF \
     -DHDF5_ROOT=$INSTALL_DIR
 make -j$(nproc)
 make install
 cd ../..
 
 ```
+
+Verify the result before moving on:
+
+```bash
+grep -E "ADIOS2_HAVE_(Kokkos|CUDA|SST|MPI) " \
+     $INSTALL_DIR/lib/cmake/adios2/adios2-config-common.cmake
+#   set(ADIOS2_HAVE_MPI TRUE)
+#   set(ADIOS2_HAVE_SST TRUE)
+#   set(ADIOS2_HAVE_CUDA )        <- empty
+#   set(ADIOS2_HAVE_Kokkos )      <- empty
+```
+
+VVMex re-checks this at configure time and prints one of:
+
+```
+-- ADIOS2 has no Kokkos support -- IO server ranks stay off the GPU
+```
+```
+CMake Warning: ADIOS2 at ... was built with Kokkos support.
+   IO server ranks will each occupy a GPU even though they never compute.
+```
+
+If you see the warning, the `ADIOS2_DIR` in your CMake preset is pointing at a
+Kokkos-enabled build. Note that an `ADIOS2_DIR` naming a path that does not exist
+does **not** fail: CMake falls back to whatever else is on the search path, so this
+warning is the only signal that the IO server will land on a GPU.
+
+Already have a Kokkos-enabled ADIOS2 you would rather not disturb? Build the
+Kokkos-free one into a second prefix and point `ADIOS2_DIR` at that; it layers over
+the first, taking `libfabric`, `libhdf5` and `libz` from it. `submit.py` puts
+`ADIOS2_DIR` ahead of the other library directories on `LD_LIBRARY_PATH`, which it
+must -- both prefixes carry `libadios2_*.so` with identical SONAMEs, so whichever
+comes first is the one that loads.
 
 Warning: If using less than 2.11.0, some errors may appear when compiling VVM. You need to modify adios2/cxx/KokkosView.h to adios2/cxx11/KokkosView.h in the code and cmakelist.
 
