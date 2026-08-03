@@ -28,7 +28,14 @@ set_target_properties(vvm_land PROPERTIES LINKER_LANGUAGE Fortran)
 set_target_properties(vvm_land PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if (CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
-    target_compile_options(vvm_land PRIVATE -fast -acc)
+    # Without -acc the !$acc directives degrade to comments and the Noah routines
+    # run serially on the host; LandProcess then skips the acc_map_data calls that
+    # only make sense when device memory is distinct from host memory.
+    if(VVM_ENABLE_GPU)
+        target_compile_options(vvm_land PRIVATE -fast -acc)
+    else()
+        target_compile_options(vvm_land PRIVATE -fast)
+    endif()
 
     target_compile_options(vvm_land PRIVATE
         $<$<COMPILE_LANGUAGE:Fortran>:-Mallocatable=03;-Mfreeform;-Mextend;-Mpreprocess>
@@ -40,7 +47,11 @@ if (CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
         target_compile_definitions(vvm_land PRIVATE $<$<COMPILE_LANGUAGE:Fortran>:SP>)
     endif()
     
-    target_link_options(vvm_land PRIVATE -acc -fortranlibs -c++libs)
+    if(VVM_ENABLE_GPU)
+        target_link_options(vvm_land PRIVATE -acc -fortranlibs -c++libs)
+    else()
+        target_link_options(vvm_land PRIVATE -fortranlibs -c++libs)
+    endif()
 endif()
 
 target_link_libraries(vvm_land PUBLIC Kokkos::kokkos vvm_core)

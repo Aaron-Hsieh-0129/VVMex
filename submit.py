@@ -98,9 +98,11 @@ def setup_environment(preset_name):
             presets_data = json.load(f)
 
         cache_vars = {}
+        binary_dir_raw = "${sourceDir}/build"
         for p in presets_data.get("configurePresets", []):
             if p.get("name") == preset_name:
                 cache_vars = p.get("cacheVariables", {})
+                binary_dir_raw = p.get("binaryDir", binary_dir_raw)
                 break
 
         if not cache_vars:
@@ -108,6 +110,21 @@ def setup_environment(preset_name):
             return env
 
         print(f"[Info] Loaded environment from CMake preset: '{preset_name}'")
+
+        # ----------------------------------------------------------------------
+        # Execution backend
+        # ----------------------------------------------------------------------
+        # Both the backend and the binary path are read from the same preset that
+        # built the code, so the launcher cannot disagree with the binary: a CPU
+        # build is never handed a GPU mapping, and vice versa.
+        # ----------------------------------------------------------------------
+        gpu_enabled = str(cache_vars.get("VVM_ENABLE_GPU", "ON")).strip().upper() \
+            not in ("OFF", "0", "FALSE", "NO")
+        env["VVM_BACKEND"] = "gpu" if gpu_enabled else "cpu"
+
+        binary_dir = binary_dir_raw.replace("${sourceDir}", vvm_root)
+        env["VVM_BINARY"] = os.path.join(binary_dir, "vvm")
+        print(f"[Info] Execution backend: {env['VVM_BACKEND']}  binary: {env['VVM_BINARY']}")
 
         # ----------------------------------------------------------------------
         # HPCX / MPI environment metadata
@@ -139,7 +156,12 @@ def setup_environment(preset_name):
         # ----------------------------------------------------------------------
         lib_dirs = []
 
+        # Kokkos_DIR first, and it matters. A CPU build's libkokkoscore.so.4.7 has
+        # the same SONAME as the CUDA one in libs_GPUVVM/lib, which the user profile
+        # already puts on LD_LIBRARY_PATH. LD_LIBRARY_PATH beats the binary's
+        # RUNPATH, so without this the CPU binary would load the CUDA Kokkos.
         for key in [
+            "Kokkos_DIR",
             "HDF5_DIR",
             "NETCDF_C_DIR",
             "NETCDF_Fortran_DIR",
@@ -150,8 +172,14 @@ def setup_environment(preset_name):
             if not val:
                 continue
 
-            append_unique(lib_dirs, os.path.join(val, "lib"))
-            append_unique(lib_dirs, os.path.join(val, "lib64"))
+            # These may be either an install prefix (HDF5_DIR=/opt/foo) or a CMake
+            # package directory (Kokkos_DIR=/opt/foo/lib/cmake/Kokkos).
+            marker = os.sep + "cmake" + os.sep
+            if marker in val:
+                append_unique(lib_dirs, val.split(marker)[0])
+            else:
+                append_unique(lib_dirs, os.path.join(val, "lib"))
+                append_unique(lib_dirs, os.path.join(val, "lib64"))
 
         if lib_dirs:
             extra_ld = ":".join(lib_dirs)
@@ -676,11 +704,20 @@ def main():
 
     # Derived defaults.
     args.io = infer_io_tasks(io_engine, args.compute, args.io)
-    args.gpus = infer_gpus_per_node(args.compute, args.nodes, args.gpus)
 
-    if args.gpus <= 0:
-        print("[Error] --gpus must be positive.")
-        sys.exit(1)
+    cpu_backend = env.get("VVM_BACKEND", "gpu") == "cpu"
+    if cpu_backend:
+        # A CPU build has no device to request or map. Requesting GPUs from SLURM
+        # would also make the job queue for resources it will never touch.
+        if args.gpus:
+            print("[Info] CPU backend: ignoring --gpus.")
+        args.gpus = 0
+    else:
+        args.gpus = infer_gpus_per_node(args.compute, args.nodes, args.gpus)
+
+        if args.gpus <= 0:
+            print("[Error] --gpus must be positive.")
+            sys.exit(1)
 
     total_tasks = args.compute + args.io
 
@@ -755,14 +792,19 @@ def main():
     print(f" Compute/node      : {compute_per_node}")
     print(f" IO/node           : {io_per_node}")
     print(f" Total tasks/node  : {tasks_per_node}")
-    print(f" GPUs/node         : {args.gpus}")
-    if args.local:
-        gpu_list = env.get("VVM_GPU_LIST", "")
-        if gpu_list:
-            print(f" Local GPU list    : {gpu_list}")
-        else:
-            print(" Local GPU list    : <unset; ranks map by local rank modulo GPUs/node>")
-            print("                     Set VVM_GPU_LIST=0,1,... before ./submit.py --local to choose GPU IDs.")
+    print(f" Backend           : {env.get('VVM_BACKEND', 'gpu')}")
+    print(f" Binary            : {env.get('VVM_BINARY', '<default>')}")
+    if cpu_backend:
+        print(" GPUs/node         : none (CPU build)")
+    else:
+        print(f" GPUs/node         : {args.gpus}")
+        if args.local:
+            gpu_list = env.get("VVM_GPU_LIST", "")
+            if gpu_list:
+                print(f" Local GPU list    : {gpu_list}")
+            else:
+                print(" Local GPU list    : <unset; ranks map by local rank modulo GPUs/node>")
+                print("                     Set VVM_GPU_LIST=0,1,... before ./submit.py --local to choose GPU IDs.")
     print(f" CPUs/task         : {args.cpus}")
     if not args.local:
         print(f" Exclusive         : {args.exclusive}")
@@ -787,8 +829,15 @@ def main():
             f"--nodes={args.nodes}",
             f"--ntasks={total_tasks}",
             f"--ntasks-per-node={tasks_per_node}",
-            f"--gpus-per-node={args.gpus}",
-            "--gpu-bind=none",
+        ]
+
+        if not cpu_backend:
+            cmd += [
+                f"--gpus-per-node={args.gpus}",
+                "--gpu-bind=none",
+            ]
+
+        cmd += [
             f"--cpus-per-task={args.cpus}",
             f"--export={args.export}",
             f"--time={args.time}",

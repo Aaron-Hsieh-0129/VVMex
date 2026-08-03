@@ -3,10 +3,15 @@
 
 #if defined(KOKKOS_ENABLE_CUDA)
 #include <cuda_runtime.h>
-#endif
 
-#define MAP_KOKKOS_DEVICE(view) acc_map_data(view.data(), view.data(), view.span() * sizeof(view.data()[0]))                                           
+#define MAP_KOKKOS_DEVICE(view) acc_map_data(view.data(), view.data(), view.span() * sizeof(view.data()[0]))
 #define UNMAP_KOKKOS_DEVICE(view) acc_unmap_data(view.data())
+#else
+// Host and device memory are the same allocation, so there is nothing to map and
+// no OpenACC runtime to map it into.
+#define MAP_KOKKOS_DEVICE(view) ((void)0)
+#define UNMAP_KOKKOS_DEVICE(view) ((void)0)
+#endif
 
 namespace VVM {
 namespace Physics {

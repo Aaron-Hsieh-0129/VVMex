@@ -8,7 +8,9 @@
 #include "core/vvm_types.hpp"
 #include "utils/ConfigurationManager.hpp"
 #include <Kokkos_Core.hpp>
+#if defined(KOKKOS_ENABLE_CUDA)
 #include <openacc.h>
+#endif
 
 extern "C" {
     void run_vvm_land_wrapper(int use_tco_ocean, int nx, int ny, int nsoil, VVM::Real dt,

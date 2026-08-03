@@ -61,6 +61,17 @@ if (NOT EAMXX_ENABLE_GPU OR Kokkos_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE OR Kokkos
   ) # P3 ETI SRCS
 endif()
 
+# Missing from the ETI list above. A GPU build does not need it: EAMXX_ENABLE_GPU
+# makes p3_functions.hpp include p3_limit_cond_evap_dep_sub_impl.hpp directly, so
+# the symbol is instantiated in every translation unit that uses it. Without that
+# define the CPU build has no definition and p3_main_impl_part2 fails to link.
+# Kept out of the list above so the GPU object list is unchanged.
+if (NOT EAMXX_ENABLE_GPU)
+  list(APPEND P3_SRCS
+    eti/p3_limit_cond_evap_dep_sub.cpp
+  )
+endif()
+
 # List of dispatch source files if monolithic kernels are off
 set(P3_SK_SRCS
     disp/p3_check_values_impl_disp.cpp

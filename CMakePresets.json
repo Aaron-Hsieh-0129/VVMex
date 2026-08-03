@@ -38,6 +38,45 @@
       }
     },
     {
+      "name": "blaze-cpu",
+      "displayName": "NVHPC 24.9 on blaze, CPU-only (Kokkos OpenMP)",
+      "description": "CPU build: Kokkos OpenMP, MPI instead of NCCL, land model without OpenACC",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build_cpu",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+
+        "NVHPC_DIR": "/home/mog/nvhpc_24_9/Linux_x86_64/24.9",
+
+        "CMAKE_CXX_COMPILER": "/home/mog/nvhpc_24_9/Linux_x86_64/24.9/comm_libs/12.6/hpcx/hpcx-2.20/ompi/bin/mpic++",
+        "CMAKE_C_COMPILER":   "/home/mog/nvhpc_24_9/Linux_x86_64/24.9/comm_libs/12.6/hpcx/hpcx-2.20/ompi/bin/mpicc",
+        "CMAKE_Fortran_COMPILER": "/home/mog/nvhpc_24_9/Linux_x86_64/24.9/comm_libs/12.6/hpcx/hpcx-2.20/ompi/bin/mpifort",
+
+        "CMAKE_CXX_FLAGS": "--gcc-toolchain=/home/mog/gcc11",
+        "CMAKE_C_FLAGS": "--gcc-toolchain=/home/mog/gcc11",
+        "CMAKE_Fortran_FLAGS": "--gcc-toolchain=/home/mog/gcc11",
+
+        "Kokkos_DIR": "/raid/mog/libs_VVM_cpu/lib/cmake/Kokkos",
+        "ADIOS2_DIR": "/raid/mog/libs_VVM_cpu/lib/cmake/adios2",
+
+        "HDF5_DIR": "/raid/mog/libs_VVM_cpu/tpl",
+        "NETCDF_C_DIR": "/raid/mog/libs_VVM_cpu/tpl",
+        "NETCDF_Fortran_DIR": "/raid/mog/libs_VVM_cpu/tpl",
+        "PNETCDF_DIR": "/raid/mog/libs_VVM_cpu/tpl",
+
+        "VVM_ENABLE_GPU": "OFF",
+        "VVM_USE_DOUBLE_PRECISION": "ON",
+        "ENABLE_NCCL": "OFF",
+        "EAMXX_ENABLE_GPU": "OFF",
+        "Kokkos_ENABLE_CUDA": "OFF",
+        "SCREAM_DOUBLE_PRECISION": "ON",
+        "RRTMGP_USE_DOUBLE_PRECISION": "ON",
+        "SCREAM_PACK_SIZE": "1",
+        "SCREAM_P3_SMALL_KERNELS": "ON",
+        "SCREAM_SMALL_PACK_SIZE": "1"
+      }
+    },
+    {
       "name": "nano5",
       "displayName": "NVHPC 24.9 on nano5",
       "description": "Custom environment NVHPC on blaze",

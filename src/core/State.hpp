@@ -15,7 +15,9 @@
 #include <stdexcept>
 #include <variant>
 #include <vector>
-#include <cuda_runtime.h>
+#if defined(KOKKOS_ENABLE_CUDA)
+    #include <cuda_runtime.h>
+#endif
 #if defined(ENABLE_NCCL)
     #include <nccl.h>
 #endif

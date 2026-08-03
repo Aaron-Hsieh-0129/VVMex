@@ -363,7 +363,10 @@ void AreaMeanNudging::initialize(Core::State& state) {
         // different team size means a different reduction tree, which shifts the
         // last bits of the sum. Results stay reproducible run to run either way,
         // but only a fixed team size keeps them reproducible across builds.
-        constexpr int kTeamSize = 256;
+        // Host backends cap a team at the thread-pool size, so clamp by concurrency
+        // or Kokkos aborts. On CUDA concurrency far exceeds 256, leaving the GPU
+        // team size -- and therefore the GPU reduction tree -- exactly as before.
+        const int kTeamSize = std::min(256, std::max(1, Kokkos::DefaultExecutionSpace().concurrency()));
 
         Kokkos::parallel_for("AREAMN_Init_Local_Sum", TeamPol(nz - 2 * h, kTeamSize),
             KOKKOS_LAMBDA(const Member& team) {
@@ -552,7 +555,10 @@ void AreaMeanNudging::apply_vorticity(Core::State& state, VVM::Real dt) {
         // different team size means a different reduction tree, which shifts the
         // last bits of the sum. Results stay reproducible run to run either way,
         // but only a fixed team size keeps them reproducible across builds.
-        constexpr int kTeamSize = 256;
+        // Host backends cap a team at the thread-pool size, so clamp by concurrency
+        // or Kokkos aborts. On CUDA concurrency far exceeds 256, leaving the GPU
+        // team size -- and therefore the GPU reduction tree -- exactly as before.
+        const int kTeamSize = std::min(256, std::max(1, Kokkos::DefaultExecutionSpace().concurrency()));
 
         Kokkos::parallel_for("AREAMN_Sum", TeamPol(nz - 2 * h, kTeamSize),
             KOKKOS_LAMBDA(const Member& team) {

@@ -13,11 +13,17 @@ namespace VVM {
 #ifdef VVM_USE_DOUBLE_PRECISION
     using Real = double;
     #define VVM_MPI_REAL MPI_DOUBLE
-    #define VVM_NCCL_REAL ncclDouble
 #else
     using Real = float;
     #define VVM_MPI_REAL MPI_FLOAT
-    #define VVM_NCCL_REAL ncclFloat
+#endif
+
+#if defined(ENABLE_NCCL)
+    #ifdef VVM_USE_DOUBLE_PRECISION
+        #define VVM_NCCL_REAL ncclDouble
+    #else
+        #define VVM_NCCL_REAL ncclFloat
+    #endif
 #endif
 
 template<typename T>
