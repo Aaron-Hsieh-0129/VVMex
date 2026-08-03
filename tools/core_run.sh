@@ -63,7 +63,21 @@ else
     RUN_MODE="Local Shared Mode"
 fi
 
-PE=$(( TOTAL_CORES / TASKS_PER_NODE ))
+# Cores per IO rank. The IO server is host-only: it never initializes Kokkos and
+# spends its time in ADIOS2/HDF5, so it does not need an equal share of the node.
+VVM_IO_CPUS="${VVM_IO_CPUS:-1}"
+if [ "$VVM_IO_CPUS" -lt 1 ]; then VVM_IO_CPUS=1; fi
+
+if [ -n "$SLURM_JOB_ID" ] && [ "${VVM_COMPUTE_PER_NODE:-0}" -gt 0 ]; then
+    # Real allocation: reserve a small slice for the IO ranks and give the rest to
+    # the compute ranks, instead of splitting the node evenly across both roles.
+    IO_CORES_PER_NODE=$(( VVM_IO_PER_NODE * VVM_IO_CPUS ))
+    PE=$(( (TOTAL_CORES - IO_CORES_PER_NODE) / VVM_COMPUTE_PER_NODE ))
+else
+    # Local mode: TOTAL_CORES was synthesized from the requested --cpus, so honour
+    # that number for compute ranks rather than redistributing it.
+    PE=$(( TOTAL_CORES / TASKS_PER_NODE ))
+fi
 if [ "$PE" -lt 1 ]; then PE=1; fi
 
 # Preserve original CPU/OpenMP behavior.
@@ -82,7 +96,7 @@ export VVM_GPU_LIST="${VVM_GPU_LIST:-}"
 echo "========================================================="
 echo "[$RUN_MODE]"
 echo " Nodes: ${SLURM_JOB_NUM_NODES:-1} | Tasks/Node: $TASKS_PER_NODE"
-echo " Total Cores Used/Node: $TOTAL_CORES | Allocated Cores/Task (PE): $PE"
+echo " Total Cores Used/Node: $TOTAL_CORES | Cores/compute rank: $PE | Cores/IO rank: $VVM_IO_CPUS"
 echo "========================================================="
 if [ -n "$VVM_GPU_LIST" ]; then
     echo "[GPUMap] Using explicit VVM_GPU_LIST=$VVM_GPU_LIST"
@@ -220,6 +234,25 @@ pick_gpu_from_array() {
 
 GPU_SOURCE="numeric_fallback"
 
+# IO server ranks are host-only. main.cpp assigns the role by *global* rank
+# (color = world_rank < compute_tasks), so use the same test here.
+#
+# They must not take a GPU: src/main.cpp skips Kokkos initialization on these
+# ranks, but ADIOS2 is built with Kokkos support and still opens a CUDA context of
+# its own (measured: 520 MiB per IO rank) unless no device is visible. Hiding the
+# device is only safe because Kokkos is no longer initialized here -- a
+# CUDA-enabled Kokkos aborts when it finds no device.
+#
+# This is also what lets the IO server scale past the GPU count: IO ranks no longer
+# consume a slot in the local_rank % VVM_GPUS mapping.
+if [ "$GLOBAL_RANK" != "NA" ] && [ "${VVM_COMPUTE_TASKS:-0}" -gt 0 ] \
+   && [ "$GLOBAL_RANK" -ge "$VVM_COMPUTE_TASKS" ]; then
+    export CUDA_VISIBLE_DEVICES=""
+    export OMP_NUM_THREADS="${VVM_IO_CPUS:-1}"
+    echo "[GPUMap] host=$(hostname) global_rank=${GLOBAL_RANK} local_rank=${LOCAL_RANK} role=io source=host_only_no_gpu omp=${OMP_NUM_THREADS}" >&2
+    exec ./build/vvm "$@"
+fi
+
 if [ -n "${VVM_GPU_LIST:-}" ]; then
     if ! parse_gpu_list "$VVM_GPU_LIST"; then
         echo "[VVM launch] ERROR: failed to parse VVM_GPU_LIST=${VVM_GPU_LIST}" >&2
@@ -275,6 +308,7 @@ mpirun -np $VVM_TOTAL_TASKS \
  -x NCCL_DEBUG=INFO \
  -x HDF5_USE_FILE_LOCKING=FALSE \
  -x VVM_GPUS \
+ -x VVM_IO_CPUS \
  -x VVM_GPU_LIST \
  -x VVM_PARENT_CUDA_VISIBLE_DEVICES \
  -x VVM_COMPUTE_PER_NODE \
