@@ -25,7 +25,7 @@ DEFAULT_COMPUTE = 1
 DEFAULT_IO = None                 # None means infer from output.engine
 DEFAULT_NODES = 1
 DEFAULT_GPUS = None               # None means infer from compute ranks per node
-DEFAULT_CPUS = None               # None means fill the node (see infer_cpus_per_task)
+DEFAULT_CPUS = None               # SLURM fills the node; local mode falls back to 1
 DEFAULT_IO_CPUS = 1               # IO ranks are host-only and effectively single-threaded
 DEFAULT_TIME = "24:00:00"
 DEFAULT_OUT = "log/%j.out"
@@ -49,11 +49,9 @@ def get_available_presets(vvm_root):
     preset_file = os.path.join(vvm_root, "CMakePresets.json")
     if not os.path.exists(preset_file):
         return []
-
     try:
         with open(preset_file, "r") as f:
             presets_data = json.load(f)
-
         return [
             p.get("name")
             for p in presets_data.get("configurePresets", [])
@@ -61,6 +59,22 @@ def get_available_presets(vvm_root):
         ]
     except Exception:
         return []
+
+
+def preset_uses_gpu(vvm_root, preset_name):
+    """Return whether a CMake preset selects the GPU execution backend."""
+    preset_file = os.path.join(vvm_root, "CMakePresets.json")
+    try:
+        with open(preset_file, "r") as f:
+            presets_data = json.load(f)
+        for preset in presets_data.get("configurePresets", []):
+            if preset.get("name") == preset_name:
+                value = preset.get("cacheVariables", {}).get("VVM_ENABLE_GPU", "ON")
+                return str(value).strip().upper() not in ("OFF", "0", "FALSE", "NO")
+    except Exception:
+        pass
+    # Existing presets predate VVM_ENABLE_GPU and are GPU builds by default.
+    return True
 
 
 def append_unique(paths, path):
@@ -500,36 +514,35 @@ def interactive_wizard():
     print(f" -A, --account    : SLURM account (default: {DEFAULT_ACCOUNT})")
     print(f" -p, --partition  : SLURM partition (default: {DEFAULT_PARTITION})")
     print("--------------------------------------------------------------------")
-    print(" Derived Defaults")
+    print(" Automatic and Advanced Options")
     print("--------------------------------------------------------------------")
-    print(" --cpus           : CPUs per task / OMP_NUM_THREADS.")
-    print("                    Default fills the node: usable CPUs/node / tasks per node.")
-    print("                    This is not asked in the wizard. Override with --cpus N.")
+    print(" --cpus N         : Host CPUs allocated per MPI task and OMP_NUM_THREADS.")
+    print("                    SLURM default: fill each node across its tasks.")
+    print("                    Local CLI default: 1, because no partition can be queried.")
+    print("                    For a local CPU preset, this wizard prompts with a full-node suggestion.")
     print("")
-    print(" --io             : IO MPI ranks")
-    print("                    If output.engine == SST, default is --io = --compute.")
-    print("                    Otherwise, default is --io = 0.")
-    print("                    This is not asked in the wizard. Override with --io N.")
+    print(" --io N           : Number of additional IO-server MPI ranks/processes.")
+    print("                    This is a rank count, not a CPU count.")
+    print("                    SST default: --io equals --compute; HDF5 default: 0.")
+    print("                    IO ranks are only valid with the SST output engine.")
     print("")
-    print(" --gpus           : GPUs per node")
-    print("                    Default is ceil(compute ranks / nodes).")
-    print("                    This is not asked in the wizard. Override with --gpus N.")
-    print("                    This is not based on compute + IO ranks.")
-    print("                    IO ranks do not increase the GPU request by default.")
-    print("                    For local runs, specify physical GPU IDs with")
-    print("                    VVM_GPU_LIST=0,1,2,3 ./submit.py --local ...")
+    print(f" --io-cpus N      : Host CPUs/threads reserved for each IO rank (default: {DEFAULT_IO_CPUS}).")
+    print("                    This does not create IO ranks and has no effect at --io 0.")
+    print("                    It exists for both presets; normally leave it at 1 unless tuning SST IO.")
+    print("")
+    print(" --gpus N         : GPUs requested per node by GPU presets only.")
+    print("                    Default: ceil(compute ranks / nodes). IO ranks add no GPUs.")
+    print("                    CPU presets request no GPUs and ignore VVM_GPU_LIST.")
     print("")
     print(" --ntasks         : compute ranks + IO ranks")
     print(" --ntasks-per-node: ceil((compute ranks + IO ranks) / nodes)")
-    print(" --gpus-per-node  : ceil(compute ranks / nodes), unless --gpus is given")
     print("--------------------------------------------------------------------")
-    print(" Local GPU Selection")
+    print(" Local GPU Selection (GPU presets only)")
     print("--------------------------------------------------------------------")
-    print(" For local runs on specific physical GPUs, set VVM_GPU_LIST before")
-    print(" launching this wizard or the command-line run. Example:")
+    print(" Set VVM_GPU_LIST before a local GPU run to choose physical devices:")
     print('   VVM_GPU_LIST=0,1,2,3,4,5,6,7 ./submit.py --local -c "rundata/input_configs/default_cases/taiwanvvm_2048.json" --preset blaze --compute 8 --nodes 1')
-    print(" If VVM_GPU_LIST is not set, local ranks are mapped by local rank")
-    print(" modulo GPUs/node.")
+    print(" Without it, GPU ranks map by local rank modulo GPUs/node.")
+    print(" CPU presets ignore VVM_GPU_LIST.")
     print("--------------------------------------------------------------------")
     print(" Advanced SLURM Options: command-line only")
     print("--------------------------------------------------------------------")
@@ -566,10 +579,13 @@ def interactive_wizard():
     else:
         args.preset = ask("CMake preset environment", default_preset)
 
+    gpu_preset = preset_uses_gpu(vvm_root, args.preset)
+
     args.compute = int(ask("\nCompute tasks / MPI ranks", DEFAULT_COMPUTE))
 
-    # Not prompted in wizard.
+    # Derived or prompted below as appropriate.
     args.io = DEFAULT_IO
+    args.io_cpus = DEFAULT_IO_CPUS
     args.cpus = DEFAULT_CPUS
     args.gpus = DEFAULT_GPUS
 
@@ -579,27 +595,45 @@ def interactive_wizard():
         args.nodes = 1
 
     io_engine = peek_io_engine(args.config)
-    inferred_io = infer_io_tasks(io_engine, args.compute, args.io)
-    inferred_gpus = infer_gpus_per_node(args.compute, args.nodes, args.gpus)
+    args.io = infer_io_tasks(io_engine, args.compute, args.io)
+    inferred_gpus = infer_gpus_per_node(args.compute, args.nodes, args.gpus) if gpu_preset else 0
+    if args.local and not gpu_preset:
+        logical_cpus = os.cpu_count() or 1
+        compute_per_node = math.ceil(args.compute / args.nodes)
+        io_per_node = math.ceil(args.io / args.nodes) if args.io > 0 else 0
+        io_threads = io_per_node * args.io_cpus
+        full_node_cpus = max(1, (logical_cpus - io_threads) // compute_per_node)
+        print(f"\n[Info] Full-node CPU suggestion: --cpus {full_node_cpus}")
+        print(f"       ({logical_cpus} logical CPUs - {io_per_node} IO ranks x {args.io_cpus}) / {compute_per_node} compute ranks")
+        args.cpus = int(ask("CPUs/threads per compute rank (--cpus)", full_node_cpus))
 
     print("")
+    backend_name = "GPU" if gpu_preset else "CPU"
+    print(f"[Info] Selected backend: {backend_name} ({args.preset})")
     print(f"[Info] Detected output engine: {io_engine}")
-    print(f"[Info] IO ranks default: {inferred_io}")
-    print("[Info] CPUs per task default: fill the node (reported before submit)")
-    print(f"[Info] GPUs per node default: {inferred_gpus}")
-    print("       This is derived from compute ranks per node.")
-    print("       IO ranks do not increase the GPU request by default.")
-    print("       Override with --gpus N if needed.")
+    io_reason = "SST default: same as compute ranks" if io_engine == "SST" else "non-SST default: no IO servers"
+    print(f"[Info] IO MPI ranks (--io): {args.io}  ({io_reason})")
+    print(f"[Info] CPUs per IO rank (--io-cpus): {args.io_cpus}")
+    print("       --io-cpus sizes each IO rank; it does not change the IO rank count.")
     if args.local:
-        gpu_list = os.environ.get("VVM_GPU_LIST", "")
-        print("       Local GPU IDs are selected with VVM_GPU_LIST.")
-        if gpu_list:
-            print(f"       Current VVM_GPU_LIST={gpu_list}")
+        if args.cpus is None:
+            print("[Info] CPUs per task (--cpus) default: 1 in local GPU mode.")
         else:
-            print("       VVM_GPU_LIST is not set for this wizard session.")
-            print("       To choose exact local GPU IDs, exit and rerun like this:")
-            print('       VVM_GPU_LIST=0,1,2,3,4,5,6,7 ./submit.py --local -c "rundata/input_configs/default_cases/taiwanvvm_2048.json" --preset blaze --compute 8 --nodes 1')
-
+            print(f"[Info] CPUs per compute rank (--cpus): {args.cpus}  (wizard selection)")
+    else:
+        print("[Info] CPUs per task (--cpus) default: fill the SLURM node.")
+        print("       The final value is queried from the selected partition before submit.")
+    if gpu_preset:
+        print(f"[Info] GPUs per node default: {inferred_gpus}")
+        print("       Derived from compute ranks only; IO ranks add no GPU requests.")
+        if args.local:
+            gpu_list = os.environ.get("VVM_GPU_LIST", "")
+            if gpu_list:
+                print(f"       Current VVM_GPU_LIST={gpu_list}")
+            else:
+                print("       VVM_GPU_LIST is unset; ranks map modulo GPUs/node.")
+    else:
+        print("[Info] GPUs per node: none; CPU presets ignore VVM_GPU_LIST.")
 
     if not args.local:
         args.time = ask("\nTime limit", DEFAULT_TIME)
@@ -626,7 +660,7 @@ def interactive_wizard():
 
     cmd_parts = [sys.argv[0]]
 
-    if args.local and os.environ.get("VVM_GPU_LIST"):
+    if args.local and gpu_preset and os.environ.get("VVM_GPU_LIST"):
         cmd_parts.insert(0, f'VVM_GPU_LIST={os.environ["VVM_GPU_LIST"]}')
 
     if args.local:
@@ -635,6 +669,10 @@ def interactive_wizard():
     cmd_parts.append(f'-c "{args.config}"')
     cmd_parts.append(f'--preset "{args.preset}"')
     cmd_parts.append(f"--compute {args.compute}")
+    cmd_parts.append(f"--io {args.io}")
+    cmd_parts.append(f"--io-cpus {args.io_cpus}")
+    if args.cpus is not None:
+        cmd_parts.append(f"--cpus {args.cpus}")
     cmd_parts.append(f"--nodes {args.nodes}")
 
     if not args.local:
@@ -659,7 +697,7 @@ def interactive_wizard():
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="VVM GPU C++ job submission wrapper",
+        description="VVM C++ job submission wrapper",
         epilog=(
             "If you do not know which inputs to provide, run ./submit.py with no "
             "arguments and follow the prompts. For local runs that need specific "
@@ -681,8 +719,8 @@ def parse_args():
     )
     parser.add_argument(
         "--io-cpus", type=int, default=DEFAULT_IO_CPUS,
-        help="CPU cores/threads per IO rank (default 1). IO ranks are host-only: "
-             "they never initialize Kokkos and do not consume a GPU.")
+        help="Host CPUs/threads reserved per IO rank (default 1). This does not create IO ranks; "
+             "IO ranks are host-only and do not consume a GPU.")
     parser.add_argument("--nodes", type=int, default=DEFAULT_NODES, help="Number of nodes")
     parser.add_argument(
         "--gpus",
@@ -694,7 +732,7 @@ def parse_args():
         "--cpus",
         type=int,
         default=DEFAULT_CPUS,
-        help="CPUs per task / OMP_NUM_THREADS. Default: 1.",
+        help="CPUs per task / OMP_NUM_THREADS. SLURM default fills the node; local default is 1.",
     )
 
     parser.add_argument("-t", "--time", type=str, default=DEFAULT_TIME, help="Wall time limit")
@@ -822,6 +860,9 @@ def main():
 
     if io_engine == "SST" and args.io == 0:
         print("[Error] SST engine requires IO ranks. Use --io N or omit --io to default to compute ranks.")
+        sys.exit(1)
+    if io_engine != "SST" and args.io > 0:
+        print(f"[Error] output.engine={io_engine!r} does not use IO-server ranks. Omit --io or use --io 0.")
         sys.exit(1)
 
     prof_file = config_data.get("initial_conditions", {}).get("source_file", "")
