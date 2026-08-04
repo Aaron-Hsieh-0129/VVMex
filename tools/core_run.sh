@@ -61,7 +61,13 @@ if [ -n "$SLURM_JOB_ID" ]; then
     RUN_MODE="SLURM Exclusive Mode"
 else
     PE=${OMP_NUM_THREADS:-1}
-    TOTAL_CORES=$(( PE * TASKS_PER_NODE ))
+    if [ "$VVM_BACKEND" = "cpu" ]; then
+        # Local CPU capacity is the machine, not requested ranks x threads.
+        TOTAL_CORES=$(nproc --all)
+    else
+        # Preserve the existing local GPU launcher behavior verbatim.
+        TOTAL_CORES=$(( PE * TASKS_PER_NODE ))
+    fi
     RUN_MODE="Local Shared Mode"
 fi
 
@@ -70,14 +76,17 @@ fi
 VVM_IO_CPUS="${VVM_IO_CPUS:-1}"
 if [ "$VVM_IO_CPUS" -lt 1 ]; then VVM_IO_CPUS=1; fi
 
-if [ -n "$SLURM_JOB_ID" ] && [ "${VVM_COMPUTE_PER_NODE:-0}" -gt 0 ]; then
-    # Real allocation: reserve a small slice for the IO ranks and give the rest to
-    # the compute ranks, instead of splitting the node evenly across both roles.
+if [ "$VVM_BACKEND" = "cpu" ]; then
+    # submit.py already chose --cpus per task; do not apply the GPU IO-rank
+    # redistribution formula to a CPU build.
+    PE=${OMP_NUM_THREADS:-1}
+elif [ -n "$SLURM_JOB_ID" ] && [ "${VVM_COMPUTE_PER_NODE:-0}" -gt 0 ]; then
+    # Real GPU allocation: reserve a small slice for the host-only IO ranks and
+    # give the rest to the GPU compute ranks.
     IO_CORES_PER_NODE=$(( VVM_IO_PER_NODE * VVM_IO_CPUS ))
     PE=$(( (TOTAL_CORES - IO_CORES_PER_NODE) / VVM_COMPUTE_PER_NODE ))
 else
-    # Local mode: TOTAL_CORES was synthesized from the requested --cpus, so honour
-    # that number for compute ranks rather than redistributing it.
+    # Preserve the existing local GPU calculation.
     PE=$(( TOTAL_CORES / TASKS_PER_NODE ))
 fi
 if [ "$PE" -lt 1 ]; then PE=1; fi
@@ -109,7 +118,7 @@ export VVM_GPU_LIST="${VVM_GPU_LIST:-}"
 echo "========================================================="
 echo "[$RUN_MODE]"
 echo " Nodes: ${SLURM_JOB_NUM_NODES:-1} | Tasks/Node: $TASKS_PER_NODE"
-echo " Total Cores Used/Node: $TOTAL_CORES | Cores/compute rank: $PE | Cores/IO rank: $VVM_IO_CPUS"
+echo " Logical CPUs Available/Node: $TOTAL_CORES | Cores/compute rank: $PE | Cores/IO rank: $VVM_IO_CPUS"
 echo "========================================================="
 if [ -n "$VVM_GPU_LIST" ]; then
     echo "[GPUMap] Using explicit VVM_GPU_LIST=$VVM_GPU_LIST"
@@ -165,6 +174,10 @@ fi
 LOCAL_RANK="${OMPI_COMM_WORLD_LOCAL_RANK:-${SLURM_LOCALID:-0}}"
 GLOBAL_RANK="${OMPI_COMM_WORLD_RANK:-${SLURM_PROCID:-NA}}"
 if [ "$VVM_BACKEND" = "cpu" ]; then
+    if [ "$GLOBAL_RANK" != "NA" ] && [ "${VVM_COMPUTE_TASKS:-0}" -gt 0 ] \
+       && [ "$GLOBAL_RANK" -ge "$VVM_COMPUTE_TASKS" ]; then
+        export OMP_NUM_THREADS="${VVM_IO_CPUS:-1}"
+    fi
     exec "$VVM_BINARY" "$@"
 fi
 
@@ -559,10 +572,27 @@ launch_vvm "$@"
 '
 
 if [ "$VVM_BACKEND" = "cpu" ]; then
-    if [ $(( TASKS_PER_NODE * PE )) -le "$TOTAL_CORES" ]; then
+    HOST_LOGICAL_CPUS=$(nproc --all)
+    HOST_PHYSICAL_CORES=$(lscpu -p=CORE,SOCKET 2>/dev/null | awk -F, '!/^#/ {print $1 ":" $2}' | sort -u | wc -l)
+    if [ "$HOST_PHYSICAL_CORES" -lt 1 ] 2>/dev/null; then
+        HOST_PHYSICAL_CORES="$HOST_LOGICAL_CPUS"
+    fi
+    HOST_THREADS_PER_CORE=$(( (HOST_LOGICAL_CPUS + HOST_PHYSICAL_CORES - 1) / HOST_PHYSICAL_CORES ))
+    CPU_BIND_CAPACITY=$(( (TOTAL_CORES + HOST_THREADS_PER_CORE - 1) / HOST_THREADS_PER_CORE ))
+    if [ "$CPU_BIND_CAPACITY" -gt "$HOST_PHYSICAL_CORES" ]; then
+        CPU_BIND_CAPACITY="$HOST_PHYSICAL_CORES"
+    fi
+    MAPPED_CPU_PES=$(( TASKS_PER_NODE * PE ))
+    REQUESTED_CPU_THREADS=$(( VVM_COMPUTE_PER_NODE * PE + VVM_IO_PER_NODE * VVM_IO_CPUS ))
+    if [ "$REQUESTED_CPU_THREADS" -gt "$TOTAL_CORES" ]; then
+        echo "[Warning] CPU oversubscription: ${VVM_COMPUTE_PER_NODE} compute ranks x ${PE} threads + ${VVM_IO_PER_NODE} IO ranks x ${VVM_IO_CPUS} threads = ${REQUESTED_CPU_THREADS}, but ${TOTAL_CORES} logical CPUs are available." >&2
+    fi
+    if [ "$MAPPED_CPU_PES" -le "$CPU_BIND_CAPACITY" ]; then
         MPIRUN_MAP_ARGS=(--map-by "ppr:${TASKS_PER_NODE}:node:PE=${PE}" --bind-to core)
+        echo "[Info] CPU mapping: ${TASKS_PER_NODE} ranks x ${PE} PEs; binding to ${MAPPED_CPU_PES}/${CPU_BIND_CAPACITY} physical cores. Runtime threads/node: ${REQUESTED_CPU_THREADS}/${TOTAL_CORES} logical CPUs."
     else
         MPIRUN_MAP_ARGS=(--map-by "ppr:${TASKS_PER_NODE}:node" --bind-to none)
+        echo "[Info] CPU mapping: uniform PE=${PE} would require ${MAPPED_CPU_PES}/${CPU_BIND_CAPACITY} bindable physical cores; using --bind-to none. Runtime threads/node: ${REQUESTED_CPU_THREADS}/${TOTAL_CORES} logical CPUs."
     fi
 else
     MPIRUN_MAP_ARGS=(--map-by "ppr:${TASKS_PER_NODE}:node" --rank-by node --bind-to none)
