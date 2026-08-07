@@ -242,6 +242,46 @@
         "SCREAM_P3_SMALL_KERNELS": "OFF",
         "SCREAM_SMALL_PACK_SIZE": "1"
       }
+    },
+    {
+      "name": "f1-cpu",
+      "displayName": "NVHPC 24.9 on f1, CPU-only (Kokkos OpenMP)",
+      "description": "CPU build: Kokkos OpenMP, MPI instead of NCCL, land model without OpenACC",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+
+        "NVHPC_DIR": "/work1/aaron900129/libs_VVMex/nvhpc_24_9/Linux_x86_64/24.9",
+
+        "CMAKE_CXX_COMPILER": "/work1/aaron900129/libs_VVMex/openmpi-nvhpc/bin/mpic++",
+        "CMAKE_C_COMPILER":   "/work1/aaron900129/libs_VVMex/openmpi-nvhpc/bin/mpicc",
+        "CMAKE_Fortran_COMPILER": "/work1/aaron900129/libs_VVMex/openmpi-nvhpc/bin/mpifort",
+        "MPIEXEC_EXECUTABLE": "/work1/aaron900129/libs_VVMex/openmpi-nvhpc/bin/mpiexec",
+
+        "CMAKE_CXX_FLAGS": "--gcc-toolchain=/work1/aaron900129/libs_VVMex/gcc11",
+        "CMAKE_C_FLAGS": "--gcc-toolchain=/work1/aaron900129/libs_VVMex/gcc11",
+        "CMAKE_Fortran_FLAGS": "--gcc-toolchain=/work1/aaron900129/libs_VVMex/gcc11",
+
+        "Kokkos_DIR": "/work1/aaron900129/libs_VVMex/lib64/cmake/Kokkos",
+        "ADIOS2_DIR": "/work1/aaron900129/libs_VVMex/adios2-2.12.1/lib64/cmake/adios2",
+
+        "HDF5_DIR": "/work1/aaron900129/libs_VVMex",
+        "NETCDF_C_DIR": "/work1/aaron900129/libs_VVMex",
+        "NETCDF_Fortran_DIR": "/work1/aaron900129/libs_VVMex",
+        "PNETCDF_DIR": "/work1/aaron900129/libs_VVMex",
+
+        "VVM_ENABLE_GPU": "OFF",
+        "VVM_USE_DOUBLE_PRECISION": "ON",
+        "ENABLE_NCCL": "OFF",
+        "EAMXX_ENABLE_GPU": "OFF",
+        "Kokkos_ENABLE_CUDA": "OFF",
+        "SCREAM_DOUBLE_PRECISION": "ON",
+        "RRTMGP_USE_DOUBLE_PRECISION": "ON",
+        "SCREAM_PACK_SIZE": "1",
+        "SCREAM_P3_SMALL_KERNELS": "ON",
+        "SCREAM_SMALL_PACK_SIZE": "1"
+      }
     }
   ]
 }

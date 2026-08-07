@@ -26,6 +26,7 @@ DEFAULT_IO = None                 # None means infer from output.engine
 DEFAULT_NODES = 1
 DEFAULT_GPUS = None               # None means infer from compute ranks per node
 DEFAULT_CPUS = None               # SLURM fills the node; local mode falls back to 1
+DEFAULT_OMP_THREADS = None        # Defaults to allocated CPUs per task
 DEFAULT_IO_CPUS = 1               # IO ranks are host-only and effectively single-threaded
 DEFAULT_TIME = "24:00:00"
 DEFAULT_OUT = "log/%j.out"
@@ -150,6 +151,15 @@ def setup_environment(preset_name):
         # runtime stack should remain internally consistent.
         # ----------------------------------------------------------------------
         cxx_compiler = cache_vars.get("CMAKE_CXX_COMPILER", "")
+        mpi_wrapper_names = {"mpic++", "mpicxx", "mpiCC"}
+        if os.path.basename(cxx_compiler) in mpi_wrapper_names:
+            mpi_bin = os.path.dirname(cxx_compiler)
+            if os.path.isdir(mpi_bin):
+                # Compile and launch with the same MPI implementation.  This is
+                # needed for ordinary Open MPI prefixes as well as HPC-X; an
+                # inherited Intel MPI mpirun cannot launch this binary.
+                env["PATH"] = mpi_bin + os.pathsep + env.get("PATH", "")
+
         if "/ompi/bin/" in cxx_compiler:
             hpcx_home = cxx_compiler.split("/ompi/bin/")[0]
             my_plugin_path = f"{hpcx_home}/nccl_rdma_sharp_plugin/lib"
@@ -160,9 +170,6 @@ def setup_environment(preset_name):
             env["SHARP_LIB_PATH"] = sharp_lib_path
             env["VVM_ENV_SCRIPT"] = f"{hpcx_home}/hpcx-init.sh"
             env["VVM_PRE_RUN_CMD"] = f"source {hpcx_home}/hpcx-init.sh"
-
-            # Ensure mpirun from the intended HPCX tree is first.
-            env["PATH"] = f"{hpcx_home}/ompi/bin:" + env.get("PATH", "")
 
         # ----------------------------------------------------------------------
         # Explicitly configured project dependencies
@@ -516,7 +523,7 @@ def interactive_wizard():
     print("--------------------------------------------------------------------")
     print(" Automatic and Advanced Options")
     print("--------------------------------------------------------------------")
-    print(" --cpus N         : Host CPUs allocated per MPI task and OMP_NUM_THREADS.")
+    print(" --cpus N         : Host CPUs allocated per MPI task; OpenMP defaults to this.")
     print("                    SLURM default: fill each node across its tasks.")
     print("                    Local CLI default: 1, because no partition can be queried.")
     print("                    For a local CPU preset, this wizard prompts with a full-node suggestion.")
@@ -587,6 +594,7 @@ def interactive_wizard():
     args.io = DEFAULT_IO
     args.io_cpus = DEFAULT_IO_CPUS
     args.cpus = DEFAULT_CPUS
+    args.omp_threads = DEFAULT_OMP_THREADS
     args.gpus = DEFAULT_GPUS
 
     if not args.local:
@@ -673,6 +681,8 @@ def interactive_wizard():
     cmd_parts.append(f"--io-cpus {args.io_cpus}")
     if args.cpus is not None:
         cmd_parts.append(f"--cpus {args.cpus}")
+    if args.omp_threads is not None:
+        cmd_parts.append(f"--omp-threads {args.omp_threads}")
     cmd_parts.append(f"--nodes {args.nodes}")
 
     if not args.local:
@@ -732,7 +742,13 @@ def parse_args():
         "--cpus",
         type=int,
         default=DEFAULT_CPUS,
-        help="CPUs per task / OMP_NUM_THREADS. SLURM default fills the node; local default is 1.",
+        help="CPUs allocated per MPI task. OpenMP threads default to this unless --omp-threads is set.",
+    )
+    parser.add_argument(
+        "--omp-threads",
+        type=int,
+        default=DEFAULT_OMP_THREADS,
+        help="OpenMP/Kokkos threads per compute rank. Defaults to --cpus; may be lower when the scheduler requires allocation padding.",
     )
 
     parser.add_argument("-t", "--time", type=str, default=DEFAULT_TIME, help="Wall time limit")
@@ -835,6 +851,10 @@ def main():
         print("[Error] --cpus must be positive.")
         sys.exit(1)
 
+    if args.omp_threads is not None and args.omp_threads <= 0:
+        print("[Error] --omp-threads must be positive.")
+        sys.exit(1)
+
     if args.io_cpus <= 0:
         print("[Error] --io-cpus must be positive.")
         sys.exit(1)
@@ -918,6 +938,8 @@ def main():
     env["VVM_IO_ENGINE"] = io_engine
     env["VVM_OUTPUT_DIR"] = out_dir_abs
     env["OMP_NUM_THREADS"] = str(args.cpus)
+    if args.omp_threads is not None:
+        env["VVM_OMP_THREADS"] = str(args.omp_threads)
     env["VVM_GPUS"] = str(args.gpus)
     env["VVM_IO_CPUS"] = str(args.io_cpus)
 
@@ -933,6 +955,8 @@ def main():
     print(f" Config            : {config_path_user}")
     print(f" Preset            : {args.preset}")
     print(f" Output engine     : {io_engine}")
+    if io_engine == "BP5":
+        print(" IO path           : direct compute-rank BP5 (no IO-server ranks)")
     print(f" Compute ranks     : {args.compute}")
     print(f" IO ranks          : {args.io}")
     print(f" Total ranks       : {total_tasks}")
@@ -954,6 +978,8 @@ def main():
                 print(" Local GPU list    : <unset; ranks map by local rank modulo GPUs/node>")
                 print("                     Set VVM_GPU_LIST=0,1,... before ./submit.py --local to choose GPU IDs.")
     print(f" CPUs/compute rank : {args.cpus}")
+    print(f" OpenMP threads/compute rank: {args.omp_threads or args.cpus}")
+    print(f" Active compute cores: {args.compute * (args.omp_threads or args.cpus)}")
     if args.io > 0:
         print(f" CPUs/IO rank      : {args.io_cpus}  (host-only, no GPU)")
     if not args.local:

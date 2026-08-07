@@ -234,6 +234,119 @@ add_vvm_unit_test(test_sst_path)
 # usable through an explicit opt-in. Pure decision logic.
 add_vvm_unit_test(test_restart_time)
 
+# Direct BP5 pure logic and CPU staging. These link the new isolated I/O
+# subsystem but do not open a dataset or require multiple ranks.
+if(NOT VVM_ENABLE_GPU)
+    foreach(BP5_UNIT_TEST
+            test_bp5_output_config
+            test_bp5_field_schema
+            test_bp5_path_policy
+            test_cpu_field_source)
+        add_executable(${BP5_UNIT_TEST} ${TEST_DIR}/unit/${BP5_UNIT_TEST}.cpp)
+        target_include_directories(${BP5_UNIT_TEST} PRIVATE ${CMAKE_SOURCE_DIR}/src)
+        target_link_libraries(${BP5_UNIT_TEST} PRIVATE vvm_io Kokkos::kokkos MPI::MPI_CXX)
+        add_test(NAME ${BP5_UNIT_TEST} COMMAND ${BP5_UNIT_TEST})
+        set_tests_properties(${BP5_UNIT_TEST} PROPERTIES LABELS "unit;bp5")
+    endforeach()
+
+    add_executable(test_bp5_history_mpi integration/test_bp5_history_mpi.cpp)
+    target_include_directories(test_bp5_history_mpi PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(test_bp5_history_mpi PRIVATE
+                          vvm_io vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX)
+
+    add_executable(test_bp5_collective_config integration/test_bp5_collective_config.cpp)
+    target_include_directories(test_bp5_collective_config PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(test_bp5_collective_config PRIVATE vvm_io MPI::MPI_CXX)
+    add_test(NAME test_bp5_collective_config_r2
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+                     ${VVM_MPI_BIND_ARGS} $<TARGET_FILE:test_bp5_collective_config>)
+    set_tests_properties(test_bp5_collective_config_r2 PROPERTIES
+                         LABELS "bp5;integration;failure" TIMEOUT 30)
+
+    # One-rank readback after 1/2/4-rank writes proves reader/writer process
+    # counts need not match. The four-rank selection deliberately leaves ranks
+    # with no selected cells. Both CPU source modes are checked synchronously;
+    # async is a separate opt-in safety gate.
+    set(BP5_INTEGRATION_WORKDIR "${CMAKE_BINARY_DIR}/bp5_integration")
+    foreach(BP5_MODE direct pack)
+        foreach(BP5_RANKS 1 2 4)
+            set(BP5_TEST_NAME test_bp5_history_${BP5_MODE}_sync_r${BP5_RANKS})
+            add_test(NAME ${BP5_TEST_NAME}
+                     COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${BP5_RANKS}
+                             ${VVM_MPI_BIND_ARGS} $<TARGET_FILE:test_bp5_history_mpi>
+                             ${TEST_DIR}/configs/advection_u.json
+                             ${BP5_INTEGRATION_WORKDIR} ${BP5_MODE} sync ${BP5_RANKS}
+                     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+            set_tests_properties(${BP5_TEST_NAME} PROPERTIES
+                                 LABELS "bp5;integration;multirank" TIMEOUT 90)
+        endforeach()
+    endforeach()
+    foreach(BP5_RANKS 1 2 4)
+        set(BP5_TEST_NAME test_bp5_history_direct_async_r${BP5_RANKS})
+        add_test(NAME ${BP5_TEST_NAME}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${BP5_RANKS}
+                         ${VVM_MPI_BIND_ARGS} $<TARGET_FILE:test_bp5_history_mpi>
+                         ${TEST_DIR}/configs/advection_u.json
+                         ${BP5_INTEGRATION_WORKDIR} direct async ${BP5_RANKS}
+                 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        set_tests_properties(${BP5_TEST_NAME} PROPERTIES
+                             LABELS "bp5;integration;async;multirank" TIMEOUT 90)
+    endforeach()
+
+    add_executable(test_bp5_model_output integration/test_bp5_model_output.cpp)
+    target_include_directories(test_bp5_model_output PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(test_bp5_model_output PRIVATE
+                          adios2::adios2 Kokkos::kokkos MPI::MPI_CXX)
+    add_test(NAME Run_bp5_model_smoke
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+                     ${VVM_MPI_BIND_ARGS} $<TARGET_FILE:vvm>
+                     ${TEST_DIR}/configs/bp5_model_smoke.json
+             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME Verify_bp5_model_smoke
+             COMMAND $<TARGET_FILE:test_bp5_model_output>
+                     ${CMAKE_BINARY_DIR}/testing_output_bp5_model_smoke/history.bp
+             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(Run_bp5_model_smoke PROPERTIES
+                         LABELS "bp5;integration;model" TIMEOUT 120)
+    set_tests_properties(Verify_bp5_model_smoke PROPERTIES
+                         DEPENDS Run_bp5_model_smoke LABELS "bp5;integration;model" TIMEOUT 30)
+
+    add_test(NAME Run_bp5_model_async_smoke
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+                     ${VVM_MPI_BIND_ARGS} $<TARGET_FILE:vvm>
+                     ${TEST_DIR}/configs/bp5_model_async_smoke.json
+             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME Verify_bp5_model_async_smoke
+             COMMAND $<TARGET_FILE:test_bp5_model_output>
+                     ${CMAKE_BINARY_DIR}/testing_output_bp5_model_async_smoke/history.bp
+             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(Run_bp5_model_async_smoke PROPERTIES
+                         LABELS "bp5;integration;model;async" TIMEOUT 120)
+    set_tests_properties(Verify_bp5_model_async_smoke PROPERTIES
+                         DEPENDS Run_bp5_model_async_smoke
+                         LABELS "bp5;integration;model;async" TIMEOUT 30)
+
+    add_executable(test_bp5_hdf5_compat integration/test_bp5_hdf5_compat.cpp)
+    target_include_directories(test_bp5_hdf5_compat PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(test_bp5_hdf5_compat PRIVATE
+                          adios2::adios2 HDF5::HL Kokkos::kokkos MPI::MPI_CXX)
+    add_test(NAME Run_hdf5_model_smoke
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+                     ${VVM_MPI_BIND_ARGS} $<TARGET_FILE:vvm>
+                     ${TEST_DIR}/configs/hdf5_model_smoke.json
+             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME Compare_bp5_hdf5_model_smoke
+             COMMAND $<TARGET_FILE:test_bp5_hdf5_compat>
+                     ${CMAKE_BINARY_DIR}/testing_output_bp5_model_smoke/history.bp
+                     ${CMAKE_BINARY_DIR}/testing_output_hdf5_model_smoke
+             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(Run_hdf5_model_smoke PROPERTIES
+                         LABELS "bp5;integration;compatibility" TIMEOUT 120)
+    set_tests_properties(Compare_bp5_hdf5_model_smoke PROPERTIES
+                         DEPENDS "Run_bp5_model_smoke;Run_hdf5_model_smoke"
+                         LABELS "bp5;integration;compatibility" TIMEOUT 30)
+endif()
+
 # --- unit, on files: no GPU, 1-2 ranks, <1 s ------------------------------
 # Same idea as add_vvm_unit_test, but the code under test reads real HDF5 and
 # NetCDF files, and PnetCDF needs MPI. No device is involved, so the multi-rank
@@ -355,6 +468,20 @@ if(NOT VVM_ENABLE_GPU)
     if(ADIOS2_DIR)
         string(REGEX REPLACE "/cmake/adios2/?$" "" _vvm_adios2_libdir "${ADIOS2_DIR}")
         list(APPEND VVM_CPU_RUNTIME_DIRS "${_vvm_adios2_libdir}")
+        # ADIOS2 itself is installed in lib64 in the F1 prefix, while its
+        # libfabric dependency is installed in the sibling lib directory.
+        # Keep both ahead of the Intel module's older libfabric at test time.
+        get_filename_component(_vvm_adios2_prefix "${_vvm_adios2_libdir}" DIRECTORY)
+        if(EXISTS "${_vvm_adios2_prefix}/lib")
+            list(APPEND VVM_CPU_RUNTIME_DIRS "${_vvm_adios2_prefix}/lib")
+        endif()
+    endif()
+    if(HDF5_DIR)
+        foreach(_vvm_dep_libdir "${HDF5_DIR}/lib64" "${HDF5_DIR}/lib")
+            if(EXISTS "${_vvm_dep_libdir}")
+                list(APPEND VVM_CPU_RUNTIME_DIRS "${_vvm_dep_libdir}")
+            endif()
+        endforeach()
     endif()
     list(REMOVE_DUPLICATES VVM_CPU_RUNTIME_DIRS)
 
