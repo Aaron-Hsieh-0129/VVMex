@@ -412,7 +412,7 @@ if (PNETCDF_INCLUDE_DIR AND PNETCDF_LIBRARY)
                           IMPORTED_LOCATION "${PNETCDF_LIBRARY}"
                           INTERFACE_INCLUDE_DIRECTORIES "${PNETCDF_INCLUDE_DIR}")
     find_library(M_LIBRARY m)
-    target_link_libraries(PnetCDF::pnetcdf INTERFACE MPI::MPI_CXX ${M_LIBRARY})
+    target_link_libraries(PnetCDF::pnetcdf INTERFACE MPI::MPI_CXX NetCDF::netcdf ${M_LIBRARY})
     set(PNETCDF_FOUND TRUE)
     message(STATUS "PnetCDF found manually at: ${PNETCDF_LIBRARY}")
 else()

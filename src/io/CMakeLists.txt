@@ -5,6 +5,12 @@ set(VVM_IO_SOURCES
     Hdf5RestartReader.cpp
     Hdf5DimensionScales.cpp
     IOServer.cpp
+    bp5/Bp5HistoryWriter.cpp
+    bp5/Bp5CollectiveValidation.cpp
+    bp5/Bp5OutputConfig.cpp
+    bp5/Bp5FieldSchema.cpp
+    bp5/Bp5PathPolicy.cpp
+    bp5/CpuFieldSource.cpp
 )
 
 set(VVM_IO_HEADERS
@@ -15,6 +21,15 @@ set(VVM_IO_HEADERS
     Hdf5RestartReader.hpp
     Hdf5DimensionScales.hpp
     IOServer.hpp
+    history/HistoryWriter.hpp
+    history/LegacyHistoryWriter.hpp
+    bp5/Bp5HistoryWriter.hpp
+    bp5/Bp5CollectiveValidation.hpp
+    bp5/Bp5OutputConfig.hpp
+    bp5/Bp5FieldSchema.hpp
+    bp5/Bp5BufferSet.hpp
+    bp5/CpuFieldSource.hpp
+    bp5/FieldInput.hpp
 )
 
 add_library(vvm_io STATIC

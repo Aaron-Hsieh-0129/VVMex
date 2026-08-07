@@ -19,7 +19,9 @@
 #include "core/HaloExchanger.hpp"
 #include "core/Parameters.hpp"
 #include "core/State.hpp"
-#include "io/OutputManager.hpp"
+#include "io/bp5/Bp5HistoryWriter.hpp"
+#include "io/history/HistoryWriter.hpp"
+#include "io/history/LegacyHistoryWriter.hpp"
 #include "utils/ConfigurationManager.hpp"
 #include "utils/SstPath.hpp"
 #include "utils/Timer.hpp"
@@ -263,16 +265,23 @@ int main(int argc, char *argv[]) {
 
         timing.stop_timer("initialize");
 
-        auto output_manager = std::make_unique<VVM::IO::OutputManager>(
-            config, grid, parameters, state, split_comm
-        );
+        std::unique_ptr<VVM::IO::HistoryWriter> history_writer;
+        const std::string output_engine =
+            config.get_value<std::string>("output.engine", "HDF5");
+        if (output_engine == "BP5") {
+            history_writer = std::make_unique<VVM::IO::BP5::Bp5HistoryWriter>(
+                config, grid, parameters, state, split_comm);
+        } else {
+            history_writer = std::make_unique<VVM::IO::LegacyHistoryWriter>(
+                config, grid, parameters, state, split_comm);
+        }
 
         const bool restart_enabled = config.get_value<bool>("restart.enable", false);
         const bool output_initial_step =
             config.get_value<bool>("output.output_initial_step", true);
         if (output_initial_step) {
             VVM::Utils::Timer timer("io");
-            output_manager->write(state.get_step(), state.get_time());
+            history_writer->write(state.get_step(), state.get_time());
         } else if (split_rank == 0) {
             std::cout << "[Output] Skipping initial full output." << std::endl;
         }
@@ -300,7 +309,7 @@ int main(int argc, char *argv[]) {
             if (state.get_time() >= next_output_time) {
                 {
                     VVM::Utils::Timer timer("io");
-                    output_manager->write(state.get_step(), state.get_time());
+                    history_writer->write(state.get_step(), state.get_time());
                 }
                 next_output_time += output_interval;
             }
@@ -309,6 +318,8 @@ int main(int argc, char *argv[]) {
                 timing.print_timings(split_comm, timing_reset_after_interval_print);
             }
         }
+        history_writer->close();
+
         timing.stop_timer("total_vvm");
         timing.print_timings(split_comm, false);
 
