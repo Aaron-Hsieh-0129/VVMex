@@ -25,7 +25,7 @@ execution backend:
 | Halo exchange | NCCL | MPI |
 | Noah land model | OpenACC offload | directives compile as comments |
 | NVIDIA driver at run time | required | not required |
-| Validated output engines | HDF5, SST | HDF5, BP5 |
+| Validated output engines | HDF5, SST, BP5 | HDF5, BP5 |
 | Reference test data | `tests/baselines/`, `tests/references/` | `tests/baselines_cpu/`, `tests/references_cpu/` |
 
 Both are complete on their own — pick the one matching the machine you will run
@@ -47,9 +47,16 @@ Both stacks need the same things, and neither guide will work without them:
   the same preset that built the code, so the launcher can never disagree with
   the binary about which backend it is.
 
-## Keep the two prefixes separate
+## Keep prefixes and build directories separate
 
-Install each stack into its own prefix. This is not tidiness — CPU and CUDA
+Install each stack into its own prefix, and keep one build directory per
+backend: every GPU preset must use `${sourceDir}/build`, while every CPU preset
+must use `${sourceDir}/build_cpu`. `submit.py` reads the selected preset's
+`binaryDir`, so the same choice also routes the launcher to the matching
+binary. Both trees may remain configured and built at the same time; never
+reconfigure one tree for the other backend.
+
+This is not tidiness — CPU and CUDA
 Kokkos ship `libkokkoscore.so` with the *same* SONAME, and so do the ADIOS2
 libraries. If both prefixes end up on `LD_LIBRARY_PATH`, the loader picks
 whichever comes first, and a CPU binary will happily load the CUDA Kokkos and

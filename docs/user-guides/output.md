@@ -14,12 +14,12 @@ which backend you built.
 | Writes | one file per output time | streams to I/O ranks, which write HDF5 | one multi-step `.bp` dataset |
 | Dedicated I/O ranks | none | required (`--io N`) | none |
 | CPU build | supported | supported | **supported, validated** |
-| GPU build | supported | supported, production path | **not available — see below** |
+| GPU build | supported | supported, production path | **supported, host-staged** |
 | Restart source | yes | yes (writes HDF5) | no, history only |
-| Best for | small runs, restarts, reference output | GPU production | CPU production |
+| Best for | small runs, restarts, reference output | GPU production with I/O ranks | direct multi-step output |
 
 If you are unsure: **HDF5** for anything small or when you need restarts,
-**BP5** for CPU production, **SST** for GPU production.
+**BP5** for direct output without I/O ranks, **SST** for GPU production with I/O ranks.
 
 ## Options common to every engine
 
@@ -92,7 +92,7 @@ directory so a previous run's stream is not reused.
 ## BP5
 
 Direct compute-rank output to a single multi-step `.bp` dataset. No I/O ranks,
-no SST, no relay, and no patched ADIOS2. This is the CPU production path.
+no SST, no relay, and no patched ADIOS2. Both CPU and GPU builds support it.
 
 ```json
 "output": {
@@ -115,9 +115,14 @@ Submit without `--io`; `submit.py` detects BP5 and assigns zero I/O ranks. A
 nonzero `--io` is rejected.
 
 ```bash
+# CPU
 ./submit.py --preset f1-cpu -c <case>.json \
     --compute 1024 --nodes 20 --cpus 2 --omp-threads 2 \
     --partition ct2k --account <account> -t 64:00:00
+
+# GPU
+./submit.py --preset blaze -c <case>.json \
+    --compute 8 --nodes 1 --gpus 8 -t 04:00:00
 ```
 
 ### BP5 options
@@ -128,7 +133,7 @@ nonzero `--io` is rejected.
 | `num_subfiles` | Data subfile count. Start with the number of nodes. |
 | `stats_level` | `0` minimises statistics work; `1` enables BP5 statistics. |
 | `async_write` | Background file writing. Default `false`. |
-| `buffer_mode` | `direct` passes the model's own memory with a memory selection; `pack` stages into persistent contiguous buffers. |
+| `buffer_mode` | `direct` passes compatible CPU memory with a memory selection; `pack` stages into persistent contiguous buffers. CUDA builds always resolve this to `pack` for host staging. |
 | `precision` | On-disk float type for field data: `native`, `float32`, or `float64`. |
 | `overwrite` | When `false`, refuse to replace an existing dataset. |
 
@@ -157,11 +162,13 @@ field type) and `vvm_real_precision` (the model's working precision). Differing
 means the history is a narrowed copy; matching means it is lossless.
 
 Converting requires a staging buffer, so `buffer_mode: direct` resolves to
-`pack` automatically when precision converts. This is reported, not silent:
+`pack` automatically when precision converts. CUDA builds also always resolve
+to `pack`, because fields must be copied from device memory into host buffers
+for the non-GPU-aware ADIOS2 writer. This is reported, not silent:
 
 ```
 [BP5] Field precision: float32 (requested 'float32', model VVM::Real is float64)
-[BP5] CPU buffer mode: pack  (requested 'direct'; converting precision requires a staging buffer)
+[BP5] Field buffer mode: pack  (requested 'direct'; CUDA fields require host staging)
 ```
 
 The conversion is a `static_cast` performed in the same pass that strips halo
@@ -181,21 +188,16 @@ exactly `--cpus` cores and the ADIOS2 background thread inherits that mask, so i
 shares cores with the OpenMP team. If async shows no benefit, that is the first
 thing to check.
 
-### Not available in GPU builds
+### GPU host staging
 
-Selecting `engine: "BP5"` in a CUDA build **throws at construction**:
+On CUDA, each selected field is mirrored to host memory with a synchronized
+Kokkos deep copy, then packed into the same persistent buffer used by CPU
+`pack` mode. ADIOS2 therefore receives only host pointers, and a request for
+`buffer_mode: direct` is safely downgraded to `pack`.
 
-```
-Direct BP5 history output is currently enabled only for the CPU build.
-Use the legacy output path for GPU runs until GpuFieldSource is implemented.
-```
-
-This is a deliberate guard, not an untested path — the field-source layer that
-stages data for ADIOS2 has only a CPU implementation, and the BP5 test suite is
-gated off entirely in GPU builds (`if(NOT VVM_ENABLE_GPU)` in
-`tests/CMakeLists.txt`). A `GpuFieldSource` sitting behind the same interface is
-future work; the schema and writer lifecycle are designed not to change when it
-lands. **GPU runs should use SST or HDF5.**
+The extra mirror currently allocates once per field and output step. This is
+correct but may be worth optimizing with persistent mirrors after production
+measurements show that host allocation is material.
 
 ## Sizing and quota
 

@@ -2,7 +2,6 @@
 
 #include <adios2.h>
 #include <hdf5.h>
-#include <mpi.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -126,16 +125,14 @@ void compare_attribute(adios2::IO& bp_io, hid_t h5_file,
 } // namespace
 
 int main(int argc, char** argv) {
-    MPI_Init(&argc, &argv);
     if (argc != 3) {
         std::fprintf(stderr, "usage: test_bp5_hdf5_compat BP5_DATASET HDF5_DIRECTORY\n");
-        MPI_Finalize();
         return 2;
     }
     try {
-        adios2::ADIOS adios(MPI_COMM_SELF);
+        adios2::ADIOS adios;
         auto bp_io = adios.DeclareIO("VVM_BP5_COMPAT_READER");
-        auto bp_reader = bp_io.Open(argv[1], adios2::Mode::Read, MPI_COMM_SELF);
+        auto bp_reader = bp_io.Open(argv[1], adios2::Mode::Read);
         int step = 0;
         while (bp_reader.BeginStep() == adios2::StepStatus::OK) {
             char filename[64];
@@ -167,6 +164,5 @@ int main(int argc, char** argv) {
         ++failures;
     }
     if (failures == 0) std::puts("test_bp5_hdf5_compat: PASS");
-    MPI_Finalize();
     return failures == 0 ? 0 : 1;
 }

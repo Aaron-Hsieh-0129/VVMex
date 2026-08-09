@@ -216,6 +216,7 @@ If you use fewer GPUs than *compute* tasks per node, the wrapper will warn that 
 - Loads compilers and library paths from the selected `CMakePresets.json` entry.
 - Creates the configured output and log directories.
 - Requires `--io` when the JSON uses `output.engine = "SST"`.
+- Rejects nonzero `--io` for HDF5 and BP5 before an allocation is requested.
 - Runs `tools/core_run.sh` locally or submits it through `sbatch`.
 - Maps local MPI ranks to visible GPU IDs and exports runtime variables used by the executable.
 - Hides all GPUs from I/O server ranks, and gives them `--io-cpus` cores each.

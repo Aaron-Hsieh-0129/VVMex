@@ -45,6 +45,11 @@ FieldInput CpuFieldSource::prepare(
                 // the on-disk type is VVM::Real. Any other precision has to be
                 // converted, which means it has to be staged.
                 if (mode == CpuBufferMode::Direct) {
+#if defined(KOKKOS_ENABLE_CUDA)
+                    throw std::logic_error(
+                        "BP5 direct mode cannot expose CUDA device memory for field '" +
+                        field_name + "'; the writer must resolve CUDA output to host packing.");
+#else
                     if (!output_element_matches_real(element_type)) {
                         throw std::logic_error(
                             "BP5 direct mode was selected for field '" + field_name +
@@ -61,6 +66,7 @@ FieldInput CpuFieldSource::prepare(
                         result.location = FieldMemoryLocation::Host;
                         result.packed = false;
                     }
+#endif
                 } else {
 #if defined(KOKKOS_ENABLE_CUDA)
                     const auto source = field.get_host_data();

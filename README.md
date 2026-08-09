@@ -43,7 +43,8 @@ The name VVMex preserves the connection to VVM while leaving “ex” intentiona
 
 ## Requirements
 
-VVMex is currently tested on NVIDIA GPU systems. Other GPU backends and CPU-only execution are planned for future development but are not yet part of the validated release workflow.
+VVMex is tested on NVIDIA GPU systems and with the NVHPC/Kokkos OpenMP
+CPU-only backend. Other GPU backends are not yet part of the validated workflow.
 
 ### Tested software environment
 
@@ -218,12 +219,12 @@ three engines are not interchangeable — the right one depends on your build:
 |---|---|---|---|---|
 | `HDF5` | one file per output time | none | yes | yes |
 | `SST` | streams to I/O ranks, which write HDF5 | required (`--io N`) | yes (production path) | yes |
-| `BP5` | one multi-step `.bp` dataset, written directly by the compute ranks | none | **not available** | yes (production path) |
+| `BP5` | one multi-step `.bp` dataset, written directly by the compute ranks | none | yes (host-staged) | yes (production path) |
 
-`BP5` is CPU-only: no GPU field source exists yet, so selecting it in a CUDA
-build raises an explicit error rather than writing unvalidated output. It also
-supports reduced-precision history (`"precision": "float32"`), which roughly
-halves dataset size without changing how the model computes.
+`BP5` stages CUDA fields through host memory before writing; CPU builds can
+write compatible layouts directly. It supports reduced-precision history
+(`"precision": "float32"`), which roughly halves dataset size without changing
+how the model computes.
 
 See [Output](https://aaron-hsieh-0129.github.io/VVMex/user-guides/output/) for
 the full option reference, engine comparison, and dataset-sizing guidance.

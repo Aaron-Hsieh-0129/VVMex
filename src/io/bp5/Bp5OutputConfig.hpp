@@ -49,8 +49,9 @@ struct Bp5OutputConfig {
 
     // Converting to a different width has to go through a staging buffer, so a
     // direct memory selection into the model's own field is only available when
-    // no conversion is needed. Asking for 'direct' with a converting precision
-    // resolves to packing rather than failing.
+    // no conversion is needed. CUDA fields also always stage through host
+    // memory because the external ADIOS2 build is not GPU-aware. Asking for
+    // 'direct' in either case resolves to packing rather than failing.
     CpuBufferMode effective_buffer_mode() const noexcept;
 
     std::map<std::string, std::string> adios_parameters() const;

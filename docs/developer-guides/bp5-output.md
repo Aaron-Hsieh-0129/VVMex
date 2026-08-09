@@ -187,15 +187,21 @@ reads and POSIX writes, never MPI.
 ## Validation
 
 ```bash
-cmake --preset <cpu-preset> -DBUILD_TESTS=ON -DVVM_TEST_BP5=ON
+# GPU
+cmake --preset <gpu-preset> -DBUILD_TESTS=ON -DVVM_TEST_BP5=ON
 ctest --test-dir build --output-on-failure -L bp5
+
+# CPU
+cmake --preset <cpu-preset> -DBUILD_TESTS=ON -DVVM_TEST_BP5=ON
+ctest --test-dir build_cpu --output-on-failure -L bp5
 ```
 
 The matrix covers:
 
-- configuration, schema, path-policy, and CPU field-source unit tests;
+- configuration, schema, path-policy, and field-source packing unit tests;
 - 1-, 2-, and 4-rank synchronous direct and packed output;
 - 1-, 2-, and 4-rank asynchronous direct output;
+  on CUDA, requested-direct variants intentionally exercise host packing;
 - collective configuration mismatch handling;
 - 1-rank read-back of data written by different writer counts;
 - exact values and shapes for 1-D through 4-D fields, coordinates, clocks, and
@@ -223,19 +229,13 @@ time.
   so `precision` can only ever narrow history — it cannot silently reduce
   restart fidelity. A separate checkpoint writer and a `Bp5RestartReader` are
   future work.
-- **GPU builds cannot use BP5.** Only a CPU field source exists, so
-  `Bp5HistoryWriter`'s constructor throws under `KOKKOS_ENABLE_CUDA` rather than
-  writing something unvalidated:
-
-    ```text
-    Direct BP5 history output is currently enabled only for the CPU build.
-    Use the legacy output path for GPU runs until GpuFieldSource is implemented.
-    ```
-
-    The BP5 test tier is likewise unavailable in GPU builds, so nothing here has
-    been exercised on a GPU. GPU runs use SST or HDF5. A `GpuFieldSource` behind
-    the existing field-source boundary is the intended extension; the schema and
-    writer lifecycle are designed not to change when it lands.
+- **CUDA output is host-staged.** `effective_buffer_mode()` always returns
+  `pack` in a CUDA build. The source creates a synchronized host mirror, then
+  copies the selected cells into a persistent `Bp5BufferSet` allocation before
+  calling ADIOS2. Its direct branch also throws under CUDA, enforcing the
+  no-device-pointer invariant at the source boundary. The host mirror itself is
+  currently allocated per field per step; cache it only after measurement shows
+  that allocation is material.
 - **No dataset rotation.** One run writes one dataset, however large it grows.
 - **No offline BP5-to-HDF5 conversion.** Read BP5 directly; see
   [Output](../user-guides/output.md#reading-the-output).
