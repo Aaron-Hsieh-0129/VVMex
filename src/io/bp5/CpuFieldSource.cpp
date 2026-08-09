@@ -7,7 +7,8 @@ namespace VVM::IO::BP5 {
 FieldInput CpuFieldSource::prepare(
     const std::string& field_name,
     const FieldSelection& selection,
-    CpuBufferMode mode) const {
+    CpuBufferMode mode,
+    OutputElementType element_type) const {
     auto it = state_.begin();
     while (it != state_.end() && it->first != field_name) ++it;
     if (it == state_.end()) {
@@ -40,7 +41,16 @@ FieldInput CpuFieldSource::prepare(
                 result.elements = selection.elements();
                 if (selection.empty()) return;
 
+                // Handing ADIOS2 the model's own memory is only possible when
+                // the on-disk type is VVM::Real. Any other precision has to be
+                // converted, which means it has to be staged.
                 if (mode == CpuBufferMode::Direct) {
+                    if (!output_element_matches_real(element_type)) {
+                        throw std::logic_error(
+                            "BP5 direct mode was selected for field '" + field_name +
+                            "' while output precision requires conversion; the writer "
+                            "should have resolved this to packing.");
+                    }
                     using Layout = typename std::decay_t<decltype(view)>::array_layout;
                     if constexpr (!std::is_same_v<Layout, Kokkos::LayoutRight>) {
                         throw std::invalid_argument(
@@ -53,15 +63,22 @@ FieldInput CpuFieldSource::prepare(
                     }
                 } else {
 #if defined(KOKKOS_ENABLE_CUDA)
-                    const auto host = field.get_host_data();
-                    auto& buffer = buffers_.require(field_name, selection.elements());
-                    pack_view(host, selection, buffer);
+                    const auto source = field.get_host_data();
 #else
                     Kokkos::fence("bp5_cpu_field_source");
-                    auto& buffer = buffers_.require(field_name, selection.elements());
-                    pack_view(view, selection, buffer);
+                    const auto& source = view;
 #endif
-                    result.data = buffer.data();
+                    if (element_type == OutputElementType::Float32) {
+                        auto& buffer =
+                            buffers_.require<float>(field_name, selection.elements());
+                        pack_view(source, selection, buffer);
+                        result.data = buffer.data();
+                    } else {
+                        auto& buffer =
+                            buffers_.require<double>(field_name, selection.elements());
+                        pack_view(source, selection, buffer);
+                        result.data = buffer.data();
+                    }
                     result.location = FieldMemoryLocation::Host;
                     result.packed = true;
                 }

@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <map>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include <adios2.h>
@@ -43,10 +44,17 @@ public:
     }
 
 private:
+    // Field data carries the configured output precision, which need not be
+    // VVM::Real. Coordinates and clocks deliberately do not: they are a few
+    // kilobytes per step against tens of gigabytes of field data, and
+    // narrowing a coordinate or a timestamp is an analysis hazard for no gain.
+    using FieldVariable =
+        std::variant<adios2::Variable<float>, adios2::Variable<double>>;
+
     struct FieldRecord {
         std::string name;
         FieldSelection selection;
-        adios2::Variable<VVM::Real> variable;
+        FieldVariable variable;
     };
 
     const Core::Grid& grid_;
@@ -57,6 +65,11 @@ private:
     int size_ = 1;
 
     Bp5OutputConfig config_;
+    // Resolved once in the constructor: element_type_ turns a 'native' request
+    // into a concrete on-disk type, and effective_buffer_mode_ downgrades a
+    // 'direct' request to packing when the precision needs converting.
+    OutputElementType element_type_ = OutputElementType::Float64;
+    CpuBufferMode effective_buffer_mode_ = CpuBufferMode::Direct;
     Bp5FieldSchema schema_;
     std::filesystem::path dataset_path_;
     std::vector<std::string> field_names_;

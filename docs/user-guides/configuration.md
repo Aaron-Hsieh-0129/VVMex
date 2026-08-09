@@ -9,7 +9,7 @@ The repository ships runnable sample configurations under `rundata/input_configs
 | Argument | Meaning |
 | -------- | ------- |
 | `path/to/config.json` | Optional. If present as the first non-flag argument, selects the configuration file. Flags such as `--io-tasks` are skipped when resolving this path. |
-| `--io-tasks N` | Reserve **N** MPI ranks for asynchronous I/O (see [I/O management](io-management.md)). |
+| `--io-tasks N` | Reserve **N** MPI ranks for asynchronous I/O. Only meaningful with `output.engine = "SST"`; see [Output](output.md). |
 
 Example:
 
@@ -164,7 +164,8 @@ Restart files are ordinary output files; there is no separate restart output pat
 | Key | Role |
 | --- | ---- |
 | `output_dir` | Directory for run output. `submit.py` creates it before launching the job. |
-| `engine` | ADIOS2 engine. Use `HDF5` for direct file output or `SST` for asynchronous streaming to I/O ranks. |
+| `engine` | ADIOS2 engine: `HDF5` (one file per output time), `SST` (asynchronous streaming to I/O ranks), or `BP5` (one multi-step `.bp` dataset, CPU builds only). See [Output](output.md). |
+| `bp5` | Engine-specific block read only when `engine` is `BP5`: `aggregation_type`, `num_subfiles`, `stats_level`, `async_write`, `buffer_mode`, `precision`, `overwrite`. |
 | `queue_limit` | ADIOS2 queue depth for buffered/asynchronous writes. |
 | `data_transport` | Optional ADIOS2 transport hint, e.g. `RDMA`, `WAN`, or empty for default behavior. |
 | `enable_netcdf` | Enables NetCDF-related output paths where supported. |

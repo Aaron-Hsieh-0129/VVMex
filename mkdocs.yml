@@ -57,19 +57,27 @@ extra_javascript:
 
 nav:
   - Home: index.md
-  - Environment Installation: environment.md
-  - CPU-Only Environment: environment-cpu.md
+  # navigation.indexes is enabled, so the first child is the section's own
+  # landing page: clicking "Environment Installation" opens it.
+  - Environment Installation:
+      - environment/index.md
+      - GPU Environment: environment/gpu.md
+      - CPU-Only Environment: environment/cpu.md
   - Quick Start: quick-start.md
   - User Guides:
       - Overview: user-guides/index.md
       - Job Submission: user-guides/job-submission.md
       - Model Configuration: user-guides/configuration.md
-      - I/O Management: user-guides/io-management.md
+      - Output: user-guides/output.md
   - Developer Guides:
       - Overview: developer-guides/index.md
       - System Architecture: developer-guides/architecture.md
       - Physics Implementation: developer-guides/physics.md
       - P3 Modifications: developer-guides/p3-modifications.md
+      - BP5 Output Internals: developer-guides/bp5-output.md
+      - SST Large-Scale Report: adios2-sst-large-scale-report.md
   - Examples:
+      - Overview: examples/index.md
       - Default cases: examples/default-cases.md
+      - TaiwanVVM: examples/taiwan-vvm.md
       - View gallery: examples/gallery.md

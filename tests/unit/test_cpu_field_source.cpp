@@ -59,6 +59,51 @@ int main(int argc, char** argv) {
         FieldSelection empty{3, {2, 2, 2}, {0, 0, 0}, {2, 0, 2}, {0, 0, 0}, {4, 4, 5}};
         CpuFieldSource::pack_view(three, empty, packed);
         check(packed.empty(), "empty selection pack");
+
+        // --- precision conversion -------------------------------------------
+        // Packing into a narrower buffer converts in the same pass. Selection
+        // geometry must be identical to the same-width pack: only the element
+        // type changes.
+        std::vector<float> packed_f32;
+        CpuFieldSource::pack_view(three, s3, packed_f32);
+        check(packed_f32 == std::vector<float>({10102, 10103, 10202, 10203,
+                                                20102, 20103, 20202, 20203}),
+              "3-D pack into float32 keeps order and halo exclusion");
+
+        std::vector<double> packed_f64;
+        CpuFieldSource::pack_view(three, s3, packed_f64);
+        check(packed_f64 == std::vector<double>({10102, 10103, 10202, 10203,
+                                                 20102, 20103, 20202, 20203}),
+              "3-D pack into float64");
+
+        // Every element is the plain static_cast of the source, including the
+        // rounding. A value that is not representable in float32 must land on
+        // exactly what the cast produces -- not on some other rounding.
+        Kokkos::View<VVM::Real*, Kokkos::LayoutRight, Kokkos::HostSpace>
+            lossy("lossy", 4);
+        lossy(0) = VVM::real(0.1);
+        lossy(1) = VVM::real(1.0) / VVM::real(3.0);
+        lossy(2) = VVM::real(16777217.0); // 2^24 + 1: first integer float32 misses
+        lossy(3) = VVM::real(-2.5);
+        FieldSelection s_lossy{1, {4}, {0}, {4}, {0}, {4}};
+        CpuFieldSource::pack_view(lossy, s_lossy, packed_f32);
+        for (std::size_t k = 0; k < 4; ++k) {
+            check(packed_f32[k] == static_cast<float>(lossy(k)),
+                  "float32 pack matches static_cast exactly");
+        }
+        check(packed_f32[3] == -2.5f, "exactly representable value is unchanged");
+
+        // Widening is lossless in the other direction.
+        CpuFieldSource::pack_view(lossy, s_lossy, packed_f64);
+        for (std::size_t k = 0; k < 4; ++k) {
+            check(packed_f64[k] == static_cast<double>(lossy(k)),
+                  "float64 pack matches static_cast exactly");
+        }
+
+        // Empty selections still resize to zero for a converting pack, rather
+        // than leaving a stale buffer from the previous step behind.
+        CpuFieldSource::pack_view(three, empty, packed_f32);
+        check(packed_f32.empty(), "empty selection pack into float32");
     }
     Kokkos::finalize();
     if (failures == 0) std::puts("test_cpu_field_source: PASS");

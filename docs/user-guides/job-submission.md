@@ -206,7 +206,7 @@ VVM_OMP_THREADS=4 ./submit.py --preset <your_preset_name> -c my_config.json \
 
 The I/O server spends its time in ADIOS2 and HDF5 and is effectively single-threaded, so the default of one core per I/O rank is usually right. Raise it only if the I/O ranks are demonstrably the bottleneck.
 
-This requires ADIOS2 to be built without Kokkos support; see [Environment Installation](../environment.md). With a Kokkos-enabled ADIOS2, each I/O rank opens a CUDA context anyway and the wrapper's GPU accounting no longer matches reality. VVMex warns about this at configure time.
+This requires ADIOS2 to be built without Kokkos support; see [GPU environment](../environment/gpu.md). With a Kokkos-enabled ADIOS2, each I/O rank opens a CUDA context anyway and the wrapper's GPU accounting no longer matches reality. VVMex warns about this at configure time.
 
 If you use fewer GPUs than *compute* tasks per node, the wrapper will warn that MPI ranks may share GPUs.
 

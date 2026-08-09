@@ -6,12 +6,12 @@ VVMex is a **C++17** cloud-resolving model using **Kokkos** for on-device parall
 
 | Path | Role |
 | ---- | ---- |
-| `src/main.cpp` | MPI init, Kokkos init, optional NCCL, config load, split communicators for I/O servers, `Grid` / `Parameters` / `State` / `HaloExchanger` / `Model` / `OutputManager`, time loop |
+| `src/main.cpp` | MPI init, Kokkos init, optional NCCL, config load, split communicators for I/O servers, `Grid` / `Parameters` / `State` / `HaloExchanger` / `Model` / `HistoryWriter`, time loop |
 | `src/driver/` | `Model`: orchestrates dynamical core, physics, and tendencies; implements `init`, `run_step`, `finalize` |
 | `src/core/` | `Grid`, `State`, `Field`, `Parameters`, `HaloExchanger`, initializer, boundary helpers |
 | `src/dynamics/` | Vector-vorticity dynamical core, time integration, forcings (sponge, nudging, random), idealized tests |
 | `src/physics/` | P3 (`p3/`), RRTMGP (`rrtmgp/`), turbulence, surface, land (Noah); CMake aggregates as `eamxx_physics` interface + static libs |
-| `src/io/` | `OutputManager` (ADIOS2), `IOServer` (SST consumer to HDF5) |
+| `src/io/` | `OutputManager` (ADIOS2 HDF5/SST), `IOServer` (SST consumer to HDF5), `history/` (neutral `HistoryWriter` interface), `bp5/` (direct BP5 writer; see [BP5 output internals](bp5-output.md)) |
 | `src/utils/` | `ConfigurationManager` (JSON via nlohmann), timing and timers |
 | `src/share/` | Shared EAMxx-derived utilities, constants, physics helpers |
 | `externals/ekat/` | EKAT submodule: logging, YAML, testing utilities, Kokkos integration (this only used in EAMxx-related things) |
@@ -25,7 +25,7 @@ Fortran pieces (e.g. Noah OpenACC) are linked through the physics/land subtree a
 2. **GPU:** `cudaGetDeviceCount` / `cudaGetDevice`; Kokkos is initialized with `set_device_id` from the node-local rank modulo GPU count.
 3. **Configuration:** `ConfigurationManager` loads the JSON path passed on the command line or by `submit.py`; runnable samples live under `rundata/input_configs/default_cases/`.
 4. **I/O split:** If `--io-tasks N` > 0, ranks are colored into simulation vs I/O; I/O ranks call `run_io_server` and exit; simulation ranks continue.
-5. **Simulation ranks:** NCCL communicator is created when enabled; `Grid` builds a Cartesian MPI decomposition; `State` and `HaloExchanger` are constructed; `Model::init` runs initializer and optional physics `initialize`/`init`; `OutputManager` writes initial step; the loop calls `model.run_step(dt)` until `simulation.total_time_s` is reached.
+5. **Simulation ranks:** NCCL communicator is created when enabled; `Grid` builds a Cartesian MPI decomposition; `State` and `HaloExchanger` are constructed; `Model::init` runs initializer and optional physics `initialize`/`init`; a `HistoryWriter` is constructed (`Bp5HistoryWriter` when `output.engine` is `BP5`, otherwise `LegacyHistoryWriter` wrapping `OutputManager`) and writes the initial step; the loop calls `model.run_step(dt)` until `simulation.total_time_s` is reached, then `close()` runs before Kokkos and MPI finalize.
 
 ## Major libraries (CMake targets)
 

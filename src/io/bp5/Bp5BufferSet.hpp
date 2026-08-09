@@ -11,11 +11,16 @@
 
 namespace VVM::IO::BP5 {
 
+// Persistent per-field staging buffers, allocated on first use and reused for
+// every later step. Kept in one map per element type: output precision is fixed
+// for the lifetime of a dataset, so exactly one of these is ever populated.
 class Bp5BufferSet {
 public:
-    std::vector<VVM::Real>& require(const std::string& field_name,
-                                    std::size_t elements) {
-        auto [it, inserted] = buffers_.try_emplace(field_name, elements);
+    template <typename T>
+    std::vector<T>& require(const std::string& field_name,
+                            std::size_t elements) {
+        auto& buffers = select<T>();
+        auto [it, inserted] = buffers.try_emplace(field_name, elements);
         if (!inserted && it->second.size() != elements) {
             throw std::logic_error(
                 "BP5 persistent buffer size changed for field '" + field_name + "'.");
@@ -25,15 +30,34 @@ public:
 
     std::size_t bytes() const noexcept {
         std::size_t total = 0;
-        for (const auto& item : buffers_) {
-            total += item.second.size() * sizeof(VVM::Real);
+        for (const auto& item : float_buffers_) {
+            total += item.second.size() * sizeof(float);
+        }
+        for (const auto& item : double_buffers_) {
+            total += item.second.size() * sizeof(double);
         }
         return total;
     }
 
 private:
-    std::map<std::string, std::vector<VVM::Real>> buffers_;
+    template <typename T>
+    std::map<std::string, std::vector<T>>& select();
+
+    std::map<std::string, std::vector<float>> float_buffers_;
+    std::map<std::string, std::vector<double>> double_buffers_;
 };
+
+template <>
+inline std::map<std::string, std::vector<float>>&
+Bp5BufferSet::select<float>() {
+    return float_buffers_;
+}
+
+template <>
+inline std::map<std::string, std::vector<double>>&
+Bp5BufferSet::select<double>() {
+    return double_buffers_;
+}
 
 } // namespace VVM::IO::BP5
 

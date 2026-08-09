@@ -16,7 +16,7 @@ This guide covers dependencies, building VVMex, and running jobs through the rec
 
 ### Libraries
 
-This guide covers dependencies, building VVMex, and running the `vvm` executable. For detailed instructions on building the full dependency stack from source, please refer to the **[Environment Installation Guide](environment.md)**.
+This guide covers dependencies, building VVMex, and running the `vvm` executable. For detailed instructions on building the full dependency stack from source, please refer to the **[Environment Installation Guide](environment/index.md)** — [GPU](environment/gpu.md) and [CPU-only](environment/cpu.md) stacks are documented separately.
 
 | Library | Minimum (tested) | Role |
 | ------- | ------------------ | ---- |
@@ -26,7 +26,7 @@ This guide covers dependencies, building VVMex, and running the `vvm` executable
 | NetCDF-C | 4.4+ | I/O |
 | NetCDF-Fortran | 4.4+ | Fortran interfaces |
 | PnetCDF | 1.14+ | Parallel I/O |
-| ADIOS2 | 2.11+ | Model output (`HDF5` / `SST` engines) |
+| ADIOS2 | 2.11+ | Model output (`HDF5` / `SST`; `BP5` needs 2.12+) |
 
 The root `CMakeLists.txt` also expects **NVIDIA CPU Math Library** (`libnvcpumath`) and, when `ENABLE_NCCL` is ON (default), **NCCL** under `NVHPC_DIR`. Turn off NCCL with `-DENABLE_NCCL=OFF` only if you have a matching build and know the implications for halo exchange.
 
@@ -160,7 +160,7 @@ mpirun -np 2 ./build/vvm ./rundata/input_configs/default_cases/advection_u.json 
 mpirun -np 4 ./build/vvm ./rundata/input_configs/default_cases/advection_u.json --io-tasks 2
 ```
 
-Details: [I/O management](user-guides/io-management.md).
+Details: [Output](user-guides/output.md).
 
 ## Documentation site
 
