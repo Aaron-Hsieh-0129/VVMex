@@ -201,6 +201,22 @@ cd ../..
 
 ```
 
+Verify that CUDA really was enabled and that the architecture matches your GPU:
+
+```bash
+grep -E "Kokkos_DEVICES|Kokkos_ARCH" \
+     $INSTALL_DIR/lib/cmake/Kokkos/KokkosConfigCommon.cmake
+#   set(Kokkos_DEVICES CUDA;OPENMP;SERIAL)
+#   set(Kokkos_ARCH HOPPER90)
+
+ldd $INSTALL_DIR/lib/libkokkoscore.so.4.7 | grep -i cudart   # expect a hit
+```
+
+An architecture mismatch does not fail the build. It produces a library that
+either JITs every kernel at first launch — a large one-off startup cost — or
+fails at launch on a device the generated code does not target. Check this
+before building VVMex rather than debugging it later.
+
 ### libfabric 1.22.0
 libfabric provides the OpenFabrics Interfaces used by high-performance communication transports. Build it before ADIOS2 so ADIOS2 can find it when enabling SST/RDMA-capable transports.
 
@@ -330,3 +346,127 @@ export LD_LIBRARY_PATH=$INSTALL_DIR/lib64:$INSTALL_DIR/lib:$LD_LIBRARY_PATH
 echo "VVMex Environment Loaded Successfully!"
 
 ```
+
+---
+
+## 5. Configure and Build VVMex
+
+Add a GPU preset to `CMakePresets.json` describing your machine, then:
+
+```bash
+source env_setup.sh
+export VVM_ROOT=/path/to/VVMex
+
+cmake --preset <your-gpu-preset> -DBUILD_TESTS=ON
+cmake --build build -j$(nproc)
+```
+
+Expected configure output:
+
+```text
+-- Detected VVM_ROOT: /path/to/VVMex
+-- VVM Execution Backend: GPU (Kokkos CUDA)
+-- VVM Precision: DOUBLE (FP64)
+-- Building with NCCL support
+-- MPI found: /path/to/hpcx/ompi/bin/mpic++
+-- ADIOS2 has no Kokkos support -- IO server ranks stay off the GPU
+```
+
+The last two lines are the ones worth reading. `Building with Standard MPI
+support` on a GPU build means `ENABLE_NCCL` was turned off, and a warning about
+ADIOS2 being Kokkos-enabled means each I/O rank will occupy a GPU it never uses
+(see section 3).
+
+Confirm the binary picked up the intended stack:
+
+```bash
+ldd build/vvm | grep -E 'libkokkoscore|libadios2_cxx11|libnccl'
+nm -D --undefined-only build/vvm | grep -c nccl     # non-zero with NCCL on
+```
+
+`libkokkoscore` must resolve to **your** prefix. CPU and CUDA Kokkos share a
+SONAME, so a stray CPU prefix earlier on `LD_LIBRARY_PATH` silently produces a
+model that never touches the GPU.
+
+---
+
+## 6. Running
+
+Use `submit.py`; it reads the same preset that built the code, so the launcher
+cannot disagree with the binary about the backend.
+
+```bash
+# Local run on specific physical GPUs
+VVM_GPU_LIST=0,1,2,3 ./submit.py --local \
+    -c rundata/input_configs/default_cases/advection_u.json \
+    --preset <your-gpu-preset> --compute 4 --nodes 1
+
+# SLURM, one rank per GPU
+./submit.py --preset <your-gpu-preset> \
+    -c rundata/input_configs/default_cases/sea_grass_mountain.json \
+    --compute 16 --nodes 1 --gpus 16 -t 24:00:00
+```
+
+The usual mapping is one MPI rank per GPU. `--gpus` covers compute ranks only —
+I/O ranks are host-only and take no device. Leave `--cpus` unset so the wrapper
+fills the node and pins each rank NUMA-local to its GPU; the `[GPUMap]` lines
+report what it decided.
+
+Output engine choice matters here: GPU builds use `HDF5` or `SST`. `BP5` is
+CPU-only and raises an explicit error in a CUDA build. See
+[Output](../user-guides/output.md).
+
+---
+
+## 7. Tests
+
+```bash
+ctest --test-dir build --output-on-failure
+```
+
+The default tier is seven bit-for-bit regression cases plus the unit tests, and
+needs one GPU. Heavier tiers are opt-in at configure time:
+
+| Tier | Needs | Enable |
+|---|---|---|
+| default | 1 GPU | always registered |
+| physics | 1 GPU | `-DVVM_TEST_PHYSICS=ON` |
+| multirank | 4 **physical** GPUs | `-DVVM_TEST_MULTIRANK=ON` |
+| large | 8 GPUs + the 961 MB `taiwanvvm_2048.nc` | `-DVVM_TEST_LARGE=ON` |
+
+Multi-rank tiers need that many real devices. Several NCCL ranks sharing one GPU
+is unsupported and silently changes results, so they cannot be faked on a
+smaller machine — see `tests/scripts/one_gpu_per_rank.sh`.
+
+`VVM_TEST_BP5` is refused on a GPU build: BP5 has no GPU field source.
+
+GPU results are gated against `tests/baselines/` and `tests/references/`. The
+CPU backend has its own data under `*_cpu/`, because the two agree only to a few
+ulp and the SHA-256 digests tolerate nothing.
+
+---
+
+## 8. Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `Could not find NVIDIA CPU Math Library` | `NVHPC_DIR` unset or wrong | VVMex links `libnvcpumath` unconditionally; set `NVHPC_DIR` in the preset |
+| RRTMGP fails with `NetCDF: Invalid dimension ID or name` | NetCDF-C was built with the MPI wrappers | Rebuild NetCDF-C with plain `gcc`/`g++` (section 2), then rebuild PnetCDF and VVMex |
+| `[Rank N] ERROR: no visible CUDA device` | `CUDA_VISIBLE_DEVICES` empty, or fewer GPUs than compute ranks | Check `--gpus` and `VVM_GPU_LIST`; the model aborts rather than silently sharing a device |
+| Warning that ranks may share GPUs | `--gpus` below compute ranks per node | Request `>= ceil(compute / nodes)` |
+| I/O ranks each hold ~520 MB of GPU memory | ADIOS2 was built with Kokkos, so it calls `Kokkos::initialize()` on I/O ranks | Rebuild ADIOS2 with `-DADIOS2_USE_Kokkos=OFF`, or point `ADIOS2_DIR` at a Kokkos-free prefix |
+| Model runs but never uses the GPU | A CPU Kokkos with the same SONAME loaded first | `ldd build/vvm \| grep libkokkoscore`; keep the CUDA prefix ahead on `LD_LIBRARY_PATH` |
+| Very slow first time step, then normal | Kokkos CUDA architecture does not match the device, so kernels JIT at launch | Rebuild Kokkos with the correct `Kokkos_ARCH_*` |
+| `version 'GLIBCXX_3.4.30' not found` starting `vvm` | NVHPC compiled against a newer GCC than the `libstdc++` loaded at run time | Pin GCC via `makelocalrc`, or pass `--gcc-toolchain` for **C, C++ and Fortran** |
+| `undefined reference to std::ios_base_library_init()` | Same GCC mismatch, at link time | Add `--gcc-toolchain=$INSTALL_DIR/gcc11` to that library's build |
+| Low GPU utilization, no error | One core per rank cannot carry the launch loop, MPI, NCCL and the driver threads | Leave `--cpus` unset; see [CPU allocation](../user-guides/job-submission.md#cpu-allocation) |
+| SST run segfaults in the data-plane read handler at ~400+ writers | Known SST scaling limit on this class of system | Reduce writer count, or use `HDF5`; the CPU backend has `BP5` as an alternative |
+
+To check which GCC ABI a finished binary needs:
+
+```bash
+objdump -T build/vvm | grep -oE 'GLIBCXX_3\.4\.[0-9]+' | sort -uV | tail -1
+```
+
+GCC 11 provides up to `GLIBCXX_3.4.29`. Anything higher will not start against a
+GCC 11 runtime.
