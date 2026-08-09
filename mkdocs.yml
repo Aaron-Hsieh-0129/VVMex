@@ -75,9 +75,9 @@ nav:
       - Physics Implementation: developer-guides/physics.md
       - P3 Modifications: developer-guides/p3-modifications.md
       - BP5 Output Internals: developer-guides/bp5-output.md
-      - SST Large-Scale Report: adios2-sst-large-scale-report.md
   - Examples:
       - Overview: examples/index.md
       - Default cases: examples/default-cases.md
+      - Idealized simulations: examples/idealized.md
       - TaiwanVVM: examples/taiwan-vvm.md
       - View gallery: examples/gallery.md
