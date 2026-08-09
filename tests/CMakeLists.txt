@@ -52,48 +52,68 @@ set(VVM_TEST_SECONDS 120 CACHE STRING "Simulated seconds for default_cases tests
 # ---------------------------------------------------------------------------
 # Test tiers, by the resource they need -- not by how much we trust them.
 #
-#   default                1 GPU,  ~40 s   always registered; plain `ctest`
-#   VVM_TEST_PHYSICS       1 GPU,  ~80 s   P3 / RRTMGP / Noah land
-#   VVM_TEST_MULTIRANK     4 GPUs, ~30 s   rank invariance (2-D decomposition)
-#   VVM_TEST_LARGE         8 GPUs, ~140 s  2048^2, needs the 961 MB input file
+#   default                always on   advection_u/v/w, stretching, twisting,
+#                                      2dbubble, mountain, plus the unit tests
+#   VVM_TEST_BP5           CPU only    direct BP5 output: unit, MPI, model
+#   VVM_TEST_PHYSICS       GPU only    P3 / RRTMGP / Noah land cases
+#   VVM_TEST_MULTIRANK     4 ranks     rank invariance (2-D decomposition)
+#   VVM_TEST_LARGE         8 ranks     2048^2, needs the 961 MB input file
 #
-# The optional tiers are opt-in at CONFIGURE time rather than label-filtered,
-# because `ctest` with no arguments runs every registered test -- `-L` filters
-# down to a label, it does not hold anything back. Registering them only when
-# asked is what actually keeps them off a default run on a 1-GPU machine.
+# Enable one or several at configure time:
 #
-#   cmake -B build -DVVM_TEST_PHYSICS=ON -DVVM_TEST_MULTIRANK=ON
+#   cmake --preset f1-cpu -DBUILD_TESTS=ON -DVVM_TEST_BP5=ON
+#   cmake --preset blaze  -DBUILD_TESTS=ON -DVVM_TEST_PHYSICS=ON -DVVM_TEST_MULTIRANK=ON
 #
-# They also carry labels, so once enabled you can still select a tier with
-# `ctest -L multirank`.
+# Opt-in at CONFIGURE time rather than label-filtered, because `ctest` with no
+# arguments runs every registered test -- `-L` filters down to a label, it does
+# not hold anything back. Registering a tier only when asked is what actually
+# keeps it off a default run. Once enabled, each tier still carries a label, so
+# `ctest -L bp5` or `ctest -L multirank` selects it.
 #
 # Every tier is a bit-for-bit gate: with random_perturbation disabled (see
 # make_test_config.py) each case is exactly reproducible, so there is no
 # tolerance to tune. A failure means bits moved.
 #
-# Multi-rank tiers need that many *physical* GPUs. Several NCCL ranks sharing one
-# device is unsupported and silently changes results, so they cannot be faked on
-# a smaller machine -- see tests/scripts/one_gpu_per_rank.sh.
+# On a GPU build the multi-rank tiers need that many *physical* GPUs. Several
+# NCCL ranks sharing one device is unsupported and silently changes results, so
+# they cannot be faked on a smaller machine -- see scripts/one_gpu_per_rank.sh.
 # ---------------------------------------------------------------------------
-option(VVM_TEST_PHYSICS   "Register physics-tier tests (1 GPU, ~80 s)"                OFF)
-option(VVM_TEST_MULTIRANK "Register rank-invariance tests (needs 4 GPUs, ~30 s)"      OFF)
-option(VVM_TEST_LARGE     "Register the 2048^2 test (needs 8 GPUs, 961 MB input)"     OFF)
+option(VVM_TEST_BP5       "Register direct BP5 output tests (CPU builds only)"        OFF)
+option(VVM_TEST_PHYSICS   "Register physics-tier tests (GPU builds only, ~80 s)"      OFF)
+option(VVM_TEST_MULTIRANK "Register rank-invariance tests (4 ranks, ~30 s)"           OFF)
+option(VVM_TEST_LARGE     "Register the 2048^2 test (8 ranks, 961 MB input)"          OFF)
+
+# A tier the current backend cannot run is switched off here, with the reason.
+# Silently registering nothing would look like the tier passed.
+if(VVM_TEST_BP5 AND VVM_ENABLE_GPU)
+    message(WARNING
+        "VVM_TEST_BP5=ON ignored: BP5 has no GPU field source, and "
+        "Bp5HistoryWriter refuses to construct in a CUDA build.")
+    set(VVM_TEST_BP5 OFF)
+endif()
+if(VVM_TEST_PHYSICS AND NOT VVM_ENABLE_GPU)
+    message(WARNING
+        "VVM_TEST_PHYSICS=ON ignored: no CPU reference data exists under "
+        "tests/references_cpu/ for the physics cases.")
+    set(VVM_TEST_PHYSICS OFF)
+endif()
 
 # Report the tiers the way the rest of the configure output reports its options,
-# including what each one needs and how to switch it on.
-function(_report_test_tier LABEL STATE NEEDS TIME_S OPT_NAME)
+# including which backend each one needs and how to switch it on.
+function(_report_test_tier LABEL STATE NEEDS OPT_NAME)
     if(STATE)
-        message(STATUS "  Test tier ${LABEL}: ON   (${NEEDS}, ~${TIME_S})")
+        message(STATUS "  Test tier ${LABEL}: ON   (${NEEDS})")
     else()
-        message(STATUS "  Test tier ${LABEL}: OFF  (${NEEDS}, ~${TIME_S}) -- enable with -D${OPT_NAME}=ON")
+        message(STATUS "  Test tier ${LABEL}: OFF  (${NEEDS}) -- enable with -D${OPT_NAME}=ON")
     endif()
 endfunction()
 
 message(STATUS "Test tiers (all are bit-for-bit gates; simulated seconds per case: ${VVM_TEST_SECONDS}):")
-message(STATUS "  Test tier default  : ON   (1 GPU, ~36 s) -- always registered")
-_report_test_tier("physics  " ${VVM_TEST_PHYSICS}   "1 GPU"  "72 s"  VVM_TEST_PHYSICS)
-_report_test_tier("multirank" ${VVM_TEST_MULTIRANK} "4 GPUs" "40 s"  VVM_TEST_MULTIRANK)
-_report_test_tier("large    " ${VVM_TEST_LARGE}     "8 GPUs" "114 s" VVM_TEST_LARGE)
+message(STATUS "  Test tier default  : ON   (advection x3, stretching, twisting, 2dbubble, mountain, unit tests)")
+_report_test_tier("bp5      " ${VVM_TEST_BP5}       "CPU build only"    VVM_TEST_BP5)
+_report_test_tier("physics  " ${VVM_TEST_PHYSICS}   "GPU build only"    VVM_TEST_PHYSICS)
+_report_test_tier("multirank" ${VVM_TEST_MULTIRANK} "4 ranks / 4 GPUs"  VVM_TEST_MULTIRANK)
+_report_test_tier("large    " ${VVM_TEST_LARGE}     "8 ranks / 8 GPUs"  VVM_TEST_LARGE)
 
 # The original hand-written regression cases, comparing against stored baseline
 # files. Small enough that a full baseline is practical.
@@ -234,9 +254,13 @@ add_vvm_unit_test(test_sst_path)
 # usable through an explicit opt-in. Pure decision logic.
 add_vvm_unit_test(test_restart_time)
 
-# Direct BP5 pure logic and CPU staging. These link the new isolated I/O
-# subsystem but do not open a dataset or require multiple ranks.
-if(NOT VVM_ENABLE_GPU)
+# --- bp5 tier: CPU only, opt-in with -DVVM_TEST_BP5=ON ---------------------
+# Everything below writes and reads real BP5 datasets under
+# ${CMAKE_BINARY_DIR}, so it is off by default rather than paid for on every
+# `ctest`. The backend guard above has already forced this OFF on a GPU build.
+if(VVM_TEST_BP5)
+    # Direct BP5 pure logic and CPU staging. These link the isolated I/O
+    # subsystem but do not open a dataset or require multiple ranks.
     foreach(BP5_UNIT_TEST
             test_bp5_output_config
             test_bp5_field_schema
@@ -293,6 +317,39 @@ if(NOT VVM_ENABLE_GPU)
                              LABELS "bp5;integration;async;multirank" TIMEOUT 90)
     endforeach()
 
+    # Output precision is independent of VVM::Real, so both on-disk types are
+    # exercised whichever way this build was configured. The test asserts the
+    # variables really are the requested type, so on a double build float32 is
+    # the converting case and float64 is the pass-through -- and vice versa.
+    # 'direct' is requested deliberately: the converting case must resolve
+    # itself to packing rather than fail.
+    foreach(BP5_PRECISION float32 float64)
+        foreach(BP5_RANKS 1 2 4)
+            set(BP5_TEST_NAME test_bp5_history_${BP5_PRECISION}_r${BP5_RANKS})
+            add_test(NAME ${BP5_TEST_NAME}
+                     COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${BP5_RANKS}
+                             ${VVM_MPI_BIND_ARGS} $<TARGET_FILE:test_bp5_history_mpi>
+                             ${TEST_DIR}/configs/advection_u.json
+                             ${BP5_INTEGRATION_WORKDIR} direct sync ${BP5_RANKS}
+                             ${BP5_PRECISION}
+                     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+            set_tests_properties(${BP5_TEST_NAME} PROPERTIES
+                                 LABELS "bp5;integration;precision;multirank" TIMEOUT 90)
+        endforeach()
+    endforeach()
+
+    # Reduced precision has to survive the async path too: it is the combination
+    # where a staging buffer is both converted and handed to a background
+    # writer thread.
+    add_test(NAME test_bp5_history_float32_async_r2
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+                     ${VVM_MPI_BIND_ARGS} $<TARGET_FILE:test_bp5_history_mpi>
+                     ${TEST_DIR}/configs/advection_u.json
+                     ${BP5_INTEGRATION_WORKDIR} pack async 2 float32
+             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(test_bp5_history_float32_async_r2 PROPERTIES
+                         LABELS "bp5;integration;precision;async;multirank" TIMEOUT 90)
+
     add_executable(test_bp5_model_output integration/test_bp5_model_output.cpp)
     target_include_directories(test_bp5_model_output PRIVATE ${CMAKE_SOURCE_DIR}/src)
     target_link_libraries(test_bp5_model_output PRIVATE
@@ -345,7 +402,7 @@ if(NOT VVM_ENABLE_GPU)
     set_tests_properties(Compare_bp5_hdf5_model_smoke PROPERTIES
                          DEPENDS "Run_bp5_model_smoke;Run_hdf5_model_smoke"
                          LABELS "bp5;integration;compatibility" TIMEOUT 30)
-endif()
+endif() # VVM_TEST_BP5
 
 # --- unit, on files: no GPU, 1-2 ranks, <1 s ------------------------------
 # Same idea as add_vvm_unit_test, but the code under test reads real HDF5 and
@@ -418,7 +475,9 @@ add_vvm_test(2dbubble "u v w xi eta zeta th")
 # Terrain + the only physics-off default_case beyond the 32^2 set. 7 s.
 add_case_test(mountain 1 "")
 
-# --- physics: 1 GPU, ~80 s. P3, RRTMGP and the Noah land model -------------
+# --- physics tier: GPU only, ~80 s. P3, RRTMGP and the Noah land model -----
+# Forced OFF on a CPU build by the backend guard above: tests/references_cpu/
+# has no digests for these cases, so they would fail for the wrong reason.
 if(VVM_TEST_PHYSICS)
     add_case_test(evergreen          1 physics)
     add_case_test(grass              1 physics)

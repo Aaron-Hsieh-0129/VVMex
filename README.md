@@ -192,6 +192,14 @@ cd $VVM_ROOT
 ./submit.py -c ./rundata/input_configs/default_cases/sea_grass_mountain.json --compute 16 --io 4 --nodes 4 --gpus 5 -t 24:00:00
 ```
 
+- SLURM Submission (BP5 Engine, CPU build, no I/O ranks):
+
+```bash
+cd $VVM_ROOT
+./submit.py --preset f1-cpu -c ./rundata/input_configs/default_cases/taiwanvvm_2048_bp5.json \
+  --compute 512 --nodes 10 --cpus 2 --omp-threads 2 -t 24:00:00
+```
+
 
 #### Option B: Manual Execution (Advanced)
 Run the model from the `build` directory:
@@ -201,9 +209,28 @@ cd $VVM_ROOT
 mpirun -np 1 ./build/vvm
 ```
 
+### Step 7: Choose an Output Engine
+
+The `output.engine` key in the case JSON selects how results are written. The
+three engines are not interchangeable — the right one depends on your build:
+
+| Engine | Writes | I/O ranks | GPU build | CPU build |
+|---|---|---|---|---|
+| `HDF5` | one file per output time | none | yes | yes |
+| `SST` | streams to I/O ranks, which write HDF5 | required (`--io N`) | yes (production path) | yes |
+| `BP5` | one multi-step `.bp` dataset, written directly by the compute ranks | none | **not available** | yes (production path) |
+
+`BP5` is CPU-only: no GPU field source exists yet, so selecting it in a CUDA
+build raises an explicit error rather than writing unvalidated output. It also
+supports reduced-precision history (`"precision": "float32"`), which roughly
+halves dataset size without changing how the model computes.
+
+See [Output](https://aaron-hsieh-0129.github.io/VVMex/user-guides/output/) for
+the full option reference, engine comparison, and dataset-sizing guidance.
+
 ##### Asynchronous I/O (Optional)
 
-To use asynchronous output, specify the SST engine in your case JSON. You can then allocate dedicated tasks for I/O.
+For SST, specify the engine in your case JSON and allocate dedicated tasks for I/O.
 
 For example, to use **1 GPU/CPU for the model** and **1 CPU for I/O**:
 
@@ -218,6 +245,9 @@ To use **2 GPUs/CPUs for the model** and **2 CPUs for I/O**:
 cd $VVM_ROOT
 mpirun -np 4 ./build/vvm --io-tasks 2
 ```
+
+For BP5, asynchronous writing is a JSON option (`"async_write": true`) rather
+than a rank allocation — there are no I/O ranks to request.
 
 
 ## Reproducing the paper experiments

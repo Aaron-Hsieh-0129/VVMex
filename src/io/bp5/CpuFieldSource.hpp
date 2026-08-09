@@ -23,12 +23,17 @@ public:
 
     FieldInput prepare(const std::string& field_name,
                        const FieldSelection& selection,
-                       CpuBufferMode mode) const;
+                       CpuBufferMode mode,
+                       OutputElementType element_type) const;
 
-    template <typename View>
+    // Out is deduced from the destination buffer, so this both packs a
+    // halo-free region and, when the output buffer is narrower than the view,
+    // performs the precision conversion in the same pass. There is no separate
+    // convert step and no second staging copy.
+    template <typename Out, typename View>
     static void pack_view(const View& view,
                           const FieldSelection& selection,
-                          std::vector<VVM::Real>& output) {
+                          std::vector<Out>& output) {
         constexpr std::size_t dimensions = View::rank;
         static_assert(dimensions >= 1 && dimensions <= 4,
                       "BP5 packing supports 1-D through 4-D views.");
@@ -41,22 +46,25 @@ public:
         std::size_t out = 0;
         if constexpr (dimensions == 1) {
             for (std::size_t k = 0; k < selection.count[0]; ++k) {
-                output[out++] = view(selection.memory_start[0] + k);
+                output[out++] = static_cast<Out>(
+                    view(selection.memory_start[0] + k));
             }
         } else if constexpr (dimensions == 2) {
             for (std::size_t j = 0; j < selection.count[0]; ++j) {
                 for (std::size_t i = 0; i < selection.count[1]; ++i) {
-                    output[out++] = view(selection.memory_start[0] + j,
-                                         selection.memory_start[1] + i);
+                    output[out++] = static_cast<Out>(
+                        view(selection.memory_start[0] + j,
+                             selection.memory_start[1] + i));
                 }
             }
         } else if constexpr (dimensions == 3) {
             for (std::size_t k = 0; k < selection.count[0]; ++k) {
                 for (std::size_t j = 0; j < selection.count[1]; ++j) {
                     for (std::size_t i = 0; i < selection.count[2]; ++i) {
-                        output[out++] = view(selection.memory_start[0] + k,
-                                             selection.memory_start[1] + j,
-                                             selection.memory_start[2] + i);
+                        output[out++] = static_cast<Out>(
+                            view(selection.memory_start[0] + k,
+                                 selection.memory_start[1] + j,
+                                 selection.memory_start[2] + i));
                     }
                 }
             }
@@ -65,10 +73,11 @@ public:
                 for (std::size_t k = 0; k < selection.count[1]; ++k) {
                     for (std::size_t j = 0; j < selection.count[2]; ++j) {
                         for (std::size_t i = 0; i < selection.count[3]; ++i) {
-                            output[out++] = view(selection.memory_start[0] + c,
-                                                 selection.memory_start[1] + k,
-                                                 selection.memory_start[2] + j,
-                                                 selection.memory_start[3] + i);
+                            output[out++] = static_cast<Out>(
+                                view(selection.memory_start[0] + c,
+                                     selection.memory_start[1] + k,
+                                     selection.memory_start[2] + j,
+                                     selection.memory_start[3] + i));
                         }
                     }
                 }

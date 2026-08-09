@@ -16,6 +16,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "../../externals/json/json.hpp"
@@ -112,6 +113,7 @@ nlohmann::json make_config(
     const std::filesystem::path& output_dir,
     const std::string& mode,
     bool async_write,
+    const std::string& precision,
     bool empty_rank_case,
     int comm_size) {
     std::ifstream stream(base_config);
@@ -139,6 +141,7 @@ nlohmann::json make_config(
         {"stats_level", 0},
         {"async_write", async_write},
         {"buffer_mode", mode},
+        {"precision", precision},
         {"overwrite", true}};
     return config;
 }
@@ -153,10 +156,15 @@ void check_shape(const adios2::Dims& got, const adios2::Dims& want,
     check(got == want, name + " global shape");
 }
 
+// Elem is the on-disk field element type, which is output.bp5.precision and not
+// necessarily VVM::Real. Coordinates and clocks are deliberately excluded: the
+// writer keeps those at full precision regardless, and this asserts that.
+template <typename Elem>
 void read_and_check(
     const std::filesystem::path& dataset,
     int x_end,
     int y_end) {
+    using Other = std::conditional_t<std::is_same_v<Elem, float>, double, float>;
     adios2::ADIOS adios(MPI_COMM_SELF);
     adios2::IO io = adios.DeclareIO("VVM_BP5_TEST_READER");
     adios2::Engine reader = io.Open(dataset.string(), adios2::Mode::Read, MPI_COMM_SELF);
@@ -168,10 +176,20 @@ void read_and_check(
         auto x_var = io.InquireVariable<VVM::Real>("coordinates/x");
         auto y_var = io.InquireVariable<VVM::Real>("coordinates/y");
         auto z_var = io.InquireVariable<VVM::Real>("coordinates/z_mid");
-        auto one_var = io.InquireVariable<VVM::Real>("thbar");
-        auto two_var = io.InquireVariable<VVM::Real>("topo");
-        auto three_var = io.InquireVariable<VVM::Real>("u");
-        auto four_var = io.InquireVariable<VVM::Real>("bp5_test_4d");
+        auto one_var = io.InquireVariable<Elem>("thbar");
+        auto two_var = io.InquireVariable<Elem>("topo");
+        auto three_var = io.InquireVariable<Elem>("u");
+        auto four_var = io.InquireVariable<Elem>("bp5_test_4d");
+
+        // The whole point of the precision option: the fields really are the
+        // requested type on disk, and really are not the other one. Without the
+        // negative half, a writer that ignored the setting would still pass.
+        check(!io.InquireVariable<Other>("thbar"), "thbar is not the other float type");
+        check(!io.InquireVariable<Other>("topo"), "topo is not the other float type");
+        check(!io.InquireVariable<Other>("u"), "u is not the other float type");
+        check(!io.InquireVariable<Other>("bp5_test_4d"),
+              "bp5_test_4d is not the other float type");
+
         check(time_var && model_time_var && model_step_var, "clock variables exist");
         check(x_var && y_var && z_var, "coordinate variables exist");
         check(one_var && two_var && three_var && four_var, "all configured fields exist");
@@ -221,27 +239,34 @@ void read_and_check(
         four_var.SetSelection({{0, z_start, 0, 0},
                                {2, z_count, static_cast<std::size_t>(y_count),
                                 static_cast<std::size_t>(x_count)}});
-        std::vector<VVM::Real> one(z_count);
-        std::vector<VVM::Real> two(y_count * x_count);
-        std::vector<VVM::Real> three(z_count * y_count * x_count);
-        std::vector<VVM::Real> four(2 * z_count * y_count * x_count);
+        std::vector<Elem> one(z_count);
+        std::vector<Elem> two(y_count * x_count);
+        std::vector<Elem> three(z_count * y_count * x_count);
+        std::vector<Elem> four(2 * z_count * y_count * x_count);
         reader.Get(one_var, one.data(), adios2::Mode::Sync);
         reader.Get(two_var, two.data(), adios2::Mode::Sync);
         reader.Get(three_var, three.data(), adios2::Mode::Sync);
         reader.Get(four_var, four.data(), adios2::Mode::Sync);
+        // Exact equality against the cast of the model value. Conversion is a
+        // plain static_cast, so there is no tolerance to tune even at float32:
+        // a different rounding would be a real defect, not noise.
         for (int k = 0; k < z_count; ++k)
-            check(one[k] == expected_1d(observed_steps, z_start + k), "1-D field value");
+            check(one[k] == static_cast<Elem>(expected_1d(observed_steps, z_start + k)),
+                  "1-D field value");
         for (int j = 0; j < y_count; ++j) {
             for (int i = 0; i < x_count; ++i) {
-                check(two[j * x_count + i] == expected_2d(observed_steps, j, i),
+                check(two[j * x_count + i] ==
+                          static_cast<Elem>(expected_2d(observed_steps, j, i)),
                       "2-D field value");
                 for (int k = 0; k < z_count; ++k) {
                     const std::size_t p = (k * y_count + j) * x_count + i;
-                    check(three[p] == expected_3d(observed_steps, z_start + k, j, i),
+                    check(three[p] == static_cast<Elem>(
+                                          expected_3d(observed_steps, z_start + k, j, i)),
                           "3-D field value");
                     for (int c = 0; c < 2; ++c) {
                         const std::size_t q = ((c * z_count + k) * y_count + j) * x_count + i;
-                        check(four[q] == expected_4d(observed_steps, c, z_start + k, j, i),
+                        check(four[q] == static_cast<Elem>(
+                                             expected_4d(observed_steps, c, z_start + k, j, i)),
                               "4-D field value");
                     }
                 }
@@ -262,6 +287,21 @@ void read_and_check(
                   "field staggering metadata");
             check(schema_version && schema_version.Data().at(0) == "1",
                   "dataset schema metadata");
+
+            // A reader has to be able to tell a lossless file from a narrowed
+            // one without inspecting variable types by hand.
+            const auto field_precision =
+                io.InquireAttribute<std::string>("vvm_field_precision");
+            const auto real_precision =
+                io.InquireAttribute<std::string>("vvm_real_precision");
+            const std::string want_field =
+                std::is_same_v<Elem, float> ? "float32" : "float64";
+            const std::string want_real =
+                sizeof(VVM::Real) == 8 ? "float64" : "float32";
+            check(field_precision && field_precision.Data().at(0) == want_field,
+                  "vvm_field_precision records the on-disk field type");
+            check(real_precision && real_precision.Data().at(0) == want_real,
+                  "vvm_real_precision still records the model's own precision");
         }
         reader.EndStep();
         ++observed_steps;
@@ -277,11 +317,11 @@ int main(int argc, char** argv) {
     MPI_Comm_rank(MPI_COMM_WORLD, &g_rank);
     int comm_size = 1;
     MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
-    if (argc != 6) {
+    if (argc != 6 && argc != 7) {
         if (g_rank == 0) {
             std::fprintf(stderr,
                          "usage: test_bp5_history_mpi BASE_CONFIG WORK_ROOT direct|pack "
-                         "sync|async EXPECTED_RANKS\n");
+                         "sync|async EXPECTED_RANKS [native|float32|float64]\n");
         }
         MPI_Finalize();
         return 2;
@@ -300,8 +340,12 @@ int main(int argc, char** argv) {
 
     const std::string mode = argv[3];
     const bool async_write = std::string(argv[4]) == "async";
+    // Omitted precision means 'native', which is the pre-existing behaviour, so
+    // the tests registered before this option existed keep their exact meaning.
+    const std::string precision = (argc == 7) ? argv[6] : "native";
     const bool empty_rank_case = comm_size >= 4;
-    const std::string tag = mode + "_" + argv[4] + "_r" + std::to_string(comm_size);
+    const std::string tag = mode + "_" + argv[4] + "_" + precision + "_r" +
+                            std::to_string(comm_size);
     const std::filesystem::path case_dir =
         std::filesystem::path(argv[2]) / ("bp5_history_" + tag);
     const std::filesystem::path config_path = case_dir.parent_path() / ("bp5_" + tag + ".json");
@@ -310,7 +354,7 @@ int main(int argc, char** argv) {
         if (g_rank == 0) {
             std::filesystem::create_directories(case_dir.parent_path());
             const auto json = make_config(argv[1], case_dir, mode, async_write,
-                                          empty_rank_case, comm_size);
+                                          precision, empty_rank_case, comm_size);
             std::ofstream output(config_path);
             output << json.dump(2) << '\n';
         }
@@ -339,9 +383,16 @@ int main(int argc, char** argv) {
             writer.close();
             MPI_Barrier(MPI_COMM_WORLD);
             if (g_rank == 0) {
-                read_and_check(case_dir / "history.bp",
-                               empty_rank_case ? 1 : 6,
-                               empty_rank_case ? 1 : 5);
+                const int x_end = empty_rank_case ? 1 : 6;
+                const int y_end = empty_rank_case ? 1 : 5;
+                const bool on_disk_is_float32 =
+                    (precision == "float32") ||
+                    (precision == "native" && sizeof(VVM::Real) == sizeof(float));
+                if (on_disk_is_float32) {
+                    read_and_check<float>(case_dir / "history.bp", x_end, y_end);
+                } else {
+                    read_and_check<double>(case_dir / "history.bp", x_end, y_end);
+                }
             }
             MPI_Barrier(MPI_COMM_WORLD);
         }

@@ -52,6 +52,11 @@ Bp5HistoryWriter::Bp5HistoryWriter(
     MPI_Comm_rank(comm_, &rank_);
     MPI_Comm_size(comm_, &size_);
 
+    // Both are pure functions of config_, but every later stage reads them, so
+    // resolve once here rather than re-deriving per field and per step.
+    element_type_ = config_.element_type();
+    effective_buffer_mode_ = config_.effective_buffer_mode();
+
 #if defined(KOKKOS_ENABLE_CUDA)
     throw std::runtime_error(
         "Direct BP5 history output is currently enabled only for the CPU build. "
@@ -96,6 +101,9 @@ void Bp5HistoryWriter::validate_collective_configuration(
     add(config_.aggregation_type);
     resolved << config_.num_subfiles << ':' << config_.stats_level << ':'
              << config_.async_write << ':' << static_cast<int>(config_.buffer_mode)
+             << ':' << static_cast<int>(config_.precision)
+             << ':' << static_cast<int>(element_type_)
+             << ':' << static_cast<int>(effective_buffer_mode_)
              << ':' << config_.overwrite << ':';
     const auto& bounds = schema_.bounds();
     resolved << bounds.x_start << ':' << bounds.x_end << ':'
@@ -197,7 +205,7 @@ void Bp5HistoryWriter::define_field(const std::string& field_name) {
                             "' dimensions do not match its grid role.");
                     }
                 }
-                if (config_.buffer_mode == CpuBufferMode::Direct) {
+                if (effective_buffer_mode_ == CpuBufferMode::Direct) {
                     using Layout = typename std::decay_t<decltype(view)>::array_layout;
                     if constexpr (!std::is_same_v<Layout, Kokkos::LayoutRight>) {
                         throw std::invalid_argument(
@@ -206,12 +214,29 @@ void Bp5HistoryWriter::define_field(const std::string& field_name) {
                     }
                 }
 
-                auto variable = io_.DefineVariable<VVM::Real>(
-                    field_name, selection.shape, selection.start, selection.count,
-                    adios2::ConstantDims);
-                if (config_.buffer_mode == CpuBufferMode::Direct && !selection.empty()) {
-                    variable.SetMemorySelection(
-                        {selection.memory_start, selection.memory_count});
+                // A memory selection describes a window into the model's own
+                // ghosted allocation, so it only applies on the direct path. A
+                // packed buffer is already exactly the selected cells.
+                const bool direct = (effective_buffer_mode_ == CpuBufferMode::Direct);
+                FieldVariable variable;
+                if (element_type_ == OutputElementType::Float32) {
+                    auto typed = io_.DefineVariable<float>(
+                        field_name, selection.shape, selection.start, selection.count,
+                        adios2::ConstantDims);
+                    if (direct && !selection.empty()) {
+                        typed.SetMemorySelection(
+                            {selection.memory_start, selection.memory_count});
+                    }
+                    variable = typed;
+                } else {
+                    auto typed = io_.DefineVariable<double>(
+                        field_name, selection.shape, selection.start, selection.count,
+                        adios2::ConstantDims);
+                    if (direct && !selection.empty()) {
+                        typed.SetMemorySelection(
+                            {selection.memory_start, selection.memory_count});
+                    }
+                    variable = typed;
                 }
                 define_metadata(field_name, field.get_metadata());
                 fields_.push_back({field_name, std::move(selection), std::move(variable)});
@@ -248,8 +273,14 @@ void Bp5HistoryWriter::define_schema() {
 
     io_.DefineAttribute<std::string>("vvm_schema_version", "1");
     io_.DefineAttribute<std::string>("vvm_output_role", "history");
+    // vvm_real_precision is the model's working precision; vvm_field_precision
+    // is what the field variables actually are. They differ whenever
+    // output.bp5.precision asks for a narrower or wider history than VVM::Real,
+    // and a reader needs both to know whether the file is lossless.
     io_.DefineAttribute<std::string>(
         "vvm_real_precision", sizeof(VVM::Real) == 8 ? "float64" : "float32");
+    io_.DefineAttribute<std::string>(
+        "vvm_field_precision", output_element_type_name(element_type_));
     io_.DefineAttribute<std::string>("vvm_coordinate_order", "z,y,x");
     const std::array<std::uint64_t, 3> grid_shape = {
         region.global_nz, region.global_ny, region.global_nx};
@@ -306,7 +337,8 @@ void Bp5HistoryWriter::validate_coverage() {
 
     std::size_t local_bytes = 0;
     for (const auto& field : fields_) {
-        local_bytes += field.selection.elements() * sizeof(VVM::Real);
+        local_bytes +=
+            field.selection.elements() * output_element_size(element_type_);
     }
     unsigned long long local = static_cast<unsigned long long>(local_bytes);
     unsigned long long global = 0;
@@ -326,7 +358,17 @@ void Bp5HistoryWriter::print_configuration() const {
               << "  [BP5] NumSubFiles: " << config_.num_subfiles << "\n"
               << "  [BP5] StatsLevel: " << config_.stats_level << "\n"
               << "  [BP5] AsyncWrite: " << (config_.async_write ? "true" : "false") << "\n"
-              << "  [BP5] CPU buffer mode: " << cpu_buffer_mode_name(config_.buffer_mode) << "\n"
+              << "  [BP5] Field precision: " << output_element_type_name(element_type_)
+              << " (requested '" << output_precision_name(config_.precision)
+              << "', model VVM::Real is "
+              << (sizeof(VVM::Real) == 8 ? "float64" : "float32") << ")\n"
+              << "  [BP5] CPU buffer mode: "
+              << cpu_buffer_mode_name(effective_buffer_mode_);
+    if (effective_buffer_mode_ != config_.buffer_mode) {
+        std::cout << "  (requested '" << cpu_buffer_mode_name(config_.buffer_mode)
+                  << "'; converting precision requires a staging buffer)";
+    }
+    std::cout << "\n"
               << "  [BP5] Estimated logical bytes/step: " << global_bytes_per_step_
               << std::endl;
 }
@@ -347,7 +389,8 @@ void Bp5HistoryWriter::write(std::size_t step, VVM::Real time) {
             Kokkos::fence("bp5_history_source_ready");
             for (const auto& field : fields_) {
                 inputs.push_back(field_source_.prepare(
-                    field.name, field.selection, config_.buffer_mode));
+                    field.name, field.selection, effective_buffer_mode_,
+                    element_type_));
             }
             prepare_s = seconds_since(start);
         }
@@ -381,7 +424,21 @@ void Bp5HistoryWriter::write(std::size_t step, VVM::Real time) {
                         "BP5 field source returned a null pointer for '" +
                         fields_[i].name + "'.");
                 }
-                writer_.Put(fields_[i].variable, inputs[i].data, put_mode);
+                std::visit(
+                    [&](auto& variable) {
+                        using VariableType = std::decay_t<decltype(variable)>;
+                        if constexpr (std::is_same_v<VariableType,
+                                                     adios2::Variable<float>>) {
+                            writer_.Put(variable,
+                                        static_cast<const float*>(inputs[i].data),
+                                        put_mode);
+                        } else {
+                            writer_.Put(variable,
+                                        static_cast<const double*>(inputs[i].data),
+                                        put_mode);
+                        }
+                    },
+                    fields_[i].variable);
             }
             put_s = seconds_since(start);
         }
