@@ -83,11 +83,11 @@ directory so a previous run's stream is not reused.
 !!! warning "Known scaling limit"
 
     SST has reproducible failures at 384–512 writers with a small reader cohort
-    on this class of system — segfaults inside the data plane's read-request
-    handler during the first output step, across WAN/sockets, UCX, and the stock
-    MPI transport. This is what motivated the direct BP5 path. See the
-    [SST large-scale report](../adios2-sst-large-scale-report.md) for the full
-    evidence and the open questions put to the ADIOS2 team.
+    on this class of system: segfaults inside the data plane's read-request
+    handler during the first output step, reproduced across WAN/sockets, UCX,
+    and the stock MPI transport. Reducing writer/reader fan-out and disabling
+    speculative preload helped but was not shown to resolve it. This is what
+    motivated the direct BP5 path, which uses no SST transport at all.
 
 ## BP5
 
