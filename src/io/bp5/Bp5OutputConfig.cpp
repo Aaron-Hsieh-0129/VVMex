@@ -65,8 +65,14 @@ OutputElementType Bp5OutputConfig::element_type() const noexcept {
 }
 
 CpuBufferMode Bp5OutputConfig::effective_buffer_mode() const noexcept {
+#if defined(KOKKOS_ENABLE_CUDA)
+    // ADIOS2 is deliberately built without Kokkos/CUDA support, so every CUDA
+    // field must be copied to host memory before it is handed to the writer.
+    return CpuBufferMode::Pack;
+#else
     return output_element_matches_real(element_type()) ? buffer_mode
                                                        : CpuBufferMode::Pack;
+#endif
 }
 
 Bp5OutputConfig Bp5OutputConfig::from_json(const nlohmann::json& value) {

@@ -412,9 +412,9 @@ I/O ranks are host-only and take no device. Leave `--cpus` unset so the wrapper
 fills the node and pins each rank NUMA-local to its GPU; the `[GPUMap]` lines
 report what it decided.
 
-Output engine choice matters here: GPU builds use `HDF5` or `SST`. `BP5` is
-CPU-only and raises an explicit error in a CUDA build. See
-[Output](../user-guides/output.md).
+GPU builds support `HDF5`, `SST`, and `BP5`. BP5 writes directly from
+compute ranks without I/O-server ranks; CUDA fields are synchronized to host
+and packed before ADIOS2 sees them. See [Output](../user-guides/output.md).
 
 ---
 
@@ -430,6 +430,7 @@ needs one GPU. Heavier tiers are opt-in at configure time:
 | Tier | Needs | Enable |
 |---|---|---|
 | default | 1 GPU | always registered |
+| bp5 | up to 4 GPUs | `-DVVM_TEST_BP5=ON` |
 | physics | 1 GPU | `-DVVM_TEST_PHYSICS=ON` |
 | multirank | 4 **physical** GPUs | `-DVVM_TEST_MULTIRANK=ON` |
 | large | 8 GPUs + the 961 MB `taiwanvvm_2048.nc` | `-DVVM_TEST_LARGE=ON` |
@@ -438,7 +439,8 @@ Multi-rank tiers need that many real devices. Several NCCL ranks sharing one GPU
 is unsupported and silently changes results, so they cannot be faked on a
 smaller machine — see `tests/scripts/one_gpu_per_rank.sh`.
 
-`VVM_TEST_BP5` is refused on a GPU build: BP5 has no GPU field source.
+The BP5 tier includes exact readback, `float32` conversion, async output, and
+a bit-for-bit comparison with HDF5 from the same deterministic GPU run.
 
 GPU results are gated against `tests/baselines/` and `tests/references/`. The
 CPU backend has its own data under `*_cpu/`, because the two agree only to a few
@@ -460,7 +462,7 @@ ulp and the SHA-256 digests tolerate nothing.
 | `version 'GLIBCXX_3.4.30' not found` starting `vvm` | NVHPC compiled against a newer GCC than the `libstdc++` loaded at run time | Pin GCC via `makelocalrc`, or pass `--gcc-toolchain` for **C, C++ and Fortran** |
 | `undefined reference to std::ios_base_library_init()` | Same GCC mismatch, at link time | Add `--gcc-toolchain=$INSTALL_DIR/gcc11` to that library's build |
 | Low GPU utilization, no error | One core per rank cannot carry the launch loop, MPI, NCCL and the driver threads | Leave `--cpus` unset; see [CPU allocation](../user-guides/job-submission.md#cpu-allocation) |
-| SST run segfaults in the data-plane read handler at ~400+ writers | Known SST scaling limit on this class of system | Reduce writer count, or use `HDF5`; the CPU backend has `BP5` as an alternative |
+| SST run segfaults in the data-plane read handler at ~400+ writers | Known SST scaling limit on this class of system | Reduce writer count, or use direct `HDF5`/`BP5` output |
 
 To check which GCC ABI a finished binary needs:
 

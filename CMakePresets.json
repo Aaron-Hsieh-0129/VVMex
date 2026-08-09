@@ -248,7 +248,7 @@
       "displayName": "NVHPC 24.9 on f1, CPU-only (Kokkos OpenMP)",
       "description": "CPU build: Kokkos OpenMP, MPI instead of NCCL, land model without OpenACC",
       "generator": "Unix Makefiles",
-      "binaryDir": "${sourceDir}/build",
+      "binaryDir": "${sourceDir}/build_cpu",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
 

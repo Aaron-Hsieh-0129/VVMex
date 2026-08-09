@@ -52,8 +52,13 @@ int main() {
     // existed before precision was configurable.
     check(defaults.precision == OutputPrecision::Native, "precision defaults to native");
     check(defaults.element_type() == kNative, "native resolves to VVM::Real width");
+#if defined(KOKKOS_ENABLE_CUDA)
+    check(defaults.effective_buffer_mode() == CpuBufferMode::Pack,
+          "CUDA fields always resolve to host packing");
+#else
     check(defaults.effective_buffer_mode() == CpuBufferMode::Direct,
           "native precision leaves direct mode intact");
+#endif
 
     const nlohmann::json configured = {
         {"aggregation_type", "TwoLevelShm"},
@@ -102,9 +107,15 @@ int main() {
     // must not silently cost a staging buffer.
     const nlohmann::json same_width = {
         {"precision", output_element_type_name(kNative)}, {"buffer_mode", "direct"}};
+#if defined(KOKKOS_ENABLE_CUDA)
+    check(Bp5OutputConfig::from_json(same_width).effective_buffer_mode() ==
+              CpuBufferMode::Pack,
+          "matching precision still stages CUDA fields");
+#else
     check(Bp5OutputConfig::from_json(same_width).effective_buffer_mode() ==
               CpuBufferMode::Direct,
           "matching precision keeps direct mode");
+#endif
 
     // Converting cannot hand ADIOS2 the model's own memory, so 'direct'
     // resolves to packing rather than failing or silently writing raw bytes.

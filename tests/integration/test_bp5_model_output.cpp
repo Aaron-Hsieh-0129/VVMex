@@ -1,7 +1,6 @@
 #include "core/vvm_types.hpp"
 
 #include <adios2.h>
-#include <mpi.h>
 
 #include <cmath>
 #include <cstdint>
@@ -20,16 +19,14 @@ void check(bool condition, const char* message) {
 } // namespace
 
 int main(int argc, char** argv) {
-    MPI_Init(&argc, &argv);
     if (argc != 2) {
         std::fprintf(stderr, "usage: test_bp5_model_output DATASET\n");
-        MPI_Finalize();
         return 2;
     }
     try {
-        adios2::ADIOS adios(MPI_COMM_SELF);
+        adios2::ADIOS adios;
         auto io = adios.DeclareIO("VVM_BP5_MODEL_SMOKE_READER");
-        auto reader = io.Open(argv[1], adios2::Mode::Read, MPI_COMM_SELF);
+        auto reader = io.Open(argv[1], adios2::Mode::Read);
         int steps = 0;
         while (reader.BeginStep() == adios2::StepStatus::OK) {
             auto time_var = io.InquireVariable<VVM::Real>("time");
@@ -72,6 +69,5 @@ int main(int argc, char** argv) {
         ++failures;
     }
     if (failures == 0) std::puts("test_bp5_model_output: PASS");
-    MPI_Finalize();
     return failures == 0 ? 0 : 1;
 }

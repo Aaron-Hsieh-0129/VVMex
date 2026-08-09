@@ -28,6 +28,7 @@ set(VVM_IO_HEADERS
     bp5/Bp5OutputConfig.hpp
     bp5/Bp5FieldSchema.hpp
     bp5/Bp5BufferSet.hpp
+    bp5/Bp5PathPolicy.hpp
     bp5/CpuFieldSource.hpp
     bp5/FieldInput.hpp
 )

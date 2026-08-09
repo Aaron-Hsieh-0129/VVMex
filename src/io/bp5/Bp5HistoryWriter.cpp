@@ -57,12 +57,6 @@ Bp5HistoryWriter::Bp5HistoryWriter(
     element_type_ = config_.element_type();
     effective_buffer_mode_ = config_.effective_buffer_mode();
 
-#if defined(KOKKOS_ENABLE_CUDA)
-    throw std::runtime_error(
-        "Direct BP5 history output is currently enabled only for the CPU build. "
-        "Use the legacy output path for GPU runs until GpuFieldSource is implemented.");
-#endif
-
     if (field_names_.empty()) {
         throw std::invalid_argument("output.fields_to_output must not be empty for BP5.");
     }
@@ -362,11 +356,16 @@ void Bp5HistoryWriter::print_configuration() const {
               << " (requested '" << output_precision_name(config_.precision)
               << "', model VVM::Real is "
               << (sizeof(VVM::Real) == 8 ? "float64" : "float32") << ")\n"
-              << "  [BP5] CPU buffer mode: "
+              << "  [BP5] Field buffer mode: "
               << cpu_buffer_mode_name(effective_buffer_mode_);
     if (effective_buffer_mode_ != config_.buffer_mode) {
         std::cout << "  (requested '" << cpu_buffer_mode_name(config_.buffer_mode)
-                  << "'; converting precision requires a staging buffer)";
+                  << "'; ";
+#if defined(KOKKOS_ENABLE_CUDA)
+        std::cout << "CUDA fields require host staging)";
+#else
+        std::cout << "converting precision requires a staging buffer)";
+#endif
     }
     std::cout << "\n"
               << "  [BP5] Estimated logical bytes/step: " << global_bytes_per_step_

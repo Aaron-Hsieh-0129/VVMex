@@ -164,7 +164,7 @@ Restart files are ordinary output files; there is no separate restart output pat
 | Key | Role |
 | --- | ---- |
 | `output_dir` | Directory for run output. `submit.py` creates it before launching the job. |
-| `engine` | ADIOS2 engine: `HDF5` (one file per output time), `SST` (asynchronous streaming to I/O ranks), or `BP5` (one multi-step `.bp` dataset, CPU builds only). See [Output](output.md). |
+| `engine` | ADIOS2 engine: `HDF5` (one file per output time), `SST` (asynchronous streaming to I/O ranks), or `BP5` (one multi-step `.bp` dataset written directly by compute ranks). See [Output](output.md). |
 | `bp5` | Engine-specific block read only when `engine` is `BP5`: `aggregation_type`, `num_subfiles`, `stats_level`, `async_write`, `buffer_mode`, `precision`, `overwrite`. |
 | `queue_limit` | ADIOS2 queue depth for buffered/asynchronous writes. |
 | `data_transport` | Optional ADIOS2 transport hint, e.g. `RDMA`, `WAN`, or empty for default behavior. |

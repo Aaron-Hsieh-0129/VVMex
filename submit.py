@@ -430,6 +430,7 @@ def create_code_snapshot(repo_root, snapshot_dir, config_path, prof_path, spat_p
         ".git",
         ".vvm_runtime_libs",
         "build",
+        "build_cpu",
         "log",
         "rundata",
         "tests",
@@ -457,6 +458,7 @@ def create_code_snapshot(repo_root, snapshot_dir, config_path, prof_path, spat_p
         "docs/\n"
         "externals/\n"
         "build/\n"
+        "build_cpu/\n"
         "log/\n"
         "output/\n"
         f"{out_base}/\n"

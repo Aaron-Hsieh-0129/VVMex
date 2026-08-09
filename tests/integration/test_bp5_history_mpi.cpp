@@ -360,13 +360,24 @@ int main(int argc, char** argv) {
         }
         MPI_Barrier(MPI_COMM_WORLD);
 
-        Kokkos::initialize(argc, argv);
+        Kokkos::initialize(Kokkos::InitializationSettings().set_device_id(0));
         {
             VVM::Utils::ConfigurationManager config(config_path.string());
             VVM::Core::Grid grid(config, MPI_COMM_WORLD);
             VVM::Core::Parameters parameters(config, grid);
             fill_coordinates(parameters, grid);
+#if defined(ENABLE_NCCL)
+            ncclUniqueId id;
+            if (g_rank == 0) ncclGetUniqueId(&id);
+            MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
+            ncclComm_t nccl_comm;
+            ncclCommInitRank(&nccl_comm, comm_size, id, g_rank);
+            cudaStream_t stream = Kokkos::Cuda().cuda_stream();
+            VVM::Core::State state(
+                config, parameters, grid, nccl_comm, stream);
+#else
             VVM::Core::State state(config, parameters, grid);
+#endif
             state.add_field<4>(
                 "bp5_test_4d",
                 {2, grid.get_local_total_points_z(), grid.get_local_total_points_y(),
@@ -395,6 +406,9 @@ int main(int argc, char** argv) {
                 }
             }
             MPI_Barrier(MPI_COMM_WORLD);
+#if defined(ENABLE_NCCL)
+            ncclCommDestroy(nccl_comm);
+#endif
         }
         Kokkos::finalize();
     } catch (const std::exception& e) {

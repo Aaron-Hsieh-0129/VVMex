@@ -54,7 +54,7 @@ set(VVM_TEST_SECONDS 120 CACHE STRING "Simulated seconds for default_cases tests
 #
 #   default                always on   advection_u/v/w, stretching, twisting,
 #                                      2dbubble, mountain, plus the unit tests
-#   VVM_TEST_BP5           CPU only    direct BP5 output: unit, MPI, model
+#   VVM_TEST_BP5           opt-in      direct BP5 output: unit, MPI, model
 #   VVM_TEST_PHYSICS       GPU only    P3 / RRTMGP / Noah land cases
 #   VVM_TEST_MULTIRANK     4 ranks     rank invariance (2-D decomposition)
 #   VVM_TEST_LARGE         8 ranks     2048^2, needs the 961 MB input file
@@ -78,19 +78,13 @@ set(VVM_TEST_SECONDS 120 CACHE STRING "Simulated seconds for default_cases tests
 # NCCL ranks sharing one device is unsupported and silently changes results, so
 # they cannot be faked on a smaller machine -- see scripts/one_gpu_per_rank.sh.
 # ---------------------------------------------------------------------------
-option(VVM_TEST_BP5       "Register direct BP5 output tests (CPU builds only)"        OFF)
+option(VVM_TEST_BP5       "Register direct BP5 output tests (CPU and GPU builds)"     OFF)
 option(VVM_TEST_PHYSICS   "Register physics-tier tests (GPU builds only, ~80 s)"      OFF)
 option(VVM_TEST_MULTIRANK "Register rank-invariance tests (4 ranks, ~30 s)"           OFF)
 option(VVM_TEST_LARGE     "Register the 2048^2 test (8 ranks, 961 MB input)"          OFF)
 
 # A tier the current backend cannot run is switched off here, with the reason.
 # Silently registering nothing would look like the tier passed.
-if(VVM_TEST_BP5 AND VVM_ENABLE_GPU)
-    message(WARNING
-        "VVM_TEST_BP5=ON ignored: BP5 has no GPU field source, and "
-        "Bp5HistoryWriter refuses to construct in a CUDA build.")
-    set(VVM_TEST_BP5 OFF)
-endif()
 if(VVM_TEST_PHYSICS AND NOT VVM_ENABLE_GPU)
     message(WARNING
         "VVM_TEST_PHYSICS=ON ignored: no CPU reference data exists under "
@@ -110,7 +104,7 @@ endfunction()
 
 message(STATUS "Test tiers (all are bit-for-bit gates; simulated seconds per case: ${VVM_TEST_SECONDS}):")
 message(STATUS "  Test tier default  : ON   (advection x3, stretching, twisting, 2dbubble, mountain, unit tests)")
-_report_test_tier("bp5      " ${VVM_TEST_BP5}       "CPU build only"    VVM_TEST_BP5)
+_report_test_tier("bp5      " ${VVM_TEST_BP5}       "CPU or GPU build"  VVM_TEST_BP5)
 _report_test_tier("physics  " ${VVM_TEST_PHYSICS}   "GPU build only"    VVM_TEST_PHYSICS)
 _report_test_tier("multirank" ${VVM_TEST_MULTIRANK} "4 ranks / 4 GPUs"  VVM_TEST_MULTIRANK)
 _report_test_tier("large    " ${VVM_TEST_LARGE}     "8 ranks / 8 GPUs"  VVM_TEST_LARGE)
@@ -254,10 +248,10 @@ add_vvm_unit_test(test_sst_path)
 # usable through an explicit opt-in. Pure decision logic.
 add_vvm_unit_test(test_restart_time)
 
-# --- bp5 tier: CPU only, opt-in with -DVVM_TEST_BP5=ON ---------------------
+# --- bp5 tier: opt-in with -DVVM_TEST_BP5=ON -------------------------------
 # Everything below writes and reads real BP5 datasets under
 # ${CMAKE_BINARY_DIR}, so it is off by default rather than paid for on every
-# `ctest`. The backend guard above has already forced this OFF on a GPU build.
+# `ctest`.
 if(VVM_TEST_BP5)
     # Direct BP5 pure logic and CPU staging. These link the isolated I/O
     # subsystem but do not open a dataset or require multiple ranks.
@@ -297,7 +291,8 @@ if(VVM_TEST_BP5)
             set(BP5_TEST_NAME test_bp5_history_${BP5_MODE}_sync_r${BP5_RANKS})
             add_test(NAME ${BP5_TEST_NAME}
                      COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${BP5_RANKS}
-                             ${VVM_MPI_BIND_ARGS} $<TARGET_FILE:test_bp5_history_mpi>
+                             ${VVM_MPI_BIND_ARGS} ${GPU_WRAP}
+                             $<TARGET_FILE:test_bp5_history_mpi>
                              ${TEST_DIR}/configs/advection_u.json
                              ${BP5_INTEGRATION_WORKDIR} ${BP5_MODE} sync ${BP5_RANKS}
                      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
@@ -309,7 +304,8 @@ if(VVM_TEST_BP5)
         set(BP5_TEST_NAME test_bp5_history_direct_async_r${BP5_RANKS})
         add_test(NAME ${BP5_TEST_NAME}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${BP5_RANKS}
-                         ${VVM_MPI_BIND_ARGS} $<TARGET_FILE:test_bp5_history_mpi>
+                         ${VVM_MPI_BIND_ARGS} ${GPU_WRAP}
+                         $<TARGET_FILE:test_bp5_history_mpi>
                          ${TEST_DIR}/configs/advection_u.json
                          ${BP5_INTEGRATION_WORKDIR} direct async ${BP5_RANKS}
                  WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
@@ -328,7 +324,8 @@ if(VVM_TEST_BP5)
             set(BP5_TEST_NAME test_bp5_history_${BP5_PRECISION}_r${BP5_RANKS})
             add_test(NAME ${BP5_TEST_NAME}
                      COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${BP5_RANKS}
-                             ${VVM_MPI_BIND_ARGS} $<TARGET_FILE:test_bp5_history_mpi>
+                             ${VVM_MPI_BIND_ARGS} ${GPU_WRAP}
+                             $<TARGET_FILE:test_bp5_history_mpi>
                              ${TEST_DIR}/configs/advection_u.json
                              ${BP5_INTEGRATION_WORKDIR} direct sync ${BP5_RANKS}
                              ${BP5_PRECISION}
@@ -343,42 +340,58 @@ if(VVM_TEST_BP5)
     # writer thread.
     add_test(NAME test_bp5_history_float32_async_r2
              COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
-                     ${VVM_MPI_BIND_ARGS} $<TARGET_FILE:test_bp5_history_mpi>
+                     ${VVM_MPI_BIND_ARGS} ${GPU_WRAP}
+                     $<TARGET_FILE:test_bp5_history_mpi>
                      ${TEST_DIR}/configs/advection_u.json
                      ${BP5_INTEGRATION_WORKDIR} pack async 2 float32
              WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     set_tests_properties(test_bp5_history_float32_async_r2 PROPERTIES
                          LABELS "bp5;integration;precision;async;multirank" TIMEOUT 90)
 
+    # Keep model-smoke output in this backend's binary tree. The checked-in
+    # configs use ./build for convenience, which would make a build_cpu run
+    # overwrite or verify the GPU tree instead of testing backend coexistence.
+    foreach(BP5_MODEL_CONFIG
+            bp5_model_smoke
+            bp5_model_async_smoke
+            hdf5_model_smoke)
+        file(READ ${TEST_DIR}/configs/${BP5_MODEL_CONFIG}.json VVM_BP5_MODEL_CFG)
+        string(REGEX REPLACE "\"output_dir\"[ \t]*:[ \t]*\"[^\"]*\""
+                             "\"output_dir\": \"${CMAKE_BINARY_DIR}/testing_output_${BP5_MODEL_CONFIG}\""
+                             VVM_BP5_MODEL_CFG "${VVM_BP5_MODEL_CFG}")
+        set(${BP5_MODEL_CONFIG}_CONFIG
+            ${CMAKE_BINARY_DIR}/test_configs/${BP5_MODEL_CONFIG}.json)
+        file(WRITE ${${BP5_MODEL_CONFIG}_CONFIG} "${VVM_BP5_MODEL_CFG}")
+    endforeach()
     add_executable(test_bp5_model_output integration/test_bp5_model_output.cpp)
     target_include_directories(test_bp5_model_output PRIVATE ${CMAKE_SOURCE_DIR}/src)
     target_link_libraries(test_bp5_model_output PRIVATE
                           adios2::adios2 Kokkos::kokkos MPI::MPI_CXX)
     add_test(NAME Run_bp5_model_smoke
              COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
-                     ${VVM_MPI_BIND_ARGS} $<TARGET_FILE:vvm>
-                     ${TEST_DIR}/configs/bp5_model_smoke.json
+                     ${VVM_MPI_BIND_ARGS} ${GPU_WRAP} $<TARGET_FILE:vvm>
+                     ${bp5_model_smoke_CONFIG}
              WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_test(NAME Verify_bp5_model_smoke
              COMMAND $<TARGET_FILE:test_bp5_model_output>
                      ${CMAKE_BINARY_DIR}/testing_output_bp5_model_smoke/history.bp
              WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     set_tests_properties(Run_bp5_model_smoke PROPERTIES
-                         LABELS "bp5;integration;model" TIMEOUT 120)
+                         LABELS "bp5;integration;model" TIMEOUT 240)
     set_tests_properties(Verify_bp5_model_smoke PROPERTIES
                          DEPENDS Run_bp5_model_smoke LABELS "bp5;integration;model" TIMEOUT 30)
 
     add_test(NAME Run_bp5_model_async_smoke
              COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
-                     ${VVM_MPI_BIND_ARGS} $<TARGET_FILE:vvm>
-                     ${TEST_DIR}/configs/bp5_model_async_smoke.json
+                     ${VVM_MPI_BIND_ARGS} ${GPU_WRAP} $<TARGET_FILE:vvm>
+                     ${bp5_model_async_smoke_CONFIG}
              WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_test(NAME Verify_bp5_model_async_smoke
              COMMAND $<TARGET_FILE:test_bp5_model_output>
                      ${CMAKE_BINARY_DIR}/testing_output_bp5_model_async_smoke/history.bp
              WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     set_tests_properties(Run_bp5_model_async_smoke PROPERTIES
-                         LABELS "bp5;integration;model;async" TIMEOUT 120)
+                         LABELS "bp5;integration;model;async" TIMEOUT 240)
     set_tests_properties(Verify_bp5_model_async_smoke PROPERTIES
                          DEPENDS Run_bp5_model_async_smoke
                          LABELS "bp5;integration;model;async" TIMEOUT 30)
@@ -389,8 +402,8 @@ if(VVM_TEST_BP5)
                           adios2::adios2 HDF5::HL Kokkos::kokkos MPI::MPI_CXX)
     add_test(NAME Run_hdf5_model_smoke
              COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
-                     ${VVM_MPI_BIND_ARGS} $<TARGET_FILE:vvm>
-                     ${TEST_DIR}/configs/hdf5_model_smoke.json
+                     ${VVM_MPI_BIND_ARGS} ${GPU_WRAP} $<TARGET_FILE:vvm>
+                     ${hdf5_model_smoke_CONFIG}
              WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_test(NAME Compare_bp5_hdf5_model_smoke
              COMMAND $<TARGET_FILE:test_bp5_hdf5_compat>
@@ -398,7 +411,7 @@ if(VVM_TEST_BP5)
                      ${CMAKE_BINARY_DIR}/testing_output_hdf5_model_smoke
              WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     set_tests_properties(Run_hdf5_model_smoke PROPERTIES
-                         LABELS "bp5;integration;compatibility" TIMEOUT 120)
+                         LABELS "bp5;integration;compatibility" TIMEOUT 240)
     set_tests_properties(Compare_bp5_hdf5_model_smoke PROPERTIES
                          DEPENDS "Run_bp5_model_smoke;Run_hdf5_model_smoke"
                          LABELS "bp5;integration;compatibility" TIMEOUT 30)
