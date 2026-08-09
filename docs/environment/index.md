@@ -3,19 +3,12 @@
 VVMex needs a dependency stack built from source. There are two guides, one per
 execution backend:
 
-<div class="grid cards" markdown>
+- **[GPU environment](gpu.md)** — Kokkos on CUDA, NCCL for halo exchange, and
+  the Noah land model with OpenACC. This is the validated production path.
 
-- **[GPU environment](gpu.md)**
-
-    Kokkos on CUDA, NCCL for halo exchange, the Noah land model with OpenACC.
-    This is the validated production path.
-
-- **[CPU-only environment](cpu.md)**
-
-    Kokkos on OpenMP, standard MPI in place of NCCL, no device at run time.
-    Self-contained: it does not require the GPU stack to be built first.
-
-</div>
+- **[CPU-only environment](cpu.md)** — Kokkos on OpenMP and standard MPI in
+  place of NCCL, with no device required at run time. This stack is
+  self-contained and does not require the GPU stack to be built first.
 
 ## Which one do I need?
 
