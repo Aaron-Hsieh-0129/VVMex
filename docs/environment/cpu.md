@@ -503,6 +503,23 @@ grep -E "ADIOS2_HAVE_(Kokkos|CUDA|SST|MPI) " \
 #   set(ADIOS2_HAVE_Kokkos )      <- empty
 ```
 
+That file does not record HDF5, so check the generated header instead. HDF5
+support is what installs `bp2h5`, the converter described in
+[Output](../user-guides/output.md#converting-to-hdf5):
+
+```bash
+grep -E "ADIOS2_HAVE_HDF5|ADIOS2_FEATURE_LIST" \
+     $VVM_CPU_DIR/include/adios2/common/ADIOSConfig.h
+#   #define ADIOS2_HAVE_HDF5
+#   #define ADIOS2_FEATURE_LIST ... "HDF5", ...
+
+test -x $VVM_CPU_DIR/bin/bp2h5 && echo "bp2h5 present"
+```
+
+Read the `#define`, not the `/* CMake Option: ADIOS2_USE_HDF5=OFF */` comment
+directly above it — that comment reports CMake's default, not the value used for
+this build.
+
 The CPU BP5 implementation was validated with the unmodified 2.12.1 release.
 SST remains enabled so existing SST configurations can still be selected; the
 direct BP5 path does not use SST or its transports.

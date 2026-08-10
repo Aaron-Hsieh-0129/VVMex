@@ -262,6 +262,125 @@ every compute rank as a separate block, so one field at 1024 ranks costs ~1024
 small reads scattered across the subfiles. Read the steps you need rather than
 looping over all of them.
 
+### Converting to HDF5
+
+VVMex ships no converter, but ADIOS2 does: `bp2h5`, present in the ADIOS2 prefix
+whenever ADIOS2 was built with HDF5 support, which the environment guides enable.
+
+```bash
+export ADIOS2=<adios2-prefix>
+export LD_LIBRARY_PATH=$ADIOS2/lib64:<hdf5-and-compiler-runtime-paths>:$LD_LIBRARY_PATH
+export HDF5_USE_FILE_LOCKING=FALSE
+
+$ADIOS2/bin/bp2h5     output/my_case/vvm_output.bp converted.h5   # serial
+$ADIOS2/bin/bp2h5_mpi output/my_case/vvm_output.bp converted.h5   # MPI
+```
+
+The wrapper sets no library paths of its own. ADIOS2's own libraries are found
+through `RPATH`, but HDF5 and the compiler runtime are not.
+
+`bp2h5` is a thin wrapper around `adios2_reorganize` that fixes the engines and
+their parameters:
+
+```text
+BPFile "StreamReader=ON"  ->  HDF5 ""
+```
+
+It writes **one** HDF5 file containing `Step0 … StepN`. The VVMex HDF5 engine
+writes one file per output time, each holding a single `Step0` group. Same
+per-step structure, different file granularity — tooling written against VVMex
+HDF5 output must walk steps rather than files.
+
+#### Converting while the run is still going
+
+This works, and needs no extra flags. `StreamReader=ON` is what makes it work,
+and the wrapper already sets it.
+
+`StreamReader` is a BP5 **reader** parameter, default `false`. With it off the
+reader parses the whole metadata index at open, so a dataset that is still being
+appended is frozen at whatever existed at that moment. With it on the index is
+parsed incrementally and steps written after open become visible.
+
+`adios2_reorganize` polls with a ten-second timeout per step. Because `bp2h5`
+names the read engine `BPFile`, the tool treats its input as a file rather than a
+stream and **stops** at the first ten-second gap instead of following the writer:
+
+```text
+Timeout waiting for next step. If this is a live stream through file, use a
+different reading engine, like FileStream or BP4. If it is an unclosed BP file,
+you may manually close it with using adios_deactive_bp.sh.
+Bye after processing 37 steps
+```
+
+That message is the normal exit path, not an error. The HDF5 file left behind is
+complete and valid for the steps it converted.
+
+What follows from that:
+
+- **It is a snapshot, not a follow.** Each invocation converts what has been
+  flushed so far and exits. Re-run it for a newer snapshot.
+- **There is no incremental mode.** Every run starts from step 0 and writes a
+  fresh output, so repeatedly converting a multi-terabyte dataset re-reads and
+  re-writes all of it each time.
+- **Storage doubles.** A 6.8 TB dataset becomes 6.8 TB of BP5 plus 6.8 TB of HDF5.
+- With `async_write: true` a step reaches disk later than `EndStep` returns, so
+  the newest step or two may not be visible yet.
+
+!!! warning "Not during a performance measurement"
+
+    The converter reads the whole dataset and writes an equally large HDF5 copy
+    to the same filesystem the running job is writing to. That contention slows
+    the model and corrupts exactly the timings a benchmark exists to produce.
+    Prove the workflow on a throwaway run instead.
+
+If a job died without calling `Close()`, the dataset's active flag is still set
+and readers wait for steps that will never arrive. ADIOS2 ships
+`adios_deactive_bp.sh` to clear it.
+
+Two ready-made cases exercise this end to end:
+`rundata/input_configs/default_cases/bp5_live_test.json` and its `_async` twin.
+Both are a 32×32×33 bubble writing 101 output steps over a run long enough to
+attach a converter mid-flight, with `overwrite: true` so they can be re-run
+freely.
+
+The BP5 reader also accepts `SelectSteps`, which converts a step range instead of
+restarting from step 0. `bp2h5` hardcodes its reader parameters, so this needs the
+underlying tool directly:
+
+```bash
+$ADIOS2/bin/adios2_reorganize in.bp out.h5 \
+    BPFile "StreamReader=ON,SelectSteps=10:20" HDF5 ""
+```
+
+The value is a space-separated list of `start:end:step` expressions, indexed from
+0, with **`end` inclusive**. Rules are unioned, and `n` as the end means
+unbounded:
+
+| Expression | Steps selected |
+|---|---|
+| `10:20` | 10 through 20 inclusive — 11 steps |
+| `0 6 3 2` | 0, 2, 3, 6 — a bare number selects that single step |
+| `2:n` | everything from step 2 onward |
+| `0:n:2` | every other step from the beginning |
+| `0:n:3 10:n:5` | every third step, plus every fifth from step 10 |
+
+Separators are strict: `10-20` is rejected at open with `could not cast the
+entire string '10-20' to a single integer number`.
+
+`adios2_reorganize` prints `WARNING: steps ... were missed when advancing` for
+every gap the filter creates. That is expected with `SelectSteps`, not a fault.
+
+**Output steps are renumbered from 0.** The converter opens one output step per
+surviving input step and passes no index, so `SelectSteps=10:20` produces
+`Step0 … Step10`, not `Step10 … Step20`. Nothing is lost — `model_step` and
+`model_time_s` are written into every step and travel with the data — but the
+group name is not a model step number, and two separately converted ranges cannot
+be told apart by group name alone. Read `model_step` to place a converted chunk.
+
+`SelectSteps` and `StreamReader` do compose; the invocation above is verified.
+Whether a range selection also picks up steps appended *after* open, on a dataset
+a writer still holds open, has not been tested separately.
+
 ## Where the code lives
 
 | Path | Role |
