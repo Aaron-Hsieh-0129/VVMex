@@ -63,11 +63,16 @@ Edit `CMakePresets.json` (or pass cache variables on the command line) so that:
 ### 4. Configure and compile
 
 ```bash
+# GPU presets (blaze, nano4, nano5, spark, twnia2, twnia3) build into build/
 cmake --preset <your_preset_name> -DBUILD_TESTS=ON
 cmake --build build -j$(nproc)
+
+# CPU-only presets (blaze-cpu, f1-cpu) build into build_cpu/
+cmake --preset <your_cpu_preset_name> -DBUILD_TESTS=ON
+cmake --build build_cpu -j$(nproc)
 ```
 
-The main binary is **`build/vvm`** (`RUNTIME_OUTPUT_DIRECTORY` is the build root).
+The main binary is **`vvm`** in the preset's `binaryDir` (`RUNTIME_OUTPUT_DIRECTORY` is the build root), so `build/vvm` for GPU presets and `build_cpu/vvm` for CPU-only ones. `submit.py` reads the same preset and picks the matching binary, so a CPU build is never handed a GPU mapping.
 
 ## Configure a run
 
@@ -93,43 +98,92 @@ Use `submit.py` from the project root. It safely handles SLURM resource allocati
 
 **Recommended for all normal runs:** Direct `mpirun` commands are advanced/debugging commands. Use `submit.py` for performance runs because CPU/GPU assignment and I/O-rank allocation strongly affect speed.
 
-### Interactive setup
+Two things decide what a run command looks like, and they are set in two different places:
+
+| Decides | Set by | Effect on the command |
+| --- | --- | --- |
+| **Backend** — GPU or CPU | `--preset` (the preset's `VVM_ENABLE_GPU`) | GPU runs use `--gpus` / `VVM_GPU_LIST`; CPU runs use `--cpus` / `--omp-threads` and ignore `--gpus` |
+| **Output engine** — `HDF5`, `SST`, `BP5` | `output.engine` in the case JSON | `SST` needs I/O ranks (`--io`); `HDF5` and `BP5` reject a nonzero `--io` |
+
+So pick the section below that matches your build, then the engine row that matches your JSON. Engine trade-offs are in [Output](user-guides/output.md).
+
+### Interactive setup (either backend)
 
 ```bash
 ./submit.py
 ```
 
-If you do not know which inputs to provide, run `./submit.py` with no arguments. The interactive phase prompts for the required values step by step, explains the run options, and prints an equivalent command-line invocation at the end so you can reuse it for future runs.
+If you do not know which inputs to provide, run `./submit.py` with no arguments. The interactive phase detects your presets, reads the configured output engine, prompts for the required values step by step, and prints an equivalent command-line invocation at the end so you can reuse it for future runs.
 
-### Command-line execution
+### Run on GPU
 
-```bash
-# Local test run without SLURM (4 MPI tasks)
-./submit.py --local --preset <your_preset_name> -c ./rundata/input_configs/default_cases/advection_u.json --compute 4
+GPU presets: `blaze`, `nano4`, `nano5`, `spark`, `twnia2`, `twnia3`. One MPI compute rank per GPU is the normal mapping. `--gpus` is GPUs **per node** and covers compute ranks only — I/O ranks are host-only. Omit it and the wrapper infers `ceil(compute / nodes)`.
 
-# Local run on specific GPU IDs
-VVM_GPU_LIST=0,1,2,3,4,5,6,7 ./submit.py --local \
-  -c "rundata/input_configs/default_cases/taiwanvvm_2048.json" \
-  --preset blaze \
-  --compute 8 \
-  --nodes 1
-
-# Submit to SLURM (16 Compute tasks, 1 Node)
-./submit.py --preset <your_preset_name> -c ./rundata/input_configs/default_cases/sea_grass_mountain.json --compute 16 --nodes 1 --gpus 16
-```
-
-### Asynchronous I/O with SST
-If `output.engine` is `SST` in your JSON, `submit.py` sets the required I/O ranks automatically when `--io` is omitted. You can run the same style of command and let the wrapper choose the I/O task count:
+| `output.engine` | I/O ranks | Extra flags | Behaviour |
+| --- | --- | --- | --- |
+| `HDF5` | none | *(none)* | One `.h5` file per output time, written synchronously by the compute ranks. Restart-capable; best for small runs and reference output. |
+| `SST` | required | `--io N`, optionally `--io-cpus` | Compute ranks stream to dedicated host-only I/O ranks that write HDF5. Omit `--io` and the wrapper sets it for you. Production path on GPU. |
+| `BP5` | none (`--io` rejected) | *(none)* | Compute ranks write one multi-step `.bp` dataset directly. Fields are host-staged from device memory. History only — no restart. |
 
 ```bash
-./submit.py --preset <your_preset_name> -c my_config.json --compute 16 --nodes 4 --gpus 4
+# HDF5 -- local test run without SLURM, 4 ranks on 4 GPUs
+./submit.py --local --preset blaze \
+  -c ./rundata/input_configs/default_cases/advection_u.json \
+  --compute 4
+
+# HDF5 -- local run pinned to specific physical GPU IDs
+VVM_GPU_LIST=0,1,2,3,4,5,6,7 ./submit.py --local --preset blaze \
+  -c ./rundata/input_configs/default_cases/taiwanvvm_2048.json \
+  --compute 8 --nodes 1
+
+# HDF5 -- SLURM, 16 compute ranks on 1 node
+./submit.py --preset <your_preset_name> \
+  -c ./rundata/input_configs/default_cases/sea_grass_mountain.json \
+  --compute 16 --nodes 1 --gpus 16 -t 24:00:00
+
+# SST -- SLURM, 4 compute + 1 I/O rank per node; --io may be omitted
+./submit.py --preset <your_preset_name> \
+  -c ./rundata/input_configs/default_cases/sea_grass_mountain.json \
+  --compute 16 --io 4 --nodes 4 --gpus 4 --io-cpus 1 -t 24:00:00
+
+# BP5 -- SLURM, 8 compute ranks on 1 node, no I/O ranks
+./submit.py --preset blaze -c <case>.json \
+  --compute 8 --nodes 1 --gpus 8 -t 04:00:00
 ```
 
-Use `--io N` only when you want to override the wrapper's inferred I/O rank count. More detail: [Job submission](user-guides/job-submission.md).
+`VVM_GPU_LIST` selects physical GPU IDs for **local** runs; `--gpus` is the per-node count the wrapper requests from SLURM. They are not interchangeable.
+
+### Run on CPU
+
+CPU-only presets: `blaze-cpu`, `f1-cpu`. Kokkos runs on OpenMP, standard MPI replaces NCCL, and no device is touched at run time. `--gpus` is ignored with an `[Info]` message and no GPUs are requested from SLURM, so the job does not queue for resources it will never use. Instead, size the run with ranks x threads: `--cpus` is cores per rank and `--omp-threads` sets the OpenMP team when you want it smaller than the core count.
+
+| `output.engine` | I/O ranks | Extra flags | Behaviour |
+| --- | --- | --- | --- |
+| `HDF5` | none | *(none)* | Same synchronous one-file-per-step path as GPU. Restart-capable; the reference output BP5 is validated against. |
+| `SST` | required | `--io N`, optionally `--io-cpus` | Supported, but the extra ranks buy less here than on GPU since there is no device to keep busy. |
+| `BP5` | none (`--io` rejected) | *(none)* | Validated CPU production path — one multi-step `.bp` dataset, no I/O ranks, no SST transport. |
+
+```bash
+# HDF5 -- local test run without SLURM, 4 ranks
+./submit.py --local --preset blaze-cpu \
+  -c ./rundata/input_configs/default_cases/advection_u.json \
+  --compute 4
+
+# BP5 -- SLURM, 1024 ranks on 20 nodes, 2 OpenMP threads each
+./submit.py --preset f1-cpu -c <case>.json \
+  --compute 1024 --nodes 20 --cpus 2 --omp-threads 2 \
+  --partition ct2k --account <account> -t 64:00:00
+
+# SST -- SLURM, 16 compute + 4 I/O ranks
+./submit.py --preset f1-cpu -c <case>.json \
+  --compute 16 --io 4 --nodes 4 --io-cpus 1 -t 24:00:00
+```
+
+More detail on rank and core sizing: [Job submission](user-guides/job-submission.md).
 
 ### A note on `--cpus`
 
-None of the commands above pass `--cpus`, and that is the recommended way to run
+Most commands above do not pass `--cpus`, and that is the recommended way to run
 them. Left unset, the wrapper sizes it to fill the node and then pins each rank
 to its own cores, with compute ranks placed on the NUMA node of their GPU.
 
@@ -137,7 +191,9 @@ to its own cores, with compute ranks placed on the NUMA node of their GPU.
 holds: `--cpus x tasks per node`. Passing a small value such as `--cpus 1` is
 valid but under-allocates badly on a many-core node -- one core per rank has to
 carry the CUDA launch loop, MPI, NCCL and the driver threads at once, which
-starves the GPU without producing any error. See
+starves the GPU without producing any error. On a CPU run the same flag is what
+sets the OpenMP team size, so it is normally given deliberately together with
+`--omp-threads`. See
 [CPU allocation](user-guides/job-submission.md#cpu-allocation).
 
 ## Direct MPI (advanced)
