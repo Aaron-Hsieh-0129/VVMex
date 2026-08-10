@@ -237,7 +237,10 @@ time.
   currently allocated per field per step; cache it only after measurement shows
   that allocation is material.
 - **No dataset rotation.** One run writes one dataset, however large it grows.
-- **No offline BP5-to-HDF5 conversion.** Read BP5 directly; see
-  [Output](../user-guides/output.md#reading-the-output).
+- **No VVMex-native BP5-to-HDF5 conversion,** and none is planned: ADIOS2's own
+  `bp2h5` covers it, including against a dataset a running job still has open.
+  It converts what has been flushed so far and exits; it does not follow the
+  writer, and it has no incremental mode. See
+  [Converting to HDF5](../user-guides/output.md#converting-to-hdf5).
 - SST remains switchable because the external ADIOS2 build includes it. BP5 uses
   no SST data plane or transport setting.
