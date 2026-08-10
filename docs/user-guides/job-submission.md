@@ -81,6 +81,88 @@ ranks only -- the I/O rank is host-only and needs no device, so the GPU count
 follows `ceil(compute / nodes)` and ignores `--io` entirely. Omitting `--gpus`
 infers the same number.
 
+## Full option reference
+
+Every `submit.py` flag, with the value used when it is omitted. `--config` is the
+only one that is mandatory in command-line mode; run the wizard instead and it
+fills the rest in for you.
+
+### Run selection
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `-c`, `--config PATH` | *(required)* | Case JSON handed to the executable. Its `output.engine` decides whether I/O ranks are required, and its `output.output_dir` is created before launch. |
+| `--preset NAME` | *(none)* | `CMakePresets.json` entry to take the environment from. It also selects the **backend** (`VVM_ENABLE_GPU`) and the **binary** (`binaryDir/vvm`), so the launcher can never hand a CPU build a GPU mapping. Without it, library paths are whatever your shell already has. |
+| `--local` | off | Run `tools/core_run.sh` immediately in this shell instead of submitting it with `sbatch`. All SLURM-only flags below are ignored. |
+
+### Rank and core sizing
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--compute N` | `1` | Simulation MPI ranks. |
+| `--io N` | inferred | Dedicated I/O-server ranks. Inferred as `--compute` for `SST` and `0` otherwise. A nonzero value with `HDF5` or `BP5` is rejected before an allocation is requested. |
+| `--io-cpus N` | `1` | Cores reserved per I/O rank. Does **not** create I/O ranks. |
+| `--nodes N` | `1` | Nodes to spread the total rank count over. |
+| `--gpus N` | `ceil(compute / nodes)` | GPUs **per node**, covering compute ranks only. Ignored on CPU-only presets, which request no GPUs at all. |
+| `--cpus N` | fills the node | `--cpus-per-task`, and the base for `OMP_NUM_THREADS`. Left unset, the wrapper reads the partition's `CPUEfctv` and divides by tasks per node; it falls back to `1` where SLURM cannot answer. See [CPU allocation](#cpu-allocation). |
+| `--omp-threads N` | `--cpus` | OpenMP/Kokkos threads per compute rank, held fixed while `--cpus` varies. Useful on GPU runs where a rank wants cores for the launch loop but not an OpenMP worker on each. |
+
+### SLURM job
+
+Ignored under `--local`.
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `-t`, `--time HH:MM:SS` | `24:00:00` | Wall-time limit. |
+| `-A`, `--account NAME` | `MST114418` | Charging account. Override this on any other system. |
+| `-p`, `--partition NAME` | `normal` | Partition. Also the partition the wrapper queries when sizing `--cpus`. |
+| `--job-name NAME` | `VVMex` | `--job-name`. |
+| `--out PATH` | `log/%j.out` | Standard output file; `%j` expands to the job ID. Its directory is created. |
+| `--err PATH` | `log/%j.err` | Standard error file. |
+
+### Advanced SLURM
+
+Command-line only — the wizard does not prompt for these.
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--exclusive` / `--no-exclusive` | `--exclusive` | Whether to hold whole nodes. Exclusive is the default because shared nodes make the CPU-affinity split unreliable. |
+| `--export VALUE` | `ALL` | `sbatch --export`. |
+| `--nodelist LIST` | *(none)* | Restrict to specific nodes. |
+| `--exclude LIST` | *(none)* | Exclude specific nodes. |
+| `--contiguous` | off | Request contiguous nodes. |
+| `--slurm-arg ARG` | *(none)* | Append a raw `sbatch` argument. Repeatable: `--slurm-arg='--qos=debug' --slurm-arg='--mem=0'`. |
+
+### Environment variables you set
+
+| Variable | Applies to | Meaning |
+| --- | --- | --- |
+| `VVM_GPU_LIST` | local GPU runs | Comma-separated **physical** GPU IDs to expose, e.g. `0,1,2,3`. Ranks map onto this list in local-rank order. Unset, they map modulo `--gpus`. CPU presets ignore it. |
+| `VVM_OMP_THREADS` | any run | Same effect as `--omp-threads`, honoured straight from the caller's environment: `VVM_OMP_THREADS=4 ./submit.py ...`. Reported as `[Info] OMP_NUM_THREADS overridden: 11 -> 4`. |
+| `VVM_EXTRA_LD_LIBRARY_PATH` | any run | Prepended ahead of the preset's own library directories, so one library can be swapped — an ADIOS2 built without Kokkos, say — without editing `CMakePresets.json`. Reported as `[Info] Honouring caller VVM_EXTRA_LD_LIBRARY_PATH`. |
+
+### Environment variables the wrapper sets
+
+`submit.py` exports these for `tools/core_run.sh` and the executable. They are
+listed so the launcher banner and `[GPUMap]` lines are readable — setting them by
+hand does not change the allocation SLURM was asked for, and will desynchronise
+the two.
+
+`VVM_ROOT`, `VVM_BACKEND`, `VVM_BINARY`, `VVM_CONFIG_FILE`, `VVM_ARGS`,
+`VVM_COMPUTE_TASKS`, `VVM_IO_TASKS`, `VVM_TOTAL_TASKS`, `VVM_COMPUTE_PER_NODE`,
+`VVM_IO_PER_NODE`, `VVM_GPUS`, `VVM_IO_CPUS`, `VVM_IO_ENGINE`, `VVM_OUTPUT_DIR`,
+`VVM_ENV_SCRIPT`, `OMP_NUM_THREADS`.
+
+### Executable options
+
+`submit.py` builds this command line for you. It matters only when running
+`mpirun` by hand:
+
+| Argument | Meaning |
+| --- | --- |
+| `path/to/config.json` | First non-flag argument selects the case JSON. |
+| `--io-tasks N` | Reserve the last **N** ranks as I/O servers. Only meaningful with `output.engine = "SST"`. |
+
 ## Choosing resources
 
 `--compute` is the number of simulation MPI ranks. `--io` is the number of dedicated I/O ranks used when `output.engine` is `SST`. The total MPI size is:
