@@ -31,37 +31,8 @@ const char* cpu_buffer_mode_name(CpuBufferMode mode) noexcept {
     return mode == CpuBufferMode::Direct ? "direct" : "pack";
 }
 
-const char* output_precision_name(OutputPrecision precision) noexcept {
-    switch (precision) {
-        case OutputPrecision::Float32: return "float32";
-        case OutputPrecision::Float64: return "float64";
-        case OutputPrecision::Native:  break;
-    }
-    return "native";
-}
-
-const char* output_element_type_name(OutputElementType type) noexcept {
-    return type == OutputElementType::Float32 ? "float32" : "float64";
-}
-
-std::size_t output_element_size(OutputElementType type) noexcept {
-    return type == OutputElementType::Float32 ? sizeof(float) : sizeof(double);
-}
-
-bool output_element_matches_real(OutputElementType type) noexcept {
-    // VVM::Real is float or double, so comparing widths is a valid identity
-    // test and stays correct if the model's precision switch ever moves.
-    return output_element_size(type) == sizeof(VVM::Real);
-}
-
 OutputElementType Bp5OutputConfig::element_type() const noexcept {
-    switch (precision) {
-        case OutputPrecision::Float32: return OutputElementType::Float32;
-        case OutputPrecision::Float64: return OutputElementType::Float64;
-        case OutputPrecision::Native:  break;
-    }
-    return sizeof(VVM::Real) == sizeof(float) ? OutputElementType::Float32
-                                              : OutputElementType::Float64;
+    return resolve_output_element_type(precision);
 }
 
 CpuBufferMode Bp5OutputConfig::effective_buffer_mode() const noexcept {
@@ -75,7 +46,9 @@ CpuBufferMode Bp5OutputConfig::effective_buffer_mode() const noexcept {
 #endif
 }
 
-Bp5OutputConfig Bp5OutputConfig::from_json(const nlohmann::json& value) {
+Bp5OutputConfig Bp5OutputConfig::from_json(
+    const nlohmann::json& value,
+    OutputPrecision default_precision) {
     if (!value.is_object()) {
         throw std::invalid_argument("output.bp5 must be a JSON object.");
     }
@@ -93,6 +66,7 @@ Bp5OutputConfig Bp5OutputConfig::from_json(const nlohmann::json& value) {
     }
 
     Bp5OutputConfig result;
+    result.precision = default_precision;
     result.aggregation_type =
         read_optional<std::string>(value, "aggregation_type", result.aggregation_type);
     result.num_subfiles =
@@ -114,20 +88,10 @@ Bp5OutputConfig Bp5OutputConfig::from_json(const nlohmann::json& value) {
             "output.bp5.buffer_mode must be 'direct' or 'pack'.");
     }
 
-    // Aliases are accepted because this is the knob a user flips between runs,
-    // and 'float'/'double' is how most people say it.
-    const std::string precision = lower(
-        read_optional<std::string>(value, "precision", "native"));
-    if (precision == "native") {
-        result.precision = OutputPrecision::Native;
-    } else if (precision == "float32" || precision == "float" ||
-               precision == "single") {
-        result.precision = OutputPrecision::Float32;
-    } else if (precision == "float64" || precision == "double") {
-        result.precision = OutputPrecision::Float64;
-    } else {
-        throw std::invalid_argument(
-            "output.bp5.precision must be 'native', 'float32', or 'float64'.");
+    if (value.contains("precision")) {
+        result.precision = parse_output_precision(
+            read_optional<std::string>(value, "precision", "native"),
+            "output.bp5.precision");
     }
 
     if (result.aggregation_type != "TwoLevelShm") {
@@ -146,8 +110,14 @@ Bp5OutputConfig Bp5OutputConfig::from_json(const nlohmann::json& value) {
 
 Bp5OutputConfig Bp5OutputConfig::from_config(
     const Utils::ConfigurationManager& config) {
-    if (!config.has_key("output.bp5")) return Bp5OutputConfig{};
-    return from_json(config.get_value<nlohmann::json>("output.bp5"));
+    const OutputPrecision default_precision = configured_output_precision(config);
+    if (!config.has_key("output.bp5")) {
+        Bp5OutputConfig result;
+        result.precision = default_precision;
+        return result;
+    }
+    return from_json(
+        config.get_value<nlohmann::json>("output.bp5"), default_precision);
 }
 
 std::map<std::string, std::string> Bp5OutputConfig::adios_parameters() const {

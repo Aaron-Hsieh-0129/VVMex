@@ -6,31 +6,23 @@
 #include <string>
 
 #include "core/vvm_types.hpp"
+#include "io/OutputPrecision.hpp"
 #include "utils/ConfigurationManager.hpp"
 
 namespace VVM::IO::BP5 {
 
 enum class CpuBufferMode { Direct, Pack };
 
-// What the configuration asked for. Native follows VVM::Real, so a
-// configuration written before this option existed keeps producing exactly the
-// bytes it produced before.
-enum class OutputPrecision { Native, Float32, Float64 };
-
-// What actually lands on disk, once Native has been resolved against this
-// build. History output is deliberately independent of VVM::Real: a
-// double-precision model may write float32 history without changing how it
-// computes.
-enum class OutputElementType { Float32, Float64 };
+// Output precision is engine-neutral and lives in VVM::IO. Re-exported here so
+// existing BP5 code and tests keep naming it VVM::IO::BP5::OutputPrecision.
+using VVM::IO::OutputElementType;
+using VVM::IO::OutputPrecision;
+using VVM::IO::output_element_matches_real;
+using VVM::IO::output_element_size;
+using VVM::IO::output_element_type_name;
+using VVM::IO::output_precision_name;
 
 const char* cpu_buffer_mode_name(CpuBufferMode mode) noexcept;
-const char* output_precision_name(OutputPrecision precision) noexcept;
-const char* output_element_type_name(OutputElementType type) noexcept;
-std::size_t output_element_size(OutputElementType type) noexcept;
-
-// True when the on-disk type is VVM::Real, so writing a field costs no
-// conversion and the model's own memory can be handed straight to ADIOS2.
-bool output_element_matches_real(OutputElementType type) noexcept;
 
 struct Bp5OutputConfig {
     std::string aggregation_type = "TwoLevelShm";
@@ -41,7 +33,11 @@ struct Bp5OutputConfig {
     OutputPrecision precision = OutputPrecision::Native;
     bool overwrite = false;
 
-    static Bp5OutputConfig from_json(const nlohmann::json& value);
+    // `default_precision` is what `output.precision` asked for; the BP5 block's
+    // own `precision` key overrides it when present.
+    static Bp5OutputConfig from_json(
+        const nlohmann::json& value,
+        OutputPrecision default_precision = OutputPrecision::Native);
     static Bp5OutputConfig from_config(
         const Utils::ConfigurationManager& config);
 

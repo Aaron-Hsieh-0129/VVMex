@@ -1,6 +1,7 @@
 set(VVM_IO_SOURCES
     TxtReader.cpp
     OutputManager.cpp
+    OutputPrecision.cpp
     PnetcdfReader.cpp
     Hdf5RestartReader.cpp
     Hdf5DimensionScales.cpp
@@ -18,6 +19,7 @@ set(VVM_IO_HEADERS
     Reader.hpp
     TxtReader.hpp
     OutputManager.hpp
+    OutputPrecision.hpp
     PnetcdfReader.hpp
     Hdf5RestartReader.hpp
     Hdf5DimensionScales.hpp
