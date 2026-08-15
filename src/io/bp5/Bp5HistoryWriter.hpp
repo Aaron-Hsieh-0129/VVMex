@@ -18,6 +18,7 @@
 #include "core/Grid.hpp"
 #include "core/Parameters.hpp"
 #include "core/State.hpp"
+#include "io/history/GradsCtl.hpp"
 #include "io/history/HistoryWriter.hpp"
 #include "utils/ConfigurationManager.hpp"
 
@@ -53,6 +54,7 @@ private:
 
     struct FieldRecord {
         std::string name;
+        std::string description;  // GrADS descriptor text
         FieldSelection selection;
         FieldVariable variable;
     };
@@ -102,6 +104,10 @@ private:
     void define_field(const std::string& field_name);
     void define_metadata(const std::string& field_name,
                          const Core::FieldMetadata& metadata);
+    void skip_field(const std::string& field_name, const char* reason) const;
+    static std::string describe_field(const std::string& field_name,
+                                      const Core::FieldMetadata& metadata);
+    void write_grads_ctl_file(const Utils::ConfigurationManager& config);
     void prepare_coordinates();
     void validate_coverage();
     void print_configuration() const;

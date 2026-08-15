@@ -42,7 +42,7 @@ If you are unsure: **HDF5** for anything small or when you need restarts,
 | `output_dir` | Destination directory. Created if missing. |
 | `output_filename_prefix` | Base name for files or the dataset. |
 | `output_initial_step` | Write step 0 before the first model step. Default `true`. |
-| `fields_to_output` | Field names that must exist on the model state. A missing, disabled, or misspelled name is an error, not a warning. |
+| `fields_to_output` | Field names to write. A name the run never registered — a disabled microphysics or radiation output, say — is skipped with a message rather than written. On HDF5 and SST a name that is neither a known optional field nor a registered one is still an error, so typos are caught. |
 | `output_grid` | Inclusive index bounds per direction; `-1` means "to the end". Halo cells are never written. |
 
 Cadence is `simulation.output_interval_s`. With `dt_s: 1.0` and
@@ -140,6 +140,40 @@ nonzero `--io` is rejected.
 Unknown keys and invalid values are errors. Every resolved setting is compared
 across all compute ranks before the dataset is opened, so ranks cannot disagree.
 
+### GrADS descriptor
+
+Like the HDF5 and SST paths, a BP5 run writes `<output_dir>/vvm.ctl` next to the
+dataset. It differs only where the container does: `DTYPE bp5`, `DSET` pointing
+at the `.bp` directory, and no `OPTIONS template`, because one dataset holds
+every step.
+
+```text
+DSET ^vvm_output.bp
+DTYPE bp5
+...
+VARS 10
+w 44 z,y,x Vertical wind (m s-1)
+Tg=>tg 0 y,x Surface skin temperature (K)
+precip_liq_surf_mass=>precip_liq_surf 0 y,x Surface liquid precipitation flux (kg m-2 s-1)
+ENDVARS
+```
+
+Reading it needs a GrADS build with BP5 support, which stock GrADS and OpenGrADS
+do not have. Build it from
+[Aaron-Hsieh-0129/opengrads-update](https://github.com/Aaron-Hsieh-0129/opengrads-update),
+an OpenGrADS fork with a BP5 reader added; point its configure at the same ADIOS2
+install the model uses. `q config` on the resulting binary reports `adios2-bp5`
+when the support is present.
+
+Two consequences of what GrADS accepts are worth knowing:
+
+- GrADS variable names are lowercase and at most 15 characters, so a field whose
+  name is neither gets an alias (`Tg=>tg`). Use the name on the right in GrADS.
+- Every GrADS variable must map one x and one y dimension, so z-only profile
+  fields (`thbar`, `rhobar`, …) cannot appear at all — declaring one would fail
+  the whole `open`. They are listed in a comment line instead and remain
+  readable from the dataset through ADIOS2.
+
 ### Output precision
 
 History precision is independent of `VVM::Real`. A double-precision build can
@@ -234,7 +268,10 @@ committing to a long job:
 
 HDF5 output is readable by any HDF5 or NetCDF4 tool.
 
-BP5 datasets need ADIOS2. To inspect one:
+BP5 datasets need ADIOS2, or the BP5-capable GrADS from
+[Aaron-Hsieh-0129/opengrads-update](https://github.com/Aaron-Hsieh-0129/opengrads-update)
+reading the `vvm.ctl` the run writes — see
+[GrADS descriptor](#grads-descriptor). To inspect one:
 
 ```bash
 <adios2-prefix>/bin/bpls -l output/my_case/vvm_output.bp
@@ -388,6 +425,7 @@ a writer still holds open, has not been tested separately.
 | `src/io/OutputManager.*` | HDF5 and SST writer, schema, field packing |
 | `src/io/IOServer.*` | SST reader and HDF5 relay |
 | `src/io/history/HistoryWriter.hpp` | Neutral `write`/`close` interface used by `main.cpp` |
+| `src/io/history/GradsCtl.*` | GrADS descriptor shared by every engine |
 | `src/io/bp5/` | Direct BP5 writer: config, schema, CPU staging, lifecycle |
 
 For BP5 internals — architecture, dataset layout, the compatibility contract
