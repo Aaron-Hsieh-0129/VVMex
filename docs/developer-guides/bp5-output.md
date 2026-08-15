@@ -51,6 +51,7 @@ and `MPI_Finalize()`. The destructor is a fallback, not the normal path.
 |---|---|
 | `src/io/history/HistoryWriter.hpp` | Neutral `write`/`close` interface |
 | `src/io/history/LegacyHistoryWriter.hpp` | Adapter around the original `OutputManager` |
+| `src/io/history/GradsCtl.*` | GrADS descriptor emitter shared with the legacy writer |
 | `src/io/bp5/Bp5HistoryWriter.*` | ADIOS2 lifecycle and step orchestration |
 | `src/io/bp5/Bp5OutputConfig.*` | Parse and validate the `output.bp5` block |
 | `src/io/bp5/Bp5FieldSchema.*` | Global shapes, per-rank selections, output bounds |
@@ -114,7 +115,9 @@ content of the original `OutputManager` output:
 | `units`, `long_name`, `standard_name`, `comment`, `grid_staggering` | Preserved when present |
 | `output.output_grid` | Same inclusive subsetting semantics |
 | Halo handling | Same physical cells written, halo excluded |
+| A configured field the run never registered | Skipped with a message, as HDF5 and SST do |
 | Invalid field selection | Fails with a clear error, as before |
+| `<output_dir>/vvm.ctl` | Same descriptor, retargeted at the `.bp` dataset |
 
 Scalar metadata is likewise unchanged:
 
@@ -138,6 +141,40 @@ This is **semantic** equivalence, not binary equivalence:
 A test generates HDF5 and BP5 output from the same deterministic run and
 compares names, types, shapes, steps, attributes, and values through each
 format's own reader.
+
+## GrADS descriptor
+
+Both writers build their `vvm.ctl` through `src/io/history/GradsCtl.*`, so the
+axis maths, time formatting, and variable-name rules have one implementation.
+Only the header lines and the variable records differ:
+
+| | HDF5 / SST | BP5 |
+|---|---|---|
+| `DSET` | `^<prefix>_%tm6.h5` | `^<prefix>.bp` |
+| `DTYPE` | `hdf5_grid` | `bp5` |
+| `OPTIONS template` | yes, one file per step | no, one multi-step dataset |
+| Variable record | `/Step0/<name>=><grads>` | `<name>=><grads>` |
+| Description | field name | `long_name (units)` |
+
+The BP5 records are shaped by what the GrADS BP5 reader validates on `open`.
+That reader lives in
+[Aaron-Hsieh-0129/opengrads-update](https://github.com/Aaron-Hsieh-0129/opengrads-update)
+(`cola/src/gaadios.c`), an OpenGrADS fork with BP5 support added; stock GrADS
+cannot open a `dtype bp5` descriptor at all. Its rules:
+
+- Names are lowercased and truncated to 15 characters, and must start with a
+  letter, so `unique_grads_variable_name` sanitises each name and de-duplicates
+  the truncations. Untouched names are written without an alias.
+- A variable must map exactly one x and one y dimension. A z-only profile field
+  cannot be expressed, and declaring one fails the whole `open` rather than that
+  variable, so profiles are omitted and named in a `*` comment line.
+- A 4-D field is declared as `0,z,y,x`, pinning the component axis to a fixed
+  index, because the descriptor's dimension count must equal the variable's
+  rank.
+- Variables keep the full global shape even under `output.output_grid`, so the
+  axes always describe the global grid.
+- `TDEF` must not exceed the number of steps in the dataset, so it counts the
+  steps the run will write, `output.output_initial_step` included.
 
 ## CPU staging
 
@@ -199,6 +236,8 @@ ctest --test-dir build_cpu --output-on-failure -L bp5
 The matrix covers:
 
 - configuration, schema, path-policy, and field-source packing unit tests;
+- the GrADS descriptor emitter (`ctest -R test_grads_ctl`, part of the default
+  unit tier rather than the BP5 tier);
 - 1-, 2-, and 4-rank synchronous direct and packed output;
 - 1-, 2-, and 4-rank asynchronous direct output;
   on CUDA, requested-direct variants intentionally exercise host packing;

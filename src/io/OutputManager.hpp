@@ -13,6 +13,7 @@
 #include "core/State.hpp"
 #include "core/Parameters.hpp"
 #include "core/vvm_types.hpp"
+#include "io/history/GradsCtl.hpp"
 #include "utils/ConfigurationManager.hpp"
 #include "utils/Timer.hpp"
 #include "utils/TimingManager.hpp"
@@ -66,11 +67,6 @@ private:
     bool variables_defined_ = false;
     adios2::Variable<VVM::Real> var_time_;
 
-    struct LinearAxis {
-        VVM::Real start = real(0.0);
-        VVM::Real increment = real(1.0);
-    };
-
     void define_variables();
     void define_adios_field_metadata(
         const std::string& field_name,
@@ -78,10 +74,9 @@ private:
     void attach_hdf5_field_metadata(const std::string& filename);
 
     void grads_ctl_file();
-    LinearAxis centered_lonlat_axis(int points, VVM::Real spacing) const;
-    std::pair<LinearAxis, LinearAxis> grads_horizontal_axes() const;
-    std::string grads_start_time() const;
-    std::string grads_time_increment() const;
+    std::vector<GradsVariable> grads_variables(
+        const std::string& dataset_prefix,
+        std::size_t levels) const;
 
     std::string format_to_six_digits(int number);
 

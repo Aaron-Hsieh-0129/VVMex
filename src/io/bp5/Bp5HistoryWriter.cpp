@@ -5,12 +5,14 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
 #include <type_traits>
+#include <unordered_set>
 #include <variant>
 
 #include <Kokkos_Core.hpp>
@@ -76,6 +78,7 @@ Bp5HistoryWriter::Bp5HistoryWriter(
         define_schema();
         prepare_coordinates();
         validate_coverage();
+        write_grads_ctl_file(config);
         print_configuration();
         writer_ = io_.Open(dataset_path_.string(), adios2::Mode::Write, comm_);
         writer_.LockWriterDefinitions();
@@ -170,22 +173,32 @@ void Bp5HistoryWriter::define_metadata(
     }
 }
 
+void Bp5HistoryWriter::skip_field(const std::string& field_name, const char* reason) const {
+    if (rank_ == 0) {
+        std::cout << "  [BP5] Skipping output field '" << field_name << "': " << reason
+                  << std::endl;
+    }
+}
+
 void Bp5HistoryWriter::define_field(const std::string& field_name) {
     auto it = state_.begin();
     while (it != state_.end() && it->first != field_name) ++it;
     if (it == state_.end()) {
-        throw std::invalid_argument(
-            "Configured BP5 output field '" + field_name + "' is not registered.");
+        // A configured field that the run never registered -- a disabled
+        // microphysics or radiation output, say -- is dropped from the schema
+        // and from the descriptor, as the HDF5 and SST paths do, rather than
+        // aborting a run that is otherwise fine.
+        skip_field(field_name, "not registered in this run's state");
+        return;
     }
 
     std::visit(
         [&](const auto& field) {
             using FieldType = std::decay_t<decltype(field)>;
             if constexpr (std::is_same_v<FieldType, std::monostate>) {
-                throw std::invalid_argument("Configured BP5 field '" + field_name + "' is empty.");
+                skip_field(field_name, "registered but holds no field");
             } else if constexpr (FieldType::DimValue == 0) {
-                throw std::invalid_argument(
-                    "Configured BP5 field '" + field_name + "' is 0-D and unsupported.");
+                skip_field(field_name, "0-D fields are not supported by BP5 output");
             } else {
                 const auto& view = field.get_device_data();
                 const std::size_t components =
@@ -232,8 +245,10 @@ void Bp5HistoryWriter::define_field(const std::string& field_name) {
                     }
                     variable = typed;
                 }
-                define_metadata(field_name, field.get_metadata());
-                fields_.push_back({field_name, std::move(selection), std::move(variable)});
+                const auto& metadata = field.get_metadata();
+                define_metadata(field_name, metadata);
+                fields_.push_back({field_name, describe_field(field_name, metadata),
+                                   std::move(selection), std::move(variable)});
             }
         },
         it->second);
@@ -290,6 +305,100 @@ void Bp5HistoryWriter::define_schema() {
 
     fields_.reserve(field_names_.size());
     for (const auto& field_name : field_names_) define_field(field_name);
+}
+
+std::string Bp5HistoryWriter::describe_field(
+    const std::string& field_name,
+    const Core::FieldMetadata& metadata) {
+    std::string description =
+        metadata.long_name.empty() ? field_name : metadata.long_name;
+    if (!metadata.units.empty()) description += " (" + metadata.units + ")";
+    return description;
+}
+
+void Bp5HistoryWriter::write_grads_ctl_file(
+    const Utils::ConfigurationManager& config) {
+    const bool use_taiwanvvm_coordinates =
+        config.get_value<std::string>("grid.vertical_coordinate_type", "default") ==
+        "taiwanvvm";
+    // Collective on every rank; only rank 0 writes the descriptor.
+    const auto axes =
+        grads_horizontal_axes(grid_, state_, use_taiwanvvm_coordinates, comm_);
+    if (rank_ != 0) return;
+
+    const auto& region = schema_.grid();
+
+    GradsCtl ctl;
+    // The descriptor sits next to the dataset in output.output_dir, so '^'
+    // keeps the pair relocatable. BP5 holds every step in one .bp directory,
+    // which is why there is no 'OPTIONS template' here.
+    ctl.dset = "^" + dataset_path_.filename().string();
+    ctl.dtype = "bp5";
+    ctl.x = axes.first;
+    ctl.y = axes.second;
+    // Variables keep the full global shape even when output.output_grid selects
+    // a sub-box, so the axes describe the global grid, as in HDF5 output.
+    ctl.nx = region.global_nx;
+    ctl.ny = region.global_ny;
+    ctl.z_levels = z_coordinates_;
+
+    const double total_time = config.get_value<double>("simulation.total_time_s", 0.0);
+    const double output_interval =
+        std::max(1e-6, config.get_value<double>("simulation.output_interval_s", 1.0));
+    // GrADS refuses to open a dataset whose step count is below TDEF, so count
+    // the steps this run will actually write: those between the current model
+    // time (nonzero after a restart) and the end, plus the initial one.
+    const auto intervals_before = [&](double time) {
+        return std::floor(time / output_interval + 1e-6);
+    };
+    const double start_time = static_cast<double>(state_.get_time());
+    ctl.time_count = static_cast<std::size_t>(
+        std::max(0.0, intervals_before(total_time) - intervals_before(start_time)));
+    if (config.get_value<bool>("output.output_initial_step", true)) ++ctl.time_count;
+    const int start_hour = (config.get_value<int>("physics.rrtmgp.time.hour", 16) + 8) % 24;
+    ctl.time_start = grads_start_time(start_hour);
+    ctl.time_increment = grads_time_increment(output_interval);
+
+    std::unordered_set<std::string> taken;
+    std::vector<std::string> profile_fields;
+    for (const auto& field : fields_) {
+        GradsVariable variable;
+        variable.dataset_name = field.name;
+        variable.description = field.description;
+        if (field.selection.dimensions == 2) {
+            variable.levels = 0;
+            variable.dimensions = "y,x";
+        } else if (field.selection.dimensions == 3) {
+            variable.levels = region.global_nz;
+            variable.dimensions = "z,y,x";
+        } else if (field.selection.dimensions == 4) {
+            // GrADS has no component axis, so pin the leading component with a
+            // fixed index and expose the field as the usual z,y,x grid.
+            variable.levels = region.global_nz;
+            variable.dimensions = "0,z,y,x";
+        } else {
+            // GrADS requires exactly one x and one y dimension per variable, so
+            // a z-only profile cannot be declared at all -- and declaring one
+            // fails the whole open, not just that variable. The data is still
+            // in the .bp dataset; only the descriptor leaves it out.
+            profile_fields.push_back(field.name);
+            continue;
+        }
+        variable.grads_name = unique_grads_variable_name(field.name, taken);
+        ctl.variables.push_back(std::move(variable));
+    }
+    if (!profile_fields.empty()) {
+        std::string note =
+            "Profile (z-only) variables in the dataset, not usable from GrADS:";
+        for (const auto& name : profile_fields) note += " " + name;
+        ctl.notes.push_back(note);
+    }
+
+    const std::filesystem::path ctl_path =
+        std::filesystem::path(config.get_value<std::string>("output.output_dir")) /
+        "vvm.ctl";
+    write_grads_ctl(ctl_path, ctl);
+    std::cout << "  [BP5] GrADS descriptor: " << ctl_path.string() << std::endl;
 }
 
 void Bp5HistoryWriter::prepare_coordinates() {

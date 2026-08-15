@@ -1,5 +1,6 @@
 #include "OutputManager.hpp"
 #include "Hdf5DimensionScales.hpp"
+#include "io/history/GradsCtl.hpp"
 #include <sys/stat.h>
 #include <cerrno>
 #include <algorithm>
@@ -20,19 +21,6 @@ namespace VVM {
 namespace IO {
 
 namespace {
-constexpr VVM::Real earth_radius_m = VVM::real(6.37e6);
-constexpr VVM::Real pi = VVM::real(3.141592653589793238462643383279502884);
-
-std::string format_grads_axis_number(VVM::Real value) {
-    std::ostringstream ss;
-    ss << std::fixed << std::setprecision(7) << value;
-    std::string formatted = ss.str();
-    if (value > VVM::real(0.0) && value < VVM::real(1.0) && formatted.rfind("0.", 0) == 0) {
-        formatted.erase(0, 1);
-    }
-    return formatted;
-}
-
 std::string uppercase_transport_name(std::string value) {
     std::transform(
         value.begin(),
@@ -599,164 +587,69 @@ void OutputManager::attach_hdf5_field_metadata(
 }
 
 
-OutputManager::LinearAxis OutputManager::centered_lonlat_axis(int points, VVM::Real spacing) const {
-    LinearAxis axis;
-    axis.increment = spacing / earth_radius_m / (real(2.0) * pi) * real(360.0);
-    axis.start = (real(0.5) - real(0.5) * static_cast<VVM::Real>(points)) * axis.increment;
-    return axis;
-}
-
-std::pair<OutputManager::LinearAxis, OutputManager::LinearAxis> OutputManager::grads_horizontal_axes() const {
-    LinearAxis x_axis = centered_lonlat_axis(grid_.get_global_points_x(), grid_.get_dx());
-    LinearAxis y_axis = centered_lonlat_axis(grid_.get_global_points_y(), grid_.get_dy());
-
-    if (!use_taiwanvvm_coordinates_) {
-        return {x_axis, y_axis};
-    }
-
-    const int h = grid_.get_halo_cells();
-    const int local_start_x = grid_.get_local_physical_start_x();
-    const int local_end_x = grid_.get_local_physical_end_x();
-    const int local_start_y = grid_.get_local_physical_start_y();
-    const int local_end_y = grid_.get_local_physical_end_y();
-
-    std::array<VVM::Real, 4> local_values = {
-        real(0.0), real(0.0), real(0.0), real(0.0)
-    };
-    std::array<int, 4> local_flags = {0, 0, 0, 0};
-
-    auto owns_point = [&](int global_y, int global_x) {
-        return local_start_y <= global_y && global_y <= local_end_y &&
-               local_start_x <= global_x && global_x <= local_end_x;
-    };
-
-    if (owns_point(0, 0)) {
-        const auto lon_host = state_.get_field<2>("lon").get_host_data();
-        const auto lat_host = state_.get_field<2>("lat").get_host_data();
-        const int j = h - local_start_y;
-        const int i = h - local_start_x;
-        local_values[0] = lon_host(j, i);
-        local_values[2] = lat_host(j, i);
-        local_flags[0] = 1;
-        local_flags[2] = 1;
-    }
-
-    if (grid_.get_global_points_x() > 1 && owns_point(0, 1)) {
-        const auto lon_host = state_.get_field<2>("lon").get_host_data();
-        const int j = h - local_start_y;
-        const int i = h + 1 - local_start_x;
-        local_values[1] = lon_host(j, i);
-        local_flags[1] = 1;
-    }
-
-    if (grid_.get_global_points_y() > 1 && owns_point(1, 0)) {
-        const auto lat_host = state_.get_field<2>("lat").get_host_data();
-        const int j = h + 1 - local_start_y;
-        const int i = h - local_start_x;
-        local_values[3] = lat_host(j, i);
-        local_flags[3] = 1;
-    }
-
-    std::array<VVM::Real, 4> global_values;
-    std::array<int, 4> global_flags;
-    MPI_Allreduce(local_values.data(), global_values.data(), 4, VVM_MPI_REAL, MPI_SUM, comm_);
-    MPI_Allreduce(local_flags.data(), global_flags.data(), 4, MPI_INT, MPI_SUM, comm_);
-
-    if (global_flags[0] > 0) x_axis.start = global_values[0] / static_cast<VVM::Real>(global_flags[0]);
-    if (global_flags[2] > 0) y_axis.start = global_values[2] / static_cast<VVM::Real>(global_flags[2]);
-    if (global_flags[1] > 0) {
-        x_axis.increment = global_values[1] / static_cast<VVM::Real>(global_flags[1]) - x_axis.start;
-    }
-    if (global_flags[3] > 0) {
-        y_axis.increment = global_values[3] / static_cast<VVM::Real>(global_flags[3]) - y_axis.start;
-    }
-
-    return {x_axis, y_axis};
-}
-
-std::string OutputManager::grads_start_time() const {
-    std::ostringstream ss;
-    ss << std::setfill('0') << std::setw(2) << grads_start_hour_ << "z01JAN1998";
-    return ss.str();
-}
-
-std::string OutputManager::grads_time_increment() const {
-    const auto minutes = std::max<long long>(
-        1,
-        static_cast<long long>(std::llround(output_interval_s_ / real(60.0)))
-    );
-
-    if (minutes % 60 == 0) return std::to_string(minutes / 60) + "hr";
-    return std::to_string(minutes) + "mn";
-}
-
 void OutputManager::grads_ctl_file() {
-    const auto axes = grads_horizontal_axes();
+    const auto axes = grads_horizontal_axes(grid_, state_, use_taiwanvvm_coordinates_, comm_);
 
     if (rank_ != 0) return;
 
-    std::ofstream outFile(output_dir_ + "/vvm.ctl");
-    if (!outFile.is_open()) return;
+    const auto z_mid_host = params_.z_mid.get_host_data();
+    const int h = grid_.get_halo_cells();
+    const int nz_phy = grid_.get_global_points_z();
 
-    auto z_mid_host = params_.z_mid.get_host_data();
-    auto h = grid_.get_halo_cells();
-    auto nz_phy = grid_.get_global_points_z();
-    
-    outFile << "DSET ^" << filename_prefix_ << "_%tm6.h5\n";
-    outFile << "DTYPE hdf5_grid\n";
-    outFile << "OPTIONS template\n";
-    outFile << "TITLE VVMex\n";
-    outFile << "UNDEF -9999.0\n";
-    outFile << "XDEF " << grid_.get_global_points_x() << " LINEAR "
-            << format_grads_axis_number(axes.first.start) << " "
-            << format_grads_axis_number(axes.first.increment) << "\n";
-    outFile << "YDEF " << grid_.get_global_points_y() << " LINEAR "
-            << format_grads_axis_number(axes.second.start) << " "
-            << format_grads_axis_number(axes.second.increment) << "\n";
-    outFile << "ZDEF " << grid_.get_global_points_z() << " LEVELS ";
-    for (int k = h; k < h+nz_phy; k++) {
-        outFile << static_cast<int> (z_mid_host(k));
-        if (k < nz_phy+h-1) outFile << " ";
-        if (k % 15 == 0) outFile << "\n";
-    }
-    outFile << "\n";
-    outFile << "TDEF " << (int) (total_time_ / (output_interval_s_)+1) << " LINEAR " << grads_start_time() << " "
-            << grads_time_increment() << "\n";
-    outFile << "\n";
+    GradsCtl ctl;
+    ctl.dset = "^" + filename_prefix_ + "_%tm6.h5";
+    ctl.dtype = "hdf5_grid";
+    ctl.templated = true;
+    ctl.x = axes.first;
+    ctl.y = axes.second;
+    ctl.nx = grid_.get_global_points_x();
+    ctl.ny = grid_.get_global_points_y();
+    ctl.z_levels.reserve(nz_phy);
+    for (int k = h; k < h + nz_phy; ++k) ctl.z_levels.push_back(z_mid_host(k));
+    ctl.time_count = static_cast<std::size_t>(total_time_ / output_interval_s_ + 1);
+    ctl.time_start = grads_start_time(grads_start_hour_);
+    ctl.time_increment = grads_time_increment(output_interval_s_);
+    ctl.variables = grads_variables("/Step0/", nz_phy);
 
-    int valid_vars_count = 0;
-    std::vector<std::string> lines_to_write;
+    write_grads_ctl(output_dir_ + "/vvm.ctl", ctl);
+}
+
+std::vector<GradsVariable> OutputManager::grads_variables(
+    const std::string& dataset_prefix,
+    std::size_t levels) const {
+    std::vector<GradsVariable> variables;
+    std::unordered_set<std::string> taken;
+
     for (const auto& field_name : fields_to_output_) {
         auto it = state_.begin();
         while (it != state_.end() && it->first != field_name) ++it;
-        if (it != state_.end()) {
-            std::visit([&](const auto& field) {
-                using T = std::decay_t<decltype(field)>;
-                if constexpr (!std::is_same_v<T, std::monostate>) {
-                    std::stringstream ss;
-                    if constexpr (T::DimValue == 3 || T::DimValue == 4) {
-                        ss << "/Step0/" << field_name << "=>" << field_name << " " << nz_phy << " z,y,x " << field_name << "\n";
-                        valid_vars_count++;
-                        lines_to_write.push_back(ss.str());
-                    } 
-                    else if constexpr (T::DimValue == 2) {
-                        ss << "/Step0/" << field_name << "=>" << field_name << " 0 y,x " << field_name << "\n";
-                        valid_vars_count++;
-                        lines_to_write.push_back(ss.str());
-                    } 
-                    else if constexpr (T::DimValue == 1) {
-                        ss << "/Step0/" << field_name << "=>" << field_name << " " << nz_phy << " z " << field_name << "\n";
-                        valid_vars_count++;
-                        lines_to_write.push_back(ss.str());
-                    }
+        if (it == state_.end()) continue;
+
+        std::visit([&](const auto& field) {
+            using T = std::decay_t<decltype(field)>;
+            if constexpr (!std::is_same_v<T, std::monostate>) {
+                GradsVariable variable;
+                variable.dataset_name = dataset_prefix + field_name;
+                variable.grads_name = unique_grads_variable_name(field_name, taken);
+                variable.description = field_name;
+                if constexpr (T::DimValue == 3 || T::DimValue == 4) {
+                    variable.levels = levels;
+                    variable.dimensions = "z,y,x";
+                } else if constexpr (T::DimValue == 2) {
+                    variable.levels = 0;
+                    variable.dimensions = "y,x";
+                } else if constexpr (T::DimValue == 1) {
+                    variable.levels = levels;
+                    variable.dimensions = "z";
+                } else {
+                    return;
                 }
-            }, it->second);
-        }
+                variables.push_back(std::move(variable));
+            }
+        }, it->second);
     }
-    outFile << "VARS " << valid_vars_count << "\n";
-    for(const auto& line : lines_to_write) outFile << line;
-    outFile << "ENDVARS\n";
-    outFile.close();
+
+    return variables;
 }
 
 void OutputManager::write_static_topo_file() {

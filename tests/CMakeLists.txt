@@ -248,6 +248,15 @@ add_vvm_unit_test(test_sst_path)
 # usable through an explicit opt-in. Pure decision logic.
 add_vvm_unit_test(test_restart_time)
 
+# The GrADS descriptor both output engines emit: the header lines that differ
+# per engine, and the name mangling GrADS forces (lowercase, 15 characters).
+# Links vvm_io rather than being header-only, so it is registered by hand.
+add_executable(test_grads_ctl ${TEST_DIR}/unit/test_grads_ctl.cpp)
+target_include_directories(test_grads_ctl PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_grads_ctl PRIVATE vvm_io Kokkos::kokkos MPI::MPI_CXX)
+add_test(NAME test_grads_ctl COMMAND test_grads_ctl)
+set_tests_properties(test_grads_ctl PROPERTIES LABELS unit)
+
 # --- bp5 tier: opt-in with -DVVM_TEST_BP5=ON -------------------------------
 # Everything below writes and reads real BP5 datasets under
 # ${CMAKE_BINARY_DIR}, so it is off by default rather than paid for on every

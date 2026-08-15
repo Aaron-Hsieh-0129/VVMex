@@ -5,6 +5,7 @@ set(VVM_IO_SOURCES
     Hdf5RestartReader.cpp
     Hdf5DimensionScales.cpp
     IOServer.cpp
+    history/GradsCtl.cpp
     bp5/Bp5HistoryWriter.cpp
     bp5/Bp5CollectiveValidation.cpp
     bp5/Bp5OutputConfig.cpp
@@ -21,6 +22,7 @@ set(VVM_IO_HEADERS
     Hdf5RestartReader.hpp
     Hdf5DimensionScales.hpp
     IOServer.hpp
+    history/GradsCtl.hpp
     history/HistoryWriter.hpp
     history/LegacyHistoryWriter.hpp
     bp5/Bp5HistoryWriter.hpp
