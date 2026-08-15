@@ -29,40 +29,34 @@ std::string uppercase_transport_name(std::string value) {
     return value;
 }
 
-using FieldMetadataCache =
-    std::map<std::string, std::map<std::string, std::string>>;
+// Every string attribute the stream carries, under the flat names ADIOS uses:
+// "u/units", "coordinates/x/units", "vvm_field_precision". Copying them
+// wholesale, rather than a hand-listed few, is what makes a relayed file carry
+// the same metadata as one the HDF5 engine wrote directly.
+using AttributeCache = std::map<std::string, std::string>;
 
-void cache_adios_field_metadata(
-    adios2::IO& input_io,
-    const std::string& field_name,
-    FieldMetadataCache& metadata_cache)
+void cache_stream_attributes(adios2::IO& input_io, AttributeCache& cache)
 {
-    auto& metadata = metadata_cache[field_name];
-    const auto copy_attribute = [&](const std::string& attribute_name)
-    {
-        if (metadata.count(attribute_name)) {
-            return;
-        }
+    for (const auto& item : input_io.AvailableAttributes()) {
+        const std::string& name = item.first;
+        if (cache.count(name)) continue;
 
-        const auto input_attribute =
-            input_io.InquireAttribute<std::string>(attribute_name, field_name);
-        if (!input_attribute) {
-            return;
-        }
+        const auto attribute = input_io.InquireAttribute<std::string>(name);
+        if (!attribute) continue;  // VVMex writes no non-string attributes
 
-        const auto values = input_attribute.Data();
-        if (values.empty() || values.front().empty()) {
-            return;
-        }
+        const auto values = attribute.Data();
+        if (values.empty() || values.front().empty()) continue;
 
-        metadata[attribute_name] = values.front();
-    };
+        cache[name] = values.front();
+    }
+}
 
-    copy_attribute("units");
-    copy_attribute("long_name");
-    copy_attribute("standard_name");
-    copy_attribute("comment");
-    copy_attribute("grid_staggering");
+void define_relayed_attributes(adios2::IO& output_io, const AttributeCache& cache)
+{
+    for (const auto& attribute : cache) {
+        if (output_io.InquireAttribute<std::string>(attribute.first)) continue;
+        output_io.DefineAttribute<std::string>(attribute.first, attribute.second);
+    }
 }
 
 void write_hdf5_string_attribute(
@@ -92,7 +86,8 @@ void write_hdf5_string_attribute(
 
 void attach_sst_hdf5_field_metadata(
     const std::string& filename,
-    const FieldMetadataCache& metadata_cache)
+    const AttributeCache& metadata_cache,
+    const std::vector<std::string>& field_names)
 {
     hid_t file = H5Fopen(filename.c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
     if (file < 0) {
@@ -101,26 +96,23 @@ void attach_sst_hdf5_field_metadata(
         return;
     }
 
-    for (const auto& field_metadata : metadata_cache) {
-        const std::string dataset_path = "/Step0/" + field_metadata.first;
+    // The same attributes again, this time attached to the dataset itself, so a
+    // reader that looks at /Step0/u sees them without consulting the root.
+    for (const auto& attribute : metadata_cache) {
+        const auto separator = attribute.first.rfind('/');
+        if (separator == std::string::npos) continue;  // file-level attribute
+
+        const std::string dataset_path =
+            "/Step0/" + attribute.first.substr(0, separator);
         hid_t dataset = H5Dopen2(file, dataset_path.c_str(), H5P_DEFAULT);
         if (dataset < 0) continue;
 
-        for (const auto& attribute : field_metadata.second) {
-            write_hdf5_string_attribute(
-                dataset,
-                attribute.first,
-                attribute.second);
-        }
+        write_hdf5_string_attribute(
+            dataset, attribute.first.substr(separator + 1), attribute.second);
 
         H5Dclose(dataset);
     }
 
-    std::vector<std::string> field_names;
-    field_names.reserve(metadata_cache.size());
-    for (const auto& field_metadata : metadata_cache) {
-        field_names.push_back(field_metadata.first);
-    }
     attach_hdf5_dimension_scales(file, field_names);
 
     H5Fclose(file);
@@ -223,9 +215,14 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
         MPI_Abort(MPI_COMM_WORLD, 10);
     }
 
-    FieldMetadataCache field_metadata_cache;
+    AttributeCache stream_attributes;
     while (true) {
-        std::map<std::string, std::vector<VVM::Real>> data_buffers;
+        // The writer's field precision is independent of VVM::Real, so the
+        // relay follows whatever type the stream declares instead of assuming
+        // one. Reading a float32 field as VVM::Real would simply not resolve,
+        // and the field would vanish from the HDF5 file.
+        std::map<std::string, std::vector<float>> float_buffers;
+        std::map<std::string, std::vector<double>> double_buffers;
         // Integer scalars travel separately from the float relay below: the
         // restart step count must reach the HDF5 file as an exact integer, and
         // rounding it through VVM::Real is exactly what the restart clock is
@@ -257,6 +254,58 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
 
         const auto& varTypeMap = inIO.AvailableVariables();
 
+        // One staging routine per element type, instantiated from the sample
+        // value so the read, the output definition, and the buffer all agree.
+        const auto stage_variable = [&](auto sample, const std::string& name, auto& buffers) {
+            using T = decltype(sample);
+
+            auto varIn = inIO.InquireVariable<T>(name);
+            if (!varIn) return;
+
+            const adios2::Dims shape = varIn.Shape();
+            current_step_vars.push_back(name);
+
+            if (!outIO.InquireVariable<T>(name)) {
+                if (shape.empty()) {
+                    outIO.DefineVariable<T>(name);
+                } else {
+                    adios2::Dims start(shape.size(), 0);
+                    adios2::Dims count = shape;
+                    outIO.DefineVariable<T>(name, shape, start, count);
+                }
+            }
+
+            // Scalar
+            if (shape.empty()) {
+                buffers[name].resize(1);
+                reader.Get(varIn, buffers[name].data(), adios2::Mode::Deferred);
+                if (name == "time") has_time_variable = true;
+                return;
+            }
+
+            // Array: split first dimension across IO ranks.
+            size_t my_start = 0;
+            size_t my_count = 0;
+            get_local_range(shape[0], rank, size, my_start, my_count);
+
+            if (my_count == 0) return;
+
+            adios2::Dims start(shape.size(), 0);
+            adios2::Dims count = shape;
+            start[0] = my_start;
+            count[0] = my_count;
+
+            varIn.SetSelection({start, count});
+
+            size_t elements = 1;
+            for (const auto c : count) {
+                elements *= c;
+            }
+
+            buffers[name].resize(elements);
+            reader.Get(varIn, buffers[name].data(), adios2::Mode::Deferred);
+        };
+
         try {
             for (const auto& varPair : varTypeMap) {
                 const std::string& name = varPair.first;
@@ -279,73 +328,25 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
                     continue;
                 }
 
-                if (type != "double" && type != "float") continue;
-
-                auto varIn = inIO.InquireVariable<VVM::Real>(name);
-                if (!varIn) continue;
-
-                const adios2::Dims shape = varIn.Shape();
-                current_step_vars.push_back(name);
-
-                if (!outIO.InquireVariable<VVM::Real>(name)) {
-                    if (shape.empty()) {
-                        outIO.DefineVariable<VVM::Real>(name);
-                    } else {
-                        adios2::Dims start(shape.size(), 0);
-                        adios2::Dims count = shape;
-                        outIO.DefineVariable<VVM::Real>(name, shape, start, count);
-                    }
+                if (type == "float") {
+                    stage_variable(float{}, name, float_buffers);
+                } else if (type == "double") {
+                    stage_variable(double{}, name, double_buffers);
                 }
-
-                if (std::find(fields_to_output.begin(), fields_to_output.end(), name) !=
-                    fields_to_output.end()) {
-                    cache_adios_field_metadata(inIO, name, field_metadata_cache);
-                }
-
-                // Scalar
-                if (shape.empty()) {
-                    data_buffers[name].resize(1);
-
-                    reader.Get(varIn, data_buffers[name].data(), adios2::Mode::Deferred);
-
-                    if (name == "time") {
-                        has_time_variable = true;
-                    }
-                    continue;
-                }
-
-                // Array: split first dimension across IO ranks.
-                size_t my_start = 0;
-                size_t my_count = 0;
-                get_local_range(shape[0], rank, size, my_start, my_count);
-
-                if (my_count == 0) {
-                    continue;
-                }
-
-                adios2::Dims start(shape.size(), 0);
-                adios2::Dims count = shape;
-                start[0] = my_start;
-                count[0] = my_count;
-
-                varIn.SetSelection({start, count});
-
-                size_t elements = 1;
-                for (const auto c : count) {
-                    elements *= c;
-                }
-
-                data_buffers[name].resize(elements);
-
-                reader.Get(varIn, data_buffers[name].data(), adios2::Mode::Deferred);
             }
+
+            cache_stream_attributes(inIO, stream_attributes);
 
             reader.PerformGets();
 
             if (has_time_variable) {
-                auto timeIt = data_buffers.find("time");
-                if (timeIt != data_buffers.end() && !timeIt->second.empty()) {
-                    step_time = timeIt->second[0];
+                const auto float_time = float_buffers.find("time");
+                const auto double_time = double_buffers.find("time");
+                if (float_time != float_buffers.end() && !float_time->second.empty()) {
+                    step_time = static_cast<VVM::Real>(float_time->second[0]);
+                } else if (double_time != double_buffers.end() &&
+                           !double_time->second.empty()) {
+                    step_time = static_cast<VVM::Real>(double_time->second[0]);
                 }
             }
 
@@ -374,8 +375,44 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
         std::sort(current_step_vars.begin(), current_step_vars.end());
 
         try {
+            define_relayed_attributes(outIO, stream_attributes);
             adios2::Engine writer = outIO.Open(h5_name, adios2::Mode::Write, io_comm);
             writer.BeginStep();
+
+            const auto relay_variable = [&](auto sample, const std::string& name, auto& buffers) {
+                using T = decltype(sample);
+
+                auto bufIt = buffers.find(name);
+                if (bufIt == buffers.end()) return;
+
+                auto varOut = outIO.InquireVariable<T>(name);
+                if (!varOut) return;
+
+                auto& buffer = bufIt->second;
+
+                const adios2::Dims shape = varOut.Shape();
+
+                // Scalar
+                if (shape.empty()) {
+                    writer.Put(varOut, buffer.data(), adios2::Mode::Deferred);
+                    return;
+                }
+
+                size_t s_start = 0;
+                size_t s_count = 0;
+                get_local_range(shape[0], rank, size, s_start, s_count);
+
+                if (s_count == 0) return;
+
+                adios2::Dims start(shape.size(), 0);
+                adios2::Dims count = shape;
+                start[0] = s_start;
+                count[0] = s_count;
+
+                varOut.SetSelection({start, count});
+
+                writer.Put(varOut, buffer.data(), adios2::Mode::Deferred);
+            };
 
             for (const auto& name : current_step_vars) {
                 const auto intIt = int_scalars.find(name);
@@ -387,39 +424,8 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
                     continue;
                 }
 
-                auto varOut = outIO.InquireVariable<VVM::Real>(name);
-                if (!varOut) continue;
-
-                auto bufIt = data_buffers.find(name);
-                if (bufIt == data_buffers.end()) continue;
-
-                auto& buffer = bufIt->second;
-
-                // Scalar
-                if (varOut.Shape().empty()) {
-                    writer.Put(varOut, buffer.data(), adios2::Mode::Deferred);
-                    continue;
-                }
-
-                const adios2::Dims shape = varOut.Shape();
-                if (shape.empty()) continue;
-
-                size_t s_start = 0;
-                size_t s_count = 0;
-                get_local_range(shape[0], rank, size, s_start, s_count);
-
-                if (s_count == 0) {
-                    continue;
-                }
-
-                adios2::Dims start(shape.size(), 0);
-                adios2::Dims count = shape;
-                start[0] = s_start;
-                count[0] = s_count;
-
-                varOut.SetSelection({start, count});
-
-                writer.Put(varOut, buffer.data(), adios2::Mode::Deferred);
+                relay_variable(float{}, name, float_buffers);
+                relay_variable(double{}, name, double_buffers);
             }
 
             writer.PerformPuts();
@@ -436,7 +442,7 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
 
         MPI_Barrier(io_comm);
         if (rank == 0) {
-            attach_sst_hdf5_field_metadata(h5_name, field_metadata_cache);
+            attach_sst_hdf5_field_metadata(h5_name, stream_attributes, fields_to_output);
         }
         MPI_Barrier(io_comm);
     }

@@ -52,6 +52,7 @@ and `MPI_Finalize()`. The destructor is a fallback, not the normal path.
 | `src/io/history/HistoryWriter.hpp` | Neutral `write`/`close` interface |
 | `src/io/history/LegacyHistoryWriter.hpp` | Adapter around the original `OutputManager` |
 | `src/io/history/GradsCtl.*` | GrADS descriptor emitter shared with the legacy writer |
+| `src/io/OutputPrecision.*` | Engine-neutral `output.precision` parsing and element-type resolution |
 | `src/io/bp5/Bp5HistoryWriter.*` | ADIOS2 lifecycle and step orchestration |
 | `src/io/bp5/Bp5OutputConfig.*` | Parse and validate the `output.bp5` block |
 | `src/io/bp5/Bp5FieldSchema.*` | Global shapes, per-rank selections, output bounds |
@@ -85,8 +86,10 @@ Dataset-level attributes describe how to interpret the file:
 | `vvm_global_grid_shape` | Global `{nz, ny, nx}` |
 | `vvm_output_bounds_zyx` | Resolved inclusive output bounds |
 
-`vvm_real_precision` and `vvm_field_precision` differ exactly when
-`output.bp5.precision` narrows or widens the history relative to `VVM::Real`.
+`vvm_real_precision` and `vvm_field_precision` differ exactly when the resolved
+precision — `output.bp5.precision`, else `output.precision` — narrows or widens
+the history relative to `VVM::Real`. The HDF5 writer records the same two
+attributes for the same reason.
 Matching values mean the file is a lossless copy of the model state.
 
 Global variable shapes are independent of the MPI decomposition. Halo cells are
@@ -138,9 +141,13 @@ This is **semantic** equivalence, not binary equivalence:
 - Reduced precision is the one intentional, opt-in departure. It is never a
   default and is always recorded in `vvm_field_precision`.
 
-A test generates HDF5 and BP5 output from the same deterministic run and
-compares names, types, shapes, steps, attributes, and values through each
-format's own reader.
+All three engines are held to this. `Compare_engine_outputs_model_smoke` runs
+the same deterministic case three times — HDF5, BP5, and SST (two compute ranks
+each, plus one I/O rank for SST) — and compares names, types, shapes, steps,
+attributes, and values through each format's own reader. Values and metadata
+both: the SST relay is the path where every number can be right while an
+attribute quietly goes missing, which is exactly what happened before it copied
+attributes wholesale.
 
 ## GrADS descriptor
 
@@ -238,6 +245,9 @@ The matrix covers:
 - configuration, schema, path-policy, and field-source packing unit tests;
 - the GrADS descriptor emitter (`ctest -R test_grads_ctl`, part of the default
   unit tier rather than the BP5 tier);
+- precision parsing and the `output.precision` → `output.bp5.precision`
+  precedence (`ctest -R test_output_precision`), plus the same option applied to
+  the HDF5 writer and the SST relay (`ctest -L precision`);
 - 1-, 2-, and 4-rank synchronous direct and packed output;
 - 1-, 2-, and 4-rank asynchronous direct output;
   on CUDA, requested-direct variants intentionally exercise host packing;
@@ -246,7 +256,8 @@ The matrix covers:
 - exact values and shapes for 1-D through 4-D fields, coordinates, clocks, and
   metadata over three ADIOS steps;
 - ten computed model steps plus initial output, synchronous and asynchronous;
-- bit-for-bit comparison against HDF5 model output for all eleven output steps;
+- bit-for-bit comparison of HDF5, SST, and BP5 model output, values and
+  attributes, for all eleven output steps;
 - 1-, 2-, and 4-rank `float32` and `float64` output, asserting the field
   variables **are** the requested type and **are not** the other one, plus a
   converting `float32` run through the asynchronous path.
@@ -265,9 +276,11 @@ time.
 ## Current boundaries
 
 - **History output only.** HDF5 remains the supported checkpoint/restart route,
-  so `precision` can only ever narrow history — it cannot silently reduce
-  restart fidelity. A separate checkpoint writer and a `Bp5RestartReader` are
-  future work.
+  so `output.bp5.precision` cannot reduce restart fidelity: it narrows BP5
+  history alone. (`output.precision` now applies to the HDF5 writer as well, and
+  narrowing *that* does narrow what a restart recovers — see
+  [Output](../user-guides/output.md#output-precision).) A separate checkpoint
+  writer and a `Bp5RestartReader` are future work.
 - **CUDA output is host-staged.** `effective_buffer_mode()` always returns
   `pack` in a CUDA build. The source creates a synchronized host mirror, then
   copies the selected cells into a persistent `Bp5BufferSet` allocation before

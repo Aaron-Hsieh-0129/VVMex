@@ -86,6 +86,24 @@ OutputManager::OutputManager(const Utils::ConfigurationManager& config, const VV
         engine_type_ = "HDF5"; 
     }
 
+    element_type_ = resolve_output_element_type(configured_output_precision(config));
+    converts_precision_ = !output_element_matches_real(element_type_);
+    if (rank_ == 0 && converts_precision_) {
+        std::cout << "  [OutputManager] Field precision: "
+                  << output_element_type_name(element_type_) << " (model VVM::Real is "
+                  << (sizeof(VVM::Real) == 8 ? "float64" : "float32")
+                  << "); clocks and coordinates stay VVM::Real" << std::endl;
+        if (element_type_ == OutputElementType::Float32 &&
+            config.get_value<bool>("restart.enable", false)) {
+            // HDF5 output is also the restart source, so narrowing it narrows
+            // what a later restart can recover. Worth saying out loud rather
+            // than discovering from a restarted run's trajectory.
+            std::cout << "  [OutputManager] WARNING: narrowed output is the restart "
+                         "source; restarts from these files lose precision."
+                      << std::endl;
+        }
+    }
+
     output_x_start_  = config.get_value<size_t>("output.output_grid.x_start");
     output_y_start_  = config.get_value<size_t>("output.output_grid.y_start");
     output_z_start_  = config.get_value<size_t>("output.output_grid.z_start");
@@ -241,6 +259,14 @@ void OutputManager::define_variables() {
     io_.DefineAttribute<std::string>("units", "meter", "coordinates/y");
     io_.DefineAttribute<std::string>("units", "meter", "coordinates/x");
 
+    // A reader needs both to tell whether the file is a lossless copy of the
+    // model state: the model's working precision, and what the field variables
+    // actually are.
+    io_.DefineAttribute<std::string>(
+        "vvm_real_precision", sizeof(VVM::Real) == 8 ? "float64" : "float32");
+    io_.DefineAttribute<std::string>(
+        "vvm_field_precision", output_element_type_name(element_type_));
+
     const size_t rank_lnx = grid_.get_local_physical_points_x();
     const size_t rank_lny = grid_.get_local_physical_points_y();
     const size_t rank_lnz = grid_.get_local_physical_points_z();
@@ -271,27 +297,67 @@ void OutputManager::define_variables() {
                     
                     if constexpr (T::DimValue == 1) {
                         size_t count = (rank_ == 0) ? local_nz : 0;
-                        field_variables_[field_name] = io_.DefineVariable<VVM::Real>(field_name, {gnz}, {actual_out_z_start}, {count});
+                        define_field_variable(field_name, {gnz}, {actual_out_z_start}, {count});
                     }
                     else if constexpr (T::DimValue == 2) {
-                        field_variables_[field_name] = io_.DefineVariable<VVM::Real>(field_name, {gny, gnx}, {actual_out_y_start, actual_out_x_start}, {local_ny, local_nx});
+                        define_field_variable(field_name, {gny, gnx}, {actual_out_y_start, actual_out_x_start}, {local_ny, local_nx});
                     }
                     else if constexpr (T::DimValue == 3) {
-                        field_variables_[field_name] = io_.DefineVariable<VVM::Real>(field_name, {gnz, gny, gnx}, {actual_out_z_start, actual_out_y_start, actual_out_x_start}, {local_nz, local_ny, local_nx});
+                        define_field_variable(field_name, {gnz, gny, gnx}, {actual_out_z_start, actual_out_y_start, actual_out_x_start}, {local_nz, local_ny, local_nx});
                     }
                     else if constexpr (T::DimValue == 4) {
                         const size_t dim4 = field.get_device_data().extent(0);
-                        field_variables_[field_name] = io_.DefineVariable<VVM::Real>(field_name, {dim4, gnz, gny, gnx}, {0, actual_out_z_start, actual_out_y_start, actual_out_x_start}, {dim4, local_nz, local_ny, local_nx});
+                        define_field_variable(field_name, {dim4, gnz, gny, gnx}, {0, actual_out_z_start, actual_out_y_start, actual_out_x_start}, {dim4, local_nz, local_ny, local_nx});
                     }
 
                     const auto& metadata = field.get_metadata();
-                    if (field_variables_.count(field_name)) {
+                    if (field_counts_.count(field_name)) {
                         define_adios_field_metadata(field_name, metadata);
                     }
                 }
             }, it->second);
         }
     }
+}
+
+void OutputManager::define_field_variable(
+    const std::string& field_name,
+    const adios2::Dims& shape,
+    const adios2::Dims& start,
+    const adios2::Dims& count)
+{
+    if (converts_precision_) {
+        converted_variables_[field_name] =
+            io_.DefineVariable<ConvertedReal>(field_name, shape, start, count);
+    } else {
+        field_variables_[field_name] =
+            io_.DefineVariable<VVM::Real>(field_name, shape, start, count);
+    }
+    field_counts_[field_name] = count;
+}
+
+void OutputManager::put_field(
+    const std::string& field_name,
+    const VVM::Real* data,
+    size_t elements)
+{
+    if (!converts_precision_) {
+        writer_.Put(field_variables_.at(field_name), data, adios2::Mode::Sync);
+        return;
+    }
+
+    // The staged host copy is VVM::Real, so narrowing or widening happens here,
+    // once per field per output, into a buffer that is allocated once. Never
+    // empty, so a rank with no selected cells still hands ADIOS2 a valid
+    // pointer, as the VVM::Real path does.
+    auto& buffer = converted_buffers_[field_name];
+    if (buffer.size() < std::max<size_t>(elements, 1)) {
+        buffer.resize(std::max<size_t>(elements, 1));
+    }
+    for (size_t i = 0; i < elements; ++i) {
+        buffer[i] = static_cast<ConvertedReal>(data[i]);
+    }
+    writer_.Put(converted_variables_.at(field_name), buffer.data(), adios2::Mode::Sync);
 }
 
 void OutputManager::write(size_t step, VVM::Real time) {
@@ -338,8 +404,8 @@ void OutputManager::write(size_t step, VVM::Real time) {
     size_t out_z_start = std::max(rank_off_z, output_z_start_);
 
     for (const auto& field_name : fields_to_output_) {
-        if (field_variables_.count(field_name)) {
-            auto& adios_var = field_variables_.at(field_name);
+        if (field_counts_.count(field_name)) {
+            const auto& adios_count = field_counts_.at(field_name);
             auto it = state_.begin();
             while (it != state_.end() && it->first != field_name) ++it;
              
@@ -355,20 +421,20 @@ void OutputManager::write(size_t step, VVM::Real time) {
                         size_t i_start = (out_x_start - rank_off_x) + h;
 
                         if constexpr (T::DimValue == 1) {
-                            size_t count = adios_var.Count()[0];
+                            size_t count = adios_count[0];
                             auto subview = Kokkos::subview(full_data_view, std::make_pair(k_start, k_start + count));
-                            
+
                             if (host_buffers_1d_.find(field_name) == host_buffers_1d_.end()) {
                                 host_buffers_1d_[field_name] = Kokkos::View<VVM::Real*, Kokkos::HostSpace>(field_name + "_host", count);
                             }
                             auto& host_view = host_buffers_1d_[field_name];
-                            
+
                             Kokkos::deep_copy(host_view, subview);
-                            writer_.Put(adios_var, host_view.data(), adios2::Mode::Sync);
+                            put_field(field_name, host_view.data(), count);
                         }
                         else if constexpr (T::DimValue == 2) {
-                            size_t ny = adios_var.Count()[0];
-                            size_t nx = adios_var.Count()[1];
+                            size_t ny = adios_count[0];
+                            size_t nx = adios_count[1];
                             
                             // 2-Step Copy: Strided Device -> Contiguous Device -> Contiguous Host
                             if (dev_buffers_2d_.find(field_name) == dev_buffers_2d_.end()) {
@@ -386,14 +452,14 @@ void OutputManager::write(size_t step, VVM::Real time) {
                             }
                             auto& host_view = host_buffers_2d_[field_name];
                             Kokkos::deep_copy(host_view, dev_contig);
-                            
+
                             // UNCONDITIONAL PUT: Even if ny*nx is 0, we pass the pointer (which is valid/empty)
-                            writer_.Put(adios_var, host_view.data(), adios2::Mode::Sync);
+                            put_field(field_name, host_view.data(), ny * nx);
                         }
                         else if constexpr (T::DimValue == 3) {
-                            size_t nz = adios_var.Count()[0];
-                            size_t ny = adios_var.Count()[1];
-                            size_t nx = adios_var.Count()[2];
+                            size_t nz = adios_count[0];
+                            size_t ny = adios_count[1];
+                            size_t nx = adios_count[2];
 
                             if (dev_buffers_3d_.find(field_name) == dev_buffers_3d_.end()) {
                                 dev_buffers_3d_[field_name] = Kokkos::View<VVM::Real***, Kokkos::LayoutRight>(field_name + "_dev", nz, ny, nx);
@@ -412,14 +478,14 @@ void OutputManager::write(size_t step, VVM::Real time) {
                             }
                             auto& host_view = host_buffers_3d_[field_name];
                             Kokkos::deep_copy(host_view, dev_contig);
-                            
-                            writer_.Put(adios_var, host_view.data(), adios2::Mode::Sync);
+
+                            put_field(field_name, host_view.data(), nz * ny * nx);
                         }
                         else if constexpr (T::DimValue == 4) {
-                            size_t d4 = adios_var.Count()[0];
-                            size_t nz = adios_var.Count()[1];
-                            size_t ny = adios_var.Count()[2];
-                            size_t nx = adios_var.Count()[3];
+                            size_t d4 = adios_count[0];
+                            size_t nz = adios_count[1];
+                            size_t ny = adios_count[2];
+                            size_t nx = adios_count[3];
 
                             if (dev_buffers_4d_.find(field_name) == dev_buffers_4d_.end()) {
                                 dev_buffers_4d_[field_name] = Kokkos::View<VVM::Real****, Kokkos::LayoutRight>(field_name + "_dev", d4, nz, ny, nx);
@@ -438,8 +504,8 @@ void OutputManager::write(size_t step, VVM::Real time) {
                             }
                             auto& host_view = host_buffers_4d_[field_name];
                             Kokkos::deep_copy(host_view, dev_contig);
-                            
-                            writer_.Put(adios_var, host_view.data(), adios2::Mode::Sync);
+
+                            put_field(field_name, host_view.data(), d4 * nz * ny * nx);
                         }
                     }
                 }, it->second);
@@ -563,17 +629,22 @@ void OutputManager::attach_hdf5_field_metadata(
         H5Dclose(dataset);
     }
 
-    // The scalar clock variables are not State fields, so the loop above never
+    // The clocks and coordinates are not State fields, so the loop above never
     // reaches them. Label them in the file itself: a reader that opens
-    // vvm_output_XXXXXX.h5 should be able to see that these are elapsed seconds
-    // and an exact step count, without consulting the source.
-    const std::array<std::array<const char*, 3>, 3> scalar_metadata = {{
-        {{"time",         "s", "elapsed simulation time"}},
-        {{"model_time_s", "s", "elapsed simulation time"}},
-        {{"model_step",   "1", "integration step count"}},
+    // vvm_output_XXXXXX.h5 should be able to see that these are elapsed seconds,
+    // an exact step count, and metres, without consulting the source. Done
+    // before the dimension scales are copied, so the x/y/z scales inherit the
+    // coordinate units.
+    const std::array<std::array<const char*, 3>, 6> labelled_datasets = {{
+        {{"time",              "s",     "elapsed simulation time"}},
+        {{"model_time_s",      "s",     "elapsed simulation time"}},
+        {{"model_step",        "1",     "integration step count"}},
+        {{"coordinates/x",     "meter", ""}},
+        {{"coordinates/y",     "meter", ""}},
+        {{"coordinates/z_mid", "meter", ""}},
     }};
 
-    for (const auto& entry : scalar_metadata) {
+    for (const auto& entry : labelled_datasets) {
         hid_t dataset = H5Dopen2(file, (std::string("/Step0/") + entry[0]).c_str(), H5P_DEFAULT);
         if (dataset < 0) continue;
         write_attribute(dataset, "units", entry[1]);

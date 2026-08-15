@@ -194,7 +194,8 @@ ADIOS2 output, field selection, and optional subsetting. Engine trade-offs and s
 | `output_dir` | string | *required* | Destination directory. `submit.py` creates it before launching. |
 | `output_filename_prefix` | string | *required* | Base name for the files, the `.bp` dataset, or the SST stream. |
 | `engine` | string | `"HDF5"` | `HDF5` (one file per output time), `SST` (streams to dedicated I/O ranks), or `BP5` (one multi-step `.bp` dataset written directly by compute ranks). |
-| `fields_to_output` | list | *required* | Ordered list of state fields to write. Each name must exist on the model state — a missing, disabled, or misspelled name is an error. Must be non-empty and duplicate-free for BP5. |
+| `fields_to_output` | list | *required* | Ordered list of state fields to write. A name the run never registered is skipped with a message; on HDF5 and SST a name that is not a known optional field either is an error, so typos are still caught. Must be non-empty and duplicate-free for BP5. |
+| `precision` | string | `"native"` | On-disk float type for **field data only**, on every engine: `native` (follows `VVM::Real`), `float32`/`float`/`single`, or `float64`/`double`. Case-insensitive. Clocks and coordinates always stay `VVM::Real`. Narrowing HDF5 output narrows what a later restart recovers. |
 | `output_initial_step` | bool | `true` | Write step 0 before the first model step. |
 | `output_grid.x_start`, `.y_start`, `.z_start` | int | `0` | Inclusive lower index bound per direction. |
 | `output_grid.x_end`, `.y_end`, `.z_end` | int | `-1` | Inclusive upper index bound; `-1` means "to the end". Halo cells are never written. |
@@ -224,7 +225,7 @@ Read only when `engine` is `BP5`. Unlike the rest of the file, **unknown keys an
 | `stats_level` | int | `0` | `0` minimises statistics work; `1` enables BP5 statistics. No other value is accepted. |
 | `async_write` | bool | `false` | Let ADIOS2 write to disk in the background. VVMex switches to `Mode::Sync` puts so the model may modify its fields immediately. |
 | `buffer_mode` | string | `"direct"` | `direct` hands compatible CPU memory to ADIOS2 with a memory selection; `pack` (or `packed`) stages into persistent contiguous buffers. Resolves to `pack` automatically under CUDA or whenever precision converts. |
-| `precision` | string | `"native"` | On-disk float type for **field data only**: `native` (follows `VVM::Real`), `float32`/`float`/`single`, or `float64`/`double`. Case-insensitive. |
+| `precision` | string | `output.precision` | BP5-only override of the engine-neutral `output.precision`, with the same values. Omit it to follow that key. |
 | `overwrite` | bool | `false` | When `false`, refuse to replace an existing dataset in `output_dir`. |
 
 Use `fields_to_output` deliberately. A large list is convenient for diagnostics but increases file size and I/O cost. Common field groups are:

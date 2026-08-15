@@ -55,6 +55,7 @@ set(VVM_TEST_SECONDS 120 CACHE STRING "Simulated seconds for default_cases tests
 #   default                always on   advection_u/v/w, stretching, twisting,
 #                                      2dbubble, mountain, plus the unit tests
 #   VVM_TEST_BP5           opt-in      direct BP5 output: unit, MPI, model
+#   VVM_TEST_SST           opt-in      SST relay precision (needs a working SST)
 #   VVM_TEST_PHYSICS       GPU only    P3 / RRTMGP / Noah land cases
 #   VVM_TEST_MULTIRANK     4 ranks     rank invariance (2-D decomposition)
 #   VVM_TEST_LARGE         8 ranks     2048^2, needs the 961 MB input file
@@ -79,6 +80,7 @@ set(VVM_TEST_SECONDS 120 CACHE STRING "Simulated seconds for default_cases tests
 # they cannot be faked on a smaller machine -- see scripts/one_gpu_per_rank.sh.
 # ---------------------------------------------------------------------------
 option(VVM_TEST_BP5       "Register direct BP5 output tests (CPU and GPU builds)"     OFF)
+option(VVM_TEST_SST       "Register the SST relay precision test (2 ranks, network)"  OFF)
 option(VVM_TEST_PHYSICS   "Register physics-tier tests (GPU builds only, ~80 s)"      OFF)
 option(VVM_TEST_MULTIRANK "Register rank-invariance tests (4 ranks, ~30 s)"           OFF)
 option(VVM_TEST_LARGE     "Register the 2048^2 test (8 ranks, 961 MB input)"          OFF)
@@ -105,6 +107,7 @@ endfunction()
 message(STATUS "Test tiers (all are bit-for-bit gates; simulated seconds per case: ${VVM_TEST_SECONDS}):")
 message(STATUS "  Test tier default  : ON   (advection x3, stretching, twisting, 2dbubble, mountain, unit tests)")
 _report_test_tier("bp5      " ${VVM_TEST_BP5}       "CPU or GPU build"  VVM_TEST_BP5)
+_report_test_tier("sst      " ${VVM_TEST_SST}       "2 ranks, SST"      VVM_TEST_SST)
 _report_test_tier("physics  " ${VVM_TEST_PHYSICS}   "GPU build only"    VVM_TEST_PHYSICS)
 _report_test_tier("multirank" ${VVM_TEST_MULTIRANK} "4 ranks / 4 GPUs"  VVM_TEST_MULTIRANK)
 _report_test_tier("large    " ${VVM_TEST_LARGE}     "8 ranks / 8 GPUs"  VVM_TEST_LARGE)
@@ -257,6 +260,59 @@ target_link_libraries(test_grads_ctl PRIVATE vvm_io Kokkos::kokkos MPI::MPI_CXX)
 add_test(NAME test_grads_ctl COMMAND test_grads_ctl)
 set_tests_properties(test_grads_ctl PROPERTIES LABELS unit)
 
+# Output precision: the engine-neutral output.precision key, its aliases, and
+# how the BP5 block overrides it. Launched through mpirun because
+# ConfigurationManager reads MPI_COMM_WORLD.
+add_executable(test_output_precision ${TEST_DIR}/unit/test_output_precision.cpp)
+target_include_directories(test_output_precision PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_output_precision PRIVATE vvm_io vvm_utils Kokkos::kokkos MPI::MPI_CXX)
+add_test(NAME test_output_precision
+         COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
+                 $<TARGET_FILE:test_output_precision>)
+set_tests_properties(test_output_precision PROPERTIES LABELS unit TIMEOUT 60)
+
+# --- output precision on the legacy writer ---------------------------------
+# output.precision decides the on-disk field type for HDF5 and SST as it does
+# for BP5. The HDF5 case writes a real file and reads its dataset types back;
+# 'unset' is the pre-existing behaviour and guards against a silent change to
+# the default path. One rank, one GPU, no network.
+set(OUTPUT_PRECISION_WORKDIR "${CMAKE_BINARY_DIR}/output_precision")
+add_executable(test_hdf5_precision integration/test_hdf5_precision.cpp)
+target_include_directories(test_hdf5_precision PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_hdf5_precision PRIVATE
+                      vvm_io vvm_core vvm_utils HDF5::HL Kokkos::kokkos MPI::MPI_CXX)
+foreach(PRECISION unset native float32 float64)
+    add_test(NAME test_hdf5_precision_${PRECISION}
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
+                     ${GPU_WRAP} $<TARGET_FILE:test_hdf5_precision>
+                     ${TEST_DIR}/configs/advection_u.json
+                     ${OUTPUT_PRECISION_WORKDIR} ${PRECISION}
+             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(test_hdf5_precision_${PRECISION} PROPERTIES
+                         LABELS "integration;precision" RESOURCE_LOCK gpu TIMEOUT 120)
+endforeach()
+
+# The SST relay carries the same precision through the I/O server. Opt-in
+# because it opens a real SST stream, which depends on the machine's network
+# rather than on this code.
+if(VVM_TEST_SST)
+    add_executable(test_sst_precision integration/test_sst_precision.cpp)
+    target_include_directories(test_sst_precision PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(test_sst_precision PRIVATE
+                          vvm_io vvm_core vvm_utils HDF5::HL Kokkos::kokkos MPI::MPI_CXX)
+    foreach(PRECISION unset float32)
+        add_test(NAME test_sst_precision_${PRECISION}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2 ${VVM_MPI_BIND_ARGS}
+                         ${GPU_WRAP} $<TARGET_FILE:test_sst_precision>
+                         ${TEST_DIR}/configs/advection_u.json
+                         ${OUTPUT_PRECISION_WORKDIR} ${PRECISION}
+                 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        set_tests_properties(test_sst_precision_${PRECISION} PROPERTIES
+                             LABELS "integration;precision;sst" RESOURCE_LOCK gpu
+                             TIMEOUT 300)
+    endforeach()
+endif()
+
 # --- bp5 tier: opt-in with -DVVM_TEST_BP5=ON -------------------------------
 # Everything below writes and reads real BP5 datasets under
 # ${CMAKE_BINARY_DIR}, so it is off by default rather than paid for on every
@@ -363,7 +419,8 @@ if(VVM_TEST_BP5)
     foreach(BP5_MODEL_CONFIG
             bp5_model_smoke
             bp5_model_async_smoke
-            hdf5_model_smoke)
+            hdf5_model_smoke
+            sst_model_smoke)
         file(READ ${TEST_DIR}/configs/${BP5_MODEL_CONFIG}.json VVM_BP5_MODEL_CFG)
         string(REGEX REPLACE "\"output_dir\"[ \t]*:[ \t]*\"[^\"]*\""
                              "\"output_dir\": \"${CMAKE_BINARY_DIR}/testing_output_${BP5_MODEL_CONFIG}\""
@@ -405,25 +462,37 @@ if(VVM_TEST_BP5)
                          DEPENDS Run_bp5_model_async_smoke
                          LABELS "bp5;integration;model;async" TIMEOUT 30)
 
-    add_executable(test_bp5_hdf5_compat integration/test_bp5_hdf5_compat.cpp)
-    target_include_directories(test_bp5_hdf5_compat PRIVATE ${CMAKE_SOURCE_DIR}/src)
-    target_link_libraries(test_bp5_hdf5_compat PRIVATE
+    # The three engines must agree bit-for-bit on the same run: same case, same
+    # two compute ranks (SST adds one I/O rank on top), compared through each
+    # format's own reader. Values and metadata both -- the SST relay once
+    # delivered every number correctly while dropping attributes.
+    add_executable(test_engine_output_compat integration/test_engine_output_compat.cpp)
+    target_include_directories(test_engine_output_compat PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(test_engine_output_compat PRIVATE
                           adios2::adios2 HDF5::HL Kokkos::kokkos MPI::MPI_CXX)
     add_test(NAME Run_hdf5_model_smoke
              COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
                      ${VVM_MPI_BIND_ARGS} ${GPU_WRAP} $<TARGET_FILE:vvm>
                      ${hdf5_model_smoke_CONFIG}
              WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-    add_test(NAME Compare_bp5_hdf5_model_smoke
-             COMMAND $<TARGET_FILE:test_bp5_hdf5_compat>
+    add_test(NAME Run_sst_model_smoke
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 3
+                     ${VVM_MPI_BIND_ARGS} ${GPU_WRAP} $<TARGET_FILE:vvm>
+                     ${sst_model_smoke_CONFIG} --io-tasks 1
+             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME Compare_engine_outputs_model_smoke
+             COMMAND $<TARGET_FILE:test_engine_output_compat>
                      ${CMAKE_BINARY_DIR}/testing_output_bp5_model_smoke/history.bp
                      ${CMAKE_BINARY_DIR}/testing_output_hdf5_model_smoke
+                     ${CMAKE_BINARY_DIR}/testing_output_sst_model_smoke
              WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     set_tests_properties(Run_hdf5_model_smoke PROPERTIES
                          LABELS "bp5;integration;compatibility" TIMEOUT 240)
-    set_tests_properties(Compare_bp5_hdf5_model_smoke PROPERTIES
-                         DEPENDS "Run_bp5_model_smoke;Run_hdf5_model_smoke"
-                         LABELS "bp5;integration;compatibility" TIMEOUT 30)
+    set_tests_properties(Run_sst_model_smoke PROPERTIES
+                         LABELS "bp5;integration;compatibility;sst" TIMEOUT 300)
+    set_tests_properties(Compare_engine_outputs_model_smoke PROPERTIES
+                         DEPENDS "Run_bp5_model_smoke;Run_hdf5_model_smoke;Run_sst_model_smoke"
+                         LABELS "bp5;integration;compatibility" TIMEOUT 60)
 endif() # VVM_TEST_BP5
 
 # --- unit, on files: no GPU, 1-2 ranks, <1 s ------------------------------

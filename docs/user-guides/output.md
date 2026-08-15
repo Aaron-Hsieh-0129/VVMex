@@ -21,6 +21,12 @@ which backend you built.
 If you are unsure: **HDF5** for anything small or when you need restarts,
 **BP5** for direct output without I/O ranks, **SST** for GPU production with I/O ranks.
 
+The engine changes the container, not the numbers. For the same case and the
+same compute-rank count, all three write **bit-for-bit identical** field values
+and identical metadata; a test compares them through each format's own reader on
+every output step (`ctest -R Compare_engine_outputs`). Choose an engine on I/O
+cost and workflow, never on results.
+
 ## Options common to every engine
 
 ```json
@@ -44,9 +50,52 @@ If you are unsure: **HDF5** for anything small or when you need restarts,
 | `output_initial_step` | Write step 0 before the first model step. Default `true`. |
 | `fields_to_output` | Field names to write. A name the run never registered — a disabled microphysics or radiation output, say — is skipped with a message rather than written. On HDF5 and SST a name that is neither a known optional field nor a registered one is still an error, so typos are caught. |
 | `output_grid` | Inclusive index bounds per direction; `-1` means "to the end". Halo cells are never written. |
+| `precision` | On-disk float type for field data: `native` (default), `float32`, or `float64`. See below. |
 
 Cadence is `simulation.output_interval_s`. With `dt_s: 1.0` and
 `output_interval_s: 600.0` you get one output every 600 model steps.
+
+### Output precision
+
+History precision is independent of `VVM::Real`, on **every** engine. A
+double-precision build can write `float32` history without changing how it
+computes — roughly halving the output for a run dominated by 3-D fields.
+
+```json
+"output": { "precision": "float32" }
+```
+
+| Value | On-disk field type |
+|---|---|
+| `native` (default) | `VVM::Real` — identical to the behaviour before this option existed |
+| `float32`, `float`, `single` | `float` |
+| `float64`, `double` | `double` |
+
+Case-insensitive. **Field data only.** `time`, `model_time_s`, `model_step`, and
+`coordinates/*` keep their types: they are kilobytes per step against tens of
+gigabytes of field data, so narrowing them would save nothing while making a
+timestamp or grid coordinate lossy.
+
+Two attributes record what happened — `vvm_field_precision` (the on-disk field
+type) and `vvm_real_precision` (the model's working precision). Differing means
+the history is a narrowed copy; matching means it is lossless.
+
+Per engine:
+
+| Engine | How the choice is applied |
+|---|---|
+| `HDF5` | Field datasets are created at the chosen type; the staged host copy is converted per field per output. |
+| `SST` | Fields stream at the chosen type, and the I/O server relays whatever type the stream declares into HDF5. |
+| `BP5` | As above; `output.bp5.precision` overrides `output.precision` when both are set. |
+
+!!! warning "HDF5 output is also the restart source"
+
+    A restart reads the HDF5 history files, so `precision: float32` on the HDF5
+    or SST path means a later restart resumes from float32 state. HDF5 converts
+    on read, so the run still starts — it just starts from less precise numbers,
+    and is no longer bit-for-bit with an uninterrupted run. Keep `native` for
+    any run you intend to restart. The writer says so at startup when both are
+    set.
 
 ## HDF5
 
@@ -134,7 +183,7 @@ nonzero `--io` is rejected.
 | `stats_level` | `0` minimises statistics work; `1` enables BP5 statistics. |
 | `async_write` | Background file writing. Default `false`. |
 | `buffer_mode` | `direct` passes compatible CPU memory with a memory selection; `pack` stages into persistent contiguous buffers. CUDA builds always resolve this to `pack` for host staging. |
-| `precision` | On-disk float type for field data: `native`, `float32`, or `float64`. |
+| `precision` | BP5-only override of [`output.precision`](#output-precision). Omit it to follow that key. |
 | `overwrite` | When `false`, refuse to replace an existing dataset. |
 
 Unknown keys and invalid values are errors. Every resolved setting is compared
@@ -174,26 +223,12 @@ Two consequences of what GrADS accepts are worth knowing:
   the whole `open`. They are listed in a comment line instead and remain
   readable from the dataset through ADIOS2.
 
-### Output precision
+### BP5 precision and buffering
 
-History precision is independent of `VVM::Real`. A double-precision build can
-write `float32` history without changing how it computes — roughly halving the
-dataset for a run dominated by 3-D fields.
-
-| Value | On-disk field type |
-|---|---|
-| `native` (default) | `VVM::Real` — identical to the behaviour before this option existed |
-| `float32`, `float`, `single` | `float` |
-| `float64`, `double` | `double` |
-
-Case-insensitive. **Field data only.** `time`, `model_time_s`, `model_step`, and
-`coordinates/*` keep their types: they are kilobytes per step against tens of
-gigabytes of field data, so narrowing them would save nothing while making a
-timestamp or grid coordinate lossy.
-
-Two dataset attributes record what happened — `vvm_field_precision` (the on-disk
-field type) and `vvm_real_precision` (the model's working precision). Differing
-means the history is a narrowed copy; matching means it is lossless.
+BP5 takes its precision from the engine-neutral
+[`output.precision`](#output-precision), and `output.bp5.precision` overrides it
+for BP5 alone — useful for writing narrowed BP5 history while an HDF5 restart
+file stays lossless.
 
 Converting requires a staging buffer, so `buffer_mode: direct` resolves to
 `pack` automatically when precision converts. CUDA builds also always resolve

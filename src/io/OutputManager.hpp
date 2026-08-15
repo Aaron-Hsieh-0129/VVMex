@@ -13,6 +13,7 @@
 #include "core/State.hpp"
 #include "core/Parameters.hpp"
 #include "core/vvm_types.hpp"
+#include "io/OutputPrecision.hpp"
 #include "io/history/GradsCtl.hpp"
 #include "utils/ConfigurationManager.hpp"
 #include "utils/Timer.hpp"
@@ -58,7 +59,16 @@ private:
     adios2::ADIOS adios_;
     adios2::IO io_;
     adios2::Engine writer_;
+
+    // Field data carries the configured output precision, which need not be
+    // VVM::Real; clocks and coordinates deliberately stay VVM::Real. Exactly
+    // one of these two maps is populated, decided once by converts_precision_.
+    OutputElementType element_type_ = OutputElementType::Float64;
+    bool converts_precision_ = false;
     std::map<std::string, adios2::Variable<VVM::Real>> field_variables_;
+    std::map<std::string, adios2::Variable<ConvertedReal>> converted_variables_;
+    std::map<std::string, adios2::Dims> field_counts_;
+    std::map<std::string, std::vector<ConvertedReal>> converted_buffers_;
 
     size_t output_x_start_, output_y_start_, output_z_start_;
     size_t output_x_end_, output_y_end_, output_z_end_;
@@ -68,6 +78,12 @@ private:
     adios2::Variable<VVM::Real> var_time_;
 
     void define_variables();
+    void define_field_variable(
+        const std::string& field_name,
+        const adios2::Dims& shape,
+        const adios2::Dims& start,
+        const adios2::Dims& count);
+    void put_field(const std::string& field_name, const VVM::Real* data, size_t elements);
     void define_adios_field_metadata(
         const std::string& field_name,
         const VVM::Core::FieldMetadata& metadata);

@@ -120,7 +120,7 @@ cmake --build build -j<core_number>
       Missing profile columns, configured NetCDF variables, and incompatible spatial
       dimensions fail with diagnostics that name the input file and field.
 
-- **ERA5 nudging/large-scale forcing**:
+- **ERA5 nudging/large-scale forcing** (only needed for nudging case):
 
     Edit the user-settings section near the top of
     `tools/generate_ls_forcing.py`: select the case JSON, local ERA5 dynamics
@@ -222,9 +222,13 @@ three engines are not interchangeable — the right one depends on your build:
 | `BP5` | one multi-step `.bp` dataset, written directly by the compute ranks | none | yes (host-staged) | yes (production path) |
 
 `BP5` stages CUDA fields through host memory before writing; CPU builds can
-write compatible layouts directly. It supports reduced-precision history
-(`"precision": "float32"`), which roughly halves dataset size without changing
-how the model computes.
+write compatible layouts directly.
+
+Every engine supports reduced-precision history (`"output": {"precision":
+"float32"}`), which roughly halves output size without changing how the model
+computes. Clocks and coordinates keep the model's precision. Note that HDF5
+output is also the restart source, so narrowing it narrows what a restart
+recovers.
 
 See [Output](https://aaron-hsieh-0129.github.io/VVMex/user-guides/output/) for
 the full option reference, engine comparison, and dataset-sizing guidance.
