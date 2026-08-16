@@ -1,31 +1,19 @@
 #include "Hdf5RestartReader.hpp"
 
 #include "Hdf5RestartMetadata.hpp"
+#include "io/RestartVariables.hpp"
 #include "core/vvm_types.hpp"
 
 #include <Kokkos_Core.hpp>
 #include <hdf5.h>
 #include <algorithm>
 #include <iostream>
-#include <sstream>
 #include <stdexcept>
-#include <unordered_set>
 
 namespace VVM {
 namespace IO {
 
 namespace {
-std::string join_variable_names(const std::vector<std::string>& names) {
-    if (names.empty()) return "(none)";
-
-    std::ostringstream oss;
-    for (size_t i = 0; i < names.size(); ++i) {
-        if (i > 0) oss << ", ";
-        oss << names[i];
-    }
-    return oss.str();
-}
-
 void checked_hdf5_call(herr_t status, const std::string& message) {
     if (status < 0) throw std::runtime_error(message);
 }
@@ -83,27 +71,17 @@ Hdf5RestartReader::Hdf5RestartReader(const std::string& filepath,
 }
 
 void Hdf5RestartReader::read_and_initialize(Core::State& state) {
-    std::vector<std::string> vars_1d;
-    std::vector<std::string> vars_2d;
-    std::vector<std::string> vars_3d;
+    const RestartVariables variables =
+        select_restart_variables(config_, state, rank_, "Hdf5RestartReader");
+    const std::vector<std::string>& vars_1d = variables.vars_1d;
+    const std::vector<std::string>& vars_2d = variables.vars_2d;
+    const std::vector<std::string>& vars_3d = variables.vars_3d;
 
-    if (config_.has_key("restart.variables_to_read.1d")) {
-        vars_1d = config_.get_value<std::vector<std::string>>("restart.variables_to_read.1d");
-    }
-    if (config_.has_key("restart.variables_to_read.2d")) {
-        vars_2d = config_.get_value<std::vector<std::string>>("restart.variables_to_read.2d");
-    }
-    if (config_.has_key("restart.variables_to_read.3d")) {
-        vars_3d = config_.get_value<std::vector<std::string>>("restart.variables_to_read.3d");
-    } else {
-        vars_3d = get_variables_to_read(state);
-    }
-
-    if (vars_1d.empty() && vars_2d.empty() && vars_3d.empty()) {
+    if (variables.empty()) {
         throw std::runtime_error("[Hdf5RestartReader] No restart variables selected from " + source_file_);
     }
 
-    print_variables_to_read(vars_1d, vars_2d, vars_3d);
+    print_restart_variables(variables, source_file_, rank_, "Hdf5RestartReader");
 
     hid_t file_id = H5Fopen(source_file_.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
     if (file_id < 0) {
@@ -163,83 +141,6 @@ VVM::Utils::RestartFileMetadata Hdf5RestartReader::read_restart_metadata() {
         }
     }
     return metadata;
-}
-
-std::vector<std::string> Hdf5RestartReader::get_variables_to_read(const Core::State& state) const {
-    std::vector<std::string> result;
-    std::unordered_set<std::string> output_fields;
-    std::vector<std::string> skipped_output_fields;
-
-    if (config_.has_key("output.fields_to_output")) {
-        for (const auto& name : config_.get_value<std::vector<std::string>>("output.fields_to_output")) {
-            output_fields.insert(name);
-        }
-    }
-
-    auto prognostic_config = config_.get_value<nlohmann::json>("dynamics.prognostic_variables");
-    for (const auto& item : prognostic_config.items()) {
-        const std::string& var_name = item.key();
-        if (!state.has_field(var_name)) continue;
-        if (!output_fields.empty() && output_fields.count(var_name) == 0) {
-            skipped_output_fields.push_back(var_name);
-            continue;
-        }
-        result.push_back(var_name);
-    }
-
-    // User tracers are prognostic even though they are deliberately not
-    // duplicated under dynamics.prognostic_variables. In inferred mode they
-    // are therefore always required from the restart file.
-    for (const auto& tracer_name : state.get_tracer_names()) {
-        if (std::find(result.begin(), result.end(), tracer_name) == result.end()) {
-            result.push_back(tracer_name);
-        }
-    }
-
-    // u/v/w are diagnostic rather than prognostic,
-    // but they are still needed for a physically consistent restart.
-    // They are written to the restart/output file, so include them explicitly.
-    const std::vector<std::string> diagnostic_velocity_fields = {"u", "v", "w"};
-
-    for (const auto& var_name : diagnostic_velocity_fields) {
-        if (!state.has_field(var_name)) {
-            continue;
-        }
-
-        if (!output_fields.empty() && output_fields.count(var_name) == 0) {
-            skipped_output_fields.push_back(var_name);
-            continue;
-        }
-
-        bool already_in_result = false;
-        for (const auto& selected_name : result) {
-            if (selected_name == var_name) {
-                already_in_result = true;
-                break;
-            }
-        }
-
-        if (!already_in_result) {
-            result.push_back(var_name);
-        }
-    }
-
-    if (rank_ == 0 && !skipped_output_fields.empty()) {
-        std::cout << "  [Hdf5RestartReader] Skipping restart variables not listed in output.fields_to_output: "
-                  << join_variable_names(skipped_output_fields) << std::endl;
-    }
-    return result;
-}
-
-void Hdf5RestartReader::print_variables_to_read(const std::vector<std::string>& vars_1d,
-                                                const std::vector<std::string>& vars_2d,
-                                                const std::vector<std::string>& vars_3d) const {
-    if (rank_ != 0) return;
-
-    std::cout << "  [Hdf5RestartReader] Restart variables to read from " << source_file_ << ":" << std::endl;
-    std::cout << "    1D: " << join_variable_names(vars_1d) << std::endl;
-    std::cout << "    2D: " << join_variable_names(vars_2d) << std::endl;
-    std::cout << "    3D: " << join_variable_names(vars_3d) << std::endl;
 }
 
 template<size_t Dim>

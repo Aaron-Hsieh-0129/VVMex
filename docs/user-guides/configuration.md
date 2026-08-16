@@ -146,16 +146,17 @@ Whether the model initializes prognostic fields from an existing output file.
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `enable` | bool | `false` | Enables restart loading. |
-| `source_file` | string | *required when enabled* | Restart source. `.h5` goes through the HDF5 restart reader, `.nc` through the PnetCDF reader; any other extension is an error. |
+| `source_file` | string | *required when enabled* | Restart source. `.h5` goes through the HDF5 restart reader, `.bp` through the BP5 restart reader, `.nc` through the PnetCDF reader; any other extension is an error. |
 | `legacy_time_s` | real | *(none)* | Elapsed simulation seconds to resume from, for a file that stores no clock of its own. Explicit opt-in; warns when used. |
 | `allow_filename_time_fallback` | bool | `false` | Restores the old behaviour of deriving the restart time from the digits in the file name (`index * file_interval_s`). Warns loudly when enabled. |
 | `file_interval_s` | real | `3600.0` | Seconds represented by one numbered output index. Consulted only when `allow_filename_time_fallback` is true. |
 | `ignore_stored_step` | bool | `false` | Discard the `model_step` stored in the file and re-derive the step from `simulation.dt_s`. Use when `dt` was deliberately changed on restart. |
+| `step_index` | int | `-1` | **BP5 only.** Which ADIOS2 step of the `.bp` dataset to resume from; `-1` is the last one written. An `.h5` file holds a single time, so this key has no meaning there. |
 | `variables_to_read.1d` | list | *(none)* | Explicit 1-D restart variable list. |
 | `variables_to_read.2d` | list | *(none)* | Explicit 2-D restart variable list. |
 | `variables_to_read.3d` | list | inferred | Explicit 3-D restart variable list. See below for how it is inferred. |
 
-If no explicit `restart.variables_to_read.3d` is supplied for HDF5 restart, the reader selects prognostic variables from `dynamics.prognostic_variables` and filters them through `output.fields_to_output`. That means fields needed after restart should either be listed explicitly under `restart.variables_to_read` or be included in `output.fields_to_output`.
+If no explicit `restart.variables_to_read.3d` is supplied, the reader (HDF5 or BP5 — they share this selection) selects prognostic variables from `dynamics.prognostic_variables` and filters them through `output.fields_to_output`. That means fields needed after restart should either be listed explicitly under `restart.variables_to_read` or be included in `output.fields_to_output`.
 
 When restart is enabled, the restart state replaces the normal perturbation initialization.
 
@@ -183,7 +184,68 @@ Without one of these the run stops rather than guessing. The recovered values ar
 
 NetCDF restart sources are written outside this model, so only unambiguous metadata is accepted: `model_time_s` / `model_step` as scalar variables or as global attributes, or a `time` variable whose `units` attribute says plain seconds. A calendar `time` ("hours since ...") is deliberately *not* read as an elapsed time — such a file needs `restart.legacy_time_s`.
 
-Restart files are ordinary output files; there is no separate restart output path.
+Restart files are ordinary output files; there is no separate restart output path. What each engine leaves behind to restart from:
+
+| `output.engine` | Restart source it produces | Read by |
+| --- | --- | --- |
+| `HDF5` | `<prefix>_NNNNNN.h5`, one per output time | `Hdf5RestartReader` |
+| `SST` | the same `.h5` files, written by the I/O server rather than the compute ranks | `Hdf5RestartReader` — SST is a transport, not a restart format |
+| `BP5` | `<prefix>.bp`, one dataset holding every output time | `Bp5RestartReader`, which also needs `step_index` |
+
+The keys above are the same for all three; only `step_index` is engine-specific, because only BP5 stores more than one time per source. Field selection and clock recovery are shared code, so the same run resumes identically whichever of the three wrote its source.
+
+### Worked examples
+
+Resuming an HDF5 (or SST) run from the file written at t = 3600 s:
+
+```json
+"restart": {
+  "enable": true,
+  "source_file": "./output/my_case/vvm_output_000006.h5"
+},
+"simulation": {
+  "total_time_s": 7200.0,
+  "dt_s": 1.0,
+  "output_interval_s": 600.0
+},
+"output": {
+  "engine": "HDF5",
+  "output_dir": "./output/my_case_resumed",
+  "output_filename_prefix": "vvm_output",
+  "fields_to_output": ["thbar", "rhobar", "topo", "u", "v", "w", "th", "qv", "xi", "eta", "zeta"]
+}
+```
+
+The same run resuming from a BP5 dataset instead:
+
+```json
+"restart": {
+  "enable": true,
+  "source_file": "./output/my_case/vvm_output.bp",
+  "step_index": -1
+},
+"simulation": {
+  "total_time_s": 7200.0,
+  "dt_s": 1.0,
+  "output_interval_s": 600.0
+},
+"output": {
+  "engine": "BP5",
+  "output_dir": "./output/my_case_resumed",
+  "output_filename_prefix": "vvm_output",
+  "fields_to_output": ["thbar", "rhobar", "topo", "u", "v", "w", "th", "qv", "xi", "eta", "zeta"],
+  "bp5": { "num_subfiles": 2, "overwrite": false }
+}
+```
+
+Four things decide whether these work:
+
+- **`total_time_s` is absolute, not additional.** The clock resumes at the time stored in the source, so `7200.0` means "run until t = 7200 s", which is one more hour after resuming at 3600 s. Setting it to the restart time produces a run that takes no steps and writes only the loaded state.
+- **`fields_to_output` has to contain what the restart needs.** The inferred variable list is filtered through it, so a field that was never written cannot be recovered. List it explicitly under `restart.variables_to_read` only when you want a set other than the inferred one.
+- **Write somewhere else.** Both examples resume into `my_case_resumed`. Writing back into `my_case` re-emits the same numbered HDF5 files, and on BP5 the writer refuses outright rather than deleting the dataset it just read.
+- **The first step after any restart is first order.** The AB2 tendency history is not stored, so a resumed run is not bit-for-bit with an uninterrupted one. The model warns about this on every restart.
+
+Output resumes on the same index grid: the example above writes `vvm_output_000006` (the restart state, from `output_initial_step`) and then `000007` onward.
 
 ## `output`
 
@@ -195,7 +257,7 @@ ADIOS2 output, field selection, and optional subsetting. Engine trade-offs and s
 | `output_filename_prefix` | string | *required* | Base name for the files, the `.bp` dataset, or the SST stream. |
 | `engine` | string | `"HDF5"` | `HDF5` (one file per output time), `SST` (streams to dedicated I/O ranks), or `BP5` (one multi-step `.bp` dataset written directly by compute ranks). |
 | `fields_to_output` | list | *required* | Ordered list of state fields to write. A name the run never registered is skipped with a message; on HDF5 and SST a name that is not a known optional field either is an error, so typos are still caught. Must be non-empty and duplicate-free for BP5. |
-| `precision` | string | `"native"` | On-disk float type for **field data only**, on every engine: `native` (follows `VVM::Real`), `float32`/`float`/`single`, or `float64`/`double`. Case-insensitive. Clocks and coordinates always stay `VVM::Real`. Narrowing HDF5 output narrows what a later restart recovers. |
+| `precision` | string | `"native"` | On-disk float type for **field data only**, on every engine: `native` (follows `VVM::Real`), `float32`/`float`/`single`, or `float64`/`double`. Case-insensitive. Clocks and coordinates always stay `VVM::Real`. Narrowing output narrows what a later restart recovers, on whichever engine produced the restart source. |
 | `output_initial_step` | bool | `true` | Write step 0 before the first model step. |
 | `output_grid.x_start`, `.y_start`, `.z_start` | int | `0` | Inclusive lower index bound per direction. |
 | `output_grid.x_end`, `.y_end`, `.z_end` | int | `-1` | Inclusive upper index bound; `-1` means "to the end". Halo cells are never written. |

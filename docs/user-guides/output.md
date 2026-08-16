@@ -15,7 +15,7 @@ which backend you built.
 | Dedicated I/O ranks | none | required (`--io N`) | none |
 | CPU build | supported | supported | **supported, validated** |
 | GPU build | supported | supported, production path | **supported, host-staged** |
-| Restart source | yes | yes (writes HDF5) | no, history only |
+| Restart source | yes | yes (writes HDF5) | yes, any step of the dataset |
 | Best for | small runs, restarts, reference output | GPU production with I/O ranks | direct multi-step output |
 
 If you are unsure: **HDF5** for anything small or when you need restarts,
@@ -188,6 +188,37 @@ nonzero `--io` is rejected.
 
 Unknown keys and invalid values are errors. Every resolved setting is compared
 across all compute ranks before the dataset is opened, so ranks cannot disagree.
+
+### Restarting from a BP5 dataset
+
+A `.bp` dataset is a restart source like an HDF5 file, with one extra choice: it
+holds every output time, so the run has to say which one to resume from.
+
+```json
+"restart": {
+  "enable": true,
+  "source_file": "./output/taiwanvvm_2048_bp5/vvm_output.bp",
+  "step_index": -1
+}
+```
+
+`step_index: -1` (the default) resumes from the last step written; any valid
+index picks an earlier one. Everything else matches the HDF5 route — the same
+`restart.variables_to_read` selection, the same clock recovery from
+`model_time_s` / `model_step`, and the same rule that a field must be in
+`output.fields_to_output` to be recoverable.
+
+Two things are worth knowing:
+
+- **The reader does not care how many ranks wrote the dataset.** A run written by
+  8 ranks restarts on 1, or on 64: each rank reads its own slab of the global
+  array.
+- **The run must not overwrite the dataset it resumed from.** Point
+  `output.output_dir` (or the prefix) somewhere else for the resumed run; the
+  writer refuses to start otherwise, rather than deleting the history mid-run.
+
+A narrowed dataset (`precision: float32`) restarts too, from float32 numbers —
+the same caveat as narrowed HDF5 output.
 
 ### GrADS descriptor
 

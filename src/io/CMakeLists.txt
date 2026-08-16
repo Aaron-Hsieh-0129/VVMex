@@ -4,10 +4,12 @@ set(VVM_IO_SOURCES
     OutputPrecision.cpp
     PnetcdfReader.cpp
     Hdf5RestartReader.cpp
+    RestartVariables.cpp
     Hdf5DimensionScales.cpp
     IOServer.cpp
     history/GradsCtl.cpp
     bp5/Bp5HistoryWriter.cpp
+    bp5/Bp5RestartReader.cpp
     bp5/Bp5CollectiveValidation.cpp
     bp5/Bp5OutputConfig.cpp
     bp5/Bp5FieldSchema.cpp
@@ -22,12 +24,14 @@ set(VVM_IO_HEADERS
     OutputPrecision.hpp
     PnetcdfReader.hpp
     Hdf5RestartReader.hpp
+    RestartVariables.hpp
     Hdf5DimensionScales.hpp
     IOServer.hpp
     history/GradsCtl.hpp
     history/HistoryWriter.hpp
     history/LegacyHistoryWriter.hpp
     bp5/Bp5HistoryWriter.hpp
+    bp5/Bp5RestartReader.hpp
     bp5/Bp5CollectiveValidation.hpp
     bp5/Bp5OutputConfig.hpp
     bp5/Bp5FieldSchema.hpp

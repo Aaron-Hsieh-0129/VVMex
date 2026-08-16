@@ -123,7 +123,7 @@ GPU presets: `blaze`, `nano4`, `nano5`, `spark`, `twnia2`, `twnia3`. One MPI com
 | --- | --- | --- | --- |
 | `HDF5` | none | *(none)* | One `.h5` file per output time, written synchronously by the compute ranks. Restart-capable; best for small runs and reference output. |
 | `SST` | required | `--io N`, optionally `--io-cpus` | Compute ranks stream to dedicated host-only I/O ranks that write HDF5. Omit `--io` and the wrapper sets it for you. Production path on GPU. |
-| `BP5` | none (`--io` rejected) | *(none)* | Compute ranks write one multi-step `.bp` dataset directly. Fields are host-staged from device memory. History only — no restart. |
+| `BP5` | none (`--io` rejected) | *(none)* | Compute ranks write one multi-step `.bp` dataset directly. Fields are host-staged from device memory. Restartable from any step. |
 
 ```bash
 # HDF5 -- local test run without SLURM, 4 ranks on 4 GPUs

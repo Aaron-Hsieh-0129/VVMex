@@ -3,6 +3,7 @@
 #include "io/TxtReader.hpp"
 #include "io/PnetcdfReader.hpp"
 #include "io/Hdf5RestartReader.hpp"
+#include "io/bp5/Bp5RestartReader.hpp"
 #include "vvm_types.hpp"
 #include <Kokkos_Core.hpp>
 #include <algorithm>
@@ -82,8 +83,17 @@ Initializer::Initializer(const Utils::ConfigurationManager& config, const Grid& 
     }
     if (config.get_value<bool>("restart.enable", false)) {
         std::string restart_source_file = config.get_value<std::string>("restart.source_file");
+        // A trailing slash is easy to pick up when the source is a .bp
+        // directory rather than a file, and would otherwise look like an
+        // unsupported extension.
+        while (restart_source_file.size() > 1 && restart_source_file.back() == '/') {
+            restart_source_file.pop_back();
+        }
         if (ends_with(restart_source_file, ".h5")) {
             restart_reader_ = std::make_unique<VVM::IO::Hdf5RestartReader>(
+                restart_source_file, grid, parameters_, config_, halo_exchanger_);
+        } else if (ends_with(restart_source_file, ".bp")) {
+            restart_reader_ = std::make_unique<VVM::IO::BP5::Bp5RestartReader>(
                 restart_source_file, grid, parameters_, config_, halo_exchanger_);
         } else if (ends_with(restart_source_file, ".nc")) {
             restart_reader_ = std::make_unique<VVM::IO::PnetcdfReader>(
@@ -717,6 +727,7 @@ void Initializer::assign_vars() const {
                 : real(2.) * OMEGA * Kokkos::sin(
                       (global_j - real(1540.) / real(2.) - real(0.5))
                       * dy() / real(6.37e6));
+            // VVM::Real coriolis = 5e-5;
             f(j) = coriolis;
             f_2d(j,i) = coriolis;
         }
