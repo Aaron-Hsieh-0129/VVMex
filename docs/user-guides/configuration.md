@@ -78,7 +78,7 @@ Global mesh, halo width, horizontal boundary behavior, and vertical coordinate c
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `nx`, `ny`, `nz` | int | *required* | Global domain size in x, y, and z. MPI decomposes this domain across compute ranks. |
-| `n_halo_cells` | int | *required* | Halo width used by stencil operations and MPI halo exchange. `2` for everything except WENO5 tracer advection, which requires `3`. |
+| `n_halo_cells` | int | *required* | Halo width used by stencil operations and MPI halo exchange. `2` suits every scheme except `weno5`, whose flux stencil reaches three cells past the last interior cell. This is one grid-wide setting, so **a single tracer using `weno5` forces `3` for the whole run**, whatever the other tracers use. A run that gets this wrong stops at startup with `Tracer '<name>': weno5 halo width is insufficient; configured 2, required 3.` |
 | `dx`, `dy` | real | *required* | Horizontal grid spacing in meters. Uniform. |
 | `dz` | real | *required* | Nominal vertical spacing in meters. |
 | `dz1` | real | *required* | Spacing of the stretched lower layers. With `dz1 < dz` the vertical grid is stretched from `dz1` near the surface toward `dz` aloft; `dz1 == dz` gives a uniform column. |
