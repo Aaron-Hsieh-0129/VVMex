@@ -151,6 +151,57 @@ public:
 
         ScalarView d_local_sum("horizontal_mean_local_sum");
 
+#if defined(VVM_DETERMINISTIC_FP)
+        // Fixed-order local sum: each row is summed sequentially over i, and the
+        // rows are then summed in order. A parallel_reduce combines its partial
+        // sums in whatever order the backend's thread layout produces, and
+        // CUDA's shuffle tree and OpenMP's per-thread partials do not agree --
+        // measured at ~10 ULP over a million values. Row-then-rank ordering is
+        // an order both backends can commit to, and it is the same discipline
+        // the rank sums below already use. The rows are still summed in
+        // parallel, so the O(nx*ny) work stays parallel; only the O(ny) combine
+        // is serial. Off by default because it changes the answer in the last
+        // ULP, and the v1.0.0 baselines encode the parallel_reduce order.
+        if (static_cast<int>(row_sums_.extent(0)) != ny_local) {
+            row_sums_ = Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space>(
+                "horizontal_mean_row_sums", ny_local);
+        }
+        auto row_sums = row_sums_;
+        const int nx_count = nx_local;
+        const int ny_count = ny_local;
+        const int halo = h;
+
+        if constexpr (Dim == 3) {
+            Kokkos::parallel_for("calculate_3d_row_sums",
+                Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, ny_local),
+                KOKKOS_LAMBDA(const int row) {
+                    VVM::Real sum = VVM::real(0.0);
+                    for (int i = 0; i < nx_count; ++i) sum += view(k_level, halo + row, halo + i);
+                    row_sums(row) = sum;
+                });
+        }
+        else {
+            Kokkos::parallel_for("calculate_2d_row_sums",
+                Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, ny_local),
+                KOKKOS_LAMBDA(const int row) {
+                    VVM::Real sum = VVM::real(0.0);
+                    for (int i = 0; i < nx_count; ++i) sum += view(halo + row, halo + i);
+                    row_sums(row) = sum;
+                });
+        }
+
+        Kokkos::parallel_for("calculate_local_sum",
+            Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, 1),
+            KOKKOS_LAMBDA(const int) {
+                VVM::Real sum = VVM::real(0.0);
+                for (int row = 0; row < ny_count; ++row) sum += row_sums(row);
+                d_local_sum() = sum;
+            });
+#else
+        // The backend's own reduction order. Faster to reach, and what the
+        // v1.0.0 baselines encode, at the cost of a last-ULP difference between
+        // a CUDA and an OpenMP build -- see
+        // docs/developer-guides/reproducibility.md.
         if constexpr (Dim == 3) {
             Kokkos::parallel_reduce("calculate_3d_local_sum",
                 Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny_local + h, nx_local + h}),
@@ -165,6 +216,7 @@ public:
                     update_sum += view(j, i);
                 }, d_local_sum);
         }
+#endif
 
         Kokkos::fence();
 
@@ -302,6 +354,9 @@ private:
     // Per-rank partial sums for calculate_horizontal_mean(), kept across calls
     // so the mean does not allocate every time it is asked for.
     mutable Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space> rank_sums_;
+#if defined(VVM_DETERMINISTIC_FP)
+    mutable Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space> row_sums_;
+#endif
 
 #if defined(ENABLE_NCCL)
     ncclComm_t nccl_comm_;
