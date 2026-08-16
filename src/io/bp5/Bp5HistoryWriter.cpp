@@ -58,6 +58,10 @@ Bp5HistoryWriter::Bp5HistoryWriter(
     // resolve once here rather than re-deriving per field and per step.
     element_type_ = config_.element_type();
     effective_buffer_mode_ = config_.effective_buffer_mode();
+    narrowed_restart_source_ =
+        element_type_ == OutputElementType::Float32 &&
+        !output_element_matches_real(element_type_) &&
+        config.get_value<bool>("restart.enable", false);
 
     if (field_names_.empty()) {
         throw std::invalid_argument("output.fields_to_output must not be empty for BP5.");
@@ -134,6 +138,26 @@ void Bp5HistoryWriter::prepare_dataset_path(
     int path_status = 0;
     if (rank_ == 0) {
         try {
+            // Overwriting the dataset this run was restarted from would delete
+            // the history it just resumed, and the restart read has already
+            // happened by the time the writer opens. Refuse instead.
+            if (config.get_value<bool>("restart.enable", false) &&
+                config.has_key("restart.source_file")) {
+                std::error_code ec;
+                const auto source = std::filesystem::weakly_canonical(
+                    std::filesystem::path(
+                        config.get_value<std::string>("restart.source_file")), ec);
+                const auto target =
+                    std::filesystem::weakly_canonical(dataset_path_, ec);
+                if (!ec && source == target) {
+                    throw std::runtime_error(
+                        "restart.source_file is the dataset this run would write ('" +
+                        dataset_path_.string() +
+                        "'); choose a different output.output_dir or "
+                        "output.output_filename_prefix so the resumed history survives");
+                }
+            }
+
             dataset_path_ = prepare_bp5_dataset_path(
                 output_dir, prefix, config_.overwrite);
         } catch (const std::exception& e) {
@@ -479,6 +503,13 @@ void Bp5HistoryWriter::print_configuration() const {
     std::cout << "\n"
               << "  [BP5] Estimated logical bytes/step: " << global_bytes_per_step_
               << std::endl;
+    if (narrowed_restart_source_) {
+        // The same warning the HDF5 writer prints, for the same reason: this
+        // dataset is a restart source now, and a narrowed one resumes from
+        // narrowed numbers.
+        std::cout << "  [BP5] WARNING: narrowed output is a restart source; "
+                     "restarts from this dataset lose precision." << std::endl;
+    }
 }
 
 void Bp5HistoryWriter::write(std::size_t step, VVM::Real time) {

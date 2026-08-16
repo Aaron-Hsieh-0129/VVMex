@@ -94,6 +94,7 @@ private:
     CpuFieldSource field_source_;
 
     bool closed_ = false;
+    bool narrowed_restart_source_ = false;
     std::size_t steps_written_ = 0;
     std::size_t global_bytes_per_step_ = 0;
 

@@ -31,11 +31,6 @@ public:
     VVM::Utils::RestartFileMetadata read_restart_metadata() override;
 
 private:
-    std::vector<std::string> get_variables_to_read(const Core::State& state) const;
-    void print_variables_to_read(const std::vector<std::string>& vars_1d,
-                                 const std::vector<std::string>& vars_2d,
-                                 const std::vector<std::string>& vars_3d) const;
-
     template<size_t Dim>
     void read_field(hid_t file_id,
                     const std::string& var_name,

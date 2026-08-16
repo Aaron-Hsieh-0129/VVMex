@@ -54,6 +54,8 @@ and `MPI_Finalize()`. The destructor is a fallback, not the normal path.
 | `src/io/history/GradsCtl.*` | GrADS descriptor emitter shared with the legacy writer |
 | `src/io/OutputPrecision.*` | Engine-neutral `output.precision` parsing and element-type resolution |
 | `src/io/bp5/Bp5HistoryWriter.*` | ADIOS2 lifecycle and step orchestration |
+| `src/io/bp5/Bp5RestartReader.*` | Restart from one step of a `.bp` dataset |
+| `src/io/RestartVariables.*` | Which fields a restart recovers, shared with the HDF5 reader |
 | `src/io/bp5/Bp5OutputConfig.*` | Parse and validate the `output.bp5` block |
 | `src/io/bp5/Bp5FieldSchema.*` | Global shapes, per-rank selections, output bounds |
 | `src/io/bp5/Bp5BufferSet.hpp` | Persistent per-field staging buffers, one map per element type |
@@ -183,6 +185,30 @@ cannot open a `dtype bp5` descriptor at all. Its rules:
 - `TDEF` must not exceed the number of steps in the dataset, so it counts the
   steps the run will write, `output.output_initial_step` included.
 
+## Restart
+
+`Bp5RestartReader` (`src/io/bp5/Bp5RestartReader.*`) is the read side, chosen by
+`Initializer` when `restart.source_file` ends in `.bp`. It differs from the HDF5
+reader in three places and matches it everywhere else:
+
+| | HDF5 reader | BP5 reader |
+|---|---|---|
+| Which time | the file is one time | `restart.step_index`, default `-1` = last step |
+| Open mode | `H5Fopen` | `Mode::ReadRandomAccess`, so any step is reachable |
+| Stored type | HDF5 converts on read | the reader dispatches on `VariableType` and converts |
+
+Field selection is literally shared code (`src/io/RestartVariables.*`), extracted
+from the HDF5 reader so a run restarted from BP5 loads exactly what the same run
+restarted from HDF5 would. Each rank reads its own slab of the global array, so
+the rank count at restart is independent of the rank count that wrote the
+dataset. Halo exchange after loading uses the per-field overload, for the same
+CUDA-graph reason the HDF5 reader documents.
+
+One guard is specific to BP5: because a `.bp` dataset is a directory the writer
+may be asked to overwrite, `Bp5HistoryWriter` refuses to start when its target
+resolves to the same path as `restart.source_file`. Without it, a resumed run
+with `overwrite: true` would delete the history it had just read.
+
 ## CPU staging
 
 `CpuFieldSource` implements two equivalent routes to the same bytes, selected by
@@ -256,6 +282,8 @@ The matrix covers:
 - exact values and shapes for 1-D through 4-D fields, coordinates, clocks, and
   metadata over three ADIOS steps;
 - ten computed model steps plus initial output, synchronous and asynchronous;
+- restart from a `.bp` step: a resumed run that takes no further steps writes
+  back exactly the fields and clock of the step it resumed from;
 - bit-for-bit comparison of HDF5, SST, and BP5 model output, values and
   attributes, for all eleven output steps;
 - 1-, 2-, and 4-rank `float32` and `float64` output, asserting the field
@@ -275,12 +303,10 @@ time.
 
 ## Current boundaries
 
-- **History output only.** HDF5 remains the supported checkpoint/restart route,
-  so `output.bp5.precision` cannot reduce restart fidelity: it narrows BP5
-  history alone. (`output.precision` now applies to the HDF5 writer as well, and
-  narrowing *that* does narrow what a restart recovers — see
-  [Output](../user-guides/output.md#output-precision).) A separate checkpoint
-  writer and a `Bp5RestartReader` are future work.
+- **No separate checkpoint writer.** As with HDF5, the history dataset *is* the
+  restart source; there is no second, denser checkpoint stream. Narrowing the
+  history with `precision` therefore narrows what a restart recovers, on every
+  engine — see [Output](../user-guides/output.md#output-precision).
 - **CUDA output is host-staged.** `effective_buffer_mode()` always returns
   `pack` in a CUDA build. The source creates a synchronized host mirror, then
   copies the selected cells into a persistent `Bp5BufferSet` allocation before

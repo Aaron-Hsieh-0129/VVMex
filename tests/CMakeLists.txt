@@ -422,10 +422,16 @@ if(VVM_TEST_BP5)
             bp5_model_smoke
             bp5_model_async_smoke
             hdf5_model_smoke
-            sst_model_smoke)
+            sst_model_smoke
+            bp5_restart_source
+            bp5_restart_resume)
         file(READ ${TEST_DIR}/configs/${BP5_MODEL_CONFIG}.json VVM_BP5_MODEL_CFG)
         string(REGEX REPLACE "\"output_dir\"[ \t]*:[ \t]*\"[^\"]*\""
                              "\"output_dir\": \"${CMAKE_BINARY_DIR}/testing_output_${BP5_MODEL_CONFIG}\""
+                             VVM_BP5_MODEL_CFG "${VVM_BP5_MODEL_CFG}")
+        # The restart source has to follow the same tree, for the same reason.
+        string(REGEX REPLACE "\"source_file\"[ \t]*:[ \t]*\"[^\"]*history.bp\""
+                             "\"source_file\": \"${CMAKE_BINARY_DIR}/testing_output_bp5_restart_source/history.bp\""
                              VVM_BP5_MODEL_CFG "${VVM_BP5_MODEL_CFG}")
         set(${BP5_MODEL_CONFIG}_CONFIG
             ${CMAKE_BINARY_DIR}/test_configs/${BP5_MODEL_CONFIG}.json)
@@ -463,6 +469,38 @@ if(VVM_TEST_BP5)
     set_tests_properties(Verify_bp5_model_async_smoke PROPERTIES
                          DEPENDS Run_bp5_model_async_smoke
                          LABELS "bp5;integration;model;async" TIMEOUT 30)
+
+    # Restart from a .bp dataset. The resumed run is configured to take no
+    # further steps, so its first output is the loaded state itself and can be
+    # compared against the source step -- fields, per-rank slabs, and clock.
+    add_executable(test_bp5_restart integration/test_bp5_restart.cpp)
+    target_include_directories(test_bp5_restart PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(test_bp5_restart PRIVATE
+                          adios2::adios2 HDF5::HL Kokkos::kokkos MPI::MPI_CXX)
+    add_test(NAME Run_bp5_restart_source
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+                     ${VVM_MPI_BIND_ARGS} ${GPU_WRAP} $<TARGET_FILE:vvm>
+                     ${bp5_restart_source_CONFIG}
+             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME Run_bp5_restart_resume
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+                     ${VVM_MPI_BIND_ARGS} ${GPU_WRAP} $<TARGET_FILE:vvm>
+                     ${bp5_restart_resume_CONFIG}
+             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME Verify_bp5_restart
+             COMMAND $<TARGET_FILE:test_bp5_restart>
+                     ${CMAKE_BINARY_DIR}/testing_output_bp5_restart_source/history.bp 10
+                     ${CMAKE_BINARY_DIR}/testing_output_bp5_restart_resume/history_000010.h5
+                     thbar rhobar topo u v w th qv xi eta zeta
+             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(Run_bp5_restart_source PROPERTIES
+                         LABELS "bp5;integration;restart" TIMEOUT 240)
+    set_tests_properties(Run_bp5_restart_resume PROPERTIES
+                         DEPENDS Run_bp5_restart_source
+                         LABELS "bp5;integration;restart" TIMEOUT 240)
+    set_tests_properties(Verify_bp5_restart PROPERTIES
+                         DEPENDS Run_bp5_restart_resume
+                         LABELS "bp5;integration;restart" TIMEOUT 60)
 
     # The three engines must agree bit-for-bit on the same run: same case, same
     # two compute ranks (SST adds one I/O rank on top), compared through each
