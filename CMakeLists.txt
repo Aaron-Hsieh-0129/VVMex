@@ -67,22 +67,6 @@ macro(vvm_set_flag_once VAR FLAG DOC)
     set(${VAR} "${_vvm_flags} ${FLAG}" CACHE STRING "${DOC}" FORCE)
 endmacro()
 
-if(CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
-    message(STATUS "Applying NVHPC dependency flag workaround.")
-    # Disable automatic dependency generation flags that NVHPC might set
-    set(CMAKE_CXX_DEPENDS "")
-    set(CMAKE_C_DEPENDS "")
-    set(CMAKE_DEPFILE_FLAGS_CXX "")
-    set(CMAKE_DEPFILE_FLAGS_C "")
-
-    if(VVM_ENABLE_GPU)
-        vvm_set_flag_once(CMAKE_CUDA_FLAGS "-Xcompiler -mp"  "CUDA OpenMP flags")
-        vvm_set_flag_once(CMAKE_CUDA_FLAGS "-use_fast_math"  "CUDA flags")
-    endif()
-    vvm_set_flag_once(CMAKE_CXX_FLAGS  "-fast"           "CXX flags")
-    vvm_set_flag_once(CMAKE_C_FLAGS    "-fast"           "C flags")
-endif()
-
 # Strip a flag from a FORCEd cache variable, so switching an option back off
 # actually removes what switching it on added.
 macro(vvm_unset_flag VAR FLAG DOC)
@@ -91,6 +75,42 @@ macro(vvm_unset_flag VAR FLAG DOC)
     string(STRIP "${_vvm_flags}" _vvm_flags)
     set(${VAR} "${_vvm_flags}" CACHE STRING "${DOC}" FORCE)
 endmacro()
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
+    message(STATUS "Applying NVHPC dependency flag workaround.")
+    # Disable automatic dependency generation flags that NVHPC might set
+    set(CMAKE_CXX_DEPENDS "")
+    set(CMAKE_C_DEPENDS "")
+    set(CMAKE_DEPFILE_FLAGS_CXX "")
+    set(CMAKE_DEPFILE_FLAGS_C "")
+
+    # No CMAKE_CUDA_FLAGS here. This project declares LANGUAGES CXX C Fortran and
+    # has no .cu sources -- device code reaches nvcc through nvcc_wrapper as CXX
+    # -- so CUDA-language flags are never consumed. Setting them wrote a cache
+    # entry that appeared on no compile line, which read like fast-math was in
+    # effect when it was not. If CUDA is ever enabled as a language, add the
+    # flags then, and note that nvcc's -use_fast_math only affects single
+    # precision. Heal caches written before this change, so a reconfigured tree
+    # does not keep advertising flags nothing reads.
+    vvm_unset_flag(CMAKE_CUDA_FLAGS "-use_fast_math" "CUDA flags")
+    vvm_unset_flag(CMAKE_CUDA_FLAGS "-Xcompiler -mp" "CUDA flags")
+
+    # -fast belongs to the optimized configurations, not to every build. CMake's
+    # NVHPC defaults already put it in *_RELEASE (as they do for Fortran, which
+    # this block never touched), so adding it globally only ever reached the
+    # configurations that should not have it: a Debug build came out as
+    # `-fast -g -O0`, which still vectorizes and reassociates -- its FP
+    # reduction differs from a plain -O0 build. Strip any copy an earlier
+    # configure left in the cache, and state the intent per configuration.
+    vvm_unset_flag(CMAKE_CXX_FLAGS "-fast" "CXX flags")
+    vvm_unset_flag(CMAKE_C_FLAGS   "-fast" "C flags")
+    foreach(_vvm_opt_config RELEASE RELWITHDEBINFO MINSIZEREL)
+        vvm_set_flag_once(CMAKE_CXX_FLAGS_${_vvm_opt_config} "-fast"
+                          "CXX ${_vvm_opt_config} flags")
+        vvm_set_flag_once(CMAKE_C_FLAGS_${_vvm_opt_config}   "-fast"
+                          "C ${_vvm_opt_config} flags")
+    endforeach()
+endif()
 
 # Bit-identical results between a GPU build and a CPU-only build.
 #

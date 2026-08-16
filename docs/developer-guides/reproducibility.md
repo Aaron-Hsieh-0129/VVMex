@@ -33,6 +33,23 @@ precision, 2^20 values, nvcc device pass vs nvc++ `-fast` host pass):
 | `pow` | 0.7% differ by 1 ULP |
 | `tanh` | 19% differ by up to 2 ULP |
 
+Fast-math is not in play at all, and it is worth saying why, because the flag
+names suggest otherwise. NVHPC's `-fast` expands to
+`-O2 -Munroll=c:1 -Mlre -Mautoinline -Mvect=simd -Mflushz -Mcache_align`; it does
+*not* imply `-Mfprelaxed` (that comes with `-Ofast`, which is unused), and
+measured on doubles it leaves division and `sqrt` bit-identical to `-Kieee`. The
+one relaxed transformation it does bring is reassociation of vectorized FP
+reductions. `-use_fast_math` was written into `CMAKE_CUDA_FLAGS` until 2026-08-16
+but reached no compile line — the project declares `LANGUAGES CXX C Fortran` and
+has no `.cu` sources — and forcing it onto the line changes no double-precision
+result, because nvcc's fast-math is single-precision.
+
+Two further host-side details that `VVM_DETERMINISTIC_FP` does **not** address:
+denormals are flushed on the host (NVHPC's default, not `-fast`) while CUDA keeps
+double denormals; and `-Kieee` does not rescue transcendental agreement — it cuts
+`log` disagreement from 306,440 values to 197 but pushes `pow` from 7,690 to
+306,958.
+
 So it is **not** fast-math, and not FMA as such: both compilers contract
 `a*b + c` into an FMA and agree. What they do not agree on is *which* multiply to
 fuse once an expression has more than one product, and a fused product keeps a
