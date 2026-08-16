@@ -15,7 +15,9 @@ endif()
 # the 1e-6 tolerance absorbs for the advection cases but not for 2dbubble (a
 # convective case amplifies it to ~2e-2 over 120 steps), and never for the
 # SHA-256 digests. So each backend is gated against references generated on that
-# backend; cross-backend agreement is a separate, looser question.
+# backend; cross-backend agreement is a separate question, and one that
+# -DVVM_DETERMINISTIC_FP=ON settles for the dry cases -- see
+# docs/developer-guides/reproducibility.md.
 if(VVM_ENABLE_GPU)
     set(VVM_BASELINE_DIR  ${TEST_DIR}/baselines)
     set(VVM_REFERENCE_DIR ${TEST_DIR}/references)

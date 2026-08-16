@@ -83,6 +83,51 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
     vvm_set_flag_once(CMAKE_C_FLAGS    "-fast"           "C flags")
 endif()
 
+# Strip a flag from a FORCEd cache variable, so switching an option back off
+# actually removes what switching it on added.
+macro(vvm_unset_flag VAR FLAG DOC)
+    string(REPLACE "${FLAG}" "" _vvm_flags "${${VAR}}")
+    string(REGEX REPLACE "  +" " " _vvm_flags "${_vvm_flags}")
+    string(STRIP "${_vvm_flags}" _vvm_flags)
+    set(${VAR} "${_vvm_flags}" CACHE STRING "${DOC}" FORCE)
+endmacro()
+
+# Bit-identical results between a GPU build and a CPU-only build.
+#
+# Two things have to change together. nvcc and nvc++ both contract a*b+c into an
+# FMA, but in a multi-product expression they need not fuse the same multiply,
+# so a Takacs flux term differs in the last ULP between backends -- that is the
+# first divergence between a GPU and a CPU-only run of advection_u. And
+# Kokkos::parallel_reduce combines partial sums in a backend-specific order, so
+# State's horizontal mean switches to a fixed row-then-rank order under the same
+# switch. Measured cost: ~0.2% on GPU (2dbubble) and ~1.2% on CPU
+# (advection_u).
+#
+# OFF by default because both changes move results in the last ULP, and the
+# v1.0.0 baselines encode the default. Runs with P3, RRTMGP or Noah still differ
+# across backends even with this on, because log/pow/tanh have separate device
+# and host implementations. See docs/developer-guides/reproducibility.md.
+option(VVM_DETERMINISTIC_FP "Disable FP contraction so CPU and GPU agree bit-for-bit" OFF)
+if(VVM_DETERMINISTIC_FP)
+    message(STATUS "VVM deterministic FP: ON (no FMA contraction, fixed-order reductions)")
+    add_compile_definitions(VVM_DETERMINISTIC_FP)
+    if(VVM_ENABLE_GPU)
+        # .cpp files reach nvcc through nvcc_wrapper, so the device switch has
+        # to travel in the CXX flags as well as the CUDA ones.
+        vvm_set_flag_once(CMAKE_CXX_FLAGS  "--fmad=false" "CXX flags")
+        vvm_set_flag_once(CMAKE_CUDA_FLAGS "--fmad=false" "CUDA flags")
+    endif()
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
+        vvm_set_flag_once(CMAKE_CXX_FLAGS "-Mnofma" "CXX flags")
+        vvm_set_flag_once(CMAKE_C_FLAGS   "-Mnofma" "C flags")
+    endif()
+else()
+    vvm_unset_flag(CMAKE_CXX_FLAGS  "--fmad=false" "CXX flags")
+    vvm_unset_flag(CMAKE_CUDA_FLAGS "--fmad=false" "CUDA flags")
+    vvm_unset_flag(CMAKE_CXX_FLAGS  "-Mnofma"      "CXX flags")
+    vvm_unset_flag(CMAKE_C_FLAGS    "-Mnofma"      "C flags")
+endif()
+
 option(VVM_USE_DOUBLE_PRECISION "Use double precision (double) instead of single precision (float)" ON)
 if(VVM_USE_DOUBLE_PRECISION)
     message(STATUS "VVM Precision: DOUBLE (FP64)")
