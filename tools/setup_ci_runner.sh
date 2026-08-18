@@ -216,11 +216,17 @@ ExecStart=$RUNNER_DIR/run.sh
 WorkingDirectory=$RUNNER_DIR
 Restart=always
 RestartSec=10
-# The runner supervises its own job processes; killing the whole cgroup would
-# take a running build down with the service on every restart.
-KillMode=process
+# Leave KillMode at its default (control-group) so SIGTERM reaches
+# Runner.Listener itself. KillMode=process -- which GitHub's own template uses
+# -- signals only the ExecStart process, and that is run.sh, which does not
+# forward signals to its child. The listener then survives a restart, keeps the
+# GitHub session, and the replacement loops forever on "A session for this
+# runner already exists". GitHub gets away with it because svc.sh installs a
+# runsvc.sh wrapper that does forward; we start run.sh directly.
+# The cost is that a restart also stops a running job, which is the right
+# trade: jobs are re-runnable, orphaned listeners are not self-healing.
 KillSignal=SIGTERM
-TimeoutStopSec=5min
+TimeoutStopSec=3min
 
 [Install]
 WantedBy=default.target
