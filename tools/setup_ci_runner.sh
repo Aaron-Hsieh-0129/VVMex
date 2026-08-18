@@ -13,7 +13,9 @@
 set -euo pipefail
 
 RUNNER_VERSION="2.330.0"
-REPO_URL="https://github.com/Aaron-Hsieh-0129/VVM_GPU_CPP"
+# Empty means "ask the checkout". A hardcoded URL goes stale the moment the
+# repository is renamed, which is exactly what happened to the previous one.
+REPO_URL=""
 PRESET=""
 TOKEN=""
 RUNNER_DIR=""
@@ -64,6 +66,24 @@ done
 : "${VVM_ROOT:?export VVM_ROOT=/path/to/VVMex first}"
 [ -f "$VVM_ROOT/CMakePresets.json" ] || { echo "VVM_ROOT does not contain CMakePresets.json" >&2; exit 2; }
 [ -n "$PRESET" ] || { echo "--preset is required" >&2; usage >&2; exit 2; }
+
+# config.sh wants the web URL. Accept whichever form the checkout uses --
+# git@github.com:owner/repo.git and https://github.com/owner/repo.git both
+# normalise to https://github.com/owner/repo.
+if [ -z "$REPO_URL" ]; then
+    ORIGIN="$(git -C "$VVM_ROOT" remote get-url origin 2>/dev/null || true)"
+    [ -n "$ORIGIN" ] || { echo "no 'origin' remote in $VVM_ROOT; pass --url" >&2; exit 2; }
+    case "$ORIGIN" in
+        git@*:*) _rest="${ORIGIN#git@}"
+                 # Split host from path on the FIRST colon, before adding the
+                 # scheme -- substituting afterwards hits the one in "https:".
+                 REPO_URL="https://${_rest%%:*}/${_rest#*:}" ;;
+        ssh://git@*) REPO_URL="https://${ORIGIN#ssh://git@}" ;;
+        *)       REPO_URL="$ORIGIN" ;;
+    esac
+    REPO_URL="${REPO_URL%.git}"
+    echo "==> repository  : $REPO_URL (from origin)"
+fi
 
 # Fail early and by name if the preset is not in this checkout, rather than
 # after downloading 200 MB of runner.
