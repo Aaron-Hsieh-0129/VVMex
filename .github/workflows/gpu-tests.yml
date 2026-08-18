@@ -45,8 +45,19 @@ jobs:
         with:
           submodules: recursive
           # tests/baselines/*.h5 are LFS objects and the default tier reads them.
-          # The CPU tier does not need this; baselines_cpu are ordinary objects.
-          lfs: true
+          # NOT lfs: true. actions/checkout implements that by running
+          # `git lfs install --local`, which refuses to proceed when a pre-push
+          # hook it did not write is already there -- and .githooks/pre-push is
+          # tracked, so it is in every clone. The job died on
+          # "Hook already exists: pre-push" before building anything.
+          #
+          # Overwriting the hook is not an option either: it is a tracked file,
+          # so --force would leave the working tree dirty. Fetching the objects
+          # directly needs no hooks at all.
+          lfs: false
+
+      - name: Fetch LFS objects
+        run: git lfs pull
 
       - name: Read runner configuration
         run: |
