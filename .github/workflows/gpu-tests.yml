@@ -5,10 +5,10 @@
 # presets (tools/setup_ci_runner.sh --preset blaze  and  --preset blaze-cpu),
 # which is what gives each job the right build tree and TPL stack.
 #
-# Off until BOTH vars.VVMEX_RUNNER and vars.VVMEX_GPU_RUNNER are "true". The
-# second switch exists so enabling CPU CI cannot accidentally queue a GPU job
-# with no vvmex-gpu runner to take it -- that would sit yellow forever rather
-# than skip.
+# Switched by vars.VVMEX_GPU_RUNNER alone, independently of the CPU gate's
+# VVMEX_RUNNER. The separate switch is not ceremony: a self-hosted job with no
+# runner carrying its label does not skip, it queues for 24 hours and then
+# fails, so every push would show a stuck check until a GPU runner exists.
 name: GPU tests
 
 on:
@@ -31,7 +31,7 @@ jobs:
   gpu:
     name: Build and test (GPU)
     if: >-
-      vars.VVMEX_RUNNER == 'true' && vars.VVMEX_GPU_RUNNER == 'true' &&
+      vars.VVMEX_GPU_RUNNER == 'true' &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, vvmex-gpu]
