@@ -668,12 +668,36 @@ Run length and output cadence come from the case JSON
 ctest --test-dir build_cpu --output-on-failure
 ```
 
-Expected: `100% tests passed, 0 tests failed out of 22`.
+Expected: `100% tests passed, 0 tests failed out of 27` in about six minutes.
 
 The CPU build is gated against CPU-generated reference data
 (`tests/baselines_cpu/`, `tests/references_cpu/`), selected automatically from
-`VVM_ENABLE_GPU`. Threads default to 16 per rank; change with
-`-DVVM_TEST_CPU_THREADS=<n>`.
+`VVM_ENABLE_GPU`.
+
+Threads default to **64 per rank**; change with `-DVVM_TEST_CPU_THREADS=<n>`.
+This is a configure-time option and nothing else: CTest stamps
+`OMP_NUM_THREADS=set:<n>` onto every CPU test, which overrides whatever the
+calling shell exports, so setting `OMP_NUM_THREADS` before `ctest` has no
+effect.
+
+Thread count is not one of the axes that changes CPU arithmetic, so raising it
+is free. Measured on a 224-core host:
+
+| | 16 threads | 64 threads |
+|---|---|---|
+| `Run_2dbubble` | 283 s | 108 s |
+| `Run_mountain` | 405 s | 134 s |
+| default tier, serial | ~14 min | 5.8 min |
+| default tier, `ctest -j 224` | — | **3.5 min** |
+
+The 64-thread output is bit-for-bit identical to the 16-thread output over all
+272710 values of `2dbubble`, and `mountain` still matches its SHA-256 digest.
+On a CPU build each test also declares a `PROCESSORS` weight (ranks x threads)
+instead of taking the GPU resource lock, so `ctest -j <cores>` runs them side by
+side without oversubscribing — that is where the last third of the speedup comes
+from. Lower the thread count if you enable the multirank tier: it runs 4 ranks at
+once, so 64 threads per rank peaks at 256. CMake warns when the widest enabled
+tier would exceed the host's core count.
 
 Optional tiers are opt-in at configure time:
 

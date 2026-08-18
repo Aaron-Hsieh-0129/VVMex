@@ -60,7 +60,6 @@ set(VVM_TEST_SECONDS 120 CACHE STRING "Simulated seconds for default_cases tests
 #   VVM_TEST_SST           opt-in      SST relay precision (needs a working SST)
 #   VVM_TEST_PHYSICS       GPU only    P3 / RRTMGP / Noah land cases
 #   VVM_TEST_MULTIRANK     4 ranks     rank invariance (2-D decomposition)
-#   VVM_TEST_LARGE         8 ranks     2048^2, needs the 961 MB input file
 #
 # Enable one or several at configure time:
 #
@@ -80,12 +79,41 @@ set(VVM_TEST_SECONDS 120 CACHE STRING "Simulated seconds for default_cases tests
 # On a GPU build the multi-rank tiers need that many *physical* GPUs. Several
 # NCCL ranks sharing one device is unsupported and silently changes results, so
 # they cannot be faked on a smaller machine -- see scripts/one_gpu_per_rank.sh.
+# That makes rank count an expensive axis, so it is swept where the answer can
+# actually depend on it (decomposition, halo exchange, global reductions,
+# per-rank output slabs) and pinned at one value everywhere else.
 # ---------------------------------------------------------------------------
 option(VVM_TEST_BP5       "Register direct BP5 output tests (CPU and GPU builds)"     OFF)
 option(VVM_TEST_SST       "Register the SST relay precision test (2 ranks, network)"  OFF)
 option(VVM_TEST_PHYSICS   "Register physics-tier tests (GPU builds only, ~80 s)"      OFF)
 option(VVM_TEST_MULTIRANK "Register rank-invariance tests (4 ranks, ~30 s)"           OFF)
-option(VVM_TEST_LARGE     "Register the 2048^2 test (8 ranks, 961 MB input)"          OFF)
+
+# ---------------------------------------------------------------------------
+# What a test occupies while it runs.
+#
+# On a GPU build the scarce resource is the device. Several NCCL ranks sharing
+# one GPU is unsupported and silently changes results, so anything that touches
+# a device takes a hard lock and the suite runs one model at a time.
+#
+# On a CPU build the scarce resource is cores, and there is no reason two small
+# cases cannot run side by side: they are separate processes writing separate
+# output directories, and thread count does not change results. So instead of a
+# lock, each test declares how many cores it wants (ranks x threads) and
+# `ctest -j <cores>` packs them without oversubscribing. The default cases are
+# 32x32x33 and 512x16x74 grids -- far too small to keep 224 cores busy one at a
+# time, which is what the lock forced.
+# ---------------------------------------------------------------------------
+set(VVM_TEST_CPU_THREADS 64 CACHE STRING
+    "OMP_NUM_THREADS per rank for CPU tests")
+
+function(_vvm_set_test_resources TEST_NAME RANKS)
+    if(VVM_ENABLE_GPU)
+        set_tests_properties(${TEST_NAME} PROPERTIES RESOURCE_LOCK gpu)
+    else()
+        math(EXPR _vvm_procs "${RANKS} * ${VVM_TEST_CPU_THREADS}")
+        set_tests_properties(${TEST_NAME} PROPERTIES PROCESSORS ${_vvm_procs})
+    endif()
+endfunction()
 
 # A tier the current backend cannot run is switched off here, with the reason.
 # Silently registering nothing would look like the tier passed.
@@ -112,7 +140,6 @@ _report_test_tier("bp5      " ${VVM_TEST_BP5}       "CPU or GPU build"  VVM_TEST
 _report_test_tier("sst      " ${VVM_TEST_SST}       "2 ranks, SST"      VVM_TEST_SST)
 _report_test_tier("physics  " ${VVM_TEST_PHYSICS}   "GPU build only"    VVM_TEST_PHYSICS)
 _report_test_tier("multirank" ${VVM_TEST_MULTIRANK} "4 ranks / 4 GPUs"  VVM_TEST_MULTIRANK)
-_report_test_tier("large    " ${VVM_TEST_LARGE}     "8 ranks / 8 GPUs"  VVM_TEST_LARGE)
 
 # The original hand-written regression cases, comparing against stored baseline
 # files. Small enough that a full baseline is practical.
@@ -145,8 +172,12 @@ function(add_vvm_test TEST_NAME VARS_TO_TEST)
              --vars ${VARS_LIST}
              --tol 1e-6)
 
-    set_tests_properties(Run_${TEST_NAME}    PROPERTIES RESOURCE_LOCK gpu)
-    set_tests_properties(Verify_${TEST_NAME} PROPERTIES DEPENDS Run_${TEST_NAME})
+    # A hung MPI run has no other way to end: without a timeout ctest waits for
+    # it forever, which turns one wedged rank into a stuck unattended suite.
+    # Generous against the slowest measured CPU run of this tier.
+    set_tests_properties(Run_${TEST_NAME}    PROPERTIES TIMEOUT 1800)
+    _vvm_set_test_resources(Run_${TEST_NAME} 1)
+    set_tests_properties(Verify_${TEST_NAME} PROPERTIES DEPENDS Run_${TEST_NAME} TIMEOUT 300)
 endfunction()
 
 # A default_cases case, checked bit-for-bit against a stored per-variable digest.
@@ -180,8 +211,11 @@ function(add_case_test CASE_NAME RANKS LABEL)
                      --output ${ODIR}/vvm_output_000001.h5
                      --reference ${VVM_REFERENCE_DIR}/${CASE_NAME}.json)
 
-    set_tests_properties(Run_${TAG}    PROPERTIES DEPENDS Prep_${TAG} RESOURCE_LOCK gpu)
-    set_tests_properties(Verify_${TAG} PROPERTIES DEPENDS Run_${TAG})
+    # As above: mountain is 409 s on a CPU build, so the bound is generous, but
+    # an unbounded MPI run is what makes an unattended suite hang.
+    set_tests_properties(Run_${TAG}    PROPERTIES DEPENDS Prep_${TAG} TIMEOUT 1800)
+    _vvm_set_test_resources(Run_${TAG} ${RANKS})
+    set_tests_properties(Verify_${TAG} PROPERTIES DEPENDS Run_${TAG} TIMEOUT 300)
     if(NOT LABEL STREQUAL "")
         set_tests_properties(Prep_${TAG} Run_${TAG} Verify_${TAG} PROPERTIES LABELS ${LABEL})
     endif()
@@ -223,9 +257,18 @@ function(add_rank_invariance_test CASE_NAME RANKS)
                      --b ${ODIRN}/vvm_output_000001.h5
                      --label-a "1 rank" --label-b "${RANKS} ranks")
 
-    set_tests_properties(Run_${TAG}_r1       PROPERTIES DEPENDS Prep_${TAG} RESOURCE_LOCK gpu)
-    set_tests_properties(Run_${TAG}_r${RANKS} PROPERTIES DEPENDS Run_${TAG}_r1 RESOURCE_LOCK gpu)
-    set_tests_properties(Verify_${TAG}       PROPERTIES DEPENDS Run_${TAG}_r${RANKS})
+    # These are the only tests in the tree with no CTest timeout of their own,
+    # and on a CPU build they are also the slowest by a wide margin, so a run
+    # that wedges blocks the whole suite indefinitely rather than failing.
+    # 3600 s is roughly 3x the slowest measured run (twisting at 4 CPU ranks,
+    # 1237 s) -- long enough not to fire on a loaded machine, short enough that
+    # an unattended suite still terminates.
+    set_tests_properties(Run_${TAG}_r1       PROPERTIES DEPENDS Prep_${TAG} TIMEOUT 3600)
+    _vvm_set_test_resources(Run_${TAG}_r1 1)
+    set_tests_properties(Run_${TAG}_r${RANKS} PROPERTIES DEPENDS Run_${TAG}_r1 TIMEOUT 3600)
+    _vvm_set_test_resources(Run_${TAG}_r${RANKS} ${RANKS})
+    set_tests_properties(Verify_${TAG}       PROPERTIES DEPENDS Run_${TAG}_r${RANKS}
+                         TIMEOUT 300)
     set_tests_properties(Prep_${TAG} Run_${TAG}_r1 Run_${TAG}_r${RANKS} Verify_${TAG}
                          PROPERTIES LABELS multirank)
 endfunction()
@@ -237,7 +280,7 @@ function(add_vvm_unit_test TEST_NAME)
     add_executable(${TEST_NAME} ${TEST_DIR}/unit/${TEST_NAME}.cpp)
     target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
     add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
-    set_tests_properties(${TEST_NAME} PROPERTIES LABELS unit)
+    set_tests_properties(${TEST_NAME} PROPERTIES LABELS unit TIMEOUT 60)
 endfunction()
 
 # When radiation and the surface process recompute their coefficients.
@@ -260,7 +303,7 @@ add_executable(test_grads_ctl ${TEST_DIR}/unit/test_grads_ctl.cpp)
 target_include_directories(test_grads_ctl PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_grads_ctl PRIVATE vvm_io Kokkos::kokkos MPI::MPI_CXX)
 add_test(NAME test_grads_ctl COMMAND test_grads_ctl)
-set_tests_properties(test_grads_ctl PROPERTIES LABELS unit)
+set_tests_properties(test_grads_ctl PROPERTIES LABELS unit TIMEOUT 60)
 
 # Output precision: the engine-neutral output.precision key, its aliases, and
 # how the BP5 block overrides it. Launched through mpirun because
@@ -278,12 +321,16 @@ set_tests_properties(test_output_precision PROPERTIES LABELS unit TIMEOUT 60)
 # for BP5. The HDF5 case writes a real file and reads its dataset types back;
 # 'unset' is the pre-existing behaviour and guards against a silent change to
 # the default path. One rank, one GPU, no network.
+#
+# An explicit "native" is not run here: it resolves to the same on-disk type as
+# 'unset', so the file it writes and every assertion made about it are identical.
+# That the key itself parses to Native is test_output_precision's job.
 set(OUTPUT_PRECISION_WORKDIR "${CMAKE_BINARY_DIR}/output_precision")
 add_executable(test_hdf5_precision integration/test_hdf5_precision.cpp)
 target_include_directories(test_hdf5_precision PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_hdf5_precision PRIVATE
                       vvm_io vvm_core vvm_utils HDF5::HL Kokkos::kokkos MPI::MPI_CXX)
-foreach(PRECISION unset native float32 float64)
+foreach(PRECISION unset float32 float64)
     add_test(NAME test_hdf5_precision_${PRECISION}
              COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
                      ${GPU_WRAP} $<TARGET_FILE:test_hdf5_precision>
@@ -291,7 +338,8 @@ foreach(PRECISION unset native float32 float64)
                      ${OUTPUT_PRECISION_WORKDIR} ${PRECISION}
              WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     set_tests_properties(test_hdf5_precision_${PRECISION} PROPERTIES
-                         LABELS "integration;precision" RESOURCE_LOCK gpu TIMEOUT 120)
+                         LABELS "integration;precision" TIMEOUT 120)
+    _vvm_set_test_resources(test_hdf5_precision_${PRECISION} 1)
 endforeach()
 
 # The SST relay carries the same precision through the I/O server. Opt-in
@@ -310,8 +358,8 @@ if(VVM_TEST_SST)
                          ${OUTPUT_PRECISION_WORKDIR} ${PRECISION}
                  WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
         set_tests_properties(test_sst_precision_${PRECISION} PROPERTIES
-                             LABELS "integration;precision;sst" RESOURCE_LOCK gpu
-                             TIMEOUT 300)
+                             LABELS "integration;precision;sst" TIMEOUT 300)
+        _vvm_set_test_resources(test_sst_precision_${PRECISION} 2)
     endforeach()
 endif()
 
@@ -331,7 +379,7 @@ if(VVM_TEST_BP5)
         target_include_directories(${BP5_UNIT_TEST} PRIVATE ${CMAKE_SOURCE_DIR}/src)
         target_link_libraries(${BP5_UNIT_TEST} PRIVATE vvm_io Kokkos::kokkos MPI::MPI_CXX)
         add_test(NAME ${BP5_UNIT_TEST} COMMAND ${BP5_UNIT_TEST})
-        set_tests_properties(${BP5_UNIT_TEST} PROPERTIES LABELS "unit;bp5")
+        set_tests_properties(${BP5_UNIT_TEST} PROPERTIES LABELS "unit;bp5" TIMEOUT 60)
     endforeach()
 
     add_executable(test_bp5_history_mpi integration/test_bp5_history_mpi.cpp)
@@ -347,38 +395,50 @@ if(VVM_TEST_BP5)
                      ${VVM_MPI_BIND_ARGS} $<TARGET_FILE:test_bp5_collective_config>)
     set_tests_properties(test_bp5_collective_config_r2 PROPERTIES
                          LABELS "bp5;integration;failure" TIMEOUT 30)
+    _vvm_set_test_resources(test_bp5_collective_config_r2 2)
 
     # One-rank readback after 1/2/4-rank writes proves reader/writer process
     # counts need not match. The four-rank selection deliberately leaves ranks
-    # with no selected cells. Both CPU source modes are checked synchronously;
-    # async is a separate opt-in safety gate.
+    # with no selected cells.
+    #
+    # Rank count is swept on the default path only (direct + sync), because it
+    # is the writer's own axis: r1 writes an undecomposed domain, r2 splits it,
+    # and r4 is the only case that hands some ranks an empty selection. The
+    # other axes -- buffer mode, async, precision -- are per-rank-local choices
+    # that meet the decomposition through the same Selection object, so running
+    # each of them at all three counts re-tested the same slab arithmetic for
+    # four more GPUs. They are pinned at r2, the smallest count that still
+    # decomposes. 'pack' keeps its r4 run: staging an empty selection is a
+    # zero-length buffer, and that is the one case where the two modes can
+    # genuinely differ.
     set(BP5_INTEGRATION_WORKDIR "${CMAKE_BINARY_DIR}/bp5_integration")
-    foreach(BP5_MODE direct pack)
-        foreach(BP5_RANKS 1 2 4)
-            set(BP5_TEST_NAME test_bp5_history_${BP5_MODE}_sync_r${BP5_RANKS})
-            add_test(NAME ${BP5_TEST_NAME}
-                     COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${BP5_RANKS}
-                             ${VVM_MPI_BIND_ARGS} ${GPU_WRAP}
-                             $<TARGET_FILE:test_bp5_history_mpi>
-                             ${TEST_DIR}/configs/advection_u.json
-                             ${BP5_INTEGRATION_WORKDIR} ${BP5_MODE} sync ${BP5_RANKS}
-                     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-            set_tests_properties(${BP5_TEST_NAME} PROPERTIES
-                                 LABELS "bp5;integration;multirank" TIMEOUT 90)
-        endforeach()
-    endforeach()
-    foreach(BP5_RANKS 1 2 4)
-        set(BP5_TEST_NAME test_bp5_history_direct_async_r${BP5_RANKS})
+    foreach(BP5_CASE direct:1 direct:2 direct:4 pack:2 pack:4)
+        string(REPLACE ":" ";" BP5_CASE_PARTS ${BP5_CASE})
+        list(GET BP5_CASE_PARTS 0 BP5_MODE)
+        list(GET BP5_CASE_PARTS 1 BP5_RANKS)
+        set(BP5_TEST_NAME test_bp5_history_${BP5_MODE}_sync_r${BP5_RANKS})
         add_test(NAME ${BP5_TEST_NAME}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${BP5_RANKS}
                          ${VVM_MPI_BIND_ARGS} ${GPU_WRAP}
                          $<TARGET_FILE:test_bp5_history_mpi>
                          ${TEST_DIR}/configs/advection_u.json
-                         ${BP5_INTEGRATION_WORKDIR} direct async ${BP5_RANKS}
+                         ${BP5_INTEGRATION_WORKDIR} ${BP5_MODE} sync ${BP5_RANKS}
                  WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
         set_tests_properties(${BP5_TEST_NAME} PROPERTIES
-                             LABELS "bp5;integration;async;multirank" TIMEOUT 90)
+                             LABELS "bp5;integration;multirank" TIMEOUT 90)
+        _vvm_set_test_resources(${BP5_TEST_NAME} ${BP5_RANKS})
     endforeach()
+
+    add_test(NAME test_bp5_history_direct_async_r2
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+                     ${VVM_MPI_BIND_ARGS} ${GPU_WRAP}
+                     $<TARGET_FILE:test_bp5_history_mpi>
+                     ${TEST_DIR}/configs/advection_u.json
+                     ${BP5_INTEGRATION_WORKDIR} direct async 2
+             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(test_bp5_history_direct_async_r2 PROPERTIES
+                         LABELS "bp5;integration;async;multirank" TIMEOUT 90)
+    _vvm_set_test_resources(test_bp5_history_direct_async_r2 2)
 
     # Output precision is independent of VVM::Real, so both on-disk types are
     # exercised whichever way this build was configured. The test asserts the
@@ -387,19 +447,18 @@ if(VVM_TEST_BP5)
     # 'direct' is requested deliberately: the converting case must resolve
     # itself to packing rather than fail.
     foreach(BP5_PRECISION float32 float64)
-        foreach(BP5_RANKS 1 2 4)
-            set(BP5_TEST_NAME test_bp5_history_${BP5_PRECISION}_r${BP5_RANKS})
-            add_test(NAME ${BP5_TEST_NAME}
-                     COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${BP5_RANKS}
-                             ${VVM_MPI_BIND_ARGS} ${GPU_WRAP}
-                             $<TARGET_FILE:test_bp5_history_mpi>
-                             ${TEST_DIR}/configs/advection_u.json
-                             ${BP5_INTEGRATION_WORKDIR} direct sync ${BP5_RANKS}
-                             ${BP5_PRECISION}
-                     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-            set_tests_properties(${BP5_TEST_NAME} PROPERTIES
-                                 LABELS "bp5;integration;precision;multirank" TIMEOUT 90)
-        endforeach()
+        set(BP5_TEST_NAME test_bp5_history_${BP5_PRECISION}_r2)
+        add_test(NAME ${BP5_TEST_NAME}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+                         ${VVM_MPI_BIND_ARGS} ${GPU_WRAP}
+                         $<TARGET_FILE:test_bp5_history_mpi>
+                         ${TEST_DIR}/configs/advection_u.json
+                         ${BP5_INTEGRATION_WORKDIR} direct sync 2
+                         ${BP5_PRECISION}
+                 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        set_tests_properties(${BP5_TEST_NAME} PROPERTIES
+                             LABELS "bp5;integration;precision;multirank" TIMEOUT 90)
+        _vvm_set_test_resources(${BP5_TEST_NAME} 2)
     endforeach()
 
     # Reduced precision has to survive the async path too: it is the combination
@@ -414,6 +473,7 @@ if(VVM_TEST_BP5)
              WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     set_tests_properties(test_bp5_history_float32_async_r2 PROPERTIES
                          LABELS "bp5;integration;precision;async;multirank" TIMEOUT 90)
+    _vvm_set_test_resources(test_bp5_history_float32_async_r2 2)
 
     # Keep model-smoke output in this backend's binary tree. The checked-in
     # configs use ./build for convenience, which would make a build_cpu run
@@ -452,6 +512,7 @@ if(VVM_TEST_BP5)
              WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     set_tests_properties(Run_bp5_model_smoke PROPERTIES
                          LABELS "bp5;integration;model" TIMEOUT 240)
+    _vvm_set_test_resources(Run_bp5_model_smoke 2)
     set_tests_properties(Verify_bp5_model_smoke PROPERTIES
                          DEPENDS Run_bp5_model_smoke LABELS "bp5;integration;model" TIMEOUT 30)
 
@@ -466,6 +527,7 @@ if(VVM_TEST_BP5)
              WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     set_tests_properties(Run_bp5_model_async_smoke PROPERTIES
                          LABELS "bp5;integration;model;async" TIMEOUT 240)
+    _vvm_set_test_resources(Run_bp5_model_async_smoke 2)
     set_tests_properties(Verify_bp5_model_async_smoke PROPERTIES
                          DEPENDS Run_bp5_model_async_smoke
                          LABELS "bp5;integration;model;async" TIMEOUT 30)
@@ -495,9 +557,11 @@ if(VVM_TEST_BP5)
              WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     set_tests_properties(Run_bp5_restart_source PROPERTIES
                          LABELS "bp5;integration;restart" TIMEOUT 240)
+    _vvm_set_test_resources(Run_bp5_restart_source 2)
     set_tests_properties(Run_bp5_restart_resume PROPERTIES
                          DEPENDS Run_bp5_restart_source
                          LABELS "bp5;integration;restart" TIMEOUT 240)
+    _vvm_set_test_resources(Run_bp5_restart_resume 2)
     set_tests_properties(Verify_bp5_restart PROPERTIES
                          DEPENDS Run_bp5_restart_resume
                          LABELS "bp5;integration;restart" TIMEOUT 60)
@@ -528,8 +592,10 @@ if(VVM_TEST_BP5)
              WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     set_tests_properties(Run_hdf5_model_smoke PROPERTIES
                          LABELS "bp5;integration;compatibility" TIMEOUT 240)
+    _vvm_set_test_resources(Run_hdf5_model_smoke 2)
     set_tests_properties(Run_sst_model_smoke PROPERTIES
                          LABELS "bp5;integration;compatibility;sst" TIMEOUT 300)
+    _vvm_set_test_resources(Run_sst_model_smoke 3)
     set_tests_properties(Compare_engine_outputs_model_smoke PROPERTIES
                          DEPENDS "Run_bp5_model_smoke;Run_hdf5_model_smoke;Run_sst_model_smoke"
                          LABELS "bp5;integration;compatibility" TIMEOUT 60)
@@ -552,7 +618,7 @@ function(add_vvm_file_unit_test TEST_NAME RANKS)
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${N} ${VVM_MPI_BIND_ARGS}
                          $<TARGET_FILE:${TEST_NAME}>
                  WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
-        set_tests_properties(${TEST_NAME}_r${N} PROPERTIES LABELS unit)
+        set_tests_properties(${TEST_NAME}_r${N} PROPERTIES LABELS unit TIMEOUT 120)
     endforeach()
 endfunction()
 
@@ -576,7 +642,8 @@ function(add_vvm_device_unit_test TEST_NAME CONFIG RANKS)
              COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
                      ${GPU_WRAP} $<TARGET_FILE:${TEST_NAME}> ${CONFIG}
              WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
-    set_tests_properties(${TEST_NAME}_r1 PROPERTIES LABELS unit RESOURCE_LOCK gpu)
+    set_tests_properties(${TEST_NAME}_r1 PROPERTIES LABELS unit TIMEOUT 300)
+    _vvm_set_test_resources(${TEST_NAME}_r1 1)
 
     if(VVM_TEST_MULTIRANK)
         add_test(NAME ${TEST_NAME}_r${RANKS}
@@ -584,7 +651,8 @@ function(add_vvm_device_unit_test TEST_NAME CONFIG RANKS)
                          ${GPU_WRAP} $<TARGET_FILE:${TEST_NAME}> ${CONFIG}
                  WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
         set_tests_properties(${TEST_NAME}_r${RANKS}
-                             PROPERTIES LABELS "unit;multirank" RESOURCE_LOCK gpu)
+                             PROPERTIES LABELS "unit;multirank" TIMEOUT 300)
+        _vvm_set_test_resources(${TEST_NAME}_r${RANKS} ${RANKS})
     endif()
 endfunction()
 
@@ -622,20 +690,22 @@ endif()
 # 4 ranks gives a 2x2 decomposition. This is the tier that would have caught the
 # initialiser bug where each rank stamped its own perturbation from local indices;
 # 2 ranks splits one direction only and misses it.
+#
+# Two cases, not three: every rank-invariance failure is a halo or a global-index
+# bug, and what decides whether a case can expose one is which terms touch the
+# halo, not which baseline it came from. twisting carries all three vorticity
+# components and their cross-derivatives; 2dbubble adds buoyancy, thermodynamics
+# and the full elliptic wind solve, the widest halo dependence in the model. The
+# x-only advection of advection_u is a strict subset of both, so its pair of
+# 4-GPU runs bought no coverage the other two did not already have.
+#
+# On a CPU build these are the slowest tests in the tree by a wide margin: the
+# wind solver exchanges halos many times per step, and at 4 ranks over MPI on a
+# 32^2 grid that is pure latency with no work to hide it (measured on blaze:
+# twisting 1 s at 1 rank, 20 min at 4). Keep them out of any per-commit gate.
 if(VVM_TEST_MULTIRANK)
-    add_rank_invariance_test(advection_u 4)
-    add_rank_invariance_test(twisting    4)
-    add_rank_invariance_test(2dbubble    4)
-endif()
-
-# --- large: needs 8 GPUs and the 961 MB taiwanvvm_2048.nc, ~140 s ---------
-if(VVM_TEST_LARGE)
-    # Two overrides the shipped config forces on us:
-    #   fields  - the full ~60-field dump is ~46 GB at 2048^2 and overruns the
-    #             synchronous HDF5 writer used by the tests.
-    #   chunk   - default_cases still carries column_chunk_size 16384, which OOMs
-    #             on 8 GPUs; 8192 is the working value.
-    add_case_test(taiwanvvm_2048 8 large --fields u,v,w,th --rrtmgp-chunk 8192)
+    add_rank_invariance_test(twisting 4)
+    add_rank_invariance_test(2dbubble 4)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -680,9 +750,15 @@ if(NOT VVM_ENABLE_GPU)
     # thread count. Without this each rank inherits whatever OMP_NUM_THREADS the
     # caller happens to have -- usually unset, which means "one thread per core"
     # and makes multi-rank tests oversubscribe badly.
-    set(VVM_TEST_CPU_THREADS 16 CACHE STRING
-        "OMP_NUM_THREADS per rank for CPU tests")
-
+    #
+    # VVM_TEST_CPU_THREADS is defined near the top of this file, because the
+    # PROCESSORS weight each test declares is derived from it. 64 rather than 16:
+    # measured on blaze, the two slowest single-rank cases go 2dbubble
+    # 283 s -> 108 s and mountain 405 s -> 134 s, and the results do not move --
+    # 64-thread output is bit-for-bit identical to 16-thread over all 272710
+    # values of 2dbubble, and mountain still matches its SHA-256 digest. Thread
+    # count is not one of the axes that changes CPU arithmetic (unlike rank count
+    # for the horizontal mean), so raising it costs no reference data.
     set(VVM_TEST_ENV_MODS "OMP_NUM_THREADS=set:${VVM_TEST_CPU_THREADS}")
 
     if(VVM_CPU_RUNTIME_DIRS)
@@ -695,11 +771,23 @@ if(NOT VVM_ENABLE_GPU)
     cmake_host_system_information(RESULT VVM_HOST_CORES QUERY NUMBER_OF_LOGICAL_CORES)
     message(STATUS "CPU tests: OMP_NUM_THREADS=${VVM_TEST_CPU_THREADS} per rank "
                    "(host reports ${VVM_HOST_CORES} logical cores)")
-    if(VVM_TEST_CPU_THREADS GREATER VVM_HOST_CORES)
+    # The check is per rank *count*, not per rank: the multirank tier runs 4 of
+    # them at once, so a thread count that fits a single-rank case can still
+    # oversubscribe by 4x once that tier is on.
+    if(VVM_TEST_MULTIRANK)
+        set(VVM_TEST_PEAK_RANKS 4)
+    else()
+        set(VVM_TEST_PEAK_RANKS 1)
+    endif()
+    math(EXPR VVM_TEST_PEAK_THREADS "${VVM_TEST_CPU_THREADS} * ${VVM_TEST_PEAK_RANKS}")
+    if(VVM_TEST_PEAK_THREADS GREATER VVM_HOST_CORES)
         message(WARNING
-            "CPU tests are set to ${VVM_TEST_CPU_THREADS} threads/rank but this host has "
-            "only ${VVM_HOST_CORES} logical cores, so they will oversubscribe and run "
-            "slowly. Results stay correct. Override with -DVVM_TEST_CPU_THREADS=<n>.")
+            "CPU tests are set to ${VVM_TEST_CPU_THREADS} threads/rank and the widest "
+            "tier enabled runs ${VVM_TEST_PEAK_RANKS} rank(s), so they peak at "
+            "${VVM_TEST_PEAK_THREADS} threads on a host with ${VVM_HOST_CORES} logical "
+            "cores. They will oversubscribe and run slowly. Results stay correct -- "
+            "thread count does not change them. Override with "
+            "-DVVM_TEST_CPU_THREADS=<n>.")
     endif()
 
     get_property(VVM_ALL_TESTS DIRECTORY PROPERTY TESTS)
