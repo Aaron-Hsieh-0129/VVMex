@@ -274,8 +274,12 @@ The matrix covers:
 - precision parsing and the `output.precision` → `output.bp5.precision`
   precedence (`ctest -R test_output_precision`), plus the same option applied to
   the HDF5 writer and the SST relay (`ctest -L precision`);
-- 1-, 2-, and 4-rank synchronous direct and packed output;
-- 1-, 2-, and 4-rank asynchronous direct output;
+- 1-, 2-, and 4-rank synchronous direct output — the rank axis, where 1 rank is
+  undecomposed, 2 ranks split the domain, and 4 ranks are the only case that
+  leaves some ranks with an empty output selection;
+- 2- and 4-rank synchronous packed output (4 ranks because staging an empty
+  selection is the one place the two buffer modes can differ);
+- 2-rank asynchronous direct output;
   on CUDA, requested-direct variants intentionally exercise host packing;
 - collective configuration mismatch handling;
 - 1-rank read-back of data written by different writer counts;
@@ -286,9 +290,13 @@ The matrix covers:
   back exactly the fields and clock of the step it resumed from;
 - bit-for-bit comparison of HDF5, SST, and BP5 model output, values and
   attributes, for all eleven output steps;
-- 1-, 2-, and 4-rank `float32` and `float64` output, asserting the field
-  variables **are** the requested type and **are not** the other one, plus a
-  converting `float32` run through the asynchronous path.
+- 2-rank `float32` and `float64` output, asserting the field variables **are**
+  the requested type and **are not** the other one, plus a converting `float32`
+  run through the asynchronous path.
+
+Buffer mode, async and precision are all per-rank-local choices, so they are
+pinned at 2 ranks rather than swept: repeating them at 1 and 4 ranks re-tested
+the same slab arithmetic and cost 4 more GPUs.
 
 The full matrix passes against an unmodified ADIOS2 2.12.1. Precision tests
 carry their own label:
