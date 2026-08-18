@@ -1,0 +1,174 @@
+# Checks that need no compiler, no MPI and no GPU.
+#
+# VVMex itself cannot be built on a GitHub-hosted runner: the presets compile
+# with NVHPC's mpic++/mpifort and CMakeLists.txt passes NVHPC-only Fortran flags
+# (-Mallocatable=03 -Mdclchk -Mfreeform -Mextend) that gfortran rejects, on top
+# of Kokkos, ADIOS2, PnetCDF, NetCDF, HDF5 and the EAMxx physics stack. So the
+# compile-and-test gate lives in cpu-tests.yml on a self-hosted runner, and this
+# workflow covers everything that can be judged from the sources alone. It is
+# the only one that runs on a fork PR.
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Pinned: a floating linter turns an unrelated release into a red PR.
+      - run: pip install ruff==0.16.3
+
+      # Errors only -- syntax (E9), undefined and unused names (F82, F7),
+      # comparison mistakes (F63). The full default rule set reports 42 style
+      # nits on this tree, which is not a signal worth blocking a merge on.
+      - name: Syntax and undefined names
+        run: ruff check --select E9,F63,F7,F82 submit.py tools/*.py tests/scripts/*.py
+
+  data-consistency:
+    name: Configs and test registry
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+
+      # Every shipped configuration parses, and every `extends` names a file
+      # that exists. Unknown keys are silently ignored by the model, so a
+      # config that fails to parse is one of the few errors it will not absorb.
+      - name: Shipped configurations parse
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, sys, yaml
+          root = pathlib.Path("rundata/input_configs")
+          bad, n, ext = [], 0, 0
+          for p in sorted(root.rglob("*")):
+              if p.suffix not in (".json", ".yaml", ".yml"):
+                  continue
+              n += 1
+              try:
+                  d = (json.loads if p.suffix == ".json" else yaml.safe_load)(p.read_text())
+              except Exception as e:
+                  bad.append(f"{p}: {type(e).__name__}: {e}")
+                  continue
+              if isinstance(d, dict) and "extends" in d:
+                  ext += 1
+                  base = d["extends"]
+                  for b in ([base] if isinstance(base, str) else base):
+                      # extends is relative to the file that names it.
+                      if not (p.parent / b).exists():
+                          bad.append(f"{p}: extends target missing: {b}")
+          print(f"{n} configurations parsed, {ext} use extends")
+          for b in bad:
+              print("FAIL:", b, file=sys.stderr)
+          sys.exit(1 if bad else 0)
+          PY
+
+      # Catches a case registered without its config or digest, and reference
+      # data left behind by a removed test. Both are invisible to ctest.
+      - name: Test registry matches the files it names
+        run: python3 tests/scripts/check_test_registry.py
+
+      - name: Submodules are declared consistently
+        run: |
+          git submodule status --recursive
+          # externals/yaml-cpp is a hard requirement: CMake stops with a
+          # FATAL_ERROR when it is missing, so a dropped entry breaks every
+          # build long before any test runs.
+          grep -q 'path = externals/yaml-cpp' .gitmodules
+
+  shell:
+    name: Shell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax
+        run: |
+          for f in tests/scripts/*.sh tools/*.sh .githooks/*; do
+            [ -f "$f" ] || continue
+            bash -n "$f" && echo "ok  $f"
+          done
+      # --severity=error keeps this to genuine defects (unreachable code, bad
+      # redirects) rather than the quoting advice that dominates the default.
+      - name: ShellCheck
+        run: |
+          command -v shellcheck >/dev/null || {
+            sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck; }
+          shellcheck --severity=error tests/scripts/*.sh tools/*.sh .githooks/*
+
+  docs:
+    name: Docs build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Pinned, unlike the deploy workflow's bare `pip install mkdocs-material`:
+      # Material has announced that MkDocs 2.0 removes the plugin system with no
+      # migration path, so an unpinned install will break the site without any
+      # change on our side.
+      - run: pip install -r requirements-docs.txt
+      # --strict turns a broken internal link or a nav entry pointing at a
+      # missing page into a failure. The deploy workflow does not use it, so
+      # without this a bad link reaches the published site.
+      - run: mkdocs build --strict
+
+  hygiene:
+    name: Repository hygiene
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Large binaries belong in Git LFS. Only files *added* by this PR are
+      # checked: tests/baselines_cpu/*.h5 (7 MB) predates the LFS rules and is
+      # not tracked, and rewriting history to fix that is a separate decision.
+      - name: New large files are LFS-tracked
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          limit=1048576
+          # A pipe into `while` runs the loop in a subshell, so a flag set
+          # inside it is lost. Collect offenders in a file instead.
+          offenders=$(mktemp)
+          added=$(mktemp)
+          git diff --name-only --diff-filter=A "$BASE" HEAD > "$added"
+          while read -r f; do
+            [ -f "$f" ] || continue
+            size=$(stat -c%s "$f")
+            [ "$size" -le "$limit" ] && continue
+            if git check-attr filter -- "$f" | grep -q 'filter: lfs'; then
+              echo "ok   $f ($size bytes, LFS)"
+            else
+              echo "$f ($size bytes)" >> "$offenders"
+            fi
+          done < "$added"
+          if [ -s "$offenders" ]; then
+            echo "These added files are over 1 MB and not LFS-tracked:" >&2
+            cat "$offenders" >&2
+            echo "Add a pattern to .gitattributes, then re-add them." >&2
+            exit 1
+          fi
+          echo "No oversized non-LFS files added."

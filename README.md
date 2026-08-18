@@ -1,5 +1,6 @@
 # VVMex
 
+[![Checks](https://github.com/Aaron-Hsieh-0129/VVM_GPU_CPP/actions/workflows/checks.yml/badge.svg)](https://github.com/Aaron-Hsieh-0129/VVM_GPU_CPP/actions/workflows/checks.yml)
 [![C++](https://img.shields.io/badge/C++-17%2B-blue.svg)](https://isocpp.org/)
 [![Kokkos](https://img.shields.io/badge/Kokkos-Performance_Portability-blueviolet.svg)](https://kokkos.org/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
