@@ -54,6 +54,39 @@ def tool_dirs():
     return dirs
 
 
+def toolchain_bin_dirs(entry):
+    """Executable directories of the compiler stack named by the preset.
+
+    The MPI wrappers are only wrappers: mpic++ execs nvc++ and mpifort execs
+    nvfortran, both of which live in $NVHPC_DIR/compilers/bin. Without that on
+    PATH the wrappers are found, CMake identifies the compiler as "unknown",
+    and the first try-compile fails with "unable to find the specified compiler
+    nvc++ in your PATH". An interactive shell has this from the user's profile;
+    a runner service does not.
+    """
+    cache = entry.get("cacheVariables", {})
+    dirs = []
+
+    def add(path):
+        if path and os.path.isdir(path) and path not in dirs:
+            dirs.append(path)
+
+    cxx = cache.get("CMAKE_CXX_COMPILER", "")
+    if cxx:
+        add(os.path.dirname(cxx))
+
+    nvhpc = cache.get("NVHPC_DIR", "")
+    if nvhpc:
+        add(os.path.join(nvhpc, "compilers", "bin"))
+        # nvcc and friends, for a GPU preset that shells out to them.
+        cuda_root = os.path.join(nvhpc, "cuda")
+        if os.path.isdir(cuda_root):
+            for version in sorted(os.listdir(cuda_root), reverse=True):
+                add(os.path.join(cuda_root, version, "bin"))
+
+    return dirs
+
+
 def toolchain_lib_dirs(entry, gpu):
     """Runtime library directories of the compiler stack named by the preset.
 
@@ -166,6 +199,9 @@ def main():
     # full interactive PATH is deliberately not carried over -- it would pin the
     # runner to whatever happened to be loaded when this ran.
     path_parts = []
+    for d in toolchain_bin_dirs(entry):
+        if d not in path_parts:
+            path_parts.append(d)
     for d in env.get("PATH", "").split(os.pathsep):
         if d and "/ompi/bin" in d and d not in path_parts:
             path_parts.append(d)
