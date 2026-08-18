@@ -76,6 +76,7 @@ nav:
       - P3 Modifications: developer-guides/p3-modifications.md
       - BP5 Output Internals: developer-guides/bp5-output.md
       - Reproducibility: developer-guides/reproducibility.md
+      - Continuous Integration: developer-guides/ci.md
   - Examples:
       - Overview: examples/index.md
       - Default cases: examples/default-cases.md
