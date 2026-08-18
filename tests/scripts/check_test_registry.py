@@ -24,6 +24,50 @@ def calls(text, name):
     return out
 
 
+def config_inputs(path):
+    """Input files a case configuration reads, as repo-relative paths.
+
+    Heuristic on purpose: any string value that looks like a path to a data
+    file. Output directories are excluded by key name -- they are created, not
+    read.
+    """
+    import json
+    try:
+        config = json.loads(path.read_text())
+    except Exception:
+        return set()
+    found = set()
+
+    def walk(node, key=""):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                walk(v, k)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v, key)
+        elif isinstance(node, str):
+            if "dir" in key.lower() or "output" in key.lower():
+                return
+            if "/" in node and node.endswith((".nc", ".txt", ".dat")):
+                found.add(node.lstrip("./"))
+
+    walk(config)
+    return found
+
+
+def tracked_by_git(root, paths):
+    """Which of `paths` git actually has. Absent -> not in a fresh clone."""
+    import subprocess
+    if not paths:
+        return set()
+    result = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "--error-unmatch", "--"] + sorted(paths),
+        capture_output=True, text=True)
+    if result.returncode == 0:
+        return set(paths)
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--root", default=None, help="project root (default: infer)")
@@ -116,6 +160,30 @@ def main():
     for path in sorted((tests / "configs").glob("*.json")):
         if path.stem not in used_baselines:
             orphans.append(f"config read by no test: {path.relative_to(root)}")
+
+    # Inputs a registered case reads must be committed, not merely present in
+    # the developer's tree. A gitignored input passes locally forever and fails
+    # on every fresh clone -- which is what CI checks out. This is how the whole
+    # physics tier came to fail in CI while passing on the machine that wrote it.
+    case_configs = []
+    for args in calls(text, "add_case_test") + calls(text, "add_rank_invariance_test"):
+        case_configs.append(cases / f"{args[0]}.json")
+    for args in calls(text, "add_vvm_test"):
+        case_configs.append(tests / "configs" / f"{args[0]}.json")
+
+    wanted = {}
+    for config in case_configs:
+        if not config.exists():
+            continue
+        for rel in config_inputs(config):
+            wanted.setdefault(rel, set()).add(config.stem)
+    tracked = tracked_by_git(root, set(wanted))
+    for rel, users in sorted(wanted.items()):
+        if rel in tracked:
+            continue
+        state = "exists but is not committed" if (root / rel).exists() else "does not exist"
+        missing.append(f"input {state}, so a fresh clone cannot run "
+                       f"{', '.join(sorted(users))}: {rel}")
 
     for line in orphans:
         print(f"orphan:  {line}")
