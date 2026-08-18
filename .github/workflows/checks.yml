@@ -9,10 +9,19 @@
 # the only one that runs on a fork PR.
 name: Checks
 
+# Runs on every branch, not just main. This workflow is free and takes about a
+# minute, and the point of it is to catch things before a pull request exists --
+# restricting `push` to main means a topic branch gets no signal at all until
+# someone opens one, and `workflow_dispatch` is no escape hatch either, since
+# its button only appears for workflows already on the default branch.
+#
+# A branch that does have a PR open therefore runs this twice, once per event.
+# That is the deliberate trade: a duplicate minute of hosted compute in exchange
+# for feedback on push. cpu-tests.yml does NOT do this -- it costs real time on
+# your own machine, so it stays on pull requests and main.
 on:
   pull_request:
   push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
