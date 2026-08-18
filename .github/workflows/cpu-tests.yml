@@ -17,6 +17,17 @@ name: CPU tests
 # a model build, but the same filter on `pull_request` would be a trap: a
 # required status check that is skipped never reports, and branch protection
 # would wait forever on a docs-only PR. Pull requests therefore always run this.
+#
+# Consequence worth knowing: an EMPTY commit does not trigger this workflow.
+# GitHub evaluates a path filter against the set of changed files, and an empty
+# commit changes none, so the filter excludes the run -- it does not appear in
+# the Actions tab at all, which looks identical to a broken trigger.
+# `git commit --allow-empty` is therefore NOT a way to re-run this job. Use one
+# of these instead:
+#   - push a real change (anything outside docs/, *.md, mkdocs.yml);
+#   - open the previous run in the Actions tab and "Re-run all jobs";
+#   - once this file is on the default branch, the "Run workflow" button
+#     (workflow_dispatch) appears and ignores path filters entirely.
 on:
   pull_request:
   push:
