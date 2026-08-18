@@ -16,6 +16,7 @@ So CI is split by what a job needs:
 |---|---|---|---|
 | `checks.yml` | GitHub-hosted | every push and PR, forks included | ~1 min |
 | `cpu-tests.yml` | self-hosted | every push and PR from this repo | ~11 min |
+| `gpu-tests.yml` | self-hosted | every push and PR from this repo | ~14 min |
 | `nightly.yml` | self-hosted | 19:00 UTC daily, or manual | ~10 min GPU, ~1.5 h CPU |
 | `docs.yml` | GitHub-hosted | push to `main` touching `docs/` | ~1 min |
 
@@ -72,6 +73,23 @@ tree unsafe: `CMakeLists.txt` FORCE-writes empty `OpenMP_*_FLAGS` into the cache
 so a *second* configure cannot find OpenMP (after which `cmake --build` returns
 0 having built nothing), and there is no header dependency tracking, so a
 reused tree can keep objects holding a stale class layout.
+
+### `gpu-tests.yml` — the reference backend
+
+The same shape as the CPU gate, on a runner labelled `vvmex-gpu`, running the
+default **and physics** tiers. The physics tier is the reason it exists: P3,
+RRTMGP and the Noah land model are checked nowhere else, because every digest
+under `tests/references/` was generated on a GPU and `tests/references_cpu/`
+has one case.
+
+It refuses outright if it lands on a runner whose `VVM_CI_BACKEND` is not `gpu`,
+rather than building the wrong tree.
+
+It checks out with `lfs: false` and then runs `git lfs pull`. `actions/checkout`
+implements `lfs: true` by running `git lfs install --local`, which refuses when a
+pre-push hook it did not write already exists — and `.githooks/pre-push` is
+tracked, so it is in every clone. Overwriting it with `--force` would dirty the
+working tree, since it is a tracked file. Fetching the objects needs no hooks.
 
 ### `nightly.yml` — the slow tiers
 
@@ -212,20 +230,87 @@ TPLs or editing `CMakePresets.json`, then restart the service.
 
 ### Once per repository
 
-Set the variable (**Settings → Secrets and variables → Actions → Variables**):
+Set the variable for each backend you have registered a runner for
+(**Settings → Secrets and variables → Actions → Variables**):
 
-```
-VVMEX_RUNNER = true
-```
+| Variable | Means | Gates |
+|---|---|---|
+| `VVMEX_RUNNER` | a CPU runner is registered | `cpu-tests.yml`, nightly's CPU job |
+| `VVMEX_GPU_RUNNER` | a GPU runner is registered | `gpu-tests.yml`, nightly's GPU job |
 
-Unset it to switch both self-hosted workflows off without deleting them. Then
-add the required status checks under **Settings → Branches** for `main`:
-*Python*, *Configs and test registry*, *Shell*, *Docs build*, and
-*Build and test (CPU)*.
+Each backend has its own variable because **a job dispatched to a label no
+runner carries does not skip** — it queues for 24 hours and then fails. Gating a
+GPU job on the CPU variable therefore turns "no GPU runner" into a failure every
+night rather than a quiet skip. Set only the variables whose runners exist, and
+unset one to take that backend's workflows out of service without deleting them.
+
+Then add the required status checks under **Settings → Branches** for `main` —
+see [What to require](#what-to-require).
 
 The README carries a badge for `checks.yml` only. Add one for the CPU gate once
 a runner is live — a badge for a workflow that has never run renders as "no
 status", which reads as broken.
+
+## Branch protection
+
+Until this is configured, CI is advisory: a pull request shows red checks and
+the Merge button still works, and anyone can push straight to `main`. Branch
+protection is what turns the checks into a gate.
+
+**Settings → Branches → Add branch protection rule** for `main`:
+
+- Require a pull request before merging
+- Require status checks to pass before merging
+
+### What to require
+
+A check only appears in the search box **after it has run at least once**, so
+open one pull request first, let it finish, then come back and add them.
+
+| Check | Require | Why |
+|---|---|---|
+| `Python` | yes | seconds, no dependencies |
+| `Configs and test registry` | yes | seconds, catches uncommitted test inputs |
+| `Shell` | yes | seconds |
+| `Docs build` | yes | seconds, catches broken links before they publish |
+| `Build and test (CPU)` | yes, once the runner has been green a few times | the real correctness gate |
+| `Build and test (GPU)` | not yet | see below |
+| `Repository hygiene` | optional | only runs on pull requests, which is where it matters |
+
+**Do not require the GPU check while it is still settling.** Requiring it ties
+every merge to one machine having a working GPU runner; with the GPU tier only
+days old, an advisory red is more useful than a blocked repository. Promote it
+once it has run green across a week without intervention.
+
+### Two ways to deadlock a pull request
+
+**A required check that never reports.** A workflow excluded by a path or branch
+filter produces no check run at all, so the requirement sits *pending* — not
+failed — and the pull request cannot proceed. This is why every workflow here
+filters `paths-ignore` on `push` only and leaves `pull_request` unfiltered. Do
+not add a path filter to a `pull_request` trigger for anything you require.
+
+**A required check whose runner is gone.** `Build and test (CPU)` cannot pass
+without a machine carrying `vvmex-cpu`. If the runner is offline, merges stop.
+That is the intended trade for a self-hosted gate, but it is worth knowing
+before a deadline: taking the runner down blocks merging until it returns, or
+until the requirement is removed.
+
+### Bypass
+
+"Do not allow bypassing the above settings" decides whether administrators are
+held to the rule. As the sole maintainer you may want the escape hatch; leaving
+it unchecked means the protection is a speed bump for you and a wall for
+everyone else. Either is defensible — just make it a decision rather than a
+default.
+
+### What this does not cover
+
+Branch protection gates *merges*, server-side. `.githooks/pre-push` gates *your
+pushes*, from whatever state your build tree is in, and `--no-verify` skips it.
+Now that the CPU gate runs on every push, the hook's `ctest` is largely
+redundant with it; what the hook still does that nothing else does is run
+`git lfs pre-push`, which is how LFS objects get uploaded at all.
 
 ## The fork problem
 

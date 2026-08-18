@@ -254,13 +254,31 @@ else
     echo "      cd $RUNNER_DIR && ./run.sh"
 fi
 
+# Which variable this backend's workflows read. Printing VVMEX_RUNNER for a GPU
+# runner would be actively misleading: the operator sets the one variable they
+# were told about, gpu-tests.yml stays inert, and nothing says why.
+if [ "$BACKEND" = gpu ]; then
+    VAR_NAME="VVMEX_GPU_RUNNER"
+    VAR_GATES="gpu-tests.yml and the nightly GPU job"
+    CHECK_NAME="Build and test (GPU)"
+else
+    VAR_NAME="VVMEX_RUNNER"
+    VAR_GATES="cpu-tests.yml and the nightly CPU job"
+    CHECK_NAME="Build and test (CPU)"
+fi
+
 cat <<DONE
 
 Done. This machine now accepts jobs labelled: vvmex-$BACKEND
 
 Remaining, once per repository (not per machine):
-  1. Set repository variable  VVMEX_RUNNER = true
-  2. Add the required status checks under Settings -> Branches
+  1. Set repository variable  $VAR_NAME = true
+     Settings -> Secrets and variables -> Actions -> Variables
+     It gates $VAR_GATES. Each backend has its own
+     variable, because a job dispatched to a label no runner carries does not
+     skip -- it queues for 24 hours and then fails.
+  2. Add "$CHECK_NAME" to the required status checks
+     under Settings -> Branches, once it has run green at least once.
 
 Re-run with --env-only after moving the TPLs or editing CMakePresets.json.
 DONE
