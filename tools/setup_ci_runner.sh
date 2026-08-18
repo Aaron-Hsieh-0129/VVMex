@@ -119,7 +119,15 @@ PY
 
 [ -n "$RUNNER_DIR" ]  || RUNNER_DIR="$(dirname "$VVM_ROOT")/actions-runner-$PRESET"
 [ -n "$WORK_DIR" ]    || WORK_DIR="$RUNNER_DIR/_work"
-[ -n "$RUNNER_NAME" ] || RUNNER_NAME="$(hostname -s)-$PRESET"
+# <host>-<preset> reads badly when the preset is already named after the host:
+# blaze + blaze-cpu became "blaze-blaze-cpu". Use the preset alone in that case.
+if [ -z "$RUNNER_NAME" ]; then
+    _host="$(hostname -s)"
+    case "$PRESET" in
+        "$_host"|"$_host"-*) RUNNER_NAME="$PRESET" ;;
+        *)                   RUNNER_NAME="$_host-$PRESET" ;;
+    esac
+fi
 
 LABELS="vvmex,vvmex-$BACKEND,preset-$PRESET,$(hostname -s)"
 
