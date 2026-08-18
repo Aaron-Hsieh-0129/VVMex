@@ -1,0 +1,94 @@
+# The reference backend, on a self-hosted GPU runner.
+#
+# Separate from cpu-tests.yml and separately switched, because it needs a
+# separate runner: one machine can host both, registered twice with different
+# presets (tools/setup_ci_runner.sh --preset blaze  and  --preset blaze-cpu),
+# which is what gives each job the right build tree and TPL stack.
+#
+# Off until BOTH vars.VVMEX_RUNNER and vars.VVMEX_GPU_RUNNER are "true". The
+# second switch exists so enabling CPU CI cannot accidentally queue a GPU job
+# with no vvmex-gpu runner to take it -- that would sit yellow forever rather
+# than skip.
+name: GPU tests
+
+on:
+  pull_request:
+  push:
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+      - "mkdocs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vvmex-gpu-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gpu:
+    name: Build and test (GPU)
+    if: >-
+      vars.VVMEX_RUNNER == 'true' && vars.VVMEX_GPU_RUNNER == 'true' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, vvmex-gpu]
+    timeout-minutes: 120
+
+    env:
+      VVM_ROOT: ${{ github.workspace }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # tests/baselines/*.h5 are LFS objects and the default tier reads them.
+          # The CPU tier does not need this; baselines_cpu are ordinary objects.
+          lfs: true
+
+      - name: Read runner configuration
+        run: |
+          test "${VVM_CI_BACKEND}" = gpu || {
+            echo "::error::this runner is configured for '${VVM_CI_BACKEND:-nothing}', not gpu."
+            echo "::error::register a GPU runner with tools/setup_ci_runner.sh --preset <gpu-preset>"
+            exit 1; }
+          echo "preset ${VVM_CI_PRESET}, build dir ${VVM_CI_BUILD_DIR}, jobs ${VVM_CI_BUILD_JOBS}"
+          {
+            echo "BUILD_DIR=${VVM_CI_BUILD_DIR}"
+            echo "PRESET=${VVM_CI_PRESET}"
+            echo "BUILD_JOBS=${VVM_CI_BUILD_JOBS}"
+          } >> "$GITHUB_ENV"
+
+      - name: Clean build tree
+        run: rm -rf "$BUILD_DIR"
+
+      # The physics tier is GPU-only: every digest under tests/references/ was
+      # generated here, and tests/references_cpu/ has one case. This is the only
+      # place P3, RRTMGP and the Noah land model are checked at all.
+      - name: Configure
+        run: >-
+          cmake --preset "$PRESET" -DBUILD_TESTS=ON -DVVM_TEST_PHYSICS=ON
+
+      - name: Build
+        run: cmake --build "$BUILD_DIR" -j "$BUILD_JOBS"
+
+      # No -j: on a GPU build every model test takes a RESOURCE_LOCK, because
+      # several NCCL ranks sharing one device is unsupported and silently
+      # changes results.
+      - name: Run default and physics tiers
+        run: ctest --test-dir "$BUILD_DIR" --output-on-failure
+
+      - name: Upload test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-log-gpu-${{ runner.name }}
+          path: ${{ env.BUILD_DIR }}/Testing/Temporary/LastTest.log
+          retention-days: 14
+
+      # ~8.8 GB, mostly CUDA fatbins.
+      - name: Clean up
+        if: always()
+        run: rm -rf "$BUILD_DIR"
