@@ -26,14 +26,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Everything gpu-tests.yml leaves out of the per-push gate: BP5 and the
-  # 4-rank invariance tier, which needs 4 physical GPUs. When VVMEX_GPU_RUNNER
-  # is off this is the only GPU coverage there is, so it keeps the physics tier
-  # too rather than assuming the gate ran.
+  # Everything gpu-tests.yml leaves out of the per-push gate: BP5 and the 4-rank
+  # invariance tier, which needs 4 physical GPUs. It keeps the physics tier as
+  # well, so this job is a complete GPU run rather than a supplement.
+  #
+  # Gated on VVMEX_GPU_RUNNER, the same switch as gpu-tests.yml, because both
+  # dispatch to [self-hosted, vvmex-gpu]. Gating it on VVMEX_RUNNER instead --
+  # which it did until now -- meant a repository with a CPU runner and no GPU
+  # runner queued this every night against a label nothing carried, waited the
+  # full 24 hours and failed. Each variable means "a runner of this backend is
+  # registered", and nothing should dispatch to a label without one.
   gpu:
     name: Full suite (GPU)
     if: >-
-      vars.VVMEX_RUNNER == 'true' &&
+      vars.VVMEX_GPU_RUNNER == 'true' &&
       (github.event_name != 'workflow_dispatch' || inputs.tier != 'cpu-full')
     runs-on: [self-hosted, vvmex-gpu]
     timeout-minutes: 90
