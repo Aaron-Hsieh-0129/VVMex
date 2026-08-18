@@ -243,6 +243,22 @@
         "SCREAM_P3_SMALL_KERNELS": "ON",
         "SCREAM_SMALL_PACK_SIZE": "1"
       }
+    },
+    {
+      "name": "blaze-ninja",
+      "inherits": "blaze",
+      "displayName": "NVHPC 24.9 on blaze, Ninja",
+      "description": "Same toolchain and flags as blaze, built with Ninja. Measured on blaze: a clean GPU build goes 6m05s -> 4m19s at -j 224, because Make keeps about 20 compilers busy on this dependency graph and Ninja keeps hundreds. Results are unaffected -- the generator does not touch codegen, and the full suite passes 45/45 including every bit-for-bit baseline. Needs ninja on PATH, so it is a separate preset rather than the default.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build_ninja"
+    },
+    {
+      "name": "blaze-cpu-ninja",
+      "inherits": "blaze-cpu",
+      "displayName": "NVHPC 24.9 on blaze, CPU-only (Kokkos OpenMP), Ninja",
+      "description": "Same toolchain and flags as blaze-cpu, built with Ninja. Measured on blaze: a clean GPU build goes 6m05s -> 4m19s at -j 224, because Make keeps about 20 compilers busy on this dependency graph and Ninja keeps hundreds. Results are unaffected -- the generator does not touch codegen, and the full suite passes 45/45 including every bit-for-bit baseline. Needs ninja on PATH, so it is a separate preset rather than the default.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build_cpu_ninja"
     }
   ]
 }

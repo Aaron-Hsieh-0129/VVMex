@@ -47,13 +47,15 @@ def tool_dirs():
     them. git is included because actions/checkout needs it.
     """
     dirs = []
-    for tool in ("cmake", "ctest", "python3", "git"):
+    # ninja is included because the *-ninja presets need it on PATH; it is
+    # simply absent on a machine that does not use them.
+    for tool in ("cmake", "ctest", "ninja", "python3", "git", "git-lfs"):
         found = shutil.which(tool)
         if found:
             d = os.path.dirname(os.path.realpath(found))
             if d not in dirs:
                 dirs.append(d)
-        else:
+        elif tool not in ("ninja",):
             print(f"[warning] '{tool}' not found on PATH; the runner will not "
                   f"be able to use it either.", file=sys.stderr)
     return dirs
