@@ -27,6 +27,7 @@ RUNNER_DIR=""
 WORK_DIR=""
 RUNNER_NAME=""
 INSTALL_SERVICE=1
+USER_SERVICE=0
 BUILD_JOBS=""
 TEST_THREADS=""
 
@@ -44,7 +45,9 @@ Options:
   --build-jobs <n>     compile parallelism (default: all cores)
   --test-threads <n>   OMP threads per rank for CPU tests (default: cores/4)
   --runner-version <v> actions/runner release (default: RUNNER_VERSION above)
-  --no-service         configure but do not install the systemd service
+  --user-service       install a systemd --user unit instead of a system one
+                       (no root needed; use this when you have no sudo)
+  --no-service         configure but do not install any service
   --env-only           only regenerate .env in an existing runner directory
 USAGE
 }
@@ -62,6 +65,7 @@ while [ $# -gt 0 ]; do
         --test-threads)   TEST_THREADS="$2"; shift 2 ;;
         --runner-version) RUNNER_VERSION="$2"; shift 2 ;;
         --no-service)     INSTALL_SERVICE=0; shift ;;
+        --user-service)   USER_SERVICE=1; shift ;;
         --env-only)       ENV_ONLY=1; shift ;;
         -h|--help)        usage; exit 0 ;;
         *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -188,8 +192,47 @@ echo "==> configuring"
 
 write_env
 
-if [ "$INSTALL_SERVICE" -eq 1 ]; then
-    echo "==> installing service as $(id -un)"
+if [ "$INSTALL_SERVICE" -eq 1 ] && [ "$USER_SERVICE" -eq 1 ]; then
+    # No root required. `loginctl enable-linger` is what keeps a --user unit
+    # running after the last session ends and starts it again at boot; on many
+    # systems a user may enable it for themselves.
+    UNIT="vvmex-runner-$PRESET"
+    mkdir -p "$HOME/.config/systemd/user"
+    cat > "$HOME/.config/systemd/user/$UNIT.service" <<UNITFILE
+[Unit]
+Description=GitHub Actions runner for VVMex ($PRESET)
+After=network-online.target
+
+[Service]
+ExecStart=$RUNNER_DIR/run.sh
+WorkingDirectory=$RUNNER_DIR
+Restart=always
+RestartSec=10
+# The runner supervises its own job processes; killing the whole cgroup would
+# take a running build down with the service on every restart.
+KillMode=process
+KillSignal=SIGTERM
+TimeoutStopSec=5min
+
+[Install]
+WantedBy=default.target
+UNITFILE
+    loginctl enable-linger "$(id -un)" 2>/dev/null || \
+        echo "WARNING: could not enable linger; the runner will stop when you log out."
+    systemctl --user daemon-reload
+    systemctl --user enable --now "$UNIT.service"
+    echo "==> running as a user service: $UNIT"
+    echo "    status:  systemctl --user status $UNIT"
+    echo "    logs:    journalctl --user -u $UNIT -f"
+    echo "    stop:    systemctl --user stop $UNIT"
+elif [ "$INSTALL_SERVICE" -eq 1 ]; then
+    echo "==> installing system service as $(id -un) (needs sudo)"
+    if ! sudo -n true 2>/dev/null && ! sudo -v 2>/dev/null; then
+        echo
+        echo "ERROR: no usable sudo. Re-run with --user-service to install a" >&2
+        echo "       systemd --user unit instead, which needs no root." >&2
+        exit 1
+    fi
     (cd "$RUNNER_DIR" && sudo ./svc.sh install "$(id -un)" && sudo ./svc.sh start)
     echo "==> running"
 else

@@ -139,6 +139,24 @@ Put `--dir` on a filesystem with room. The work directory holds a full checkout
 plus a build tree per run — about 300 MB for a CPU build and 9 GB for a GPU one
 — and the script warns if the target looks tight.
 
+**Without root**, add `--user-service`:
+
+```bash
+tools/setup_ci_runner.sh --preset blaze-cpu --token <registration-token> \
+                         --dir /raid/mog/actions-runner-blaze-cpu \
+                         --user-service
+```
+
+This installs a `systemd --user` unit under `~/.config/systemd/user/` instead of
+calling `svc.sh install`, which needs sudo. It also runs
+`loginctl enable-linger`, which is what keeps a user unit alive after the last
+session ends and starts it again at boot — many systems let a user enable that
+for themselves. Manage it with `systemctl --user {status,stop} vvmex-runner-<preset>`
+and read its log with `journalctl --user -u vvmex-runner-<preset> -f`.
+
+If linger cannot be enabled, the runner stops when you log out. `--no-service`
+plus `./run.sh` in a `tmux` session is the last resort.
+
 The token is on **Settings → Actions → Runners → New self-hosted runner** and
 expires after an hour. That is the whole per-machine procedure; the script:
 
