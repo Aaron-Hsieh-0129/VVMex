@@ -26,9 +26,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # The reference backend. Every stored digest under tests/references/ was
-  # generated on a GPU, so this is the only place the physics tier can run at
-  # all -- tests/references_cpu/ has digests for one case.
+  # Everything gpu-tests.yml leaves out of the per-push gate: BP5 and the
+  # 4-rank invariance tier, which needs 4 physical GPUs. When VVMEX_GPU_RUNNER
+  # is off this is the only GPU coverage there is, so it keeps the physics tier
+  # too rather than assuming the gate ran.
   gpu:
     name: Full suite (GPU)
     if: >-
