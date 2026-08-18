@@ -131,8 +131,13 @@ them cannot leave pull requests waiting on a runner that is not there.
 
 ```bash
 export VVM_ROOT=/path/to/VVMex
-tools/setup_ci_runner.sh --preset blaze-cpu --token <registration-token>
+tools/setup_ci_runner.sh --preset blaze-cpu --token <registration-token> \
+                         --dir /raid/mog/actions-runner-blaze-cpu
 ```
+
+Put `--dir` on a filesystem with room. The work directory holds a full checkout
+plus a build tree per run — about 300 MB for a CPU build and 9 GB for a GPU one
+— and the script warns if the target looks tight.
 
 The token is on **Settings → Actions → Runners → New self-hosted runner** and
 expires after an hour. That is the whole per-machine procedure; the script:
@@ -176,6 +181,13 @@ Two details that are easy to get wrong by hand:
 env -i $(grep -v '^#' /path/to/runner/.env | tr '\n' ' ') HOME=$HOME VVM_ROOT=$PWD \
   bash -c 'ldd $VVM_ROOT/build_cpu/vvm | grep "not found"'
 ```
+
+One more entry is written unconditionally: `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1`.
+The runner is a vendored .NET application that probes for ICU at startup, and
+`LD_LIBRARY_PATH` points at the scientific stack, which can carry a different
+ICU version than the system one — .NET then refuses to start with "Couldn't
+find a valid ICU package" and the service never picks up a job. Invariant
+globalization sidesteps the probe, and the runner needs no locale support.
 
 Re-run `tools/setup_ci_runner.sh --preset <name> --env-only` after moving the
 TPLs or editing `CMakePresets.json`, then restart the service.

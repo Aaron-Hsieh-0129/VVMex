@@ -186,6 +186,13 @@ def main():
         f"VVM_CI_CTEST_JOBS={ctest_jobs}",
         f"VVM_CI_TEST_THREADS={test_threads}",
         f"PATH={os.pathsep.join(path_parts)}",
+        # The runner is a vendored .NET application and probes for ICU at
+        # startup. LD_LIBRARY_PATH below points at the scientific stack, which
+        # can carry an ICU of a different version than the system one, and .NET
+        # then refuses to start with "Couldn't find a valid ICU package" -- the
+        # runner service would fail before ever picking up a job. Invariant
+        # globalization sidesteps the probe; the runner needs no locale support.
+        "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1",
     ]
     for key in ("LD_LIBRARY_PATH", "VVM_EXTRA_LD_LIBRARY_PATH", "HPCX_HOME"):
         value = env.get(key)

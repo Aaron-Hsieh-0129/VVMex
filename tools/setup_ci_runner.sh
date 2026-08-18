@@ -12,6 +12,11 @@
 # on the repository, and expires after an hour.
 set -euo pipefail
 
+# config.sh and svc.sh are .NET; see the note in ci_runner_env.py. This shell
+# has the scientific stack on LD_LIBRARY_PATH, so without this the very first
+# ./config.sh dies on an ICU version mismatch.
+export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+
 RUNNER_VERSION="2.330.0"
 # Empty means "ask the checkout". A hardcoded URL goes stale the moment the
 # repository is renamed, which is exactly what happened to the previous one.
@@ -119,6 +124,27 @@ echo "==> runner dir  : $RUNNER_DIR"
 echo "==> work dir    : $WORK_DIR"
 echo "==> runner name : $RUNNER_NAME"
 echo "==> labels      : $LABELS"
+
+# The work directory holds a full checkout plus a build tree per run: ~300 MB
+# for a CPU build, ~9 GB for a GPU one. Warn rather than fail -- only the
+# operator knows what else lives on that filesystem -- but warn loudly, because
+# filling the root filesystem takes down more than CI.
+_parent="$(dirname "$RUNNER_DIR")"
+mkdir -p "$_parent"
+_avail_gb=$(( $(df -Pk "$_parent" | awk 'NR==2{print $4}') / 1024 / 1024 ))
+_want_gb=$([ "$BACKEND" = gpu ] && echo 25 || echo 10)
+echo "==> free space  : ${_avail_gb} GB on $(df -Ph "$_parent" | awk 'NR==2{print $6}')"
+if [ "$_avail_gb" -lt "$_want_gb" ]; then
+    echo
+    echo "WARNING: a $BACKEND runner wants roughly ${_want_gb} GB for checkouts and build"
+    echo "         trees, and only ${_avail_gb} GB is free here. Put it on a bigger"
+    echo "         filesystem instead:"
+    echo "           --dir /path/with/space/actions-runner-$PRESET"
+    echo
+    printf "Continue anyway? [y/N] "
+    read -r _reply
+    case "$_reply" in [yY]*) ;; *) echo "aborted."; exit 1 ;; esac
+fi
 echo
 
 write_env() {
