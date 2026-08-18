@@ -10,20 +10,36 @@
 # runner that does not exist.
 name: CPU tests
 
+# Runs on every branch, so a topic branch gets a real build-and-test result
+# without waiting for a pull request.
+#
+# paths-ignore is on `push` only, deliberately. A docs-only commit does not need
+# a model build, but the same filter on `pull_request` would be a trap: a
+# required status check that is skipped never reports, and branch protection
+# would wait forever on a docs-only PR. Pull requests therefore always run this.
 on:
   pull_request:
   push:
-    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+      - "mkdocs.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# One VVMex job per machine at a time. cancel-in-progress is off on purpose:
-# a half-killed MPI run leaves orphan ranks holding memory.
+# One VVMex job per branch at a time, and a superseded one is cancelled.
+#
+# This changed when the trigger widened to every branch. Queueing was safe while
+# runs were rare, but there is a single self-hosted runner: three pushes in a row
+# would otherwise queue three full builds, and the machine would spend half an
+# hour on two results nobody will read. Cancelling costs a small risk that a
+# killed mpiexec leaves orphan ranks behind -- if a runner ever looks busy with
+# no job attached, check with `ps -C vvm` before assuming CI is stuck.
 concurrency:
   group: vvmex-cpu-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   cpu:
