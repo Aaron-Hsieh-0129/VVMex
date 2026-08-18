@@ -25,10 +25,15 @@ def load_submit(vvm_root):
     return module
 
 
+_ALL_PRESETS = []
+
+
 def preset_entry(vvm_root, name):
+    global _ALL_PRESETS
     with open(os.path.join(vvm_root, "CMakePresets.json")) as f:
         data = json.load(f)
-    for p in data.get("configurePresets", []):
+    _ALL_PRESETS = data.get("configurePresets", [])
+    for p in _ALL_PRESETS:
         if p.get("name") == name:
             return p
     return None
@@ -122,16 +127,38 @@ def toolchain_lib_dirs(entry, gpu):
             for version in sorted(os.listdir(cuda_root), reverse=True):
                 add(os.path.join(cuda_root, version, "lib64"))
 
-    # --gcc-toolchain=<prefix> matters at run time too: NVHPC compiles against
-    # one libstdc++ and would otherwise load whatever the system provides.
-    for flag_key in ("CMAKE_CXX_FLAGS", "CMAKE_C_FLAGS"):
-        for token in str(cache.get(flag_key, "")).split():
-            if token.startswith("--gcc-toolchain="):
-                prefix = token.split("=", 1)[1]
-                add(os.path.join(prefix, "lib64"))
-                add(os.path.join(prefix, "lib"))
+    # The GCC runtime NVHPC binaries actually need. This is a property of the
+    # machine's toolchain, not of one preset: blaze-cpu spells it out as
+    # --gcc-toolchain=, blaze does not, yet both produce binaries that must load
+    # that GCC's libstdc++. Letting the system libstdc++ resolve instead does
+    # not fail to link or start -- it corrupts the heap, and the model aborts
+    # with "double free or corruption" after writing its first output file.
+    # So collect the prefix from wherever any preset declares it and apply it
+    # to all of them.
+    for prefix in gcc_toolchain_prefixes(entry):
+        add(os.path.join(prefix, "lib64"))
+        add(os.path.join(prefix, "lib"))
 
     return dirs
+
+
+def gcc_toolchain_prefixes(entry, all_presets=None):
+    """--gcc-toolchain prefixes, from this preset or any of its siblings."""
+    prefixes = []
+
+    def scan(cache):
+        for flag_key in ("CMAKE_CXX_FLAGS", "CMAKE_C_FLAGS", "CMAKE_Fortran_FLAGS"):
+            for token in str(cache.get(flag_key, "")).split():
+                if token.startswith("--gcc-toolchain="):
+                    value = token.split("=", 1)[1]
+                    if value not in prefixes:
+                        prefixes.append(value)
+
+    scan(entry.get("cacheVariables", {}))
+    if not prefixes:
+        for other in (all_presets or _ALL_PRESETS):
+            scan(other.get("cacheVariables", {}))
+    return prefixes
 
 
 def main():
