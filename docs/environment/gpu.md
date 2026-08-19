@@ -433,7 +433,6 @@ needs one GPU. Heavier tiers are opt-in at configure time:
 | bp5 | up to 4 GPUs | `-DVVM_TEST_BP5=ON` |
 | physics | 1 GPU | `-DVVM_TEST_PHYSICS=ON` |
 | multirank | 4 **physical** GPUs | `-DVVM_TEST_MULTIRANK=ON` |
-| large | 8 GPUs + the 961 MB `taiwanvvm_2048.nc` | `-DVVM_TEST_LARGE=ON` |
 
 Multi-rank tiers need that many real devices. Several NCCL ranks sharing one GPU
 is unsupported and silently changes results, so they cannot be faked on a

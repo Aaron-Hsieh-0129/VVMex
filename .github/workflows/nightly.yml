@@ -1,0 +1,174 @@
+# The tiers too slow or too resource-hungry to gate a pull request.
+#
+# Machine-agnostic, like cpu-tests.yml: the GPU job goes to any runner labelled
+# vvmex-gpu, the CPU job to any labelled vvmex-cpu, and each reads its preset
+# and parallelism from its own .env. A machine with no GPU simply never picks
+# up the GPU job.
+name: Nightly
+
+on:
+  schedule:
+    # 19:00 UTC = 03:00 Asia/Taipei, when the machines are normally idle.
+    - cron: "0 19 * * *"
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: Which job to run
+        type: choice
+        options: [both, gpu, cpu-full]
+        default: both
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vvmex-nightly
+  cancel-in-progress: false
+
+jobs:
+  # Everything gpu-tests.yml leaves out of the per-push gate: BP5 and the 4-rank
+  # invariance tier, which needs 4 physical GPUs. It keeps the physics tier as
+  # well, so this job is a complete GPU run rather than a supplement.
+  #
+  # Gated on VVMEX_GPU_RUNNER, the same switch as gpu-tests.yml, because both
+  # dispatch to [self-hosted, vvmex-gpu]. Gating it on VVMEX_RUNNER instead --
+  # which it did until now -- meant a repository with a CPU runner and no GPU
+  # runner queued this every night against a label nothing carried, waited the
+  # full 24 hours and failed. Each variable means "a runner of this backend is
+  # registered", and nothing should dispatch to a label without one.
+  gpu:
+    name: Full suite (GPU)
+    if: >-
+      vars.VVMEX_GPU_RUNNER == 'true' &&
+      (github.event_name != 'workflow_dispatch' || inputs.tier != 'cpu-full')
+    runs-on: [self-hosted, vvmex-gpu]
+    timeout-minutes: 90
+    env:
+      VVM_ROOT: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # tests/baselines/*.h5 are LFS objects and the default tier reads them.
+          # NOT lfs: true. actions/checkout implements that by running
+          # `git lfs install --local`, which refuses to proceed when a pre-push
+          # hook it did not write is already there -- and .githooks/pre-push is
+          # tracked, so it is in every clone. The job died on
+          # "Hook already exists: pre-push" before building anything.
+          #
+          # Overwriting the hook is not an option either: it is a tracked file,
+          # so --force would leave the working tree dirty. Fetching the objects
+          # directly needs no hooks at all.
+          lfs: false
+
+      - name: Fetch LFS objects
+        run: git lfs pull
+
+      - name: Read runner configuration
+        run: |
+          test -n "${VVM_CI_PRESET}" || {
+            echo "::error::runner .env is missing VVM_CI_* -- re-run tools/setup_ci_runner.sh --env-only"
+            exit 1; }
+          echo "preset ${VVM_CI_PRESET}, build dir ${VVM_CI_BUILD_DIR}, jobs ${VVM_CI_BUILD_JOBS}"
+          {
+            echo "BUILD_DIR=${VVM_CI_BUILD_DIR}"
+            echo "PRESET=${VVM_CI_PRESET}"
+            echo "BUILD_JOBS=${VVM_CI_BUILD_JOBS}"
+          } >> "$GITHUB_ENV"
+
+      - name: Clean build tree
+        run: rm -rf "$BUILD_DIR"
+
+      - name: Configure
+        run: >-
+          cmake --preset "$PRESET" -DBUILD_TESTS=ON
+          -DVVM_TEST_BP5=ON -DVVM_TEST_PHYSICS=ON -DVVM_TEST_MULTIRANK=ON
+
+      - name: Build
+        run: cmake --build "$BUILD_DIR" -j "$BUILD_JOBS"
+
+      # No -j here: on a GPU build every model test takes a RESOURCE_LOCK,
+      # because several NCCL ranks per device is unsupported and silently
+      # changes results. The multirank tier also needs 4 physical GPUs.
+      - name: Run full suite
+        run: ctest --test-dir "$BUILD_DIR" --output-on-failure
+
+      - name: Upload test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-log-gpu-${{ runner.name }}
+          path: ${{ env.BUILD_DIR }}/Testing/Temporary/LastTest.log
+          retention-days: 14
+
+      - name: Clean up
+        if: always()
+        run: rm -rf "$BUILD_DIR"
+
+  # The CPU tiers the pull-request gate leaves out. multirank is the expensive
+  # part: the wind solver exchanges halos many times per step, and at 4 ranks
+  # over MPI on a 32^2 grid that is pure latency, so twisting goes from about a
+  # second at one rank to twenty minutes at four.
+  cpu-full:
+    name: BP5 and multirank (CPU)
+    if: >-
+      vars.VVMEX_RUNNER == 'true' &&
+      (github.event_name != 'workflow_dispatch' || inputs.tier != 'gpu')
+    runs-on: [self-hosted, vvmex-cpu]
+    timeout-minutes: 180
+    env:
+      VVM_ROOT: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          lfs: false
+
+      - name: Read runner configuration
+        run: |
+          test -n "${VVM_CI_PRESET}" || {
+            echo "::error::runner .env is missing VVM_CI_* -- re-run tools/setup_ci_runner.sh --env-only"
+            exit 1; }
+          # The multirank tier runs 4 ranks at once, so each rank gets a quarter
+          # of the per-rank thread count the single-rank gate uses. CTest's
+          # PROCESSORS budget already prevents oversubscription, but a smaller
+          # per-rank count lets more tests pack in alongside.
+          threads=$(( VVM_CI_TEST_THREADS / 4 ))
+          [ "$threads" -lt 4 ] && threads=4
+          echo "preset ${VVM_CI_PRESET}, ${threads} threads/rank, -j ${VVM_CI_CTEST_JOBS}"
+          {
+            echo "BUILD_DIR=${VVM_CI_BUILD_DIR}"
+            echo "PRESET=${VVM_CI_PRESET}"
+            echo "BUILD_JOBS=${VVM_CI_BUILD_JOBS}"
+            echo "CTEST_JOBS=${VVM_CI_CTEST_JOBS}"
+            echo "TEST_THREADS=${threads}"
+          } >> "$GITHUB_ENV"
+
+      - name: Clean build tree
+        run: rm -rf "$BUILD_DIR"
+
+      - name: Configure
+        run: >-
+          cmake --preset "$PRESET" -DBUILD_TESTS=ON
+          -DVVM_TEST_BP5=ON -DVVM_TEST_MULTIRANK=ON
+          -DVVM_TEST_CPU_THREADS="$TEST_THREADS"
+
+      - name: Build
+        run: cmake --build "$BUILD_DIR" -j "$BUILD_JOBS"
+
+      - name: Run full CPU suite
+        run: >-
+          ctest --test-dir "$BUILD_DIR"
+          -j "$CTEST_JOBS" --output-on-failure
+
+      - name: Upload test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-log-cpu-full-${{ runner.name }}
+          path: ${{ env.BUILD_DIR }}/Testing/Temporary/LastTest.log
+          retention-days: 14
+
+      - name: Clean up
+        if: always()
+        run: rm -rf "$BUILD_DIR"

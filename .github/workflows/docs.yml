@@ -29,8 +29,12 @@ jobs:
         with:
           python-version: "3.x"
 
+      # Pinned via requirements-docs.txt rather than a bare `pip install
+      # mkdocs-material`. Material has announced that MkDocs 2.0 removes the
+      # plugin system with no migration path, so a floating install would break
+      # the published site without any change on our side.
       - name: Install MkDocs
-        run: pip install mkdocs-material 
+        run: pip install -r requirements-docs.txt
 
       - name: Set site and repo URLs
         run: |

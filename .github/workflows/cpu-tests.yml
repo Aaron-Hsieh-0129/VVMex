@@ -1,0 +1,146 @@
+# Build the CPU backend and run the fast test tiers on a self-hosted runner.
+#
+# Nothing here names a machine. The runner's own .env supplies VVM_CI_PRESET,
+# VVM_CI_BUILD_DIR and the parallelism, all derived from one CMake preset by
+# tools/setup_ci_runner.sh -- so a second development machine joins by running
+# that script with its own --preset, and this file does not change.
+#
+# Inert until the repository variable VVMEX_RUNNER is set to "true". Without
+# that guard, merging this would leave every pull request waiting forever on a
+# runner that does not exist.
+name: CPU tests
+
+# Runs on every branch, so a topic branch gets a real build-and-test result
+# without waiting for a pull request.
+#
+# paths-ignore is on `push` only, deliberately. A docs-only commit does not need
+# a model build, but the same filter on `pull_request` would be a trap: a
+# required status check that is skipped never reports, and branch protection
+# would wait forever on a docs-only PR. Pull requests therefore always run this.
+#
+# Consequence worth knowing: an EMPTY commit does not trigger this workflow.
+# GitHub evaluates a path filter against the set of changed files, and an empty
+# commit changes none, so the filter excludes the run -- it does not appear in
+# the Actions tab at all, which looks identical to a broken trigger.
+# `git commit --allow-empty` is therefore NOT a way to re-run this job. Use one
+# of these instead:
+#   - push a real change (anything outside docs/, *.md, mkdocs.yml);
+#   - open the previous run in the Actions tab and "Re-run all jobs";
+#   - once this file is on the default branch, the "Run workflow" button
+#     (workflow_dispatch) appears and ignores path filters entirely.
+on:
+  pull_request:
+  push:
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+      - "mkdocs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One VVMex job per branch at a time, and a superseded one is cancelled.
+#
+# This changed when the trigger widened to every branch. Queueing was safe while
+# runs were rare, but there is a single self-hosted runner: three pushes in a row
+# would otherwise queue three full builds, and the machine would spend half an
+# hour on two results nobody will read. Cancelling costs a small risk that a
+# killed mpiexec leaves orphan ranks behind -- if a runner ever looks busy with
+# no job attached, check with `ps -C vvm` before assuming CI is stuck.
+concurrency:
+  group: vvmex-cpu-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpu:
+    name: Build and test (CPU)
+    # A self-hosted runner executes whatever the workflow says, on real
+    # hardware, with the runner's credentials. A pull request from a fork must
+    # never reach it. Fork PRs still get the full Checks workflow, which is
+    # hermetic and runs on GitHub's infrastructure.
+    if: >-
+      vars.VVMEX_RUNNER == 'true' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, vvmex-cpu]
+    timeout-minutes: 60
+
+    env:
+      VVM_ROOT: ${{ github.workspace }}
+      # OMP_NUM_THREADS is deliberately NOT set here. tests/CMakeLists.txt
+      # stamps "OMP_NUM_THREADS=set:<VVM_TEST_CPU_THREADS>" onto every CPU test
+      # as an ENVIRONMENT_MODIFICATION, which overrides whatever the job
+      # exports -- so setting it here would look effective and do nothing.
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # tests/baselines_cpu/*.h5 are ordinary git objects, so the CPU tier
+          # needs no LFS fetch. Skipping it keeps LFS bandwidth for the GPU job.
+          lfs: false
+
+      # The runner's .env reaches shell steps as ordinary environment
+      # variables, but NOT the ${{ env.* }} expression context, which only sees
+      # workflow-declared values. Promote them once here so later steps and the
+      # artifact path can both use them.
+      - name: Read runner configuration
+        run: |
+          test -n "${VVM_CI_PRESET}" || {
+            echo "::error::runner .env is missing VVM_CI_* -- re-run tools/setup_ci_runner.sh --env-only"
+            exit 1; }
+          echo "preset      ${VVM_CI_PRESET}"
+          echo "build dir   ${VVM_CI_BUILD_DIR}"
+          echo "build jobs  ${VVM_CI_BUILD_JOBS}"
+          echo "ctest jobs  ${VVM_CI_CTEST_JOBS}"
+          echo "omp threads ${VVM_CI_TEST_THREADS}"
+          {
+            echo "BUILD_DIR=${VVM_CI_BUILD_DIR}"
+            echo "PRESET=${VVM_CI_PRESET}"
+            echo "BUILD_JOBS=${VVM_CI_BUILD_JOBS}"
+            echo "CTEST_JOBS=${VVM_CI_CTEST_JOBS}"
+            echo "TEST_THREADS=${VVM_CI_TEST_THREADS}"
+          } >> "$GITHUB_ENV"
+
+      # The build tree can be configured only once: CMakeLists.txt FORCE-writes
+      # empty OpenMP_*_FLAGS into the cache, and a second configure reads the
+      # blanked values back and fails to find OpenMP -- after which
+      # `cmake --build` returns 0 while building nothing. There is also no
+      # header dependency tracking, so a reused tree can hold objects with a
+      # stale class layout. Both are avoided by starting from an empty tree.
+      - name: Clean build tree
+        run: rm -rf "$BUILD_DIR"
+
+      - name: Configure
+        run: >-
+          cmake --preset "$PRESET" -DBUILD_TESTS=ON
+          -DVVM_TEST_CPU_THREADS="$TEST_THREADS"
+
+      - name: Build
+        run: cmake --build "$BUILD_DIR" -j "$BUILD_JOBS"
+
+      # No optional tier is enabled above, so this is exactly the default tier:
+      # the unit tests, the HDF5 precision cases, and the seven dynamical-core
+      # regression cases against tests/baselines_cpu/. Enabling a tier is a
+      # configure-time decision, so `ctest` with no selection is already right.
+      #
+      # -j is a PROCESSORS budget, not a job count: on a CPU build each test
+      # declares ranks x threads (see tests/CMakeLists.txt), so CTest packs them
+      # onto the machine instead of running one at a time behind a GPU lock.
+      - name: Run default and unit tiers
+        run: >-
+          ctest --test-dir "$BUILD_DIR"
+          -j "$CTEST_JOBS" --output-on-failure
+
+      - name: Upload test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-log-cpu-${{ runner.name }}
+          path: ${{ env.BUILD_DIR }}/Testing/Temporary/LastTest.log
+          retention-days: 14
+
+      - name: Clean up
+        if: always()
+        run: rm -rf "$BUILD_DIR"
