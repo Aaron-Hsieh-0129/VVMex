@@ -22,12 +22,6 @@ def main():
     p.add_argument('--seconds', type=float, default=120.0)
     p.add_argument('--engine', default='HDF5',
                    help='output engine; HDF5 keeps CTest free of IO-rank plumbing')
-    p.add_argument('--fields', default='',
-                   help='comma-separated output field list. Large grids must trim this: '
-                        'the full ~60-field dump at 2048^2 is ~46 GB and overruns the '
-                        'synchronous HDF5 writer.')
-    p.add_argument('--rrtmgp-chunk', type=int, default=0,
-                   help='override physics.rrtmgp.column_chunk_size (0 = leave alone)')
     a = p.parse_args()
 
     src = os.path.join(a.source_dir, a.case + '.json')
@@ -44,11 +38,6 @@ def main():
     rp = c.get('dynamics', {}).get('forcings', {}).get('random_perturbation')
     if rp is not None:
         rp['enable'] = False
-
-    if a.fields:
-        c['output']['fields_to_output'] = a.fields.split(',')
-    if a.rrtmgp_chunk:
-        c['physics']['rrtmgp']['column_chunk_size'] = a.rrtmgp_chunk
 
     os.makedirs(os.path.dirname(os.path.abspath(a.out_config)), exist_ok=True)
     json.dump(c, open(a.out_config, 'w'), indent=2)

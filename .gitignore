@@ -59,5 +59,9 @@ rundata/input_configs/*.json
 rundata/initial_conditions/spatial/*.nc
 rundata/initial_conditions/spatial/*.ctl
 rundata/initial_conditions/profiles/*.txt
+# ... except the sounding the rcemip vertical coordinate reads. Nine cases the
+# test suite registers name it, so without it a fresh clone -- which is what CI
+# checks out -- cannot run the physics tier at all.
+!rundata/initial_conditions/profiles/snd_rcemip_anal300_v3.txt
 __pycache__
 *.ipynb
