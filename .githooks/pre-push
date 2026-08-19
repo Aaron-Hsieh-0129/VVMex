@@ -1,34 +1,78 @@
 #!/bin/bash
+#
+# Two jobs, in order of importance.
+#
+# 1. Upload Git LFS objects. This is not optional and not merely a convenience:
+#    core.hooksPath points at .githooks, which makes git-lfs's own hook in
+#    .git/hooks/ inert, so this file is the only thing that uploads them. Without
+#    it, tests/baselines/*.h5 push as pointer files whose objects never arrive
+#    and the baselines are broken for everyone who clones.
+#
+# 2. Run the checks that are fast and depend on nothing. These mirror the
+#    hermetic half of CI (.github/workflows/checks.yml), so a problem they catch
+#    is one you would otherwise wait ~11 minutes to see on a pull request.
+#
+# What this deliberately does NOT do any more is run ctest. That moved to CI,
+# which builds from a deleted tree on a self-hosted runner. Three reasons:
+#
+#   - the runners are on the same machine, so the suite was being run twice per
+#     push -- once here, once by cpu-tests.yml and gpu-tests.yml;
+#   - this checked whatever state ./build happened to be in, and with no header
+#     dependency tracking a stale tree can pass. A build/ predating the
+#     --gcc-toolchain fix hid a heap-corruption bug that a clean CI build found
+#     immediately;
+#   - it required ./build to exist at all, so pushing from a second machine or a
+#     fresh clone failed for a reason unrelated to the code.
+#
+# For a fast local check before pushing, `ctest --test-dir build -L unit` is
+# about a minute and needs no GPU. Run it when you want it, rather than on every
+# push.
+set -u
 
-command -v git-lfs >/dev/null 2>&1 || { echo >&2 "\nThis repository is configured for Git LFS but 'git-lfs' was not found on your path.\n"; exit 2; }
-git lfs pre-push "$@"
-if [ $? -ne 0 ]; then
-    echo "Git LFS upload failed! Push aborted."
-    exit 1
+fail() { echo "pre-push: $*" >&2; exit 1; }
+
+command -v git-lfs >/dev/null 2>&1 || fail \
+    "this repository uses Git LFS but 'git-lfs' is not on your PATH. Install it,
+            or the baselines will push as pointers with no objects behind them."
+
+git lfs pre-push "$@" || fail "Git LFS upload failed. Push aborted."
+
+ROOT=$(git rev-parse --show-toplevel) || fail "not inside a git repository."
+cd "$ROOT" || fail "cannot enter $ROOT"
+
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "pre-push: python3 not found, skipping the source checks (LFS objects were uploaded)." >&2
+    exit 0
 fi
 
-echo "================================================="
-echo "Preparing to push. Running VVM regression tests..."
-echo "================================================="
+# Every input a registered test case names must be committed, not merely present
+# in this working tree. A gitignored input passes here forever and fails on every
+# fresh clone.
+python3 tests/scripts/check_test_registry.py >/dev/null || fail \
+    "tests/CMakeLists.txt names files that are missing or uncommitted.
+            Run: python3 tests/scripts/check_test_registry.py"
 
-# Get the absolute path of the Git project root
-PROJECT_DIR=$(git rev-parse --show-toplevel)
+# Configurations must parse. The model ignores unknown keys silently, so a
+# malformed file is one of the few configuration errors it will not absorb.
+python3 - <<'PY' || fail "a shipped configuration does not parse (see above)."
+import json, pathlib, sys
+try:
+    import yaml
+except ImportError:
+    yaml = None
+bad = 0
+for p in sorted(pathlib.Path("rundata/input_configs").rglob("*")):
+    if p.suffix not in (".json", ".yaml", ".yml"):
+        continue
+    if p.suffix != ".json" and yaml is None:
+        continue
+    try:
+        (json.loads if p.suffix == ".json" else yaml.safe_load)(p.read_text())
+    except Exception as e:
+        print(f"  {p}: {type(e).__name__}: {e}", file=sys.stderr)
+        bad += 1
+sys.exit(1 if bad else 0)
+PY
 
-# Check if the build directory exists
-if [ ! -d "$PROJECT_DIR/build" ]; then
-    echo "Build directory not found. Please run CMake configuration first!"
-    exit 1
-fi
-
-cd "$PROJECT_DIR/build"
-
-echo "Running CTest..."
-ctest --output-on-failure
-if [ $? -ne 0 ]; then
-    echo "Tests failed! Push aborted."
-    echo "Please check the error messages above, fix the issues, and try to push again."
-    exit 1
-fi
-
-echo "All regression tests passed! Push allowed."
+echo "pre-push: LFS uploaded, source checks passed."
 exit 0
