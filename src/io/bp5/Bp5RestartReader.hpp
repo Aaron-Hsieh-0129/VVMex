@@ -17,10 +17,6 @@
 
 namespace VVM::IO::BP5 {
 
-// Restart from a BP5 history dataset. The HDF5 route restarts from one file
-// holding one output time; a .bp dataset holds every output time as an ADIOS2
-// step, so this reader also has to choose which step to resume from --
-// restart.step_index, defaulting to the last one written.
 class Bp5RestartReader : public VVM::IO::Reader {
 public:
     Bp5RestartReader(const std::string& dataset_path,
@@ -31,13 +27,9 @@ public:
 
     void read_and_initialize(Core::State& state) override;
 
-    // Restart clock stored in the step: model_time_s + model_step, falling back
-    // to the elapsed-seconds `time` scalar, matching the HDF5 reader.
     VVM::Utils::RestartFileMetadata read_restart_metadata() override;
 
 private:
-    // One open/close per call, so the reader holds no engine between the field
-    // pass and the metadata pass. Both passes resolve the same step.
     class OpenDataset;
 
     std::size_t resolve_step(std::size_t available_steps) const;

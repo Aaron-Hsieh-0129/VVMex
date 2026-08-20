@@ -54,8 +54,6 @@ Bp5HistoryWriter::Bp5HistoryWriter(
     MPI_Comm_rank(comm_, &rank_);
     MPI_Comm_size(comm_, &size_);
 
-    // Both are pure functions of config_, but every later stage reads them, so
-    // resolve once here rather than re-deriving per field and per step.
     element_type_ = config_.element_type();
     effective_buffer_mode_ = config_.effective_buffer_mode();
     narrowed_restart_source_ =
@@ -138,9 +136,6 @@ void Bp5HistoryWriter::prepare_dataset_path(
     int path_status = 0;
     if (rank_ == 0) {
         try {
-            // Overwriting the dataset this run was restarted from would delete
-            // the history it just resumed, and the restart read has already
-            // happened by the time the writer opens. Refuse instead.
             if (config.get_value<bool>("restart.enable", false) &&
                 config.has_key("restart.source_file")) {
                 std::error_code ec;
@@ -160,7 +155,8 @@ void Bp5HistoryWriter::prepare_dataset_path(
 
             dataset_path_ = prepare_bp5_dataset_path(
                 output_dir, prefix, config_.overwrite);
-        } catch (const std::exception& e) {
+        } 
+        catch (const std::exception& e) {
             std::cerr << "[BP5 rank 0] path preparation failed for '"
                       << dataset_path_.string() << "': " << e.what() << std::endl;
             path_status = 1;
@@ -208,10 +204,6 @@ void Bp5HistoryWriter::define_field(const std::string& field_name) {
     auto it = state_.begin();
     while (it != state_.end() && it->first != field_name) ++it;
     if (it == state_.end()) {
-        // A configured field that the run never registered -- a disabled
-        // microphysics or radiation output, say -- is dropped from the schema
-        // and from the descriptor, as the HDF5 and SST paths do, rather than
-        // aborting a run that is otherwise fine.
         skip_field(field_name, "not registered in this run's state");
         return;
     }
@@ -245,9 +237,6 @@ void Bp5HistoryWriter::define_field(const std::string& field_name) {
                     }
                 }
 
-                // A memory selection describes a window into the model's own
-                // ghosted allocation, so it only applies on the direct path. A
-                // packed buffer is already exactly the selected cells.
                 const bool direct = (effective_buffer_mode_ == CpuBufferMode::Direct);
                 FieldVariable variable;
                 if (element_type_ == OutputElementType::Float32) {
@@ -306,10 +295,6 @@ void Bp5HistoryWriter::define_schema() {
 
     io_.DefineAttribute<std::string>("vvm_schema_version", "1");
     io_.DefineAttribute<std::string>("vvm_output_role", "history");
-    // vvm_real_precision is the model's working precision; vvm_field_precision
-    // is what the field variables actually are. They differ whenever
-    // output.bp5.precision asks for a narrower or wider history than VVM::Real,
-    // and a reader needs both to know whether the file is lossless.
     io_.DefineAttribute<std::string>(
         "vvm_real_precision", sizeof(VVM::Real) == 8 ? "float64" : "float32");
     io_.DefineAttribute<std::string>(
@@ -353,15 +338,10 @@ void Bp5HistoryWriter::write_grads_ctl_file(
     const auto& region = schema_.grid();
 
     GradsCtl ctl;
-    // The descriptor sits next to the dataset in output.output_dir, so '^'
-    // keeps the pair relocatable. BP5 holds every step in one .bp directory,
-    // which is why there is no 'OPTIONS template' here.
     ctl.dset = "^" + dataset_path_.filename().string();
     ctl.dtype = "bp5";
     ctl.x = axes.first;
     ctl.y = axes.second;
-    // Variables keep the full global shape even when output.output_grid selects
-    // a sub-box, so the axes describe the global grid, as in HDF5 output.
     ctl.nx = region.global_nx;
     ctl.ny = region.global_ny;
     ctl.z_levels = z_coordinates_;
@@ -369,9 +349,6 @@ void Bp5HistoryWriter::write_grads_ctl_file(
     const double total_time = config.get_value<double>("simulation.total_time_s", 0.0);
     const double output_interval =
         std::max(1e-6, config.get_value<double>("simulation.output_interval_s", 1.0));
-    // GrADS refuses to open a dataset whose step count is below TDEF, so count
-    // the steps this run will actually write: those between the current model
-    // time (nonzero after a restart) and the end, plus the initial one.
     const auto intervals_before = [&](double time) {
         return std::floor(time / output_interval + 1e-6);
     };
@@ -392,19 +369,16 @@ void Bp5HistoryWriter::write_grads_ctl_file(
         if (field.selection.dimensions == 2) {
             variable.levels = 0;
             variable.dimensions = "y,x";
-        } else if (field.selection.dimensions == 3) {
+        } 
+        else if (field.selection.dimensions == 3) {
             variable.levels = region.global_nz;
             variable.dimensions = "z,y,x";
-        } else if (field.selection.dimensions == 4) {
-            // GrADS has no component axis, so pin the leading component with a
-            // fixed index and expose the field as the usual z,y,x grid.
+        } 
+        else if (field.selection.dimensions == 4) {
             variable.levels = region.global_nz;
             variable.dimensions = "0,z,y,x";
-        } else {
-            // GrADS requires exactly one x and one y dimension per variable, so
-            // a z-only profile cannot be declared at all -- and declaring one
-            // fails the whole open, not just that variable. The data is still
-            // in the .bp dataset; only the descriptor leaves it out.
+        } 
+        else {
             profile_fields.push_back(field.name);
             continue;
         }
@@ -504,9 +478,6 @@ void Bp5HistoryWriter::print_configuration() const {
               << "  [BP5] Estimated logical bytes/step: " << global_bytes_per_step_
               << std::endl;
     if (narrowed_restart_source_) {
-        // The same warning the HDF5 writer prints, for the same reason: this
-        // dataset is a restart source now, and a narrowed one resumes from
-        // narrowed numbers.
         std::cout << "  [BP5] WARNING: narrowed output is a restart source; "
                      "restarts from this dataset lose precision." << std::endl;
     }
@@ -547,8 +518,6 @@ void Bp5HistoryWriter::write(std::size_t step, VVM::Real time) {
             const double model_time_s = static_cast<double>(time);
             const std::int64_t model_step = static_cast<std::int64_t>(step);
             if (rank_ == 0) {
-                // These are global values, so exactly one writer rank owns
-                // each value. All ranks still participate in the BP5 step.
                 writer_.Put(time_variable_, &time, adios2::Mode::Sync);
                 writer_.Put(model_time_variable_, &model_time_s, adios2::Mode::Sync);
                 writer_.Put(model_step_variable_, &model_step, adios2::Mode::Sync);

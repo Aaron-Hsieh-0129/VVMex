@@ -35,8 +35,6 @@ adios2::Dims expected_shape(std::size_t dimensions, const Core::Grid& grid) {
 }
 } // namespace
 
-// The engine and the resolved step travel together: every read has to select
-// the same step, and ReadRandomAccess is what makes an arbitrary one reachable.
 class Bp5RestartReader::OpenDataset {
 public:
     OpenDataset(const std::string& path, MPI_Comm comm, adios2::ADIOS& adios,
@@ -87,8 +85,6 @@ Bp5RestartReader::Bp5RestartReader(const std::string& dataset_path,
 }
 
 std::size_t Bp5RestartReader::resolve_step(std::size_t available_steps) const {
-    // -1 means "the last step written", which is what a restart almost always
-    // wants and the only choice an HDF5 restart ever had (one file, one time).
     const std::int64_t requested =
         config_.get_value<std::int64_t>("restart.step_index", -1);
     if (requested == -1) return available_steps - 1;
@@ -130,14 +126,14 @@ void Bp5RestartReader::read_typed_field(OpenDataset& dataset,
     adios2::Dims start;
     adios2::Dims count;
     if constexpr (Dim == 1) {
-        // A z profile is global: every rank reads the whole column, exactly as
-        // the HDF5 reader does.
         start = {0};
         count = {nz};
-    } else if constexpr (Dim == 2) {
+    } 
+    else if constexpr (Dim == 2) {
         start = {y0, x0};
         count = {ny, nx};
-    } else {
+    } 
+    else {
         start = {0, y0, x0};
         count = {nz, ny, nx};
     }
@@ -183,8 +179,6 @@ template <std::size_t Dim>
 void Bp5RestartReader::read_field(OpenDataset& dataset,
                                   const std::string& var_name,
                                   Core::Field<Dim>& field) const {
-    // The dataset carries whatever output.precision asked for, which need not be
-    // VVM::Real; a narrowed history still restarts, just from narrowed numbers.
     const std::string type = dataset.io().VariableType(var_name);
     if (type == "float") {
         read_typed_field<float, Dim>(dataset, var_name, field);
@@ -223,9 +217,6 @@ void Bp5RestartReader::read_and_initialize(Core::State& state) {
     for (const auto& name : variables.vars_2d) read_field(dataset, name, state.get_field<2>(name));
     for (const auto& name : variables.vars_3d) read_field(dataset, name, state.get_field<3>(name));
 
-    // Per-field exchange, for the same reason the HDF5 reader gives: the State&
-    // overload captures CUDA graphs here and leaves NCCL stream associations
-    // that later solve_w / relax_2d graphs bake in.
     for (const auto& name : variables.vars_1d) {
         if (state.has_field(name)) halo_exchanger_.exchange_halos(state.get_field<1>(name));
     }
@@ -267,10 +258,6 @@ VVM::Utils::RestartFileMetadata Bp5RestartReader::read_restart_metadata() {
         metadata.has_step = true;
     }
 
-    // `time` is the long-standing elapsed-seconds scalar and only fills in for a
-    // dataset written before the model clock was stored explicitly. It is
-    // VVM::Real, so its stored type depends on the build that wrote it -- try
-    // both, the way HDF5's read-time conversion does for the same fallback.
     if (!metadata.has_time) {
         double elapsed = 0.0;
         if (read_scalar(double{}, "time", elapsed) || read_scalar(float{}, "time", elapsed)) {

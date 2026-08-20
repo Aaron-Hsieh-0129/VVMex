@@ -22,9 +22,6 @@ struct GradsAxis {
 };
 
 struct GradsVariable {
-    // The name the file stores ("/Step0/th" for HDF5, "th" for BP5) and the
-    // name GrADS exposes. They differ whenever the stored name is not a legal
-    // GrADS identifier, which the descriptor spells as "stored=>exposed".
     std::string dataset_name;
     std::string grads_name;
     std::size_t levels = 0;  // 0 marks a surface field
@@ -51,8 +48,6 @@ struct GradsCtl {
     std::vector<std::string> notes;
 };
 
-// Collective: the taiwanvvm branch reduces lon/lat corner values over comm, so
-// every rank must call this even though only rank 0 writes a descriptor.
 std::pair<GradsAxis, GradsAxis> grads_horizontal_axes(
     const Core::Grid& grid,
     const Core::State& state,
@@ -62,10 +57,6 @@ std::pair<GradsAxis, GradsAxis> grads_horizontal_axes(
 std::string grads_start_time(int start_hour);
 std::string grads_time_increment(VVM::Real output_interval_s);
 
-// GrADS identifiers are lowercase, alphanumeric plus underscore, start with a
-// letter and are at most 15 characters, so names such as "Tg" or
-// "precip_liq_surf_mass" cannot be used verbatim. Inserts the result into
-// `taken` so a truncated name never collides with another field.
 std::string unique_grads_variable_name(
     const std::string& field_name,
     std::unordered_set<std::string>& taken);

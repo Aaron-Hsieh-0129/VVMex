@@ -115,6 +115,23 @@ A run with `simulation.idealized_test: "none"` — that is, any real case — **
 | `constant_upper_wind.enable` | bool | `false` | Hold winds above `pressure_threshold_Pa` constant while reading the text profile. |
 | `constant_upper_wind.pressure_threshold_Pa` | real | `25000.0` | Pressure threshold for that handling. |
 | `reapply_spatial_initial_conditions` | bool | `false` | Re-read `netcdf_reader.source_file` after the base state is assigned, so spatial fields overwrite anything the profile/topography path derived. Applied before restart loading. |
+| `rcemip_consistent_reference_state` | bool | `false` | Correct two reference-state errors on the `rcemip` vertical coordinate. Ignored on every other coordinate. See below. |
+
+!!! warning "`rcemip_consistent_reference_state` changes results"
+
+    Only meaningful when `grid.vertical_coordinate_type` is `rcemip`. With it
+    off — the default — the reference state is built the way v1.0.0 built it:
+    the Exner function uses a hardcoded exponent of `2/7` instead of
+    `constants.Rd / constants.Cp`, and the density is `p/(Rd*T)` rather than
+    `p/(Rd*Tv)`. Both are wrong, and the second is the larger error: omitting
+    the virtual-temperature correction makes the initial density about 0.9 %
+    too high for a moist RCEMIP sounding.
+
+    The default is `false` because `tests/references/rcemip.json` encodes the
+    v1.0.0 numbers. Turning it on shifts `Tbar` by 0.043 K, `pibar` by 5.9e-5,
+    `rhobar` and `rhobar_up` by 0.37 % in the mean, and the surface fluxes by
+    0.9 %, so `Verify_physics_rcemip` fails until the reference is regenerated
+    with `tests/scripts/check_output.py --update`.
 
 !!! note "`pressure_threshold_Pa` has two different fallbacks"
 

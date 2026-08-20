@@ -13,8 +13,6 @@ namespace VVM::IO::BP5 {
 
 enum class CpuBufferMode { Direct, Pack };
 
-// Output precision is engine-neutral and lives in VVM::IO. Re-exported here so
-// existing BP5 code and tests keep naming it VVM::IO::BP5::OutputPrecision.
 using VVM::IO::OutputElementType;
 using VVM::IO::OutputPrecision;
 using VVM::IO::output_element_matches_real;
@@ -33,8 +31,6 @@ struct Bp5OutputConfig {
     OutputPrecision precision = OutputPrecision::Native;
     bool overwrite = false;
 
-    // `default_precision` is what `output.precision` asked for; the BP5 block's
-    // own `precision` key overrides it when present.
     static Bp5OutputConfig from_json(
         const nlohmann::json& value,
         OutputPrecision default_precision = OutputPrecision::Native);
@@ -43,11 +39,6 @@ struct Bp5OutputConfig {
 
     OutputElementType element_type() const noexcept;
 
-    // Converting to a different width has to go through a staging buffer, so a
-    // direct memory selection into the model's own field is only available when
-    // no conversion is needed. CUDA fields also always stage through host
-    // memory because the external ADIOS2 build is not GPU-aware. Asking for
-    // 'direct' in either case resolves to packing rather than failing.
     CpuBufferMode effective_buffer_mode() const noexcept;
 
     std::map<std::string, std::string> adios_parameters() const;
