@@ -240,9 +240,15 @@ void TxtReader::initialize_thermodynamics(VVM::Core::State& state) {
     pbar(h-1) = P_sfc_val;
     Tbar(h-1) = T_sfc_val;
     qvbar(h-1) = Qv_sfc_val;
-    if (!has_tbar) thbar(h-1) = th_in[0];
 
     std::string v_coord_type = config_.get_value<std::string>("grid.vertical_coordinate_type", "default");
+
+    // v1.0.0 built the rcemip reference state with a hardcoded Exner exponent
+    // and a density that omitted the virtual-temperature correction. Both are
+    // wrong, but the stored references encode them, so the correction is opt-in
+    // and off by default.
+    bool rcemip_ref_fix = config_.get_value<bool>(
+        "initial_conditions.rcemip_consistent_reference_state", false);
 
     if (v_coord_type == "rcemip") {
         for (int k = h - 1; k < nz; ++k) {
@@ -263,12 +269,16 @@ void TxtReader::initialize_thermodynamics(VVM::Core::State& state) {
                 qvbar(k) = qvbar(k-1);
             }
             
-            pibar(k) = std::pow(pbar(k) / P0, 2./7.);
+            pibar(k) = rcemip_ref_fix ? std::pow(pbar(k) / P0, RbCp)
+                                      : std::pow(pbar(k) / P0, 2./7.);
             
             Tbar(k)  = thbar(k) * pibar(k);
             Tvbar(k) = Tbar(k) * (real(1.0) + real(0.608) * qvbar(k));
             
-            rhobar(k) = pbar(k) / (Rd * thbar(k) * pibar(k));
+            // The v1.0.0 form is p/(Rd*T), written out rather than simplified so
+            // it reproduces bit-for-bit.
+            rhobar(k) = rcemip_ref_fix ? pbar(k) / (Rd * Tvbar(k))
+                                       : pbar(k) / (Rd * thbar(k) * pibar(k));
         }
 
         for (int k = h - 1; k < nz - 1; ++k) {
@@ -285,8 +295,7 @@ void TxtReader::initialize_thermodynamics(VVM::Core::State& state) {
             VVM::Real z = z_mid(k);
             qvbar(k) = interpolate(z, input_z_, raw_data_.at("qvbar"));
 
-            // Temperature is the interpolation variable for both supported
-            // input formats. If the profile supplies potential temperature,
+            // If the profile supplies potential temperature,
             // T_in was converted at the source pressure levels above. Do not
             // independently interpolate thbar here: interpolation and the
             // pressure-dependent Exner conversion do not commute.
@@ -299,27 +308,26 @@ void TxtReader::initialize_thermodynamics(VVM::Core::State& state) {
         pilog[h-1] = std::log(pi_sfc);
         pibar_up(h-1) = pi_sfc;
 
-        for (int iter = 0; iter < 3; ++iter) {
-            for (int k = h-1; k < nz; ++k) {
-                Tvbar(k) = Tbar(k) * (real(1.0) + real(0.608) * qvbar(k));
-            }
-
-            pilog[h] = pilog[h-1] - GDZBCP / (Tvbar(h-1) + Tvbar(h)) * (z_mid(h)-z_up(h-1)) / dz;
-            for (int k = h + 1; k < nz; ++k) {
-                pilog[k] = pilog[k-1] - GDZBCP/(Tvbar(k-1)+Tvbar(k)) / flex_height_coef_up(k-1); 
-            }
-
-            for (int k = h; k < nz; ++k) {
-                pibar(k) = std::exp(pilog[k]);
-                pbar(k) = P0 * std::pow(pibar(k), Cp/Rd);
-                thbar(k) = Tbar(k) / pibar(k);
-            }
-            thbar(h-1) = Tbar(h-1) / pibar(h-1);
+        for (int k = h-1; k < nz; ++k) {
+            Tvbar(k) = Tbar(k) * (real(1.0) + real(0.608) * qvbar(k));
         }
 
-        for (int k = h; k < nz; k++) {
+        pilog[h] = pilog[h-1] - GDZBCP / (Tvbar(h-1) + Tvbar(h)) * (z_mid(h)-z_up(h-1)) / dz;
+        for (int k = h + 1; k < nz; ++k) {
+            pilog[k] = pilog[k-1] - GDZBCP/(Tvbar(k-1)+Tvbar(k)) / flex_height_coef_up(k-1);
+        }
+
+        for (int k = h; k < nz; ++k) {
+            pibar(k) = std::exp(pilog[k]);
+            pbar(k) = P0 * std::pow(pibar(k), Cp/Rd);
+            thbar(k) = Tbar(k) / pibar(k);
+        }
+        thbar(h-1) = Tbar(h-1) / pibar(h-1);
+
+        for (int k = h; k < nz - 1; ++k) {
             pibar_up(k) = real(0.5) * (pibar(k) + pibar(k+1));
         }
+        pibar_up(nz-1) = pibar(nz-1);
 
         for (int k = h-1; k < nz; ++k) {
             rhobar(k) = pbar(k) / (Rd * Tvbar(k));
@@ -341,6 +349,7 @@ void TxtReader::initialize_thermodynamics(VVM::Core::State& state) {
         pibar(k) = pibar(h-1);
         thbar(k) = thbar(h-1);
         Tvbar(k) = Tvbar(h-1);
+        pibar_up(k) = pibar_up(h-1);
         rhobar(k) = rhobar(h-1);
         rhobar_up(k) = rhobar_up(h-1);
     }

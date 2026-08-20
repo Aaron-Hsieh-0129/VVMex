@@ -45,16 +45,11 @@ public:
     }
 
 private:
-    // Field data carries the configured output precision, which need not be
-    // VVM::Real. Coordinates and clocks deliberately do not: they are a few
-    // kilobytes per step against tens of gigabytes of field data, and
-    // narrowing a coordinate or a timestamp is an analysis hazard for no gain.
-    using FieldVariable =
-        std::variant<adios2::Variable<float>, adios2::Variable<double>>;
+    using FieldVariable = std::variant<adios2::Variable<float>, adios2::Variable<double>>;
 
     struct FieldRecord {
         std::string name;
-        std::string description;  // GrADS descriptor text
+        std::string description;
         FieldSelection selection;
         FieldVariable variable;
     };
@@ -67,9 +62,6 @@ private:
     int size_ = 1;
 
     Bp5OutputConfig config_;
-    // Resolved once in the constructor: element_type_ turns a 'native' request
-    // into a concrete on-disk type, and effective_buffer_mode_ downgrades a
-    // 'direct' request to packing when the precision needs converting.
     OutputElementType element_type_ = OutputElementType::Float64;
     CpuBufferMode effective_buffer_mode_ = CpuBufferMode::Direct;
     Bp5FieldSchema schema_;
@@ -99,21 +91,17 @@ private:
     std::size_t global_bytes_per_step_ = 0;
 
     void prepare_dataset_path(const Utils::ConfigurationManager& config);
-    void validate_collective_configuration(
-        const Utils::ConfigurationManager& config) const;
+    void validate_collective_configuration(const Utils::ConfigurationManager& config) const;
     void define_schema();
     void define_field(const std::string& field_name);
-    void define_metadata(const std::string& field_name,
-                         const Core::FieldMetadata& metadata);
+    void define_metadata(const std::string& field_name, const Core::FieldMetadata& metadata);
     void skip_field(const std::string& field_name, const char* reason) const;
-    static std::string describe_field(const std::string& field_name,
-                                      const Core::FieldMetadata& metadata);
+    static std::string describe_field(const std::string& field_name, const Core::FieldMetadata& metadata);
     void write_grads_ctl_file(const Utils::ConfigurationManager& config);
     void prepare_coordinates();
     void validate_coverage();
     void print_configuration() const;
-    [[noreturn]] void throw_operation(const char* operation,
-                                      const std::exception& error) const;
+    [[noreturn]] void throw_operation(const char* operation, const std::exception& error) const;
 };
 
 } // namespace VVM::IO::BP5

@@ -26,10 +26,6 @@ public:
                        CpuBufferMode mode,
                        OutputElementType element_type) const;
 
-    // Out is deduced from the destination buffer, so this both packs a
-    // halo-free region and, when the output buffer is narrower than the view,
-    // performs the precision conversion in the same pass. There is no separate
-    // convert step and no second staging copy.
     template <typename Out, typename View>
     static void pack_view(const View& view,
                           const FieldSelection& selection,
@@ -49,7 +45,8 @@ public:
                 output[out++] = static_cast<Out>(
                     view(selection.memory_start[0] + k));
             }
-        } else if constexpr (dimensions == 2) {
+        } 
+        else if constexpr (dimensions == 2) {
             for (std::size_t j = 0; j < selection.count[0]; ++j) {
                 for (std::size_t i = 0; i < selection.count[1]; ++i) {
                     output[out++] = static_cast<Out>(
@@ -57,7 +54,8 @@ public:
                              selection.memory_start[1] + i));
                 }
             }
-        } else if constexpr (dimensions == 3) {
+        } 
+        else if constexpr (dimensions == 3) {
             for (std::size_t k = 0; k < selection.count[0]; ++k) {
                 for (std::size_t j = 0; j < selection.count[1]; ++j) {
                     for (std::size_t i = 0; i < selection.count[2]; ++i) {
@@ -68,7 +66,8 @@ public:
                     }
                 }
             }
-        } else {
+        } 
+        else {
             for (std::size_t c = 0; c < selection.count[0]; ++c) {
                 for (std::size_t k = 0; k < selection.count[1]; ++k) {
                     for (std::size_t j = 0; j < selection.count[2]; ++j) {

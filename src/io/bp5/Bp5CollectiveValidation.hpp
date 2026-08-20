@@ -7,8 +7,6 @@
 
 namespace VVM::IO::BP5 {
 
-// Throw on every rank if any rank resolved a different configuration string.
-// This prevents one rank entering an ADIOS collective with a different schema.
 void require_collective_match(
     const std::string& local_value,
     MPI_Comm comm,

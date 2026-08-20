@@ -11,9 +11,6 @@
 
 namespace VVM::IO::BP5 {
 
-// Persistent per-field staging buffers, allocated on first use and reused for
-// every later step. Kept in one map per element type: output precision is fixed
-// for the lifetime of a dataset, so exactly one of these is ever populated.
 class Bp5BufferSet {
 public:
     template <typename T>

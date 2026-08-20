@@ -21,10 +21,12 @@ FieldInput CpuFieldSource::prepare(
             using FieldType = std::decay_t<decltype(field)>;
             if constexpr (std::is_same_v<FieldType, std::monostate>) {
                 throw std::invalid_argument("BP5 output field '" + field_name + "' is empty.");
-            } else if constexpr (FieldType::DimValue == 0) {
+            } 
+            else if constexpr (FieldType::DimValue == 0) {
                 throw std::invalid_argument(
                     "BP5 history output does not support 0-D state field '" + field_name + "'.");
-            } else {
+            } 
+            else {
                 if (selection.dimensions != FieldType::DimValue) {
                     throw std::logic_error(
                         "BP5 schema dimension mismatch for field '" + field_name + "'.");
@@ -41,9 +43,6 @@ FieldInput CpuFieldSource::prepare(
                 result.elements = selection.elements();
                 if (selection.empty()) return;
 
-                // Handing ADIOS2 the model's own memory is only possible when
-                // the on-disk type is VVM::Real. Any other precision has to be
-                // converted, which means it has to be staged.
                 if (mode == CpuBufferMode::Direct) {
 #if defined(KOKKOS_ENABLE_CUDA)
                     throw std::logic_error(
@@ -61,13 +60,15 @@ FieldInput CpuFieldSource::prepare(
                         throw std::invalid_argument(
                             "BP5 direct mode requires LayoutRight for field '" + field_name +
                             "'; select output.bp5.buffer_mode='pack'.");
-                    } else {
+                    } 
+                    else {
                         result.data = view.data();
                         result.location = FieldMemoryLocation::Host;
                         result.packed = false;
                     }
 #endif
-                } else {
+                } 
+                else {
 #if defined(KOKKOS_ENABLE_CUDA)
                     const auto source = field.get_host_data();
 #else
@@ -79,7 +80,8 @@ FieldInput CpuFieldSource::prepare(
                             buffers_.require<float>(field_name, selection.elements());
                         pack_view(source, selection, buffer);
                         result.data = buffer.data();
-                    } else {
+                    } 
+                    else {
                         auto& buffer =
                             buffers_.require<double>(field_name, selection.elements());
                         pack_view(source, selection, buffer);
