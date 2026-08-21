@@ -193,6 +193,7 @@ cmake .. \
     -DKokkos_ENABLE_OPENMP=ON \
     -DKokkos_ENABLE_CUDA=ON \
     -DKokkos_ENABLE_CUDA_LAMBDA=ON \
+    -DKokkos_ENABLE_IMPL_CUDA_MALLOC_ASYNC=ON \
     -DKokkos_ARCH_HOPPER90=ON \
     -DBUILD_SHARED_LIBS=TRUE
 make -j$(nproc)
@@ -200,6 +201,14 @@ make install
 cd ../..
 
 ```
+
+`Kokkos_ENABLE_IMPL_CUDA_MALLOC_ASYNC` is a Kokkos build-time option, not a
+VVMex or RRTMGP option. Enable it for the CUDA dependency builds used by VVMex;
+do not add it to CPU, HIP, or SYCL recipes. It makes large `CudaSpace`
+allocations use CUDA's stream-ordered allocator instead of the legacy
+`cudaMalloc` path. This is required on systems where the legacy path cannot
+reliably access allocations crossing a 4 GiB boundary, and is suitable for the
+modern CUDA toolkit and driver used by this guide.
 
 Verify that CUDA really was enabled and that the architecture matches your GPU:
 
@@ -210,6 +219,8 @@ grep -E "Kokkos_DEVICES|Kokkos_ARCH" \
 #   set(Kokkos_ARCH HOPPER90)
 
 ldd $INSTALL_DIR/lib/libkokkoscore.so.4.7 | grep -i cudart   # expect a hit
+grep KOKKOS_ENABLE_IMPL_CUDA_MALLOC_ASYNC \
+     $INSTALL_DIR/include/KokkosCore_config.h                 # expect #define
 ```
 
 An architecture mismatch does not fail the build. It produces a library that
@@ -457,6 +468,7 @@ ulp and the SHA-256 digests tolerate nothing.
 | Warning that ranks may share GPUs | `--gpus` below compute ranks per node | Request `>= ceil(compute / nodes)` |
 | I/O ranks each hold ~520 MB of GPU memory | ADIOS2 was built with Kokkos, so it calls `Kokkos::initialize()` on I/O ranks | Rebuild ADIOS2 with `-DADIOS2_USE_Kokkos=OFF`, or point `ADIOS2_DIR` at a Kokkos-free prefix |
 | Model runs but never uses the GPU | A CPU Kokkos with the same SONAME loaded first | `ldd build/vvm \| grep libkokkoscore`; keep the CUDA prefix ahead on `LD_LIBRARY_PATH` |
+| RRTMGP or P3 initialization reports `cudaErrorIllegalAddress` only for large column counts or allocations above 4 GiB | The CUDA Kokkos dependency uses legacy `cudaMalloc`; some systems cannot reliably access a large allocation across a 4 GiB boundary | Rebuild the CUDA Kokkos dependency with `-DKokkos_ENABLE_IMPL_CUDA_MALLOC_ASYNC=ON`, point `Kokkos_DIR` at that installation, cleanly rebuild VVMex, and verify that the same Kokkos prefix comes first at runtime with `ldd build/vvm \| grep libkokkoscore` |
 | Very slow first time step, then normal | Kokkos CUDA architecture does not match the device, so kernels JIT at launch | Rebuild Kokkos with the correct `Kokkos_ARCH_*` |
 | `version 'GLIBCXX_3.4.30' not found` starting `vvm` | NVHPC compiled against a newer GCC than the `libstdc++` loaded at run time | Pin GCC via `makelocalrc`, or pass `--gcc-toolchain` for **C, C++ and Fortran** |
 | `undefined reference to std::ios_base_library_init()` | Same GCC mismatch, at link time | Add `--gcc-toolchain=$INSTALL_DIR/gcc11` to that library's build |
