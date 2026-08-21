@@ -89,7 +89,8 @@ Dataset-level attributes describe how to interpret the file:
 | `vvm_output_bounds_zyx` | Resolved inclusive output bounds |
 
 `vvm_real_precision` and `vvm_field_precision` differ exactly when the resolved
-precision — `output.bp5.precision`, else `output.precision` — narrows or widens
+precision — `output.precision`, or the deprecated `output.bp5.precision`
+where a configuration still carries it — narrows or widens
 the history relative to `VVM::Real`. The HDF5 writer records the same two
 attributes for the same reason.
 Matching values mean the file is a lossless copy of the model state.
@@ -271,9 +272,10 @@ The matrix covers:
 - configuration, schema, path-policy, and field-source packing unit tests;
 - the GrADS descriptor emitter (`ctest -R test_grads_ctl`, part of the default
   unit tier rather than the BP5 tier);
-- precision parsing and the `output.precision` → `output.bp5.precision`
-  precedence (`ctest -R test_output_precision`), plus the same option applied to
-  the HDF5 writer and the SST relay (`ctest -L precision`);
+- precision parsing, that BP5 takes the engine-neutral `output.precision`, and
+  that the deprecated `output.bp5.precision` still overrides it
+  (`ctest -R test_output_precision`), plus the same option applied to the HDF5
+  writer and the SST relay (`ctest -L precision`);
 - 1-, 2-, and 4-rank synchronous direct output — the rank axis, where 1 rank is
   undecomposed, 2 ranks split the domain, and 4 ranks are the only case that
   leaves some ranks with an empty output selection;

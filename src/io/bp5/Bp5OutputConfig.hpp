@@ -31,6 +31,10 @@ struct Bp5OutputConfig {
     OutputPrecision precision = OutputPrecision::Native;
     bool overwrite = false;
 
+    // Set when precision came from the deprecated output.bp5.precision rather
+    // than output.precision, so the writer can say so once on rank 0.
+    bool precision_from_bp5_block = false;
+
     static Bp5OutputConfig from_json(
         const nlohmann::json& value,
         OutputPrecision default_precision = OutputPrecision::Native);

@@ -129,6 +129,7 @@ nlohmann::json make_config(
     config["output"]["engine"] = "BP5";
     config["output"]["output_dir"] = output_dir.string();
     config["output"]["output_filename_prefix"] = "history";
+    config["output"]["precision"] = precision;
     config["output"]["fields_to_output"] =
         nlohmann::json::array({"thbar", "topo", "u", "bp5_test_4d"});
     config["output"]["output_grid"] = {
@@ -141,7 +142,6 @@ nlohmann::json make_config(
         {"stats_level", 0},
         {"async_write", async_write},
         {"buffer_mode", mode},
-        {"precision", precision},
         {"overwrite", true}};
     return config;
 }
@@ -156,7 +156,7 @@ void check_shape(const adios2::Dims& got, const adios2::Dims& want,
     check(got == want, name + " global shape");
 }
 
-// Elem is the on-disk field element type, which is output.bp5.precision and not
+// Elem is the on-disk field element type, which is output.precision and not
 // necessarily VVM::Real. Coordinates and clocks are deliberately excluded: the
 // writer keeps those at full precision regardless, and this asserts that.
 template <typename Elem>
