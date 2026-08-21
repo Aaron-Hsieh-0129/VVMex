@@ -1,24 +1,24 @@
 {
-  "creators": [
-    {
-      "name": "VVMex development team",
-      "type": "ProjectMember"
-    }
-  ],
+  "upload_type": "software",
   "title": "VVMex v1.0.0: GPU-capable refactoring of the Vector Vorticity cloud-resolving Model",
   "version": "1.0.0",
+  "publication_date": "2026-07-12",
   "access_right": "open",
   "license": "Apache-2.0",
-  "upload_type": "software",
   "language": "eng",
+  "creators": [
+    {
+      "name": "Hsieh, Chin-Wei",
+      "affiliation": "Department of Atmospheric Sciences, National Taiwan University, Taipei, Taiwan",
+      "orcid": "0009-0000-0121-3997"
+    }
+  ],
   "description": "VVMex is a GPU-capable, object-oriented C++ refactoring of the Vector Vorticity cloud-resolving Model for large-eddy and cloud-resolving simulations on heterogeneous high-performance computing systems. This release contains the source code, default experiment configurations, selected input files, lookup tables, radiation coefficient files, and regression-test baselines used for the VVMex v1.0 software release.",
-  "keywords": [
-    "large-eddy simulation",
-    "cloud-resolving model",
-    "GPU",
-    "Kokkos",
-    "atmospheric model",
-    "VVM",
-    "VVMex"
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/Aaron-Hsieh-0129/VVMex/tree/v1.0.0",
+      "relation": "isSupplementTo",
+      "resource_type": "software"
+    }
   ]
 }
