@@ -4,6 +4,7 @@
 [![C++](https://img.shields.io/badge/C++-17%2B-blue.svg)](https://isocpp.org/)
 [![Kokkos](https://img.shields.io/badge/Kokkos-Performance_Portability-blueviolet.svg)](https://kokkos.org/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21318987.svg)](https://doi.org/10.5281/zenodo.21318987)
 
 VVMex is a GPU-capable, object-oriented C++ implementation of the Vector Vorticity cloud-resolving Model (VVM) for large-eddy simulations on heterogeneous high-performance computing systems.
 
@@ -104,9 +105,15 @@ ctest --test-dir build -L unit            # optional: fast, no GPU needed
 
 ## Reproducing the paper experiments
 
-The configuration files used for the experiments in the VVMex v1.0 paper are provided in [`rundata/input_configs/default_cases/`](rundata/input_configs/default_cases/).
+The configuration files used for the experiments in the VVMex v1.0 model
+description paper ([Hsieh et al., 2026](https://doi.org/10.5194/egusphere-2026-4205))
+are provided in [`rundata/input_configs/default_cases/`](...).
 
-A case-by-case summary is available in [`rundata/input_configs/default_cases/README.md`](rundata/input_configs/default_cases/README.md). The directory includes the configuration files for the verification, validation, and performance experiments reported in the paper.
+The exact code archived for the paper is
+[VVMex v1.0.0 on Zenodo](https://doi.org/10.5281/zenodo.21319556), corresponding
+to tag [`v1.0.0`](https://github.com/Aaron-Hsieh-0129/VVMex/releases/tag/v1.0.0)
+in this repository. Simulation output is archived separately at
+[zenodo.org/records/21308460](https://zenodo.org/records/21308460).
 
 
 ## Acknowledgments & References
@@ -134,19 +141,40 @@ A case-by-case summary is available in [`rundata/input_configs/default_cases/REA
 
 ## Citation
 
-If you use VVMex, please cite the archived software release:
+If you use VVMex in published work, please cite **both** the model description
+paper and the archived software release.
+
+**Model description paper** (preprint, under review for *Geoscientific Model Development*):
 
 ```bibtex
-@software{vvmex_v1_0_0,
-  title   = {{VVMex v1.0.0: GPU-capable refactoring of the Vector Vorticity cloud-resolving Model}},
-  author  = {{Chin-Wei Hsieh}},
+@article{egusphere-2026-4205,
+  author  = {Hsieh, Chin-Wei and Tseng, Shao-Yu and Wu, Chien-Ming},
+  title   = {{VVMex v1.0: a modular GPU-capable refactoring of the Vector Vorticity
+             cloud-resolving Model (VVM) with LES-based hierarchical validation and
+             performance analysis}},
+  journal = {EGUsphere [preprint]},
   year    = {2026},
-  version = {1.0.0},
-  doi     = {10.5281/zenodo.21318987},
-  url     = {https://doi.org/10.5281/zenodo.21318987}
+  pages   = {1--44},
+  doi     = {10.5194/egusphere-2026-4205},
+  url     = {https://doi.org/10.5194/egusphere-2026-4205}
 }
 ```
 
+**Software release** (the exact code archived for the paper):
+
+```bibtex
+@software{hsieh_vvmex_2026,
+  author    = {Hsieh, Chin-Wei},
+  title     = {{VVMex v1.0.0: GPU-capable refactoring of the Vector Vorticity
+               cloud-resolving Model}},
+  year      = {2026},
+  month     = {7},
+  version   = {1.0.0},
+  publisher = {Zenodo},
+  doi       = {10.5281/zenodo.21319556},
+  url       = {https://doi.org/10.5281/zenodo.21319556}
+}
+```
 
 ## License
 
