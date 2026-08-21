@@ -477,6 +477,11 @@ void Bp5HistoryWriter::print_configuration() const {
     std::cout << "\n"
               << "  [BP5] Estimated logical bytes/step: " << global_bytes_per_step_
               << std::endl;
+    if (config_.precision_from_bp5_block) {
+        std::cout << "  [BP5] NOTE: 'output.bp5.precision' is deprecated and now "
+                     "overrides\n         the engine-neutral 'output.precision'. "
+                     "Move the value up one level." << std::endl;
+    }
     if (narrowed_restart_source_) {
         std::cout << "  [BP5] WARNING: narrowed output is a restart source; "
                      "restarts from this dataset lose precision." << std::endl;

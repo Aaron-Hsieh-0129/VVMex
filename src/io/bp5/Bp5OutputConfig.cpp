@@ -55,7 +55,7 @@ Bp5OutputConfig Bp5OutputConfig::from_json(
 
     static const std::set<std::string> allowed = {
         "aggregation_type", "num_subfiles", "stats_level",
-        "async_write", "buffer_mode", "precision", "overwrite"
+        "async_write", "buffer_mode", "overwrite", "precision"
     };
     for (const auto& item : value.items()) {
         if (!item.key().empty() && item.key().front() == '_') continue;
@@ -88,10 +88,14 @@ Bp5OutputConfig Bp5OutputConfig::from_json(
             "output.bp5.buffer_mode must be 'direct' or 'pack'.");
     }
 
+    // Deprecated: precision is engine-neutral and belongs at output.precision.
+    // Still honoured, with the original override semantics, so configurations
+    // written before it moved keep producing the same dataset.
     if (value.contains("precision")) {
         result.precision = parse_output_precision(
             read_optional<std::string>(value, "precision", "native"),
             "output.bp5.precision");
+        result.precision_from_bp5_block = true;
     }
 
     if (result.aggregation_type != "TwoLevelShm") {

@@ -300,12 +300,51 @@ Read only when `engine` is `BP5`. Unlike the rest of the file, **unknown keys an
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `aggregation_type` | string | `"TwoLevelShm"` | Currently the only accepted value. |
-| `num_subfiles` | int | `10` | Data subfile count; must be positive. Start with the number of nodes. |
+| `num_subfiles` | int | `10` | Requested data subfile count; must be positive. ADIOS2 caps it at the compute-rank count, so you get `min(num_subfiles, ranks)` `data.*` files. See below. |
 | `stats_level` | int | `0` | `0` minimises statistics work; `1` enables BP5 statistics. No other value is accepted. |
 | `async_write` | bool | `false` | Let ADIOS2 write to disk in the background. VVMex switches to `Mode::Sync` puts so the model may modify its fields immediately. |
 | `buffer_mode` | string | `"direct"` | `direct` hands compatible CPU memory to ADIOS2 with a memory selection; `pack` (or `packed`) stages into persistent contiguous buffers. Resolves to `pack` automatically under CUDA or whenever precision converts. |
-| `precision` | string | `output.precision` | BP5-only override of the engine-neutral `output.precision`, with the same values. Omit it to follow that key. |
 | `overwrite` | bool | `false` | When `false`, refuse to replace an existing dataset in `output_dir`. |
+| `precision` | string | *deprecated* | Superseded by the engine-neutral [`output.precision`](#output). Still read, and still overrides it, so configurations written before the key moved keep producing the same dataset; the writer notes it once on rank 0. Do not use it in new configurations. |
+
+!!! note "`num_subfiles` can only ever reduce the file count"
+
+    ADIOS2 writes one subfile per aggregator and cannot have more aggregators
+    than ranks, so the value is clamped. Measured on a 2-step case:
+
+    | ranks \ requested | 1 | 2 | 4 | 10 |
+    | --- | --- | --- | --- | --- |
+    | 1 | 1 | 1 | 1 | 1 |
+    | 2 | 1 | 2 | 2 | 2 |
+    | 4 | 1 | 2 | 4 | 4 |
+
+    The default of `10` therefore means "one per rank" for any run below 10
+    ranks — a 4-rank run writes 4 subfiles whatever you ask for. The knob is
+    only useful downwards: lower it to concentrate output into fewer, larger
+    files when a filesystem dislikes many concurrent writers.
+
+Copy this block and edit `output_dir`:
+
+```json
+{
+  "output": {
+    "engine": "BP5",
+    "output_dir": "./output/my_run",
+    "output_filename_prefix": "vvm_output",
+    "precision": "native",
+    "output_initial_step": true,
+    "fields_to_output": ["u", "v", "w", "th", "qv"],
+    "bp5": {
+      "aggregation_type": "TwoLevelShm",
+      "num_subfiles": 10,
+      "stats_level": 0,
+      "async_write": false,
+      "buffer_mode": "direct",
+      "overwrite": false
+    }
+  }
+}
+```
 
 Use `fields_to_output` deliberately. A large list is convenient for diagnostics but increases file size and I/O cost. Common field groups are:
 

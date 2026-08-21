@@ -86,7 +86,7 @@ Per engine:
 |---|---|
 | `HDF5` | Field datasets are created at the chosen type; the staged host copy is converted per field per output. |
 | `SST` | Fields stream at the chosen type, and the I/O server relays whatever type the stream declares into HDF5. |
-| `BP5` | As above; `output.bp5.precision` overrides `output.precision` when both are set. |
+| `BP5` | As above; the deprecated `output.bp5.precision` still overrides it where a configuration carries it. |
 
 !!! warning "HDF5 output is also the restart source"
 
@@ -154,7 +154,6 @@ no SST, no relay, and no patched ADIOS2. Both CPU and GPU builds support it.
     "stats_level": 0,
     "async_write": false,
     "buffer_mode": "direct",
-    "precision": "native",
     "overwrite": false
   }
 }
@@ -257,9 +256,13 @@ Two consequences of what GrADS accepts are worth knowing:
 ### BP5 precision and buffering
 
 BP5 takes its precision from the engine-neutral
-[`output.precision`](#output-precision), and `output.bp5.precision` overrides it
-for BP5 alone — useful for writing narrowed BP5 history while an HDF5 restart
-file stays lossless.
+[`output.precision`](#output-precision), like every other engine.
+
+A BP5-scoped `output.bp5.precision` predates that key and is **deprecated**: a
+run has exactly one engine, so it can never express anything `output.precision`
+cannot. It is still read, and still overrides `output.precision`, so old
+configurations keep producing the same dataset — the writer prints a note on
+rank 0 when it takes that path. Move the value up one level when convenient.
 
 Converting requires a staging buffer, so `buffer_mode: direct` resolves to
 `pack` automatically when precision converts. CUDA builds also always resolve

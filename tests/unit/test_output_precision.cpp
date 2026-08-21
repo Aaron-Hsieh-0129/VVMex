@@ -102,18 +102,23 @@ void test_configuration(const std::filesystem::path& root) {
               OutputPrecision::Float32,
           "a BP5 block without precision still inherits output.precision");
 
-    // ... and the BP5 block still wins where it says something.
+    // output.bp5.precision is deprecated -- precision is engine-neutral and a
+    // run has only one engine -- but configurations predating the move must
+    // keep working, so it is still read and still wins.
     const ConfigurationManager overridden(
         write_config(root / "override.json",
                      "    \"precision\": \"float32\",\n"
                      "    \"bp5\": { \"precision\": \"native\" }"));
-    check(Bp5OutputConfig::from_config(overridden).precision == OutputPrecision::Native,
-          "output.bp5.precision overrides output.precision");
+    const auto legacy = Bp5OutputConfig::from_config(overridden);
+    check(legacy.precision == OutputPrecision::Native,
+          "the deprecated output.bp5.precision still overrides output.precision");
+    check(legacy.precision_from_bp5_block,
+          "using the deprecated key is recorded");
 
     const ConfigurationManager bp5_only(
         write_config(root / "bp5_only.json", "    \"bp5\": { \"precision\": \"double\" }"));
     check(Bp5OutputConfig::from_config(bp5_only).precision == OutputPrecision::Float64,
-          "output.bp5.precision still works on its own");
+          "the deprecated key still works on its own");
 
     const ConfigurationManager invalid(
         write_config(root / "invalid.json", "    \"precision\": \"half\""));
