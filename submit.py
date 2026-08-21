@@ -179,16 +179,15 @@ def setup_environment(preset_name):
         # ----------------------------------------------------------------------
         lib_dirs = []
 
-        # ADIOS2_DIR first, and the order matters. It may point at a prefix that
-        # layers over the main one (an ADIOS2 built without Kokkos, say, while the
-        # rest of the stack stays put). Both prefixes carry libadios2_*.so with the
-        # same SONAMEs, so whichever lands on LD_LIBRARY_PATH first is the one that
-        # loads -- the override has to precede the base stack.
+        # Kokkos_DIR first: dependency prefixes often contain another Kokkos with
+        # the same SONAMEs. If an ADIOS2/HDF5 base stack wins here, it silently
+        # replaces the exact Kokkos backend and build options selected by CMake.
+        #
+        # ADIOS2_DIR remains ahead of the HDF5/NetCDF base stack so an explicit
+        # ADIOS2 override still wins over libadios2 copies in that base prefix.
         for key in [
-            "ADIOS2_DIR",
-            # CPU and CUDA Kokkos share a SONAME, so the preset-selected Kokkos
-            # must also precede inherited base-stack library paths.
             "Kokkos_DIR",
+            "ADIOS2_DIR",
             "HDF5_DIR",
             "NETCDF_C_DIR",
             "NETCDF_Fortran_DIR",
