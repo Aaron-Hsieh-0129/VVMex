@@ -16,6 +16,11 @@
   "description": "VVMex is a GPU-capable, object-oriented C++ refactoring of the Vector Vorticity cloud-resolving Model for large-eddy and cloud-resolving simulations on heterogeneous high-performance computing systems. This release contains the source code, default experiment configurations, selected input files, lookup tables, radiation coefficient files, and regression-test baselines used for the VVMex v1.0 software release.",
   "related_identifiers": [
     {
+      "identifier": "10.5194/egusphere-2026-4205",
+      "relation": "isSupplementTo",
+      "resource_type": "publication-preprint"
+    },
+    {
       "identifier": "https://github.com/Aaron-Hsieh-0129/VVMex/tree/v1.0.0",
       "relation": "isSupplementTo",
       "resource_type": "software"

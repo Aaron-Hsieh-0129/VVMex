@@ -1,21 +1,39 @@
 cff-version: 1.2.0
-message: "If you use VVMex, please cite the archived software release."
+message: "If you use VVMex, please cite the archived software release. If you refer to the model itself, please also cite the model description paper listed under preferred-citation."
 type: software
-
 title: "VVMex v1.0.0: GPU-capable refactoring of the Vector Vorticity cloud-resolving Model"
-
 authors:
   - family-names: "Hsieh"
     given-names: "Chin-Wei"
     orcid: "https://orcid.org/0009-0000-0121-3997"
     affiliation: "Department of Atmospheric Sciences, National Taiwan University, Taipei, Taiwan"
     email: "B08209006@ntu.edu.tw"
-
 abstract: "VVMex is a GPU-capable, object-oriented C++ refactoring of the Vector Vorticity cloud-resolving Model for large-eddy and cloud-resolving simulations on heterogeneous high-performance computing systems."
-
 version: "1.0.0"
 date-released: "2026-07-12"
 license: "Apache-2.0"
 repository-code: "https://github.com/Aaron-Hsieh-0129/VVMex"
 url: "https://doi.org/10.5281/zenodo.21318987"
 doi: "10.5281/zenodo.21318987"
+preferred-citation:
+  type: article
+  title: "VVMex v1.0: a modular GPU-capable refactoring of the Vector Vorticity cloud-resolving Model (VVM) with LES-based hierarchical validation and performance analysis"
+  authors:
+    - family-names: "Hsieh"
+      given-names: "Chin-Wei"
+      orcid: "https://orcid.org/0009-0000-0121-3997"
+      affiliation: "Department of Atmospheric Sciences, National Taiwan University, Taipei, Taiwan"
+    - family-names: "Tseng"
+      given-names: "Shao-Yu"
+      orcid: "https://orcid.org/0009-0007-0144-8017"
+      affiliation: "Department of Atmospheric Sciences, National Taiwan University, Taipei, Taiwan"
+    - family-names: "Wu"
+      given-names: "Chien-Ming"
+      affiliation: "Department of Atmospheric Sciences, National Taiwan University, Taipei, Taiwan"
+      email: "mogwu@ntu.edu.tw"
+  journal: "EGUsphere [preprint]"
+  year: 2026
+  month: 8
+  doi: "10.5194/egusphere-2026-4205"
+  url: "https://doi.org/10.5194/egusphere-2026-4205"
+  notes: "Preprint under review for Geoscientific Model Development (GMD)."
