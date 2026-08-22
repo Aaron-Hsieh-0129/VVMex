@@ -89,17 +89,52 @@ add_compile_definitions(VVM_ROOT_DIR="$ENV{VVM_ROOT}")
 # a config directory is treated as a prefix and handed to find_package() as a
 # search root instead, which is why all six can be written the same way.
 # ==========================================
+# Where a package config lives under a prefix is not portable: lib/cmake/<pkg> on
+# some installs, lib64/cmake/<pkg> on others. find_package() only searches lib64
+# when FIND_LIBRARY_USE_LIB64_PATHS is on, and it is off on Debian-derived
+# systems, so the lookup is done here instead of relying on that.
+set(VVM_LIBDIR_CANDIDATES lib lib64)
+if(CMAKE_LIBRARY_ARCHITECTURE)
+    list(APPEND VVM_LIBDIR_CANDIDATES lib/${CMAKE_LIBRARY_ARCHITECTURE})
+endif()
+list(APPEND VVM_LIBDIR_CANDIDATES share)
+
 foreach(_vvm_pkg Kokkos ADIOS2)
     string(TOLOWER "${_vvm_pkg}" _vvm_pkg_lc)
     if(${_vvm_pkg}_DIR
        AND NOT EXISTS "${${_vvm_pkg}_DIR}/${_vvm_pkg}Config.cmake"
        AND NOT EXISTS "${${_vvm_pkg}_DIR}/${_vvm_pkg_lc}-config.cmake")
-        set(${_vvm_pkg}_ROOT "${${_vvm_pkg}_DIR}" CACHE PATH "Install prefix for ${_vvm_pkg}" FORCE)
-        unset(${_vvm_pkg}_DIR CACHE)
+        set(_vvm_found "")
+        foreach(_vvm_libdir IN LISTS VVM_LIBDIR_CANDIDATES)
+            foreach(_vvm_name ${_vvm_pkg} ${_vvm_pkg_lc})
+                set(_vvm_cand "${${_vvm_pkg}_DIR}/${_vvm_libdir}/cmake/${_vvm_name}")
+                if(EXISTS "${_vvm_cand}/${_vvm_pkg}Config.cmake"
+                   OR EXISTS "${_vvm_cand}/${_vvm_pkg_lc}-config.cmake")
+                    set(_vvm_found "${_vvm_cand}")
+                    break()
+                endif()
+            endforeach()
+            if(_vvm_found)
+                break()
+            endif()
+        endforeach()
+        if(_vvm_found)
+            message(STATUS "${_vvm_pkg}: ${${_vvm_pkg}_DIR} -> ${_vvm_found}")
+            set(${_vvm_pkg}_DIR "${_vvm_found}" CACHE PATH "Config directory for ${_vvm_pkg}" FORCE)
+        else()
+            # Not a prefix we recognise; hand it to find_package as a search root
+            # and let it report the failure with its own diagnostics.
+            set(${_vvm_pkg}_ROOT "${${_vvm_pkg}_DIR}" CACHE PATH "Install prefix for ${_vvm_pkg}" FORCE)
+            unset(${_vvm_pkg}_DIR CACHE)
+        endif()
     endif()
 endforeach()
 unset(_vvm_pkg)
 unset(_vvm_pkg_lc)
+unset(_vvm_found)
+unset(_vvm_cand)
+unset(_vvm_libdir)
+unset(_vvm_name)
 
 # ==========================================
 # Auto-setup Git Hooks
@@ -434,7 +469,7 @@ find_path(NETCDF_C_INCLUDE_DIR netcdf.h
           HINTS ${NETCDF_C_DIR}/include
           NO_DEFAULT_PATH)
 find_library(NETCDF_C_LIBRARY NAMES netcdf
-             HINTS ${NETCDF_C_DIR}/lib
+             HINTS ${NETCDF_C_DIR}/lib ${NETCDF_C_DIR}/lib64
              NO_DEFAULT_PATH)
 
 if (NETCDF_C_INCLUDE_DIR AND NETCDF_C_LIBRARY)
@@ -452,7 +487,7 @@ endif()
 # NetCDF-Fortran
 # ------------------------------
 find_path(NETCDF_FORTRAN_INCLUDE_DIR NAMES netcdf.mod HINTS "${NETCDF_Fortran_DIR}/include" NO_DEFAULT_PATH)
-find_library(NETCDF_FORTRAN_LIBRARY NAMES netcdff HINTS "${NETCDF_Fortran_DIR}/lib" NO_DEFAULT_PATH)
+find_library(NETCDF_FORTRAN_LIBRARY NAMES netcdff HINTS "${NETCDF_Fortran_DIR}/lib" "${NETCDF_Fortran_DIR}/lib64" NO_DEFAULT_PATH)
 
 if (NOT TARGET NetCDF::NetCDF_Fortran)
     add_library(NetCDF::NetCDF_Fortran UNKNOWN IMPORTED)
@@ -555,8 +590,8 @@ endif()
 # HDF5
 # ------------------------------
 find_path(HDF5_INCLUDE_DIR hdf5.h HINTS ${HDF5_DIR}/include NO_DEFAULT_PATH)
-find_library(HDF5_LIBRARY NAMES hdf5 HINTS ${HDF5_DIR}/lib NO_DEFAULT_PATH)
-find_library(HDF5_HL_LIBRARY NAMES hdf5_hl HINTS ${HDF5_DIR}/lib NO_DEFAULT_PATH)
+find_library(HDF5_LIBRARY NAMES hdf5 HINTS ${HDF5_DIR}/lib ${HDF5_DIR}/lib64 NO_DEFAULT_PATH)
+find_library(HDF5_HL_LIBRARY NAMES hdf5_hl HINTS ${HDF5_DIR}/lib ${HDF5_DIR}/lib64 NO_DEFAULT_PATH)
 
 if(HDF5_INCLUDE_DIR AND HDF5_LIBRARY AND HDF5_HL_LIBRARY)
     add_library(HDF5::HDF5 UNKNOWN IMPORTED)
@@ -582,7 +617,7 @@ find_path(PNETCDF_INCLUDE_DIR pnetcdf.h
           HINTS ${PNETCDF_DIR}/include
           NO_DEFAULT_PATH)
 find_library(PNETCDF_LIBRARY NAMES pnetcdf
-             HINTS ${PNETCDF_DIR}/lib
+             HINTS ${PNETCDF_DIR}/lib ${PNETCDF_DIR}/lib64
              NO_DEFAULT_PATH)
 
 if (PNETCDF_INCLUDE_DIR AND PNETCDF_LIBRARY)

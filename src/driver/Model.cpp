@@ -158,7 +158,6 @@ void Model::run_step(VVM::Real dt) {
         VVM::Utils::Timer timer("radiation");
 
         // Update net heating used for calculating th tendency
-        // WARNING: If the grid size (nx, ny) can't be divided by core number, it will cause kokkos copy errors here.
         if (Utils::is_process_step(current_step, rad_freq_in_steps_)) {
             radiation_->run(state_, dt);
         }

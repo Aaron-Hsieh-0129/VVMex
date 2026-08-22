@@ -85,6 +85,7 @@ private:
     int mpi_size_;                      // Total number of processes in MPI communicator
     MPI_Comm cart_comm_;                // MPI Cartesian communicator for halo exchange
     MPI_Comm comm_;
+    bool radiation_enabled_ = false;    // Radiation needs an even column split; see the check in the .cpp
 
     // Private helper function: Calculate local grid distribution based on global grid size and MPI process count
     void calculate_local_grid_distribution();

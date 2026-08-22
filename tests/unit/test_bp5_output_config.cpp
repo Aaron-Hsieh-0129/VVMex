@@ -128,6 +128,8 @@ int main() {
     const nlohmann::json converting = {{"buffer_mode", "direct"}};
     const auto converted =
         Bp5OutputConfig::from_json(converting, kConvertingPrecision);
+    check(converted.element_type() == kConverting,
+          "a converting request resolves to the other width");
     check(converted.buffer_mode == CpuBufferMode::Direct,
           "the requested buffer mode is preserved as asked");
     check(converted.effective_buffer_mode() == CpuBufferMode::Pack,
