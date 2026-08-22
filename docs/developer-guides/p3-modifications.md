@@ -50,6 +50,34 @@ These processes are integrated into the `p3_main` execution flow. In `p3_main_im
 3. **Coupled limiting and conservation:** `limit_cond_evap_dep_sub` scales the coupled tendencies before mapping back to cell averages.
 4. **Prognostic updates:** tendencies such as `qv2qc_conden_tend`, `qc2qv_evap_tend`, `qv2qi_depos_tend`, and related number tendencies are injected into the liquid and ice update paths to advance $q_v$, $q_c$, $q_r$, $q_i$, temperature, and potential temperature consistently.
 
+## Precision-Specific Lookup Tables
+
+`p3_init` caches the four non-ice tables (`mu_r`, `vn`, `vm`, `revap`) as raw binary dumps of
+the working scalar type, so the filename carries the element size: `*_v2.dat8` for a
+double-precision build and `*_v2.dat4` for a single-precision one. `rundata/p3/` therefore
+has to hold **both sets**, and both are required inputs, not optional caches.
+
+Nothing checks that the file was actually read. `read_computed_tables` streams the bytes
+straight into a zero-initialized Kokkos view, so a missing or truncated file leaves every
+table at zero and the run continues. With `vn_table_vals` zeroed the rain fallspeed is zero:
+$q_c$ and $q_r$ still form and look normal, but rain never reaches the ground and surface
+precipitation is effectively zero for the whole run. This is silent — there is no warning and
+no abort.
+
+Regenerate a missing set by running any case once with the matching build and
+
+```json
+"physics": { "p3": { "make_lookup_table": true } }
+```
+
+which computes the tables in memory and writes them to `rundata/p3/`. Use a single rank —
+every rank writes the same paths. Set the option back to `false` afterwards.
+
+The tables are computed by integrating the drop size distribution over 10,000 bins in the
+working precision, so a `.dat4` set generated this way sits up to 2.3e-5 (relative) from the
+corresponding `.dat8` values. That is well inside single precision's own error budget for the
+model, but it does mean the two sets are not simply rounded copies of each other.
+
 ## Tracking the Code Changes
 
 For developers navigating the codebase, the VVMex-specific P3 changes are marked with comments such as `// Aaron - evporation/condensation/deposition/sublimation` and `// Aaron - limit saturation adjustment` within `p3_functions.hpp` and related `_impl.hpp` files.

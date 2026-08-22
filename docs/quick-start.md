@@ -52,13 +52,28 @@ cd $VVM_ROOT
 
 ### 3. Configure CMake presets
 
-Edit `CMakePresets.json` (or pass cache variables on the command line) so that:
+Edit `CMakePresets.json` (or pass cache variables on the command line). A preset
+names where things are installed, one variable per dependency, and CMake derives
+the rest:
 
-- `CMAKE_CXX_COMPILER`, `CMAKE_C_COMPILER`, `CMAKE_Fortran_COMPILER` point to MPI wrappers.
-- `NVHPC_DIR` matches your installation.
-- `HDF5_DIR`, `NETCDF_C_DIR`, `NETCDF_Fortran_DIR`, `PNETCDF_DIR` point to your dependency prefixes.
+| Variable | Value |
+|---|---|
+| `NVHPC_DIR` | your NVHPC install |
+| `HDF5_DIR` | HDF5 install prefix |
+| `NETCDF_C_DIR` | NetCDF-C install prefix |
+| `NETCDF_Fortran_DIR` | NetCDF-Fortran install prefix |
+| `PNETCDF_DIR` | PnetCDF install prefix |
+| `Kokkos_DIR` | Kokkos install prefix |
+| `ADIOS2_DIR` | ADIOS2 install prefix |
 
-`find_package(ADIOS2 REQUIRED CXX MPI)` must succeed using your `CMAKE_PREFIX_PATH` or install layout.
+Each takes a plain install prefix, so several dependencies sharing one prefix just
+repeat it. `Kokkos_DIR` and `ADIOS2_DIR` also accept the `lib/cmake/<pkg>` directory
+that `find_package()` normally wants, if you prefer to be specific.
+
+The MPI wrappers are found under `NVHPC_DIR`, at `comm_libs/*/hpcx/hpcx-*/ompi/bin`;
+set `VVM_MPI_ROOT` when MPI lives outside the NVHPC tree. `VVM_GCC_TOOLCHAIN` is
+optional and adds `--gcc-toolchain=` to all three languages. Setting
+`CMAKE_CXX_COMPILER` and friends explicitly still overrides everything.
 
 ### 4. Configure and compile
 

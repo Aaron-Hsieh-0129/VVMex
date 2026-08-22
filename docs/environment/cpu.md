@@ -572,22 +572,15 @@ Add a CPU preset to `CMakePresets.json`. Substitute your real paths.
     "CMAKE_BUILD_TYPE": "Release",
 
     "NVHPC_DIR": "/path/to/nvhpc/Linux_x86_64/24.9",
-
-    "CMAKE_CXX_COMPILER":     "/path/to/your/cpu/libs/bin/mpic++",
-    "CMAKE_C_COMPILER":       "/path/to/your/cpu/libs/bin/mpicc",
-    "CMAKE_Fortran_COMPILER": "/path/to/your/cpu/libs/bin/mpifort",
-
-    "CMAKE_CXX_FLAGS":     "--gcc-toolchain=/path/to/your/cpu/libs/gcc11",
-    "CMAKE_C_FLAGS":       "--gcc-toolchain=/path/to/your/cpu/libs/gcc11",
-    "CMAKE_Fortran_FLAGS": "--gcc-toolchain=/path/to/your/cpu/libs/gcc11",
-
-    "Kokkos_DIR": "/path/to/your/cpu/libs/lib/cmake/Kokkos",
-    "ADIOS2_DIR": "/path/to/your/cpu/libs/lib/cmake/adios2",
+    "VVM_MPI_ROOT": "/path/to/your/cpu/libs",
+    "VVM_GCC_TOOLCHAIN": "/path/to/your/cpu/libs/gcc11",
 
     "HDF5_DIR":           "/path/to/your/cpu/libs",
     "NETCDF_C_DIR":       "/path/to/your/cpu/libs",
     "NETCDF_Fortran_DIR": "/path/to/your/cpu/libs",
     "PNETCDF_DIR":        "/path/to/your/cpu/libs",
+    "Kokkos_DIR":         "/path/to/your/cpu/libs",
+    "ADIOS2_DIR":         "/path/to/your/cpu/libs",
 
     "VVM_ENABLE_GPU": "OFF",
     "ENABLE_NCCL": "OFF",
@@ -605,8 +598,15 @@ Add a CPU preset to `CMakePresets.json`. Substitute your real paths.
 ```
 
 The four `*_ENABLE_GPU` / `ENABLE_NCCL` / `Kokkos_ENABLE_CUDA` settings must agree.
-`VVM_ENABLE_GPU=OFF` is the master switch; the others are set explicitly so a stale
-CMake cache cannot leave one of them on.
+`VVM_ENABLE_GPU=OFF` is the master switch and CMake derives the others from it, but
+they are written out anyway so a stale CMake cache cannot leave one of them on.
+`SCREAM_DOUBLE_PRECISION` and `RRTMGP_USE_DOUBLE_PRECISION` follow
+`VVM_USE_DOUBLE_PRECISION` the same way; CMake warns if the three disagree.
+
+`VVM_MPI_ROOT` is needed here because this CPU stack builds its own MPI rather than
+using the one under `NVHPC_DIR`. Each library takes a plain install prefix, so this
+stack repeats the same one six times; `Kokkos_DIR` and `ADIOS2_DIR` also accept a
+`lib/cmake/<pkg>` directory when a package sits somewhere else.
 
 Build into `build_cpu`, separate from any GPU tree:
 

@@ -139,3 +139,32 @@ references for the dry cases, and with physics on they need them regardless.
 Neither set changes when the option is merely available — only a build that
 turns it on produces different numbers, and that configuration is not gated by
 stored references today.
+
+## Single-precision (FP32) builds
+
+Three cache variables select the working precision and must be set together:
+`VVM_USE_DOUBLE_PRECISION` (`VVM::Real`), `SCREAM_DOUBLE_PRECISION` (P3 and the
+shared EAMxx types) and `RRTMGP_USE_DOUBLE_PRECISION` (the radiation interface).
+The `blaze-float` preset turns all three off and builds into `build_float/`:
+
+```bash
+cmake --preset blaze-float
+cmake --build build_float -j 64
+./submit.py --local --preset blaze-float -c <config>.json --compute 1
+```
+
+Nothing about FP32 is covered by stored references: `tests/baselines*/` and
+`tests/references*/` are double-precision, so a float build will not reproduce
+them and is not gated by them.
+
+Two parts of the physics behave differently at FP32, both documented with their
+measurements on their own pages:
+
+- P3 caches its non-ice lookup tables per precision, so a float build reads
+  `rundata/p3/*_v2.dat4` rather than `.dat8`. A missing set is not an error — it
+  leaves the tables zeroed and silently removes surface precipitation. See
+  [P3 Modifications](p3-modifications.md).
+- Two vendored RRTMGP kernels carry double-only constants, one of which aborts a
+  float run and one of which corrupts the shortwave over terrain without warning.
+  Both are now selected on `sizeof(RealT)`, leaving FP64 byte-identical. See
+  [RRTMGP Modifications](rrtmgp-modifications.md).
