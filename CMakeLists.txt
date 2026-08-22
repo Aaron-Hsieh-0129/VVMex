@@ -356,6 +356,39 @@ else()
     FetchContent_MakeAvailable(Kokkos)
 endif()
 
+# vvm_land is linked by nvfortran with -acc, so NVHPC drives that link through
+# pgacclnk, which ignores -lcudart_static and prints
+#   pgacclnk: -lcudart_static switch ignored, please use -static-nvidia instead
+# on every relink. Which CUDA runtime reaches that line comes from the Kokkos
+# install: most expose CUDA::cudart, some expose CUDA::cudart_static. Swap it for
+# the shared runtime so the ignored switch is never passed in the first place.
+#
+# Done at the library level rather than with nvcc's -cudart switch, because that
+# switch is fatal on this link: nvfortran-Error-Unknown switch: -cudart.
+if(VVM_ENABLE_GPU AND TARGET CUDA::cudart)
+    # Kokkos::CUDA is where the runtime actually sits; the rest are listed so a
+    # differently packaged install is caught too.
+    foreach(_vvm_kk Kokkos::CUDA Kokkos::kokkos Kokkos::kokkoscore
+                    Kokkos::kokkoscontainers Kokkos::kokkosalgorithms Kokkos::kokkossimd)
+        if(NOT TARGET ${_vvm_kk})
+            continue()
+        endif()
+        get_target_property(_vvm_alias ${_vvm_kk} ALIASED_TARGET)
+        if(_vvm_alias)
+            continue()
+        endif()
+        get_target_property(_vvm_kk_libs ${_vvm_kk} INTERFACE_LINK_LIBRARIES)
+        if(_vvm_kk_libs AND _vvm_kk_libs MATCHES "cudart_static")
+            string(REPLACE "CUDA::cudart_static" "CUDA::cudart" _vvm_kk_libs "${_vvm_kk_libs}")
+            set_target_properties(${_vvm_kk} PROPERTIES INTERFACE_LINK_LIBRARIES "${_vvm_kk_libs}")
+            message(STATUS "${_vvm_kk}: using the shared CUDA runtime (pgacclnk ignores -lcudart_static)")
+        endif()
+    endforeach()
+    unset(_vvm_kk)
+    unset(_vvm_alias)
+    unset(_vvm_kk_libs)
+endif()
+
 # ------------------------------
 # NVHPC
 # ------------------------------
