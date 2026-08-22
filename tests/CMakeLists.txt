@@ -61,6 +61,17 @@ set(VVM_TEST_SECONDS 120 CACHE STRING "Simulated seconds for default_cases tests
 #   VVM_TEST_PHYSICS       GPU only    P3 / RRTMGP / Noah land cases
 #   VVM_TEST_MULTIRANK     4 ranks     rank invariance (2-D decomposition)
 #
+# On a GPU build the default tier needs exactly ONE device. Every test that
+# touches a GPU runs at one rank and holds RESOURCE_LOCK gpu, so `ctest -j`
+# never puts two of them on the same device. The one multi-rank test in the
+# tier, test_restart_metadata_io_r2, links no Kokkos and touches no device.
+# Only VVM_TEST_MULTIRANK (4 GPUs) and VVM_TEST_SST raise that.
+#
+# Pick which device with VVM_TEST_GPUS, a comma-separated list read by
+# scripts/one_gpu_per_rank.sh -- useful when the low-numbered GPUs are busy:
+#
+#   VVM_TEST_GPUS=6 ctest --test-dir build
+#
 # Enable one or several at configure time:
 #
 #   cmake --preset f1-cpu -DBUILD_TESTS=ON -DVVM_TEST_BP5=ON
@@ -135,11 +146,16 @@ function(_report_test_tier LABEL STATE NEEDS OPT_NAME)
 endfunction()
 
 message(STATUS "Test tiers (all are bit-for-bit gates; simulated seconds per case: ${VVM_TEST_SECONDS}):")
-message(STATUS "  Test tier default  : ON   (advection x3, stretching, twisting, 2dbubble, mountain, unit tests)")
+if(VVM_ENABLE_GPU)
+    message(STATUS "  Test tier default  : ON   (advection x3, stretching, twisting, 2dbubble, mountain, unit tests) -- 1 GPU")
+else()
+    message(STATUS "  Test tier default  : ON   (advection x3, stretching, twisting, 2dbubble, mountain, unit tests)")
+endif()
 _report_test_tier("bp5      " ${VVM_TEST_BP5}       "CPU or GPU build"  VVM_TEST_BP5)
 _report_test_tier("sst      " ${VVM_TEST_SST}       "2 ranks, SST"      VVM_TEST_SST)
 _report_test_tier("physics  " ${VVM_TEST_PHYSICS}   "GPU build only"    VVM_TEST_PHYSICS)
 _report_test_tier("multirank" ${VVM_TEST_MULTIRANK} "4 ranks / 4 GPUs"  VVM_TEST_MULTIRANK)
+message(STATUS "  Select the test device with VVM_TEST_GPUS (e.g. VVM_TEST_GPUS=6 ctest --test-dir build)")
 
 # The original hand-written regression cases, comparing against stored baseline
 # files. Small enough that a full baseline is practical.
@@ -158,9 +174,12 @@ function(add_vvm_test TEST_NAME VARS_TO_TEST)
                          VVM_TEST_CFG "${VVM_TEST_CFG}")
     file(WRITE ${CFG} "${VVM_TEST_CFG}")
 
+    # Through GPU_WRAP like every other device test: at one rank it only pins
+    # CUDA_VISIBLE_DEVICES to a single device, which is what lets VVM_TEST_GPUS
+    # move the whole default tier off a busy GPU.
     add_test(NAME Run_${TEST_NAME}
              COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
-                     $<TARGET_FILE:vvm> ${CFG}
+                     ${GPU_WRAP} $<TARGET_FILE:vvm> ${CFG}
              WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
 
     separate_arguments(VARS_LIST UNIX_COMMAND "${VARS_TO_TEST}")

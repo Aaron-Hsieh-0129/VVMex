@@ -62,6 +62,54 @@ def get_available_presets(vvm_root):
         return []
 
 
+def _append_lib_dirs(lib_dirs, key, val):
+    """Add the shared-library directories of one dependency prefix to lib_dirs."""
+    # A value may be an install prefix (HDF5_DIR=/opt/foo) or a CMake package
+    # directory (ADIOS2_DIR=/opt/foo/lib/cmake/adios2). Joining "lib" onto the
+    # latter yields a path that does not exist, and the library then silently
+    # resolves from whatever else is on LD_LIBRARY_PATH.
+    marker = os.sep + "cmake" + os.sep
+    if marker in val:
+        cand = val.split(marker)[0]
+        # A prefix may name lib/cmake/<pkg> while the install actually put the
+        # .so files in lib64 (CMake finds either). Landing on the empty one is
+        # silent: the base stack further down LD_LIBRARY_PATH then supplies the
+        # library, which is exactly the override this list exists to prevent.
+        #
+        # Take the sibling as well, not just as a fallback: a prefix can split
+        # itself across both, as VVMex_libs does with ADIOS2 in lib64 and the
+        # libfabric that its RDMA data plane needs in lib.
+        head, tail = os.path.split(cand)
+        sibling = os.path.join(head, "lib64" if tail == "lib" else "lib")
+        found = [d for d in (cand, sibling) if os.path.isdir(d)]
+        if not found:
+            print(f"[Warning] {key}: neither {cand} nor {sibling} exists.")
+        for d in found:
+            append_unique(lib_dirs, d)
+    else:
+        append_unique(lib_dirs, os.path.join(val, "lib"))
+        append_unique(lib_dirs, os.path.join(val, "lib64"))
+
+
+def _read_cmake_cache(binary_dir):
+    """Read NAME:TYPE=VALUE entries out of a configured tree's CMakeCache.txt."""
+    cache_file = os.path.join(binary_dir, "CMakeCache.txt")
+    values = {}
+    try:
+        with open(cache_file, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith(("#", "//")):
+                    continue
+                name, sep, value = line.partition("=")
+                if not sep or ":" not in name:
+                    continue
+                values[name.split(":", 1)[0]] = value
+    except OSError:
+        pass
+    return values
+
+
 def preset_uses_gpu(vvm_root, preset_name):
     """Return whether a CMake preset selects the GPU execution backend."""
     preset_file = os.path.join(vvm_root, "CMakePresets.json")
@@ -114,17 +162,25 @@ def setup_environment(preset_name):
         with open(preset_file, "r") as f:
             presets_data = json.load(f)
 
-        cache_vars = {}
+        cache_vars = None
         binary_dir_raw = "${sourceDir}/build"
         for p in presets_data.get("configurePresets", []):
             if p.get("name") == preset_name:
-                cache_vars = p.get("cacheVariables", {})
+                cache_vars = dict(p.get("cacheVariables", {}))
                 binary_dir_raw = p.get("binaryDir", binary_dir_raw)
                 break
 
-        if not cache_vars:
+        if cache_vars is None:
             print(f"[Warning] Preset '{preset_name}' not found in CMakePresets.json.")
             return env
+
+        # A preset names only what is machine-specific; CMake derives the compiler
+        # wrappers and the individual dependency prefixes from it. The configured
+        # tree's CMakeCache holds what the binary was actually linked against, so
+        # it wins over the preset wherever both have an entry.
+        configured = _read_cmake_cache(binary_dir_raw.replace("${sourceDir}", vvm_root))
+        if configured:
+            cache_vars.update({k: v for k, v in configured.items() if v})
 
         print(f"[Info] Loaded environment from CMake preset: '{preset_name}'")
 
@@ -193,36 +249,10 @@ def setup_environment(preset_name):
             "NETCDF_Fortran_DIR",
             "PNETCDF_DIR",
         ]:
-            val = cache_vars.get(key, "")
-            if not val:
+            raw = cache_vars.get(key, "")
+            if not raw:
                 continue
-
-            # These may be an install prefix (HDF5_DIR=/opt/foo) or a CMake package
-            # directory (ADIOS2_DIR=/opt/foo/lib/cmake/adios2). Joining "lib" onto
-            # the latter yields a path that does not exist, and the library then
-            # silently resolves from whatever else is on LD_LIBRARY_PATH.
-            marker = os.sep + "cmake" + os.sep
-            if marker in val:
-                cand = val.split(marker)[0]
-                # A preset may name lib/cmake/<pkg> while the install actually put
-                # the .so files in lib64 (CMake finds either, submit.py takes the
-                # literal string). Landing on the empty one is silent: the base
-                # stack further down LD_LIBRARY_PATH then supplies the library,
-                # which is exactly the override this list exists to prevent.
-                #
-                # Take the sibling as well, not just as a fallback: a prefix can
-                # split itself across both, as VVMex_libs does with ADIOS2 in lib64
-                # and the libfabric that its RDMA data plane needs in lib.
-                head, tail = os.path.split(cand)
-                sibling = os.path.join(head, "lib64" if tail == "lib" else "lib")
-                found = [d for d in (cand, sibling) if os.path.isdir(d)]
-                if not found:
-                    print(f"[Warning] {key}: neither {cand} nor {sibling} exists.")
-                for d in found:
-                    append_unique(lib_dirs, d)
-            else:
-                append_unique(lib_dirs, os.path.join(val, "lib"))
-                append_unique(lib_dirs, os.path.join(val, "lib64"))
+            _append_lib_dirs(lib_dirs, key, str(raw))
 
         if lib_dirs:
             extra_ld = ":".join(lib_dirs)

@@ -1,6 +1,65 @@
 cmake_minimum_required(VERSION 3.20)
 
+# ==========================================
+# Toolchain discovery (must run before project())
+#
+# A preset names where things are installed -- NVHPC_DIR for the compiler stack,
+# one prefix per dependency below -- and everything derivable is derived here.
+# Any derived value can still be set explicitly, which is how a machine with a
+# non-NVHPC MPI overrides it.
+# ==========================================
+set(NVHPC_DIR "" CACHE PATH "NVHPC install root (the <version> directory)")
+set(VVM_MPI_ROOT "" CACHE PATH "MPI install providing mpic++/mpicc/mpifort; derived from NVHPC_DIR if empty")
+set(VVM_GCC_TOOLCHAIN "" CACHE PATH "GCC toolchain for NVHPC to compile against (--gcc-toolchain=)")
+
+if(NOT VVM_MPI_ROOT AND NVHPC_DIR)
+    # NVHPC ships HPC-X under comm_libs/<cuda>/hpcx/hpcx-<ver>/ompi. Newest wins
+    # when a release carries more than one; pin VVM_MPI_ROOT to override.
+    file(GLOB _vvm_hpcx "${NVHPC_DIR}/comm_libs/*/hpcx/hpcx-*/ompi")
+    list(SORT _vvm_hpcx)
+    list(REVERSE _vvm_hpcx)
+    foreach(_vvm_cand IN LISTS _vvm_hpcx)
+        if(EXISTS "${_vvm_cand}/bin/mpic++")
+            set(VVM_MPI_ROOT "${_vvm_cand}" CACHE PATH "MPI install" FORCE)
+            break()
+        endif()
+    endforeach()
+    unset(_vvm_hpcx)
+    unset(_vvm_cand)
+endif()
+
+if(VVM_MPI_ROOT)
+    if(NOT CMAKE_CXX_COMPILER AND EXISTS "${VVM_MPI_ROOT}/bin/mpic++")
+        set(CMAKE_CXX_COMPILER "${VVM_MPI_ROOT}/bin/mpic++" CACHE FILEPATH "C++ compiler")
+    endif()
+    if(NOT CMAKE_C_COMPILER AND EXISTS "${VVM_MPI_ROOT}/bin/mpicc")
+        set(CMAKE_C_COMPILER "${VVM_MPI_ROOT}/bin/mpicc" CACHE FILEPATH "C compiler")
+    endif()
+    if(NOT CMAKE_Fortran_COMPILER AND EXISTS "${VVM_MPI_ROOT}/bin/mpifort")
+        set(CMAKE_Fortran_COMPILER "${VVM_MPI_ROOT}/bin/mpifort" CACHE FILEPATH "Fortran compiler")
+    endif()
+endif()
+
+# NVHPC compiles against the headers of whichever GCC it is pointed at; the
+# runtime libstdc++ has to match or standalone binaries fault at startup.
+if(VVM_GCC_TOOLCHAIN)
+    foreach(_vvm_lang CXX C Fortran)
+        if(NOT CMAKE_${_vvm_lang}_FLAGS MATCHES "gcc-toolchain")
+            string(STRIP "--gcc-toolchain=${VVM_GCC_TOOLCHAIN} ${CMAKE_${_vvm_lang}_FLAGS}" _vvm_flags)
+            set(CMAKE_${_vvm_lang}_FLAGS "${_vvm_flags}" CACHE STRING "${_vvm_lang} flags" FORCE)
+        endif()
+    endforeach()
+    unset(_vvm_lang)
+    unset(_vvm_flags)
+endif()
+
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 project(VVMex LANGUAGES CXX C Fortran)
+
+message(STATUS "MPI wrappers: ${VVM_MPI_ROOT}")
 
 cmake_policy(SET CMP0135 NEW)
 
@@ -16,17 +75,31 @@ endif()
 message(STATUS "Detected VVM_ROOT: $ENV{VVM_ROOT}")
 add_compile_definitions(VVM_ROOT_DIR="$ENV{VVM_ROOT}")
 
-# OFF builds the whole model for the CPU: Kokkos falls back to OpenMP, the MPI
-# communication path replaces NCCL, and the land model's OpenACC directives
-# degrade to comments. Every GPU-specific block below is gated on this, so the
-# default ON build is byte-for-byte the same as before this option existed.
-option(VVM_ENABLE_GPU "Build for GPU (Kokkos CUDA + NCCL). OFF builds a CPU-only model." ON)
-if(VVM_ENABLE_GPU)
-    message(STATUS "VVM Execution Backend: GPU (Kokkos CUDA)")
-else()
-    message(STATUS "VVM Execution Backend: CPU (Kokkos OpenMP)")
-endif()
-
+# ==========================================
+# Dependency prefixes
+#
+# Every dependency is named by one variable holding one install prefix, so a
+# preset reads the same way for all of them:
+#
+#   HDF5_DIR / NETCDF_C_DIR / NETCDF_Fortran_DIR / PNETCDF_DIR / Kokkos_DIR / ADIOS2_DIR
+#
+# Kokkos and ADIOS2 are found with find_package(), whose own convention is that
+# <Pkg>_DIR names the directory holding the package config file rather than the
+# prefix above it. Both spellings are accepted here: a value that is not already
+# a config directory is treated as a prefix and handed to find_package() as a
+# search root instead, which is why all six can be written the same way.
+# ==========================================
+foreach(_vvm_pkg Kokkos ADIOS2)
+    string(TOLOWER "${_vvm_pkg}" _vvm_pkg_lc)
+    if(${_vvm_pkg}_DIR
+       AND NOT EXISTS "${${_vvm_pkg}_DIR}/${_vvm_pkg}Config.cmake"
+       AND NOT EXISTS "${${_vvm_pkg}_DIR}/${_vvm_pkg_lc}-config.cmake")
+        set(${_vvm_pkg}_ROOT "${${_vvm_pkg}_DIR}" CACHE PATH "Install prefix for ${_vvm_pkg}" FORCE)
+        unset(${_vvm_pkg}_DIR CACHE)
+    endif()
+endforeach()
+unset(_vvm_pkg)
+unset(_vvm_pkg_lc)
 
 # ==========================================
 # Auto-setup Git Hooks
@@ -156,7 +229,7 @@ else()
     message(STATUS "VVM Precision: SINGLE (FP32)")
 endif()
 
-option(SCREAM_DOUBLE_PRECISION "Use double precision (double) instead of single precision (float)" ON)
+option(SCREAM_DOUBLE_PRECISION "Use double precision in P3 and the shared EAMxx types" ${VVM_USE_DOUBLE_PRECISION})
 if(SCREAM_DOUBLE_PRECISION)
     message(STATUS "P3 Precision: DOUBLE (FP64)")
     add_compile_definitions(SCREAM_DOUBLE_PRECISION)
@@ -164,13 +237,21 @@ else()
     message(STATUS "P3 Precision: SINGLE (FP32)")
 endif()
 
-option(RRTMGP_USE_DOUBLE_PRECISION "Use double precision inside the VVM RRTMGP radiation interface" ON)
+option(RRTMGP_USE_DOUBLE_PRECISION "Use double precision inside the VVM RRTMGP radiation interface" ${VVM_USE_DOUBLE_PRECISION})
 if(RRTMGP_USE_DOUBLE_PRECISION)
     message(STATUS "RRTMGP Internal Precision: DOUBLE (FP64)")
     add_compile_definitions(VVM_RRTMGP_USE_DOUBLE_PRECISION)
 else()
     message(STATUS "RRTMGP Internal Precision: SINGLE (FP32)")
 endif()
+if(NOT (VVM_USE_DOUBLE_PRECISION STREQUAL SCREAM_DOUBLE_PRECISION AND
+        VVM_USE_DOUBLE_PRECISION STREQUAL RRTMGP_USE_DOUBLE_PRECISION))
+    message(WARNING
+        "Mixed precision: VVM=${VVM_USE_DOUBLE_PRECISION} P3=${SCREAM_DOUBLE_PRECISION} "
+        "RRTMGP=${RRTMGP_USE_DOUBLE_PRECISION}. This builds and runs, but set all three "
+        "unless the mix is deliberate.")
+endif()
+
 # EAMXX_ENABLE_GPU selects between pulling the P3 / physics_functions impl headers
 # into every translation unit (GPU) and linking the ETI objects (CPU). The compile
 # definition and the option read by src/physics/p3 must agree, or P3 compiles

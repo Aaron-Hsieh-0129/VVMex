@@ -41,8 +41,7 @@
 *.dwo
 
 
-build
-build_cpu
+build*
 site
 .cache
 .vscode
