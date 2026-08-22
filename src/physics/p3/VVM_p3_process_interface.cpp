@@ -12,6 +12,27 @@ using Constants = scream::physics::Constants<Real>;
 namespace VVM {
 namespace Physics {
 
+namespace {
+#ifdef SCREAM_P3_SMALL_KERNELS
+constexpr int P3_NUM_WSM_VARS = 6;
+#else
+constexpr int P3_NUM_WSM_VARS = 64;
+#endif
+// ekat's TeamPolicyFactory never hands out a team larger than this on GPU.
+constexpr int P3_MAX_TEAM_SIZE = 128;
+constexpr size_t P3_WSM_BUDGET_BYTES = 1024ull*1024ull*1024ull;
+
+// Same formula as ekat's WorkspaceManager::get_total_bytes_needed, in 64-bit
+// arithmetic: the ekat version returns int and overflows for large domains.
+size_t p3_wsm_bytes(const TeamPolicy& policy, int nk_pack_p1, int num_wsm_vars) {
+    ekat::TeamUtils<Spack, KT::ExeSpace> tu(policy, WSM::GPU_DEFAULT_OVERPROVISION_FACTOR());
+    const size_t reserve_slots = (sizeof(Spack) > 2*sizeof(int))
+                                 ? 1 : (2*sizeof(int) + sizeof(Spack) - 1) / sizeof(Spack);
+    return static_cast<size_t>(tu.get_num_ws_slots()) * (static_cast<size_t>(nk_pack_p1) + reserve_slots)
+           * static_cast<size_t>(num_wsm_vars) * sizeof(Spack);
+}
+} // namespace
+
 VVM_P3_Interface::VVM_P3_Interface(const VVM::Utils::ConfigurationManager &config, const VVM::Core::Grid &grid, const VVM::Core::Parameters &params, Core::HaloExchanger& halo_exchanger, Core::State& state)
     : config_(config), grid_(grid), params_(params), halo_exchanger_(halo_exchanger), 
     m_num_cols(grid_.get_local_physical_points_x() * grid_.get_local_physical_points_y()),
@@ -37,26 +58,20 @@ VVM_P3_Interface::VVM_P3_Interface(const VVM::Utils::ConfigurationManager &confi
     m_infrastructure.prescribedCCN = config_.get_value<bool>("physics.p3.do_prescribed_ccn", false);
 
     // Set Kokkos execution policy
-    // Aaron: a safe team size mode is turned on.
     using TPF = ekat::TeamPolicyFactory<KT::ExeSpace>;
     auto default_policy = TPF::get_default_team_policy(m_num_cols, m_num_lev_packs);
-    int safe_team_size = default_policy.team_size();
-    
-    long long max_int32 = 2147483647LL;
-#ifdef SCREAM_P3_SMALL_KERNELS
-    long long num_wsm_vars = 6LL; 
-#else
-    long long num_wsm_vars = 64LL; 
-#endif
-    long long multiplier = num_wsm_vars * static_cast<long long>(m_num_cols) * static_cast<long long>(ekat::npack<Spack>(m_num_levs+1));
-    
-    if (multiplier * safe_team_size >= max_int32) {
-        if (grid_.get_mpi_rank() == 0) std::cout << "P3 note: the register memory size becomes too small because of large domain, so it's recommended to turn on SCREAM_P3_SMALL_KERNELS option when compiling to reduce memory allocation and append team size." << std::endl;
-        safe_team_size = max_int32 / multiplier;
-        if (safe_team_size < 1) safe_team_size = 1;
+    int team_size = default_policy.team_size();
+
+    // The workspace is sized per *resident* team, and the number of resident
+    // teams is (device concurrency)/(team size): a larger team is what shrinks
+    // it, not a smaller one. Grow the team if the default footprint is large.
+    const int nk_pack_p1 = ekat::npack<Spack>(m_num_levs+1);
+    while (team_size < P3_MAX_TEAM_SIZE &&
+           p3_wsm_bytes(TeamPolicy(m_num_cols, team_size, Spack::n), nk_pack_p1, P3_NUM_WSM_VARS) > P3_WSM_BUDGET_BYTES) {
+        team_size = std::min(P3_MAX_TEAM_SIZE, 2*team_size);
     }
-    
-    m_policy = TeamPolicy(m_num_cols, safe_team_size, Spack::n);
+
+    m_policy = TeamPolicy(m_num_cols, team_size, Spack::n);
     m_team_size = m_policy.team_size();
 
     if (grid_.get_mpi_rank() == 0) {
@@ -163,15 +178,13 @@ void VVM_P3_Interface::allocate_p3_buffers() {
     Kokkos::deep_copy(m_unused, 0.0);                                                                                
     Kokkos::deep_copy(m_dummy_input, 0.0);   
 
-#ifdef SCREAM_P3_SMALL_KERNELS
-    const int num_wsm_vars = 6; 
-#else
-    const int num_wsm_vars = 64; 
-#endif
-
-    const size_t wsm_size_in_bytes = WSM::get_total_bytes_needed(nk_pack_p1, num_wsm_vars, m_policy);
-    // const size_t wsm_size_in_bytes = num_wsm_vars * static_cast<size_t>(nk_pack_p1) * static_cast<size_t>(m_policy.league_size()) * static_cast<size_t>(m_policy.team_size()) * sizeof(Spack);
+    // ekat's WSM::get_total_bytes_needed returns int, which wraps negative on a
+    // large domain and then reads back as a ~2^64 request; size it in 64 bits.
+    const size_t wsm_size_in_bytes = p3_wsm_bytes(m_policy, nk_pack_p1, P3_NUM_WSM_VARS);
     const size_t wsm_size_in_spacks = (wsm_size_in_bytes + sizeof(Spack) - 1) / sizeof(Spack);
+    if (grid_.get_mpi_rank() == 0) {
+        std::cout << "p3 workspace = " << (wsm_size_in_bytes / (1024.0*1024.0)) << " MiB" << std::endl;
+    }
     m_wsm_view_storage = Kokkos::View<Spack*>("P3 WSM Storage", wsm_size_in_spacks);
     m_wsm_data = m_wsm_view_storage.data();
     if (m_wsm_data == nullptr) std::cerr << "ERROR: FAILED TO ALLOCATE WORKSPACE MANAGER MEMORY FOR P3." << std::endl;
@@ -405,13 +418,8 @@ void VVM_P3_Interface::initialize(VVM::Core::State& state) {
         m_precip_liq_surf_mass_view, m_precip_ice_surf_mass_view
     );
     
-#ifdef SCREAM_P3_SMALL_KERNELS
-    const int num_wsm_vars = 6;
-#else
-    const int num_wsm_vars = 64;
-#endif
     const int nk_pack_p1 = ekat::npack<Spack>(m_num_levs+1);
-    workspace_mgr.setup(m_wsm_data, nk_pack_p1, num_wsm_vars, m_policy);
+    workspace_mgr.setup(m_wsm_data, nk_pack_p1, P3_NUM_WSM_VARS, m_policy);
 
     this->initialize_constant_buffers(state);
 }
