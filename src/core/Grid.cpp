@@ -1,5 +1,8 @@
 #include "Grid.hpp"
 
+#include <sstream>
+#include <stdexcept>
+
 namespace VVM {
 namespace Core {
 
@@ -44,6 +47,8 @@ Grid::Grid(const VVM::Utils::ConfigurationManager& config, MPI_Comm comm)
     Kokkos::fence(); // Ensure data is on device before proceeding with device-dependent operations
 
     // Calculate local grid distribution
+    radiation_enabled_ = config.get_value<bool>("physics.rrtmgp.enable_rrtmgp", false);
+
     calculate_local_grid_distribution();
 
     if (mpi_rank_ == 0) {
@@ -132,6 +137,27 @@ void Grid::calculate_local_grid_distribution() {
         else std::cout << "Y-Non Periodic, ";
 
         std::cout << "Z-NonPeriodic" << std::endl; // Added for clarity
+    }
+
+    const int nx_global = dims_host_mirror_(2).global_size;
+    const int ny_global = dims_host_mirror_(1).global_size;
+    if (nx_global % p_dims[1] != 0 || ny_global % p_dims[0] != 0) {
+        std::ostringstream msg;
+        msg << "[Grid] Grid does not divide evenly over the ranks: "
+            << "nx=" << nx_global << " over Px=" << p_dims[1] << " ("
+            << nx_global % p_dims[1] << " left over), "
+            << "ny=" << ny_global << " over Py=" << p_dims[0] << " ("
+            << ny_global % p_dims[0] << " left over), on " << mpi_size_ << " ranks.\n"
+            << "  Use a rank count whose 2-D factors divide nx and ny, or change "
+               "grid.nx / grid.ny.";
+        if (radiation_enabled_) {
+            throw std::runtime_error(msg.str());
+        }
+        if (mpi_rank_ == 0) {
+            std::cout << "WARNING: " << msg.str() << "\n"
+                      << "  Tolerated because radiation is off; it would abort with "
+                         "physics.rrtmgp.enable_rrtmgp=true." << std::endl;
+        }
     }
 
     // 3. Create MPI Cartesian Communicator

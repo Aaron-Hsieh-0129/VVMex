@@ -42,28 +42,39 @@ void init_nccl(ncclComm_t* comm, int rank, int size, MPI_Comm mpi_comm) {
 }
 #endif
 
+int world_rank_of(MPI_Comm comm) {
+    int r = 0;
+    MPI_Comm_rank(comm, &r);
+    return r;
+}
+
 int get_io_tasks(int argc, char *argv[]) {
     for (int i = 1; i < argc; i++) {
         if (std::string(argv[i]) == "--io-tasks" && i + 1 < argc) {
-            return std::stoi(argv[i + 1]);
+            try {
+                return std::stoi(argv[i + 1]);
+            } 
+            catch (const std::exception&) {
+                if (world_rank_of(MPI_COMM_WORLD) == 0) {
+                    std::cerr << "[Main] ERROR: --io-tasks expects an integer, got \""
+                              << argv[i + 1] << "\"." << std::endl;
+                }
+                MPI_Abort(MPI_COMM_WORLD, 1);
+            }
         }
     }
     return 0;
 }
 
-int main(int argc, char *argv[]) {
-    MPI_Init(&argc, &argv);
-
-    int world_rank, world_size;
-    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-
+int run_vvm(int argc, char *argv[], int world_rank, int world_size) {
     // Load configuration file
     std::string config_file_path = TOSTRING(VVM_ROOT_DIR) "/rundata/input_configs/default_config.json";
     for(int i=1; i<argc; ++i) {
         std::string arg = argv[i];
         if(arg == "--io-tasks") { i++; continue; } 
-        if(arg[0] != '-') config_file_path = arg;
+        // An empty argv element would index past the end and, worse, blank the
+        // config path.
+        if(!arg.empty() && arg[0] != '-') config_file_path = arg;
     }
     VVM::Utils::ConfigurationManager config(config_file_path);
 
@@ -74,9 +85,6 @@ int main(int argc, char *argv[]) {
             int cleanup_failed = 0;
             if (world_rank == 0) {
                 try {
-                    // Read with a default rather than the throwing overload, so
-                    // a config with no output_dir/prefix is rejected by the
-                    // path validation with a message that names the key.
                     const std::string output_dir = config.get_value<std::string>("output.output_dir", std::string());
                     const std::string prefix = config.get_value<std::string>("output.output_filename_prefix", std::string());
 
@@ -118,10 +126,6 @@ int main(int argc, char *argv[]) {
     // Split Compute and IO jobs
     int num_io_tasks = get_io_tasks(argc, argv);
 
-    // IO server is only meaningful for SST engine. Abort early if the job was
-    // submitted with --io-tasks N for a non-SST engine, because those IO server
-    // ranks would either hang waiting for an SST stream that never opens, or
-    // compete for CUDA devices with compute ranks in CUDA exclusive mode.
     {
         std::string engine = config.get_value<std::string>("output.engine", "HDF5");
         if (engine != "SST" && num_io_tasks > 0) {
@@ -151,14 +155,22 @@ int main(int argc, char *argv[]) {
 
     int threads_per_rank = 1;
     if (const char* env_p = std::getenv("OMP_NUM_THREADS")) {
-        threads_per_rank = std::stoi(env_p);
+        try {
+            threads_per_rank = std::stoi(env_p);
+        } catch (const std::exception&) {
+            threads_per_rank = 0;  // rejected below with the offending value
+        }
+        if (threads_per_rank < 1) {
+            if (world_rank == 0) {
+                std::cerr << "[Main] WARNING: OMP_NUM_THREADS=\"" << env_p
+                          << "\" is not a positive integer; using 1." << std::endl;
+            }
+            threads_per_rank = 1;
+        }
     }
     omp_set_num_threads(threads_per_rank);
 
-    // Only compute ranks touch the GPU. The IO server moves host buffers between
-    // ADIOS2 and HDF5 and never calls Kokkos, so initializing it there would open a
-    // CUDA context per IO rank that is then never used -- which costs device memory
-    // and, under CUDA exclusive mode, occupies a device a compute rank needs.
+    // Only compute ranks touch the GPU. 
     const bool is_compute_rank = (color == 0);
 
     int num_gpus = 0;
@@ -201,17 +213,11 @@ int main(int argc, char *argv[]) {
               << (is_compute_rank ? " kokkos_device_id=0" : " kokkos=skipped(host-only)")
               << std::endl;
 
-    // Compute ranks have now initialized Kokkos/CUDA before ADIOS2 starts SST. The
-    // barrier has to stay on this side of the IO branch: it stops the reader end
-    // opening the stream while the writers are still in CUDA init.
     MPI_Barrier(MPI_COMM_WORLD);
 
-    // Phase 2: IO server branch. No Kokkos was initialized here, so none is
-    // finalized either.
     if (!is_compute_rank) {
         VVM::IO::run_io_server(split_comm, config);
         MPI_Comm_free(&split_comm);
-        MPI_Finalize();
         return 0;
     }
 
@@ -327,6 +333,33 @@ int main(int argc, char *argv[]) {
         Kokkos::fence();
     }
     Kokkos::finalize();
-    MPI_Finalize();
     return 0;
+}
+
+int main(int argc, char *argv[]) {
+    MPI_Init(&argc, &argv);
+
+    int world_rank, world_size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+    int status = 0;
+    try {
+        status = run_vvm(argc, argv, world_rank, world_size);
+    }
+    catch (const std::exception& e) {
+        std::cerr << "[Rank " << world_rank << "] FATAL: " << e.what() << std::endl;
+        std::cerr.flush();
+        MPI_Abort(MPI_COMM_WORLD, 1);
+        return 1;
+    }
+    catch (...) {
+        std::cerr << "[Rank " << world_rank << "] FATAL: unknown exception" << std::endl;
+        std::cerr.flush();
+        MPI_Abort(MPI_COMM_WORLD, 1);
+        return 1;
+    }
+
+    MPI_Finalize();
+    return status;
 }
