@@ -74,6 +74,7 @@ nav:
       - System Architecture: developer-guides/architecture.md
       - Physics Implementation: developer-guides/physics.md
       - P3 Modifications: developer-guides/p3-modifications.md
+      - RRTMGP Modifications: developer-guides/rrtmgp-modifications.md
       - BP5 Output Internals: developer-guides/bp5-output.md
       - Reproducibility: developer-guides/reproducibility.md
       - Continuous Integration: developer-guides/ci.md
