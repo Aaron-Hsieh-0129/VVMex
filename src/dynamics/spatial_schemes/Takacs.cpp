@@ -65,19 +65,19 @@ void Takacs::calculate_flux_convergence_x(
                     VVM::Real um_i   = get_uminus(i);
                     VVM::Real um_ip1 = get_uminus(i+1);
 
-                    VVM::Real flux_i = u(k,j,i)*(q(k,j,i+1)+q(k,j,i)) + 
-                            -real(1.)/real(3.)*( 
-                                 up_i*(q(k,j,i+1)-q(k,j,i)) - Kokkos::sqrt(up_i)*Kokkos::sqrt(up_im1)*(q(k,j,i)-q(k,j,i-1)) - 
-                                 um_i*(q(k,j,i+1)-q(k,j,i)) - Kokkos::sqrt(Kokkos::abs(um_i))*Kokkos::sqrt(Kokkos::abs(um_ip1))*(q(k,j,i+2)-q(k,j,i+1)) 
+                    VVM::Real flux_i = u(k,j,i)*(q(k,j,i+1)+q(k,j,i)) +
+                            -real(1.)/real(3.)*(
+                                 up_i*(q(k,j,i+1)-q(k,j,i)) - Kokkos::sqrt(up_i)*Kokkos::sqrt(up_im1)*(q(k,j,i)-q(k,j,i-1)) -
+                                 um_i*(q(k,j,i+1)-q(k,j,i)) - Kokkos::sqrt(Kokkos::abs(um_i))*Kokkos::sqrt(Kokkos::abs(um_ip1))*(q(k,j,i+2)-q(k,j,i+1))
                             );
 
                     VVM::Real up_im2 = get_uplus(i-2);
                     VVM::Real um_im1 = get_uminus(i-1);
 
-                    VVM::Real flux_im1 = u(k,j,i-1)*(q(k,j,i)+q(k,j,i-1)) + 
-                            -real(1.)/real(3.)*( 
-                                 up_im1*(q(k,j,i)-q(k,j,i-1)) - Kokkos::sqrt(up_im1)*Kokkos::sqrt(up_im2)*(q(k,j,i-1)-q(k,j,i-2)) - 
-                                 um_im1*(q(k,j,i)-q(k,j,i-1)) - Kokkos::sqrt(Kokkos::abs(um_im1))*Kokkos::sqrt(Kokkos::abs(um_i))*(q(k,j,i+1)-q(k,j,i)) 
+                    VVM::Real flux_im1 = u(k,j,i-1)*(q(k,j,i)+q(k,j,i-1)) +
+                            -real(1.)/real(3.)*(
+                                 up_im1*(q(k,j,i)-q(k,j,i-1)) - Kokkos::sqrt(up_im1)*Kokkos::sqrt(up_im2)*(q(k,j,i-1)-q(k,j,i-2)) -
+                                 um_im1*(q(k,j,i)-q(k,j,i-1)) - Kokkos::sqrt(Kokkos::abs(um_im1))*Kokkos::sqrt(Kokkos::abs(um_i))*(q(k,j,i+1)-q(k,j,i))
                             );
 
                     tendency(k,j,i) += -real(0.5)*(flux_i - flux_im1) * rdx_view();
@@ -143,19 +143,19 @@ void Takacs::calculate_flux_convergence_y(
                     VVM::Real vm_j   = get_vminus(j);
                     VVM::Real vm_jp1 = get_vminus(j+1);
 
-                    VVM::Real flux_j = v(k,j,i)*(q(k,j+1,i)+q(k,j,i)) + 
-                                  -real(1.)/real(3.)*( 
-                                     vp_j*(q(k,j+1,i)-q(k,j,i)) - Kokkos::sqrt(vp_j)*Kokkos::sqrt(vp_jm1)*(q(k,j,i)-q(k,j-1,i)) - 
-                                     vm_j*(q(k,j+1,i)-q(k,j,i)) - Kokkos::sqrt(Kokkos::abs(vm_j))*Kokkos::sqrt(Kokkos::abs(vm_jp1))*(q(k,j+2,i)-q(k,j+1,i)) 
+                    VVM::Real flux_j = v(k,j,i)*(q(k,j+1,i)+q(k,j,i)) +
+                                  -real(1.)/real(3.)*(
+                                     vp_j*(q(k,j+1,i)-q(k,j,i)) - Kokkos::sqrt(vp_j)*Kokkos::sqrt(vp_jm1)*(q(k,j,i)-q(k,j-1,i)) -
+                                     vm_j*(q(k,j+1,i)-q(k,j,i)) - Kokkos::sqrt(Kokkos::abs(vm_j))*Kokkos::sqrt(Kokkos::abs(vm_jp1))*(q(k,j+2,i)-q(k,j+1,i))
                                   );
 
                     VVM::Real vp_jm2 = get_vplus(j-2);
                     VVM::Real vm_jm1 = get_vminus(j-1);
 
-                    VVM::Real flux_jm1 = v(k,j-1,i)*(q(k,j,i)+q(k,j-1,i)) + 
-                                    -real(1.)/real(3.)*( 
-                                       vp_jm1*(q(k,j,i)-q(k,j-1,i)) - Kokkos::sqrt(vp_jm1)*Kokkos::sqrt(vp_jm2)*(q(k,j-1,i)-q(k,j-2,i)) - 
-                                       vm_jm1*(q(k,j,i)-q(k,j-1,i)) - Kokkos::sqrt(Kokkos::abs(vm_jm1))*Kokkos::sqrt(Kokkos::abs(vm_j))*(q(k,j+1,i)-q(k,j,i)) 
+                    VVM::Real flux_jm1 = v(k,j-1,i)*(q(k,j,i)+q(k,j-1,i)) +
+                                    -real(1.)/real(3.)*(
+                                       vp_jm1*(q(k,j,i)-q(k,j-1,i)) - Kokkos::sqrt(vp_jm1)*Kokkos::sqrt(vp_jm2)*(q(k,j-1,i)-q(k,j-2,i)) -
+                                       vm_jm1*(q(k,j,i)-q(k,j-1,i)) - Kokkos::sqrt(Kokkos::abs(vm_jm1))*Kokkos::sqrt(Kokkos::abs(vm_j))*(q(k,j+1,i)-q(k,j,i))
                                     );
 
                     tendency(k,j,i) += -real(0.5)*(flux_j - flux_jm1) * rdy_view();
@@ -322,9 +322,9 @@ void Takacs::calculate_stretching_tendency_x(
     const Core::State& state, const Core::Grid& grid,
     const Core::Parameters& params, Core::Field<3>& out_tendency, const std::string& var_name) const {
 
-    const auto& u = state.get_field<3>("u").get_device_data();
-    const auto& xi = state.get_field<3>("xi").get_device_data();
-    const auto& rhobar = state.get_field<1>("rhobar").get_device_data();
+    const auto& u = u_ref_.get(state, "u").get_device_data();
+    const auto& xi = xi_ref_.get(state, "xi").get_device_data();
+    const auto& rhobar = rhobar_ref_.get(state, "rhobar").get_device_data();
     auto& tendency = out_tendency.get_mutable_device_data();
     
     const auto& rdx = params.rdx;
@@ -372,9 +372,9 @@ void Takacs::calculate_stretching_tendency_y(
     const Core::State& state, const Core::Grid& grid,
     const Core::Parameters& params, Core::Field<3>& out_tendency, const std::string& var_name) const {
 
-    const auto& v = state.get_field<3>("v").get_device_data();
-    const auto& eta = state.get_field<3>("eta").get_device_data();
-    const auto& rhobar = state.get_field<1>("rhobar").get_device_data();
+    const auto& v = v_ref_.get(state, "v").get_device_data();
+    const auto& eta = eta_ref_.get(state, "eta").get_device_data();
+    const auto& rhobar = rhobar_ref_.get(state, "rhobar").get_device_data();
     auto& tendency = out_tendency.get_mutable_device_data();
     
     const auto& rdy = params.rdy;
@@ -422,9 +422,9 @@ void Takacs::calculate_stretching_tendency_z(
     const Core::State& state, const Core::Grid& grid,
     const Core::Parameters& params, Core::Field<3>& out_tendency, const std::string& var_name) const {
     
-    const auto& w = state.get_field<3>("w").get_device_data();
-    const auto& zeta = state.get_field<3>("zeta").get_device_data();
-    const auto& rhobar = state.get_field<1>("rhobar").get_device_data();
+    const auto& w = w_ref_.get(state, "w").get_device_data();
+    const auto& zeta = zeta_ref_.get(state, "zeta").get_device_data();
+    const auto& rhobar = rhobar_ref_.get(state, "rhobar").get_device_data();
     auto& tendency = out_tendency.get_mutable_device_data();
 
     const auto& rdz = params.rdz;
@@ -468,8 +468,8 @@ void Takacs::calculate_R_xi(
     const Core::State& state, const Core::Grid& grid,
     const Core::Parameters& params, Core::Field<3>& out_R_xi) const {
     
-    const auto& v = state.get_field<3>("v").get_device_data();
-    const auto& w = state.get_field<3>("w").get_device_data();
+    const auto& v = v_ref_.get(state, "v").get_device_data();
+    const auto& w = w_ref_.get(state, "w").get_device_data();
     auto& R_xi = out_R_xi.get_mutable_device_data();
 
     const auto& rdy = params.rdy;
@@ -512,8 +512,8 @@ void Takacs::calculate_R_eta(
     const Core::State& state, const Core::Grid& grid,
     const Core::Parameters& params, Core::Field<3>& out_R_eta) const {
 
-    const auto& u = state.get_field<3>("u").get_device_data();
-    const auto& w = state.get_field<3>("w").get_device_data();
+    const auto& u = u_ref_.get(state, "u").get_device_data();
+    const auto& w = w_ref_.get(state, "w").get_device_data();
     auto& R_eta = out_R_eta.get_mutable_device_data();
 
     const auto& rdx = params.rdx;
@@ -556,8 +556,8 @@ void Takacs::calculate_R_zeta(
     const Core::State& state, const Core::Grid& grid,
     const Core::Parameters& params, Core::Field<3>& out_R_zeta) const {
 
-    const auto& u = state.get_field<3>("u").get_device_data();
-    const auto& v = state.get_field<3>("v").get_device_data();
+    const auto& u = u_ref_.get(state, "u").get_device_data();
+    const auto& v = v_ref_.get(state, "v").get_device_data();
     auto& R_zeta = out_R_zeta.get_mutable_device_data();
 
     auto rdx = params.rdx;
@@ -600,14 +600,14 @@ void Takacs::calculate_twisting_tendency_x(
     const Core::State& state, const Core::Grid& grid,
     const Core::Parameters& params, Core::Field<3>& out_tendency, const std::string& var_name) const {
 
-    const auto& R_eta_field = state.get_field<3>("R_eta");
-    const auto& R_zeta_field = state.get_field<3>("R_zeta");
+    const auto& R_eta_field = R_eta_ref_.get(state, "R_eta");
+    const auto& R_zeta_field = R_zeta_ref_.get(state, "R_zeta");
     auto& R_eta = R_eta_field.get_device_data();
     auto& R_zeta = R_zeta_field.get_device_data();
-    const auto& rhobar = state.get_field<1>("rhobar").get_device_data();
-    const auto& rhobar_up = state.get_field<1>("rhobar_up").get_device_data();
-    const auto& eta = state.get_field<3>("eta").get_device_data();
-    const auto& zeta = state.get_field<3>("zeta").get_device_data();
+    const auto& rhobar = rhobar_ref_.get(state, "rhobar").get_device_data();
+    const auto& rhobar_up = rhobar_up_ref_.get(state, "rhobar_up").get_device_data();
+    const auto& eta = eta_ref_.get(state, "eta").get_device_data();
+    const auto& zeta = zeta_ref_.get(state, "zeta").get_device_data();
     auto& tendency = out_tendency.get_mutable_device_data();
 
     const int nz = grid.get_local_total_points_z();
@@ -657,14 +657,14 @@ void Takacs::calculate_twisting_tendency_y(
     const Core::State& state, const Core::Grid& grid,
     const Core::Parameters& params, Core::Field<3>& out_tendency, const std::string& var_name) const {
 
-    const auto& R_xi_field = state.get_field<3>("R_xi");
-    const auto& R_zeta_field = state.get_field<3>("R_zeta");
+    const auto& R_xi_field = R_xi_ref_.get(state, "R_xi");
+    const auto& R_zeta_field = R_zeta_ref_.get(state, "R_zeta");
     auto& R_xi = R_xi_field.get_device_data();
     auto& R_zeta = R_zeta_field.get_device_data();
-    const auto& rhobar = state.get_field<1>("rhobar").get_device_data();
-    const auto& rhobar_up = state.get_field<1>("rhobar_up").get_device_data();
-    const auto& xi = state.get_field<3>("xi").get_device_data();
-    const auto& zeta = state.get_field<3>("zeta").get_device_data();
+    const auto& rhobar = rhobar_ref_.get(state, "rhobar").get_device_data();
+    const auto& rhobar_up = rhobar_up_ref_.get(state, "rhobar_up").get_device_data();
+    const auto& xi = xi_ref_.get(state, "xi").get_device_data();
+    const auto& zeta = zeta_ref_.get(state, "zeta").get_device_data();
     auto& tendency = out_tendency.get_mutable_device_data();
 
     const int nz = grid.get_local_total_points_z();
@@ -713,10 +713,10 @@ void Takacs::calculate_twisting_tendency_z(
     const Core::State& state, const Core::Grid& grid,
     const Core::Parameters& params, Core::Field<3>& out_tendency, const std::string& var_name) const {
 
-    const auto& R_xi = state.get_field<3>("R_xi").get_device_data();
-    const auto& R_eta = state.get_field<3>("R_eta").get_device_data();
-    const auto& xi = state.get_field<3>("xi").get_device_data();
-    const auto& eta = state.get_field<3>("eta").get_device_data();
+    const auto& R_xi = R_xi_ref_.get(state, "R_xi").get_device_data();
+    const auto& R_eta = R_eta_ref_.get(state, "R_eta").get_device_data();
+    const auto& xi = xi_ref_.get(state, "xi").get_device_data();
+    const auto& eta = eta_ref_.get(state, "eta").get_device_data();
     auto& tendency = out_tendency.get_mutable_device_data();
 
     const int nz = grid.get_local_total_points_z();
@@ -767,8 +767,8 @@ void Takacs::calculate_vorticity_divergence(
     const Core::State& state, const Core::Grid& grid,
     const Core::Parameters& params, Core::Field<3>& out_field) const {
 
-    const auto& xi = state.get_field<3>("xi").get_device_data();
-    const auto& eta = state.get_field<3>("eta").get_device_data();
+    const auto& xi = xi_ref_.get(state, "xi").get_device_data();
+    const auto& eta = eta_ref_.get(state, "eta").get_device_data();
     auto& out_data = out_field.get_mutable_device_data();
 
     const auto& rdx = params.get_value_host(params.rdx);
@@ -796,14 +796,14 @@ void Takacs::calculate_buoyancy_tendency_x(
     const Core::State& state, const Core::Grid& grid,
     const Core::Parameters& params, Core::Field<3>& out_tendency) const {
     
-    const auto& thbar = state.get_field<1>("thbar").get_device_data();
-    const auto& th = state.get_field<3>("th").get_device_data();
-    const auto& qv = state.get_field<3>("qv").get_device_data();
+    const auto& thbar = thbar_ref_.get(state, "thbar").get_device_data();
+    const auto& th = th_ref_.get(state, "th").get_device_data();
+    const auto& qv = qv_ref_.get(state, "qv").get_device_data();
 
     // qp is used when P3 is turned on. 
     // To prevent 'if' at each step or #define flags, qp points to a random variables and times a 0 coefficient if P3 is not defined.
     bool has_qp = state.has_field("qp");
-    auto qp = has_qp ? state.get_field<3>("qp").get_device_data() : qv;
+    auto qp = has_qp ? qp_ref_.get(state, "qp").get_device_data() : qv;
     const VVM::Real qp_coeff = has_qp ? real(1.0) : real(0.0);
 
     auto& tendency = out_tendency.get_mutable_device_data();
@@ -815,7 +815,7 @@ void Takacs::calculate_buoyancy_tendency_x(
     const int nx = grid.get_local_total_points_x();
     const int h = grid.get_halo_cells();
 
-    const auto& ITYPEV = state.get_field<3>("ITYPEV").get_device_data();
+    const auto& ITYPEV = ITYPEV_ref_.get(state, "ITYPEV").get_device_data();
     const auto& max_topo_idx = params.max_topo_idx;
 
     const int num_j = ny - 2 * h;
@@ -853,14 +853,14 @@ void Takacs::calculate_buoyancy_tendency_y(
     const Core::State& state, const Core::Grid& grid,
     const Core::Parameters& params, Core::Field<3>& out_tendency) const {
     
-    const auto& thbar = state.get_field<1>("thbar").get_device_data();
-    const auto& th = state.get_field<3>("th").get_device_data();
-    const auto& qv = state.get_field<3>("qv").get_device_data();
+    const auto& thbar = thbar_ref_.get(state, "thbar").get_device_data();
+    const auto& th = th_ref_.get(state, "th").get_device_data();
+    const auto& qv = qv_ref_.get(state, "qv").get_device_data();
 
     // qp is used when P3 is turned on. 
     // To prevent 'if' at each step or #define flags, qp points to a random variables and times a 0 coefficient if P3 is not defined.
     bool has_qp = state.has_field("qp");
-    auto qp = has_qp ? state.get_field<3>("qp").get_device_data() : qv;
+    auto qp = has_qp ? qp_ref_.get(state, "qp").get_device_data() : qv;
     const VVM::Real qp_coeff = has_qp ? real(1.0) : real(0.0);
 
     auto& tendency = out_tendency.get_mutable_device_data();
@@ -872,7 +872,7 @@ void Takacs::calculate_buoyancy_tendency_y(
     const int nx = grid.get_local_total_points_x();
     const int h = grid.get_halo_cells();
 
-    const auto& ITYPEU = state.get_field<3>("ITYPEU").get_device_data();
+    const auto& ITYPEU = ITYPEU_ref_.get(state, "ITYPEU").get_device_data();
     const int max_topo_idx = params.max_topo_idx;
 
     const int num_j = ny - 2 * h;
@@ -912,9 +912,9 @@ void Takacs::calculate_coriolis_tendency_x(
     const Core::Parameters& params, Core::Field<3>& out_tendency) const {
     
     auto& tendency = out_tendency.get_mutable_device_data();
-    const auto& u = state.get_field<3>("u").get_device_data();
+    const auto& u = u_ref_.get(state, "u").get_device_data();
     // const auto& f = state.get_field<1>("f").get_device_data();
-    const auto& f_2d = state.get_field<2>("f_2d").get_device_data();
+    const auto& f_2d = f_2d_ref_.get(state, "f_2d").get_device_data();
     const auto& rdz = params.rdz;
     const auto& flex_height_coef_up = params.flex_height_coef_up.get_device_data();
 
@@ -942,9 +942,9 @@ void Takacs::calculate_coriolis_tendency_y(
     const Core::Parameters& params, Core::Field<3>& out_tendency) const {
 
     auto& tendency = out_tendency.get_mutable_device_data();
-    const auto& v = state.get_field<3>("v").get_device_data();
+    const auto& v = v_ref_.get(state, "v").get_device_data();
     // const auto& f = state.get_field<1>("f").get_device_data();
-    const auto& f_2d = state.get_field<2>("f_2d").get_device_data();
+    const auto& f_2d = f_2d_ref_.get(state, "f_2d").get_device_data();
     const auto& rdz = params.rdz;
     const auto& flex_height_coef_up = params.flex_height_coef_up.get_device_data();
 
@@ -971,10 +971,10 @@ void Takacs::calculate_coriolis_tendency_z(
     const Core::Parameters& params, Core::Field<3>& out_tendency) const {
 
     auto& tendency = out_tendency.get_mutable_device_data();
-    const auto& u = state.get_field<3>("u").get_device_data();
-    const auto& v = state.get_field<3>("v").get_device_data();
+    const auto& u = u_ref_.get(state, "u").get_device_data();
+    const auto& v = v_ref_.get(state, "v").get_device_data();
     // const auto& f = state.get_field<1>("f").get_device_data();
-    const auto& f_2d = state.get_field<2>("f_2d").get_device_data();
+    const auto& f_2d = f_2d_ref_.get(state, "f_2d").get_device_data();
     const auto& rdx = params.rdx;
     const auto& rdy = params.rdy;
     const auto& flex_height_coef_up = params.flex_height_coef_up.get_device_data();
@@ -995,6 +995,138 @@ void Takacs::calculate_coriolis_tendency_z(
                            +v(NK2,j+1,i+1)-v(NK2,j-1,i+1)) * rdy();
         }
     );
+    return;
+}
+
+
+// Fuse x/y in their original order; keep z separate to limit register pressure.
+void Takacs::calculate_advection_tendency(
+    const Core::State& state,
+    const Core::Field<3>& scalar,
+    const Core::Field<3>& mass_flux_x,
+    const Core::Field<3>& mass_flux_y,
+    const Core::Field<3>& mass_flux_z,
+    const Core::Grid& grid,
+    const Core::Parameters& params,
+    Core::Field<3>& out_tendency,
+    const std::string& var_name,
+    VVM::Real stage_dt) const {
+    (void)state;
+    (void)stage_dt;
+
+    const int nz = grid.get_local_total_points_z();
+    const int ny = grid.get_local_total_points_y();
+    const int nx = grid.get_local_total_points_x();
+    const int h = grid.get_halo_cells();
+
+    const auto& u = mass_flux_x.get_device_data();
+    const auto& v = mass_flux_y.get_device_data();
+    const auto& q = scalar.get_device_data();
+    auto& tendency = out_tendency.get_mutable_device_data();
+
+    auto rdx_view = params.rdx;
+    auto rdy_view = params.rdy;
+
+    int k_start = h;
+    int k_end = nz-h;
+    if (var_name == "zeta") {
+        k_start = nz-h-1;
+        k_end = nz-h;
+    }
+    else if (var_name == "eta" || var_name == "xi") {
+        k_end = nz-h-1;
+    }
+
+    const int j_start = h;
+    const int j_end = ny - h;
+    const int i_start = h;
+    const int i_end = nx - h;
+    const int num_j = j_end - j_start;
+    const int num_i = i_end - i_start;
+    const int league_size = num_j * num_i;
+
+    Kokkos::parallel_for("Takacs_flux_convergence_xy_fused",
+        TeamPolicy(league_size, Kokkos::AUTO),
+        KOKKOS_LAMBDA(const MemberType& team) {
+
+            const int league_rank = team.league_rank();
+            const int j = j_start + league_rank / num_i;
+            const int i = i_start + league_rank % num_i;
+
+            Kokkos::parallel_for(Kokkos::TeamThreadRange(team, k_start, k_end),
+                [&](const int k) {
+
+                    VVM::Real t = tendency(k,j,i);
+
+                    {
+                    auto get_uplus = [&](int idx_i) {
+                        return real(0.5)*(u(k,j,idx_i) + Kokkos::abs(u(k,j,idx_i)));
+                    };
+                    auto get_uminus = [&](int idx_i) {
+                        return real(0.5)*(u(k,j,idx_i) - Kokkos::abs(u(k,j,idx_i)));
+                    };
+
+                    VVM::Real up_i   = get_uplus(i);
+                    VVM::Real up_im1 = get_uplus(i-1);
+                    VVM::Real um_i   = get_uminus(i);
+                    VVM::Real um_ip1 = get_uminus(i+1);
+
+                    VVM::Real flux_i = u(k,j,i)*(q(k,j,i+1)+q(k,j,i)) +
+                            -real(1.)/real(3.)*(
+                                 up_i*(q(k,j,i+1)-q(k,j,i)) - Kokkos::sqrt(up_i)*Kokkos::sqrt(up_im1)*(q(k,j,i)-q(k,j,i-1)) -
+                                 um_i*(q(k,j,i+1)-q(k,j,i)) - Kokkos::sqrt(Kokkos::abs(um_i))*Kokkos::sqrt(Kokkos::abs(um_ip1))*(q(k,j,i+2)-q(k,j,i+1))
+                            );
+
+                    VVM::Real up_im2 = get_uplus(i-2);
+                    VVM::Real um_im1 = get_uminus(i-1);
+
+                    VVM::Real flux_im1 = u(k,j,i-1)*(q(k,j,i)+q(k,j,i-1)) +
+                            -real(1.)/real(3.)*(
+                                 up_im1*(q(k,j,i)-q(k,j,i-1)) - Kokkos::sqrt(up_im1)*Kokkos::sqrt(up_im2)*(q(k,j,i-1)-q(k,j,i-2)) -
+                                 um_im1*(q(k,j,i)-q(k,j,i-1)) - Kokkos::sqrt(Kokkos::abs(um_im1))*Kokkos::sqrt(Kokkos::abs(um_i))*(q(k,j,i+1)-q(k,j,i))
+                            );
+
+                    t += -real(0.5)*(flux_i - flux_im1) * rdx_view();
+                    }
+
+                    {
+                    auto get_vplus = [&](int idx_j) {
+                        return real(0.5)*(v(k,idx_j,i) + Kokkos::abs(v(k,idx_j,i)));
+                    };
+                    auto get_vminus = [&](int idx_j) {
+                        return real(0.5)*(v(k,idx_j,i) - Kokkos::abs(v(k,idx_j,i)));
+                    };
+
+                    VVM::Real vp_j   = get_vplus(j);
+                    VVM::Real vp_jm1 = get_vplus(j-1);
+                    VVM::Real vm_j   = get_vminus(j);
+                    VVM::Real vm_jp1 = get_vminus(j+1);
+
+                    VVM::Real flux_j = v(k,j,i)*(q(k,j+1,i)+q(k,j,i)) +
+                                  -real(1.)/real(3.)*(
+                                     vp_j*(q(k,j+1,i)-q(k,j,i)) - Kokkos::sqrt(vp_j)*Kokkos::sqrt(vp_jm1)*(q(k,j,i)-q(k,j-1,i)) -
+                                     vm_j*(q(k,j+1,i)-q(k,j,i)) - Kokkos::sqrt(Kokkos::abs(vm_j))*Kokkos::sqrt(Kokkos::abs(vm_jp1))*(q(k,j+2,i)-q(k,j+1,i))
+                                  );
+
+                    VVM::Real vp_jm2 = get_vplus(j-2);
+                    VVM::Real vm_jm1 = get_vminus(j-1);
+
+                    VVM::Real flux_jm1 = v(k,j-1,i)*(q(k,j,i)+q(k,j-1,i)) +
+                                    -real(1.)/real(3.)*(
+                                       vp_jm1*(q(k,j,i)-q(k,j-1,i)) - Kokkos::sqrt(vp_jm1)*Kokkos::sqrt(vp_jm2)*(q(k,j-1,i)-q(k,j-2,i)) -
+                                       vm_jm1*(q(k,j,i)-q(k,j-1,i)) - Kokkos::sqrt(Kokkos::abs(vm_jm1))*Kokkos::sqrt(Kokkos::abs(vm_j))*(q(k,j+1,i)-q(k,j,i))
+                                    );
+
+                    t += -real(0.5)*(flux_j - flux_jm1) * rdy_view();
+                    }
+
+                    tendency(k,j,i) = t;
+                }
+            );
+        }
+    );
+
+    calculate_flux_convergence_z(scalar, mass_flux_z, grid, params, out_tendency, var_name);
     return;
 }
 

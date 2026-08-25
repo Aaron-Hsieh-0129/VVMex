@@ -9,9 +9,8 @@ FieldInput CpuFieldSource::prepare(
     const FieldSelection& selection,
     CpuBufferMode mode,
     OutputElementType element_type) const {
-    auto it = state_.begin();
-    while (it != state_.end() && it->first != field_name) ++it;
-    if (it == state_.end()) {
+    const Core::AnyField* entry = state_.find_any(field_name);
+    if (entry == nullptr) {
         throw std::invalid_argument("BP5 output field '" + field_name + "' is not registered.");
     }
 
@@ -92,7 +91,7 @@ FieldInput CpuFieldSource::prepare(
                 }
             }
         },
-        it->second);
+        *entry);
     return result;
 }
 

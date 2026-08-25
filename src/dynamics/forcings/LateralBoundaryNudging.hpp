@@ -68,6 +68,16 @@ private:
 
     void load_forcing_data(Core::State& state, const std::string& filepath, bool is_constant);
     void check_ncmpi_error(int status, const std::string& msg) const;
+
+    Core::FieldRef<2> lbn_weight_ref_;
+
+    struct ForcingTarget {
+        Core::Field<3>* t1 = nullptr;
+        Core::Field<3>* t2 = nullptr;
+        Core::Field<3>* current = nullptr;
+        std::string kernel_label;
+    };
+    std::vector<ForcingTarget> forcing_targets_;
 };
 
 } // namespace Dynamics

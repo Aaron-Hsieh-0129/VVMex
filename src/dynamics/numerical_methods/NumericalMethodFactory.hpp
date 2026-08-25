@@ -2,6 +2,7 @@
 #define VVM_DYNAMICS_NUMERICAL_METHOD_FACTORY_HPP
 
 #include "NumericalMethod.hpp"
+#include "dynamics/tendency_processes/AdvectionTerm.hpp"
 #include "core/BoundaryConditionManager.hpp"
 #include "core/Grid.hpp"
 #include "core/HaloExchanger.hpp"
@@ -22,9 +23,11 @@ public:
         const Utils::ConfigurationManager& config,
         const Core::Grid& grid,
         Core::HaloExchanger& halo_exchanger,
-        const Core::BoundaryConditionManager& bc_manager)
+        const Core::BoundaryConditionManager& bc_manager,
+        std::shared_ptr<MeanWindState> mean_wind_state)
         : config_(config), grid_(grid),
-          halo_exchanger_(halo_exchanger), bc_manager_(bc_manager) {}
+          halo_exchanger_(halo_exchanger), bc_manager_(bc_manager),
+          mean_wind_state_(std::move(mean_wind_state)) {}
 
     std::unique_ptr<NumericalMethod> create(
         const std::string& variable_name,
@@ -58,6 +61,7 @@ private:
     const Core::Grid& grid_;
     Core::HaloExchanger& halo_exchanger_;
     const Core::BoundaryConditionManager& bc_manager_;
+    std::shared_ptr<MeanWindState> mean_wind_state_;
 };
 
 } // namespace Dynamics

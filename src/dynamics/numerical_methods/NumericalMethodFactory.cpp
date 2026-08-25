@@ -83,7 +83,7 @@ NumericalMethodFactory::create_tendency_term(
     std::unique_ptr<SpatialScheme> spatial_scheme,
     bool normalize_anelastic_scalar) const {
     if (term_name == "advection") {
-        return std::make_unique<AdvectionTerm>(std::move(spatial_scheme), variable_name, halo_exchanger_, bc_manager_, normalize_anelastic_scalar);
+        return std::make_unique<AdvectionTerm>(std::move(spatial_scheme), variable_name, halo_exchanger_, bc_manager_, mean_wind_state_, normalize_anelastic_scalar);
     }
     if (term_name == "stretching") {
         return std::make_unique<StretchingTerm>(std::move(spatial_scheme), variable_name, halo_exchanger_);

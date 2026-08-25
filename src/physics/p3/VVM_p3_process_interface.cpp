@@ -634,27 +634,27 @@ void VVM_P3_Interface::preprocessing_and_packing(VVM::Core::State& state) {
     EKAT_REQUIRE_MSG(nx_phys * ny_phys == m_num_cols,
                      "P3 pack column count must be nx_phys * ny_phys.");
 
-    auto qc_3d = state.get_field<3>("qc").get_mutable_device_data();
-    auto nc_3d = state.get_field<3>("nc").get_mutable_device_data();
-    auto qr_3d = state.get_field<3>("qr").get_mutable_device_data();
-    auto nr_3d = state.get_field<3>("nr").get_mutable_device_data();
-    auto qi_3d = state.get_field<3>("qi").get_mutable_device_data();
-    auto qm_3d = state.get_field<3>("qm").get_mutable_device_data();
-    auto ni_3d = state.get_field<3>("ni").get_mutable_device_data();
-    auto bm_3d = state.get_field<3>("bm").get_mutable_device_data();
-    auto th_3d = state.get_field<3>("th").get_device_data();
-    auto thm_3d = state.get_field<3>("th_m").get_device_data();
+    auto qc_3d = qc_ref_.get(state, "qc").get_mutable_device_data();
+    auto nc_3d = nc_ref_.get(state, "nc").get_mutable_device_data();
+    auto qr_3d = qr_ref_.get(state, "qr").get_mutable_device_data();
+    auto nr_3d = nr_ref_.get(state, "nr").get_mutable_device_data();
+    auto qi_3d = qi_ref_.get(state, "qi").get_mutable_device_data();
+    auto qm_3d = qm_ref_.get(state, "qm").get_mutable_device_data();
+    auto ni_3d = ni_ref_.get(state, "ni").get_mutable_device_data();
+    auto bm_3d = bm_ref_.get(state, "bm").get_mutable_device_data();
+    auto th_3d = th_ref_.get(state, "th").get_device_data();
+    auto thm_3d = th_m_ref_.get(state, "th_m").get_device_data();
 
     if (declare_p3_diag_) {
-        Kokkos::deep_copy(state.get_field<3>("th_m_diag").get_mutable_device_data(), state.get_field<3>("th_m").get_device_data());
-        Kokkos::deep_copy(state.get_field<3>("qv_m_diag").get_mutable_device_data(), state.get_field<3>("qv_m").get_device_data());
+        Kokkos::deep_copy(th_m_diag_ref_.get(state, "th_m_diag").get_mutable_device_data(), th_m_ref_.get(state, "th_m").get_device_data());
+        Kokkos::deep_copy(qv_m_diag_ref_.get(state, "qv_m_diag").get_mutable_device_data(), qv_m_ref_.get(state, "qv_m").get_device_data());
     }
-    auto qv_3d = state.get_field<3>("qv").get_mutable_device_data();
-    auto qvm_3d = state.get_field<3>("qv_m").get_mutable_device_data();
+    auto qv_3d = qv_ref_.get(state, "qv").get_mutable_device_data();
+    auto qvm_3d = qv_m_ref_.get(state, "qv_m").get_mutable_device_data();
 
-    auto pibar = state.get_field<1>("pibar").get_device_data();
-    auto pbar = state.get_field<1>("pbar").get_device_data();
-    auto dpbar_mid = state.get_field<1>("dpbar_mid").get_device_data();
+    auto pibar = pibar_ref_.get(state, "pibar").get_device_data();
+    auto pbar = pbar_ref_.get(state, "pbar").get_device_data();
+    auto dpbar_mid = dpbar_mid_ref_.get(state, "dpbar_mid").get_device_data();
 
     auto qc_p3 = m_qc_view;
     auto nc_p3 = m_nc_view;
@@ -805,32 +805,32 @@ void VVM_P3_Interface::postprocessing_and_unpacking(VVM::Core::State& state) {
     EKAT_REQUIRE_MSG(nx_phys * ny_phys == m_num_cols,
                      "P3 unpack column count must be nx_phys * ny_phys.");
 
-    auto qc_3d = state.get_field<3>("qc").get_mutable_device_data();
-    auto nc_3d = state.get_field<3>("nc").get_mutable_device_data();
-    auto qr_3d = state.get_field<3>("qr").get_mutable_device_data();
-    auto nr_3d = state.get_field<3>("nr").get_mutable_device_data();
-    auto qi_3d = state.get_field<3>("qi").get_mutable_device_data();
-    auto qm_3d = state.get_field<3>("qm").get_mutable_device_data();
-    auto ni_3d = state.get_field<3>("ni").get_mutable_device_data();
-    auto bm_3d = state.get_field<3>("bm").get_mutable_device_data();
-    auto th_3d = state.get_field<3>("th").get_mutable_device_data();
-    auto qv_3d = state.get_field<3>("qv").get_mutable_device_data();
-    auto qp_3d = state.get_field<3>("qp").get_mutable_device_data(); 
-    auto T_3d  = state.get_field<3>("T").get_mutable_device_data();
+    auto qc_3d = qc_ref_.get(state, "qc").get_mutable_device_data();
+    auto nc_3d = nc_ref_.get(state, "nc").get_mutable_device_data();
+    auto qr_3d = qr_ref_.get(state, "qr").get_mutable_device_data();
+    auto nr_3d = nr_ref_.get(state, "nr").get_mutable_device_data();
+    auto qi_3d = qi_ref_.get(state, "qi").get_mutable_device_data();
+    auto qm_3d = qm_ref_.get(state, "qm").get_mutable_device_data();
+    auto ni_3d = ni_ref_.get(state, "ni").get_mutable_device_data();
+    auto bm_3d = bm_ref_.get(state, "bm").get_mutable_device_data();
+    auto th_3d = th_ref_.get(state, "th").get_mutable_device_data();
+    auto qv_3d = qv_ref_.get(state, "qv").get_mutable_device_data();
+    auto qp_3d = qp_ref_.get(state, "qp").get_mutable_device_data();
+    auto T_3d  = T_ref_.get(state, "T").get_mutable_device_data();
 
-    auto eff_rad_qc_3d = state.get_field<3>("diag_eff_radius_qc").get_mutable_device_data();
-    auto eff_rad_qi_3d = state.get_field<3>("diag_eff_radius_qi").get_mutable_device_data();
-    auto eff_rad_qr_3d = state.get_field<3>("diag_eff_radius_qr").get_mutable_device_data();
+    auto eff_rad_qc_3d = diag_eff_radius_qc_ref_.get(state, "diag_eff_radius_qc").get_mutable_device_data();
+    auto eff_rad_qi_3d = diag_eff_radius_qi_ref_.get(state, "diag_eff_radius_qi").get_mutable_device_data();
+    auto eff_rad_qr_3d = diag_eff_radius_qr_ref_.get(state, "diag_eff_radius_qr").get_mutable_device_data();
 
-    auto precip_liq_surf_2d = state.get_field<2>("precip_liq_surf_mass").get_mutable_device_data();
-    auto precip_ice_surf_2d = state.get_field<2>("precip_ice_surf_mass").get_mutable_device_data();
-    auto precip_liq_surf_flux_2d = state.get_field<2>("precip_liq_surf_flux").get_mutable_device_data();
-    auto precip_ice_surf_flux_2d = state.get_field<2>("precip_ice_surf_flux").get_mutable_device_data();
+    auto precip_liq_surf_2d = precip_liq_surf_mass_ref_.get(state, "precip_liq_surf_mass").get_mutable_device_data();
+    auto precip_ice_surf_2d = precip_ice_surf_mass_ref_.get(state, "precip_ice_surf_mass").get_mutable_device_data();
+    auto precip_liq_surf_flux_2d = precip_liq_surf_flux_ref_.get(state, "precip_liq_surf_flux").get_mutable_device_data();
+    auto precip_ice_surf_flux_2d = precip_ice_surf_flux_ref_.get(state, "precip_ice_surf_flux").get_mutable_device_data();
 
-    auto ITYPEW = state.get_field<3>("ITYPEW").get_device_data();
-    auto thbar  = state.get_field<1>("thbar").get_device_data();
-    auto pibar  = state.get_field<1>("pibar").get_device_data();
-    auto topo = state.get_field<2>("topo").get_device_data();
+    auto ITYPEW = ITYPEW_ref_.get(state, "ITYPEW").get_device_data();
+    auto thbar  = thbar_ref_.get(state, "thbar").get_device_data();
+    auto pibar  = pibar_ref_.get(state, "pibar").get_device_data();
+    auto topo = topo_ref_.get(state, "topo").get_device_data();
 
     auto qc_p3 = m_qc_view;
     auto nc_p3 = m_nc_view;
@@ -959,11 +959,13 @@ void VVM_P3_Interface::postprocessing_and_unpacking(VVM::Core::State& state) {
         }
     );
 
-    std::vector<std::string> p3_update_vars = {
-        "qc", "nc", "qr", "nr", "qi", "qm", "ni", "bm", 
-        "th", "qv", "qp", "T"
-    };
-    halo_exchanger_.exchange_multiple_halos(p3_update_vars, state);
+    if (m_p3_update_fields.empty()) {
+        for (const char* var_name : {"qc", "nc", "qr", "nr", "qi", "qm", "ni", "bm",
+                                     "th", "qv", "qp", "T"}) {
+            m_p3_update_fields.push_back(&state.get_field<3>(var_name));
+        }
+    }
+    halo_exchanger_.exchange_multiple_halos(m_p3_update_fields);
 }
 
 
@@ -1023,22 +1025,22 @@ void VVM_P3_Interface::run(VVM::Core::State &state, const VVM::Real dt) {
     }
 
     if (declare_p3_diag_) {
-        Kokkos::deep_copy(state.get_field<3>("qv_after_p3").get_mutable_device_data(), state.get_field<3>("qv").get_device_data());
-        Kokkos::deep_copy(state.get_field<3>("qc_after_p3").get_mutable_device_data(), state.get_field<3>("qc").get_device_data());
-        Kokkos::deep_copy(state.get_field<3>("qr_after_p3").get_mutable_device_data(), state.get_field<3>("qr").get_device_data());
-        Kokkos::deep_copy(state.get_field<3>("qi_after_p3").get_mutable_device_data(), state.get_field<3>("qi").get_device_data());
-        Kokkos::deep_copy(state.get_field<3>("nc_after_p3").get_mutable_device_data(), state.get_field<3>("nc").get_device_data());
-        Kokkos::deep_copy(state.get_field<3>("ni_after_p3").get_mutable_device_data(), state.get_field<3>("ni").get_device_data());
-        Kokkos::deep_copy(state.get_field<3>("nr_after_p3").get_mutable_device_data(), state.get_field<3>("nr").get_device_data());
-        Kokkos::deep_copy(state.get_field<3>("qm_after_p3").get_mutable_device_data(), state.get_field<3>("qm").get_device_data());
-        Kokkos::deep_copy(state.get_field<3>("bm_after_p3").get_mutable_device_data(), state.get_field<3>("bm").get_device_data());
-        Kokkos::deep_copy(state.get_field<3>("th_after_p3").get_mutable_device_data(), state.get_field<3>("th").get_device_data());
+        Kokkos::deep_copy(qv_after_p3_ref_.get(state, "qv_after_p3").get_mutable_device_data(), qv_ref_.get(state, "qv").get_device_data());
+        Kokkos::deep_copy(qc_after_p3_ref_.get(state, "qc_after_p3").get_mutable_device_data(), qc_ref_.get(state, "qc").get_device_data());
+        Kokkos::deep_copy(qr_after_p3_ref_.get(state, "qr_after_p3").get_mutable_device_data(), qr_ref_.get(state, "qr").get_device_data());
+        Kokkos::deep_copy(qi_after_p3_ref_.get(state, "qi_after_p3").get_mutable_device_data(), qi_ref_.get(state, "qi").get_device_data());
+        Kokkos::deep_copy(nc_after_p3_ref_.get(state, "nc_after_p3").get_mutable_device_data(), nc_ref_.get(state, "nc").get_device_data());
+        Kokkos::deep_copy(ni_after_p3_ref_.get(state, "ni_after_p3").get_mutable_device_data(), ni_ref_.get(state, "ni").get_device_data());
+        Kokkos::deep_copy(nr_after_p3_ref_.get(state, "nr_after_p3").get_mutable_device_data(), nr_ref_.get(state, "nr").get_device_data());
+        Kokkos::deep_copy(qm_after_p3_ref_.get(state, "qm_after_p3").get_mutable_device_data(), qm_ref_.get(state, "qm").get_device_data());
+        Kokkos::deep_copy(bm_after_p3_ref_.get(state, "bm_after_p3").get_mutable_device_data(), bm_ref_.get(state, "bm").get_device_data());
+        Kokkos::deep_copy(th_after_p3_ref_.get(state, "th_after_p3").get_mutable_device_data(), th_ref_.get(state, "th").get_device_data());
     }
 }
 
 void VVM_P3_Interface::compute_time_averaged_precip(VVM::Core::State& state) {
-    auto& precip_liq_surf_mass_2d = state.get_field<2>("precip_liq_surf_mass").get_mutable_device_data();
-    auto& precip_ice_surf_mass_2d = state.get_field<2>("precip_ice_surf_mass").get_mutable_device_data();
+    auto& precip_liq_surf_mass_2d = precip_liq_surf_mass_ref_.get(state, "precip_liq_surf_mass").get_mutable_device_data();
+    auto& precip_ice_surf_mass_2d = precip_ice_surf_mass_ref_.get(state, "precip_ice_surf_mass").get_mutable_device_data();
 
     VVM::Real total_time = (m_output_interval_s > 0.0) ? m_output_interval_s : 1.0;
 
@@ -1055,8 +1057,8 @@ void VVM_P3_Interface::compute_time_averaged_precip(VVM::Core::State& state) {
 }
 
 void VVM_P3_Interface::reset_precip_accumulation(VVM::Core::State& state) {
-    auto& precip_liq_surf_mass_2d = state.get_field<2>("precip_liq_surf_mass").get_mutable_device_data();
-    auto& precip_ice_surf_mass_2d = state.get_field<2>("precip_ice_surf_mass").get_mutable_device_data();
+    auto& precip_liq_surf_mass_2d = precip_liq_surf_mass_ref_.get(state, "precip_liq_surf_mass").get_mutable_device_data();
+    auto& precip_ice_surf_mass_2d = precip_ice_surf_mass_ref_.get(state, "precip_ice_surf_mass").get_mutable_device_data();
 
     Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), precip_liq_surf_mass_2d, 0.0);
     Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), precip_ice_surf_mass_2d, 0.0);

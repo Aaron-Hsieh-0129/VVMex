@@ -113,6 +113,23 @@ private:
     VVM::Real vk_;
 
     TerrainMasks masks_;
+
+    Core::FieldRef<1> rhobar_ref_;
+    Core::FieldRef<1> rhobar_up_ref_;
+    Core::FieldRef<2> topo_ref_;
+    Core::FieldRef<2> topov_ref_;
+    Core::FieldRef<3> u_ref_;
+    Core::FieldRef<3> v_ref_;
+    Core::FieldRef<3> w_ref_;
+    Core::FieldRef<3> th_ref_;
+    Core::FieldRef<3> R_xi_ref_;
+    Core::FieldRef<3> R_eta_ref_;
+    Core::FieldRef<3> R_zeta_ref_;
+    Core::FieldRef<3> ITYPEU_ref_;
+    Core::FieldRef<3> ITYPEV_ref_;
+    Core::FieldRef<3> ITYPEW_ref_;
+    Core::FieldRef<3> RKM_ref_;
+    Core::FieldRef<3> RKH_ref_;
 };
 
 } // namespace Physics

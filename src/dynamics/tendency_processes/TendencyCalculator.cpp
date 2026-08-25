@@ -12,7 +12,10 @@ TendencyCalculator::TendencyCalculator(std::string var_name,
     : variable_name_(std::move(var_name)),
       ab2_tendency_terms_(std::move(ab2_terms)),
       fe_tendency_terms_(std::move(fe_terms)),
-      multistage_tendency_terms_(std::move(multistage_terms)) {}
+      multistage_tendency_terms_(std::move(multistage_terms)),
+      hist_0_name_("d_" + variable_name_ + "_0"),
+      hist_1_name_("d_" + variable_name_ + "_1"),
+      fe_tendency_name_("fe_tendency_" + variable_name_) {}
 
 void TendencyCalculator::calculate_tendencies(Core::State& state, const Core::Grid& grid, const Core::Parameters& params) {
     if (ab2_tendency_terms_.empty() && fe_tendency_terms_.empty()) {
@@ -23,7 +26,7 @@ void TendencyCalculator::calculate_tendencies(Core::State& state, const Core::Gr
     const int& ny = grid.get_local_total_points_y();
     const int& nx = grid.get_local_total_points_x();
 
-    auto& field_to_update = state.get_field<3>(variable_name_);
+    auto& field_to_update = var_ref_.get(state, variable_name_);
     auto& field_current_view = field_to_update.get_mutable_device_data();
 
     // Calculate AB2 tendencies
@@ -36,8 +39,9 @@ void TendencyCalculator::calculate_tendencies(Core::State& state, const Core::Gr
         }
 
         const size_t now_idx = state.get_step() % 2;
-        auto& current_tendency_field =
-            state.get_field<3>("d_" + variable_name_ + (now_idx == 0 ? "_0" : "_1"));
+        auto& current_tendency_field = (now_idx == 0)
+            ? hist_0_ref_.get(state, hist_0_name_)
+            : hist_1_ref_.get(state, hist_1_name_);
         current_tendency_field.set_to_zero();
 
         for (const auto& term : ab2_tendency_terms_) {
@@ -47,7 +51,7 @@ void TendencyCalculator::calculate_tendencies(Core::State& state, const Core::Gr
 
     // Calculate Forward Euler tendencies
     if (!fe_tendency_terms_.empty()) {
-        auto& fe_tendency_field = state.get_field<3>("fe_tendency_" + variable_name_);
+        auto& fe_tendency_field = fe_tendency_ref_.get(state, fe_tendency_name_);
         fe_tendency_field.set_to_zero();
         for (const auto& term : fe_tendency_terms_) {
             term->compute_tendency(state, grid, params, fe_tendency_field);

@@ -56,6 +56,33 @@ private:
     std::string land_scheme_;
     std::string v_coord_type_;
     VVM::Real speed1_filter_;
+
+    Core::FieldRef<1> pbar_ref_;
+    Core::FieldRef<1> pibar_ref_;
+    Core::FieldRef<1> rhobar_ref_;
+    Core::FieldRef<1> rhobar_up_ref_;
+    Core::FieldRef<1> thbar_ref_;
+    Core::FieldRef<2> Tg_ref_;
+    Core::FieldRef<2> VEN2D_ref_;
+    Core::FieldRef<2> cmx_ref_;
+    Core::FieldRef<2> gwet_ref_;
+    Core::FieldRef<2> molen_ref_;
+    Core::FieldRef<2> sea_land_ice_mask_ref_;
+    Core::FieldRef<2> sfc_flux_th_ref_;
+    Core::FieldRef<2> sfc_flux_qv_ref_;
+    Core::FieldRef<2> sfc_flux_u_ref_;
+    Core::FieldRef<2> sfc_flux_v_ref_;
+    Core::FieldRef<2> topo_ref_;
+    Core::FieldRef<2> topou_ref_;
+    Core::FieldRef<2> topov_ref_;
+    Core::FieldRef<2> ustar_ref_;
+    Core::FieldRef<2> zrough_ref_;
+    Core::FieldRef<3> u_ref_;
+    Core::FieldRef<3> v_ref_;
+    Core::FieldRef<3> th_ref_;
+    Core::FieldRef<3> qv_ref_;
+    Core::FieldRef<3> qc_ref_;
+    Core::FieldRef<3> qi_ref_;
 };
 
 } // namespace Physics

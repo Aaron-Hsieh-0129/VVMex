@@ -502,6 +502,48 @@ protected:
 #endif
 
     bool declare_p3_diag_ = false;
+
+    VVM::Core::FieldRef<1> pbar_ref_;
+    VVM::Core::FieldRef<1> pibar_ref_;
+    VVM::Core::FieldRef<1> thbar_ref_;
+    VVM::Core::FieldRef<1> dpbar_mid_ref_;
+    VVM::Core::FieldRef<2> topo_ref_;
+    VVM::Core::FieldRef<2> precip_liq_surf_mass_ref_;
+    VVM::Core::FieldRef<2> precip_ice_surf_mass_ref_;
+    VVM::Core::FieldRef<2> precip_liq_surf_flux_ref_;
+    VVM::Core::FieldRef<2> precip_ice_surf_flux_ref_;
+    VVM::Core::FieldRef<3> ITYPEW_ref_;
+    VVM::Core::FieldRef<3> T_ref_;
+    VVM::Core::FieldRef<3> th_ref_;
+    VVM::Core::FieldRef<3> th_m_ref_;
+    VVM::Core::FieldRef<3> th_m_diag_ref_;
+    VVM::Core::FieldRef<3> qv_ref_;
+    VVM::Core::FieldRef<3> qv_m_ref_;
+    VVM::Core::FieldRef<3> qv_m_diag_ref_;
+    VVM::Core::FieldRef<3> qc_ref_;
+    VVM::Core::FieldRef<3> qr_ref_;
+    VVM::Core::FieldRef<3> qi_ref_;
+    VVM::Core::FieldRef<3> qm_ref_;
+    VVM::Core::FieldRef<3> qp_ref_;
+    VVM::Core::FieldRef<3> nc_ref_;
+    VVM::Core::FieldRef<3> nr_ref_;
+    VVM::Core::FieldRef<3> ni_ref_;
+    VVM::Core::FieldRef<3> bm_ref_;
+    VVM::Core::FieldRef<3> diag_eff_radius_qc_ref_;
+    VVM::Core::FieldRef<3> diag_eff_radius_qi_ref_;
+    VVM::Core::FieldRef<3> diag_eff_radius_qr_ref_;
+    VVM::Core::FieldRef<3> th_after_p3_ref_;
+    VVM::Core::FieldRef<3> qv_after_p3_ref_;
+    VVM::Core::FieldRef<3> qc_after_p3_ref_;
+    VVM::Core::FieldRef<3> qr_after_p3_ref_;
+    VVM::Core::FieldRef<3> qi_after_p3_ref_;
+    VVM::Core::FieldRef<3> qm_after_p3_ref_;
+    VVM::Core::FieldRef<3> nc_after_p3_ref_;
+    VVM::Core::FieldRef<3> nr_after_p3_ref_;
+    VVM::Core::FieldRef<3> ni_after_p3_ref_;
+    VVM::Core::FieldRef<3> bm_after_p3_ref_;
+
+    std::vector<VVM::Core::Field<3>*> m_p3_update_fields;
 };
 
 } // namespace Physics

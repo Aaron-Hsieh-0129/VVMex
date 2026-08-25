@@ -69,6 +69,34 @@ private:
 
     VVM::Real uvtau_;
     bool predict_uvtopmn_ = true;
+
+    struct FeTarget {
+        std::string name;
+        Core::Field<3>* field = nullptr;
+        Core::Field<3>* fe_3d = nullptr;
+        Core::Field<2>* fe_2d = nullptr;
+        bool zero_gradient_top = false;
+    };
+
+    std::vector<FeTarget> tracer_source_targets_;
+    std::vector<FeTarget> turbulence_thermo_targets_;
+    std::vector<FeTarget> surface_thermo_targets_;
+    std::vector<FeTarget> integrate_thermo_targets_;
+    std::vector<FeTarget> sponge_thermo_targets_;
+    std::vector<FeTarget> lateral_nudging_targets_;
+    std::vector<FeTarget> thermo_boundary_targets_;
+    std::vector<FeTarget> turbulence_dynamics_targets_;
+    std::vector<FeTarget> surface_dynamics_targets_;
+    std::vector<FeTarget> integrate_dynamics_targets_;
+    std::vector<FeTarget> sponge_dynamics_targets_;
+    std::vector<FeTarget> dynamics_boundary_targets_;
+
+    std::vector<Core::Field<3>*> tracer_source_fields_;
+    std::vector<Core::Field<3>*> thermo_boundary_fields_;
+    std::vector<Core::Field<3>*> dynamics_boundary_fields_;
+
+    bool field_cache_ready_ = false;
+    void ensure_field_cache();
 };
 
 }

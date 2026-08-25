@@ -95,10 +95,10 @@ void TurbulenceProcess::initialize(Core::State& state) {
 }
 
 void TurbulenceProcess::init_boundary_masks(Core::State& state) {
-    const auto& ITYPEU = state.get_field<3>("ITYPEU").get_device_data();
-    const auto& ITYPEV = state.get_field<3>("ITYPEV").get_device_data();
-    const auto& ITYPEW = state.get_field<3>("ITYPEW").get_device_data();
-    const auto& hx     = state.get_field<2>("topo").get_device_data();
+    const auto& ITYPEU = ITYPEU_ref_.get(state, "ITYPEU").get_device_data();
+    const auto& ITYPEV = ITYPEV_ref_.get(state, "ITYPEV").get_device_data();
+    const auto& ITYPEW = ITYPEW_ref_.get(state, "ITYPEW").get_device_data();
+    const auto& hx     = topo_ref_.get(state, "topo").get_device_data();
 
     int nz = grid_.get_local_total_points_z();
     int ny = grid_.get_local_total_points_y();
@@ -253,22 +253,22 @@ void TurbulenceProcess::compute_coefficients(Core::State& state, VVM::Real dt)
     const int nx = grid_.get_local_total_points_x();
     const int h = grid_.get_halo_cells();
 
-    const auto& u = state.get_field<3>("u").get_device_data();
-    const auto& v = state.get_field<3>("v").get_device_data();
-    const auto& w = state.get_field<3>("w").get_device_data();
-    const auto& R_xi = state.get_field<3>("R_xi").get_device_data();
-    const auto& R_eta = state.get_field<3>("R_eta").get_device_data();
-    const auto& R_zeta = state.get_field<3>("R_zeta").get_device_data();
-    const auto& th = state.get_field<3>("th").get_device_data();
+    const auto& u = u_ref_.get(state, "u").get_device_data();
+    const auto& v = v_ref_.get(state, "v").get_device_data();
+    const auto& w = w_ref_.get(state, "w").get_device_data();
+    const auto& R_xi = R_xi_ref_.get(state, "R_xi").get_device_data();
+    const auto& R_eta = R_eta_ref_.get(state, "R_eta").get_device_data();
+    const auto& R_zeta = R_zeta_ref_.get(state, "R_zeta").get_device_data();
+    const auto& th = th_ref_.get(state, "th").get_device_data();
     const auto& z_mid = params_.z_mid.get_device_data(); 
     const auto& flex_height_coef_mid = params_.flex_height_coef_mid.get_device_data();
     const auto& flex_height_coef_up = params_.flex_height_coef_up.get_device_data();
-    const auto& ITYPEU = state.get_field<3>("ITYPEU").get_device_data();
-    const auto& ITYPEV = state.get_field<3>("ITYPEV").get_device_data();
-    const auto& ITYPEW = state.get_field<3>("ITYPEW").get_device_data();
+    const auto& ITYPEU = ITYPEU_ref_.get(state, "ITYPEU").get_device_data();
+    const auto& ITYPEV = ITYPEV_ref_.get(state, "ITYPEV").get_device_data();
+    const auto& ITYPEW = ITYPEW_ref_.get(state, "ITYPEW").get_device_data();
 
-    auto& rkm = state.get_field<3>("RKM").get_mutable_device_data();
-    auto& rkh = state.get_field<3>("RKH").get_mutable_device_data();
+    auto& rkm = RKM_ref_.get(state, "RKM").get_mutable_device_data();
+    auto& rkh = RKH_ref_.get(state, "RKH").get_mutable_device_data();
 
     const VVM::Real rdx = rdx_;
     const VVM::Real rdy = rdy_;
@@ -358,8 +358,8 @@ void TurbulenceProcess::compute_coefficients(Core::State& state, VVM::Real dt)
         }
     );
 
-    halo_exchanger_.exchange_halos(state.get_field<3>("RKM"));
-    halo_exchanger_.exchange_halos(state.get_field<3>("RKH"));
+    halo_exchanger_.exchange_halos(RKM_ref_.get(state, "RKM"));
+    halo_exchanger_.exchange_halos(RKH_ref_.get(state, "RKH"));
 }
 
 template<size_t Dim>
@@ -367,16 +367,16 @@ void TurbulenceProcess::calculate_tendencies(Core::State& state,
                                              const std::string& var_name, 
                                              Core::Field<Dim>& out_tendency) 
 {
-    const auto& RKM = state.get_field<3>("RKM").get_device_data();
-    const auto& RKH = state.get_field<3>("RKH").get_device_data();
+    const auto& RKM = RKM_ref_.get(state, "RKM").get_device_data();
+    const auto& RKH = RKH_ref_.get(state, "RKH").get_device_data();
     const auto& var = state.get_field<3>(var_name).get_device_data();
     auto& tend = out_tendency.get_mutable_device_data();
     const auto& flex_height_coef_mid = params_.flex_height_coef_mid.get_device_data();
     const auto& flex_height_coef_up = params_.flex_height_coef_up.get_device_data();
-    const auto& rhobar_up = state.get_field<1>("rhobar_up").get_device_data();
-    const auto& rhobar = state.get_field<1>("rhobar").get_device_data();
-    const auto& hx     = state.get_field<2>("topo").get_device_data();
-    const auto& hxv     = state.get_field<2>("topov").get_device_data();
+    const auto& rhobar_up = rhobar_up_ref_.get(state, "rhobar_up").get_device_data();
+    const auto& rhobar = rhobar_ref_.get(state, "rhobar").get_device_data();
+    const auto& hx     = topo_ref_.get(state, "topo").get_device_data();
+    const auto& hxv     = topov_ref_.get(state, "topov").get_device_data();
 
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
@@ -391,7 +391,7 @@ void TurbulenceProcess::calculate_tendencies(Core::State& state,
 
     int NK2 = nz-h-1;
     int NK1 = nz-h-2;
-    const auto& ITYPEW = state.get_field<3>("ITYPEW").get_device_data();
+    const auto& ITYPEW = ITYPEW_ref_.get(state, "ITYPEW").get_device_data();
     auto step = state.get_step();
     if constexpr (Dim == 3) {
         if (var_name == "xi") {

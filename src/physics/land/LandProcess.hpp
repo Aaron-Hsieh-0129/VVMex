@@ -82,6 +82,54 @@ private:
     view_2d_ll m_tskin, m_canopy, m_snwdph, m_sneqv, m_zorl, m_cmx, m_chx, m_lai;
 
     view_2d_ll m_hflux, m_qflux, m_evap, m_gfx;
+
+    Core::FieldRef<1> pbar_ref_;
+    Core::FieldRef<1> pbar_up_ref_;
+    Core::FieldRef<1> pibar_ref_;
+    Core::FieldRef<1> pibar_up_ref_;
+    Core::FieldRef<1> rhobar_ref_;
+    Core::FieldRef<2> Tg_ref_;
+    Core::FieldRef<2> albedo_ref_;
+    Core::FieldRef<2> canopy_ref_;
+    Core::FieldRef<2> chx_ref_;
+    Core::FieldRef<2> cmx_ref_;
+    Core::FieldRef<2> gfx_ref_;
+    Core::FieldRef<2> gvf_ref_;
+    Core::FieldRef<2> hfx_ref_;
+    Core::FieldRef<2> lai_ref_;
+    Core::FieldRef<2> le_ref_;
+    Core::FieldRef<2> lwdn_sfc_ref_;
+    Core::FieldRef<2> precip_ice_surf_flux_ref_;
+    Core::FieldRef<2> precip_liq_surf_flux_ref_;
+    Core::FieldRef<2> sea_land_ice_mask_ref_;
+    Core::FieldRef<2> sfemis_ref_;
+    Core::FieldRef<2> shdmax_ref_;
+    Core::FieldRef<2> shdmin_ref_;
+    Core::FieldRef<2> sl1_ref_;
+    Core::FieldRef<2> sl2_ref_;
+    Core::FieldRef<2> sl3_ref_;
+    Core::FieldRef<2> sl4_ref_;
+    Core::FieldRef<2> slopetype_ref_;
+    Core::FieldRef<2> sm1_ref_;
+    Core::FieldRef<2> sm2_ref_;
+    Core::FieldRef<2> sm3_ref_;
+    Core::FieldRef<2> sm4_ref_;
+    Core::FieldRef<2> sneqv_ref_;
+    Core::FieldRef<2> snwdph_ref_;
+    Core::FieldRef<2> soiltype_ref_;
+    Core::FieldRef<2> st1_ref_;
+    Core::FieldRef<2> st2_ref_;
+    Core::FieldRef<2> st3_ref_;
+    Core::FieldRef<2> st4_ref_;
+    Core::FieldRef<2> swdn_sfc_ref_;
+    Core::FieldRef<2> swup_sfc_ref_;
+    Core::FieldRef<2> topo_ref_;
+    Core::FieldRef<2> vegtype_ref_;
+    Core::FieldRef<2> zorl_ref_;
+    Core::FieldRef<3> th_ref_;
+    Core::FieldRef<3> qv_ref_;
+    Core::FieldRef<3> u_ref_;
+    Core::FieldRef<3> v_ref_;
 };
 
 } // namespace Physics

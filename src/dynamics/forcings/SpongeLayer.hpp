@@ -52,6 +52,11 @@ private:
 
     bool damp_thermo_ = false;
     bool damp_vort_ = false;
+
+    Core::FieldRef<1> CGR_thermo_ref_;
+    Core::FieldRef<1> CGR_vort_ref_;
+    Core::FieldRef<1> thbar_ref_;
+    Core::FieldRef<1> qvbar_ref_;
 };
 
 } // namespace Dynamics

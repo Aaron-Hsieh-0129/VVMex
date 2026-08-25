@@ -10,7 +10,11 @@ TimeIntegrator::TimeIntegrator(
     std::unique_ptr<TemporalScheme> multistage_scheme)
     : variable_name_(std::move(var_name)), has_ab2_terms_(has_ab2),
       has_fe_terms_(has_fe),
-      multistage_scheme_(std::move(multistage_scheme)) {}
+      multistage_scheme_(std::move(multistage_scheme)),
+      prev_state_name_(variable_name_ + "_m"),
+      hist_0_name_("d_" + variable_name_ + "_0"),
+      hist_1_name_("d_" + variable_name_ + "_1"),
+      fe_tendency_name_("fe_tendency_" + variable_name_) {}
 
 TimeIntegrator::~TimeIntegrator() = default; 
 
@@ -26,7 +30,7 @@ void TimeIntegrator::step(
             "' requires a tendency evaluator and stage processor.");
     }
 
-    auto& field_to_update = state.get_field<3>(variable_name_);
+    auto& field_to_update = var_ref_.get(state, variable_name_);
     auto& field_new_view = field_to_update.get_mutable_device_data();
 
     const int nz = grid.get_local_total_points_z();
@@ -42,7 +46,7 @@ void TimeIntegrator::step(
 
     if (has_ab2_terms_) {
         // Variable uses Adams-Bashforth (and possibly also Forward Euler)
-        auto& field_prev_step = state.get_field<3>(variable_name_ + "_m");
+        auto& field_prev_step = var_prev_ref_.get(state, prev_state_name_);
 
         auto& var_view = field_to_update.get_mutable_device_data();
         auto& var_m_view = field_prev_step.get_mutable_device_data();
@@ -57,12 +61,14 @@ void TimeIntegrator::step(
         size_t now_idx = state.get_step() % 2;
         size_t prev_idx = (state.get_step() + 1) % 2;
         
-        auto hist_now  = state.get_field<3>("d_" + variable_name_ + (now_idx  == 0 ? "_0" : "_1")).get_mutable_device_data();
-        auto hist_prev = state.get_field<3>("d_" + variable_name_ + (prev_idx == 0 ? "_0" : "_1")).get_mutable_device_data();
+        auto& hist_0 = hist_0_ref_.get(state, hist_0_name_);
+        auto& hist_1 = hist_1_ref_.get(state, hist_1_name_);
+        auto hist_now  = (now_idx  == 0 ? hist_0 : hist_1).get_mutable_device_data();
+        auto hist_prev = (prev_idx == 0 ? hist_0 : hist_1).get_mutable_device_data();
 
-        const auto& ITYPEU = state.get_field<3>("ITYPEU").get_device_data();
-        const auto& ITYPEV = state.get_field<3>("ITYPEV").get_device_data();
-        const auto& ITYPEW = state.get_field<3>("ITYPEW").get_device_data();
+        const auto& ITYPEU = itypeu_ref_.get(state, "ITYPEU").get_device_data();
+        const auto& ITYPEV = itypev_ref_.get(state, "ITYPEV").get_device_data();
+        const auto& ITYPEW = itypew_ref_.get(state, "ITYPEW").get_device_data();
         const auto& max_topo_idx = params.max_topo_idx;
         if (variable_name_ == "xi") {
             Kokkos::parallel_for("topo",
@@ -143,7 +149,7 @@ void TimeIntegrator::step(
 
         // --- Add Forward Euler tendencies on top of AB2 update if applicable ---
         if (has_fe_terms_) {
-            const auto& fe_tendency_data = state.get_field<3>("fe_tendency_" + variable_name_).get_device_data();
+            const auto& fe_tendency_data = fe_tendency_ref_.get(state, fe_tendency_name_).get_device_data();
 
             Kokkos::parallel_for("Forward_Euler_FE_Terms_Additive",
                 Kokkos::MDRangePolicy<Kokkos::Rank<3>>({k_start, h, h}, {k_end, ny-h, nx-h}),
@@ -156,9 +162,9 @@ void TimeIntegrator::step(
 
     if (has_fe_terms_ && !has_ab2_terms_) {
         // Variable *only* uses Forward Euler
-        auto& field_new_view = state.get_field<3>(variable_name_).get_mutable_device_data();
-        
-        auto& fe_tendency_field = state.get_field<3>("fe_tendency_" + variable_name_);
+        auto& field_new_view = var_ref_.get(state, variable_name_).get_mutable_device_data();
+
+        auto& fe_tendency_field = fe_tendency_ref_.get(state, fe_tendency_name_);
         auto fe_tendency_data = fe_tendency_field.get_device_data();
         
         Kokkos::parallel_for("Pure_Forward_Euler_Step",

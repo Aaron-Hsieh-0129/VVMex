@@ -201,9 +201,8 @@ void Bp5HistoryWriter::skip_field(const std::string& field_name, const char* rea
 }
 
 void Bp5HistoryWriter::define_field(const std::string& field_name) {
-    auto it = state_.begin();
-    while (it != state_.end() && it->first != field_name) ++it;
-    if (it == state_.end()) {
+    const Core::AnyField* entry = state_.find_any(field_name);
+    if (entry == nullptr) {
         skip_field(field_name, "not registered in this run's state");
         return;
     }
@@ -264,7 +263,7 @@ void Bp5HistoryWriter::define_field(const std::string& field_name) {
                                    std::move(selection), std::move(variable)});
             }
         },
-        it->second);
+        *entry);
 }
 
 void Bp5HistoryWriter::define_schema() {

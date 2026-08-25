@@ -172,6 +172,11 @@ private:
     const Core::Grid& grid_;
     mutable bool initial_field_validated_ = false;
 
+    Core::ConstFieldRef<1> rhobar_ref_;
+    Core::ConstFieldRef<3> ITYPEU_ref_;
+    Core::ConstFieldRef<3> ITYPEV_ref_;
+    Core::ConstFieldRef<3> ITYPEW_ref_;
+
     // Scheme-owned reusable device scratch. None of these fields is registered
     // in State, so output and restart discovery cannot expose them.
     mutable Core::Field<3> slope_x_;

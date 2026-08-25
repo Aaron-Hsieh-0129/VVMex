@@ -11,6 +11,7 @@
 #include "core/vvm_types.hpp"
 #include "utils/ConfigurationManager.hpp"
 #include "spatial_schemes/Takacs.hpp"
+#include "tendency_processes/AdvectionTerm.hpp"
 #include "numerical_methods/NumericalMethod.hpp"
 #include "solvers/WindSolver.hpp"
 #include "core/BoundaryConditionManager.hpp"
@@ -61,6 +62,25 @@ private:
     std::map<std::string, std::unique_ptr<NumericalMethod>> numerical_methods_;
     std::vector<IntegrationStep> integration_procedure_;
 
+    struct VariableCache {
+        std::string name;
+        Core::Field<3>* field = nullptr;
+        NumericalMethod* method = nullptr;
+        Core::Field<3>* fe_tendency = nullptr;
+        bool zero_gradient_top = false;
+        bool is_th = false;
+        bool is_xi = false;
+        bool is_eta = false;
+    };
+    std::vector<VariableCache> thermo_cache_;
+    std::vector<VariableCache> vorticity_cache_;
+    std::vector<const VariableCache*> single_stage_thermo_;
+    std::vector<Core::Field<3>*> single_stage_thermo_fields_;
+    bool field_cache_ready_ = false;
+    void ensure_field_cache();
+
+    std::shared_ptr<MeanWindState> mean_wind_state_;
+
     std::unique_ptr<WindSolver> wind_solver_;
     std::unique_ptr<Takacs> diagnostic_scheme_;
 
@@ -75,6 +95,38 @@ private:
     Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> mean_v_turb_{"mean_v_turb"};
     Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> mean_u_coriolis_{"mean_u_coriolis"};
     Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> mean_v_coriolis_{"mean_v_coriolis"};
+
+    Core::FieldRef<0> utopmn_ref_;
+    Core::FieldRef<0> utopmn_m_ref_;
+    Core::FieldRef<0> vtopmn_ref_;
+    Core::FieldRef<0> vtopmn_m_ref_;
+    Core::FieldRef<1> f_ref_;
+    Core::FieldRef<1> thbar_ref_;
+    Core::FieldRef<1> rhobar_ref_;
+    Core::FieldRef<1> rhobar_up_ref_;
+    Core::FieldRef<1> d_utopmn_ref_;
+    Core::FieldRef<1> d_vtopmn_ref_;
+    Core::FieldRef<2> tempu_ref_;
+    Core::FieldRef<2> tempv_ref_;
+    Core::FieldRef<3> u_ref_;
+    Core::FieldRef<3> v_ref_;
+    Core::FieldRef<3> w_ref_;
+    Core::FieldRef<3> xi_ref_;
+    Core::FieldRef<3> eta_ref_;
+    Core::FieldRef<3> zeta_ref_;
+    Core::FieldRef<3> u_topo_ref_;
+    Core::FieldRef<3> v_topo_ref_;
+    Core::FieldRef<3> w_topo_ref_;
+    Core::FieldRef<3> xi_topo_ref_;
+    Core::FieldRef<3> eta_topo_ref_;
+    Core::FieldRef<3> R_xi_ref_;
+    Core::FieldRef<3> R_eta_ref_;
+    Core::FieldRef<3> R_zeta_ref_;
+    Core::FieldRef<3> ITYPEU_ref_;
+    Core::FieldRef<3> ITYPEV_ref_;
+    Core::FieldRef<3> ITYPEW_ref_;
+    Core::FieldRef<3> RKM_ref_;
+    Core::FieldRef<3> RKH_ref_;
 };
 
 } // namespace Dynamics

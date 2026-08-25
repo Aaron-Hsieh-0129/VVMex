@@ -85,7 +85,7 @@ void LateralBoundaryNudging::initialize(Core::State& state) {
         }
     }
 
-    auto& weight = state.get_field<2>("lbn_weight").get_mutable_device_data();
+    auto& weight = lbn_weight_ref_.get(state, "lbn_weight").get_mutable_device_data();
     
     VVM::Real offset = offset_;
     VVM::Real width  = width_;
@@ -231,12 +231,22 @@ void LateralBoundaryNudging::update_large_scale_forcing(Core::State& state, VVM:
     int ny = grid_.get_local_total_points_y();
     int nx = grid_.get_local_total_points_x();
 
-    for (const auto& var : target_vars_) {
-        const auto& t1_data = state.get_field<3>(name_T1_.at(var)).get_device_data();
-        const auto& t2_data = state.get_field<3>(name_T2_.at(var)).get_device_data();
-        auto& current_ls = state.get_field<3>(var + "_ls").get_mutable_device_data();
+    if (forcing_targets_.empty()) {
+        forcing_targets_.reserve(target_vars_.size());
+        for (const auto& var : target_vars_) {
+            forcing_targets_.push_back({&state.get_field<3>(name_T1_.at(var)),
+                                        &state.get_field<3>(name_T2_.at(var)),
+                                        &state.get_field<3>(var + "_ls"),
+                                        "Time_Interpolation_" + var});
+        }
+    }
 
-        Kokkos::parallel_for("Time_Interpolation_" + var,
+    for (const auto& target : forcing_targets_) {
+        const auto& t1_data = target.t1->get_device_data();
+        const auto& t2_data = target.t2->get_device_data();
+        auto& current_ls = target.current->get_mutable_device_data();
+
+        Kokkos::parallel_for(target.kernel_label,
             Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
             KOKKOS_LAMBDA(const int k, const int j, const int i) {
                 current_ls(k, j, i) = (1.0 - W) * t1_data(k, j, i) + W * t2_data(k, j, i);
@@ -250,7 +260,7 @@ void LateralBoundaryNudging::calculate_tendencies(Core::State& state,
                                                   const std::string& var_name, 
                                                   Core::Field<Dim>& out_tendency) const 
 {
-    const auto& weight = state.get_field<2>("lbn_weight").get_device_data();
+    const auto& weight = lbn_weight_ref_.get(state, "lbn_weight").get_device_data();
     
     const auto& var = state.get_field<3>(var_name).get_device_data();
     

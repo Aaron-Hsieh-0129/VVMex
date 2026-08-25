@@ -198,11 +198,11 @@ void RRTMGPRadiation::initialize(VVM::Core::State& state) {
     const auto& h = m_grid.get_halo_cells();
     const auto& ny = m_grid.get_local_physical_points_y();
     const auto& nx = m_grid.get_local_physical_points_x();
-    const auto& lon = state.get_field<2>("lon").get_device_data();
-    const auto& lat = state.get_field<2>("lat").get_device_data();
+    const auto& lon = lon_ref_.get(state, "lon").get_device_data();
+    const auto& lat = lat_ref_.get(state, "lat").get_device_data();
 
-    const auto& lon_h = state.get_field<2>("lon").get_host_data();
-    const auto& lat_h = state.get_field<2>("lat").get_host_data();
+    const auto& lon_h = lon_ref_.get(state, "lon").get_host_data();
+    const auto& lat_h = lat_ref_.get(state, "lat").get_host_data();
 
     int rank = m_grid.get_mpi_rank();
     if (rank == 0) std::cout << "(lon, lat): (" << lon_h(0,0) << ", " << lat_h(0,0) << ")" << std::endl;
@@ -236,7 +236,7 @@ void RRTMGPRadiation::initialize(VVM::Core::State& state) {
     auto h_o2  = Kokkos::create_mirror_view(m_o2_profile);
 
     Real g1 = 3.6478, g2 = 0.83209, g3 = 11.3515;
-    const auto& h_pbar = state.get_field<1>("pbar").get_host_data(); 
+    const auto& h_pbar = pbar_ref_.get(state, "pbar").get_host_data();
     const int nz = m_grid.get_local_physical_points_z();
     // NOTE: The gas should be upside down, which means low index representing high level.
     for (int k = 0; k < m_nlay; ++k) {
@@ -394,45 +394,45 @@ void RRTMGPRadiation::run(VVM::Core::State& state, const double dt) {
     const int nlay = m_nlay;
 
     // Get VVM fields
-    auto& pbar = state.get_field<1>("pbar").get_device_data(); 
-    auto& pbar_up = state.get_field<1>("pbar_up").get_device_data(); 
-    auto& dpbar_mid = state.get_field<1>("dpbar_mid").get_device_data(); 
+    auto& pbar = pbar_ref_.get(state, "pbar").get_device_data();
+    auto& pbar_up = pbar_up_ref_.get(state, "pbar_up").get_device_data();
+    auto& dpbar_mid = dpbar_mid_ref_.get(state, "dpbar_mid").get_device_data();
     auto& dz_mid = m_params.dz_mid.get_device_data(); 
-    auto& qc = state.get_field<3>("qc").get_device_data();
-    auto& nc = state.get_field<3>("nc").get_device_data();
-    auto& qi = state.get_field<3>("qi").get_device_data();
-    auto& qv = state.get_field<3>("qv").get_device_data();
-    auto& th = state.get_field<3>("th").get_device_data();
-    const auto& tg = state.get_field<2>("Tg").get_device_data();
-    const auto& pibar = state.get_field<1>("pibar").get_device_data(); 
-    const auto& thbar = state.get_field<1>("thbar").get_device_data();
-    const auto& diag_eff_radius_qc = state.get_field<3>("diag_eff_radius_qc").get_device_data();
-    const auto& diag_eff_radius_qi = state.get_field<3>("diag_eff_radius_qi").get_device_data();
-    const auto& albedo = state.get_field<2>("albedo").get_device_data();
+    auto& qc = qc_ref_.get(state, "qc").get_device_data();
+    auto& nc = nc_ref_.get(state, "nc").get_device_data();
+    auto& qi = qi_ref_.get(state, "qi").get_device_data();
+    auto& qv = qv_ref_.get(state, "qv").get_device_data();
+    auto& th = th_ref_.get(state, "th").get_device_data();
+    const auto& tg = Tg_ref_.get(state, "Tg").get_device_data();
+    const auto& pibar = pibar_ref_.get(state, "pibar").get_device_data();
+    const auto& thbar = thbar_ref_.get(state, "thbar").get_device_data();
+    const auto& diag_eff_radius_qc = diag_eff_radius_qc_ref_.get(state, "diag_eff_radius_qc").get_device_data();
+    const auto& diag_eff_radius_qi = diag_eff_radius_qi_ref_.get(state, "diag_eff_radius_qi").get_device_data();
+    const auto& albedo = albedo_ref_.get(state, "albedo").get_device_data();
 
     Real Rd = m_config.get_value<double>("constants.Rd");
     Real g = m_config.get_value<double>("constants.gravity");
 
     // Output fields
-    auto& sw_heating = state.get_field<3>("sw_heating").get_mutable_device_data();
-    auto& lw_heating = state.get_field<3>("lw_heating").get_mutable_device_data();
-    auto& net_heating = state.get_field<3>("net_heating").get_mutable_device_data();
-    auto& net_sw_flux = state.get_field<3>("net_sw_flux").get_mutable_device_data();
-    auto& net_lw_flux = state.get_field<3>("net_lw_flux").get_mutable_device_data();
-    auto& swdn = state.get_field<3>("swdn").get_mutable_device_data();
-    auto& lwdn = state.get_field<3>("lwdn").get_mutable_device_data();
-    auto& lwup = state.get_field<3>("lwup").get_mutable_device_data();
-    auto& swup_toa = state.get_field<2>("swup_toa").get_mutable_device_data();
-    auto& swdn_toa = state.get_field<2>("swdn_toa").get_mutable_device_data();
-    auto& lwup_toa = state.get_field<2>("lwup_toa").get_mutable_device_data();
-    auto& lwdn_toa = state.get_field<2>("lwdn_toa").get_mutable_device_data();
+    auto& sw_heating = sw_heating_ref_.get(state, "sw_heating").get_mutable_device_data();
+    auto& lw_heating = lw_heating_ref_.get(state, "lw_heating").get_mutable_device_data();
+    auto& net_heating = net_heating_ref_.get(state, "net_heating").get_mutable_device_data();
+    auto& net_sw_flux = net_sw_flux_ref_.get(state, "net_sw_flux").get_mutable_device_data();
+    auto& net_lw_flux = net_lw_flux_ref_.get(state, "net_lw_flux").get_mutable_device_data();
+    auto& swdn = swdn_ref_.get(state, "swdn").get_mutable_device_data();
+    auto& lwdn = lwdn_ref_.get(state, "lwdn").get_mutable_device_data();
+    auto& lwup = lwup_ref_.get(state, "lwup").get_mutable_device_data();
+    auto& swup_toa = swup_toa_ref_.get(state, "swup_toa").get_mutable_device_data();
+    auto& swdn_toa = swdn_toa_ref_.get(state, "swdn_toa").get_mutable_device_data();
+    auto& lwup_toa = lwup_toa_ref_.get(state, "lwup_toa").get_mutable_device_data();
+    auto& lwdn_toa = lwdn_toa_ref_.get(state, "lwdn_toa").get_mutable_device_data();
 
-    auto& swup_sfc = state.get_field<2>("swup_sfc").get_mutable_device_data();
-    auto& swdn_sfc = state.get_field<2>("swdn_sfc").get_mutable_device_data();
-    auto& lwup_sfc = state.get_field<2>("lwup_sfc").get_mutable_device_data();
-    auto& lwdn_sfc = state.get_field<2>("lwdn_sfc").get_mutable_device_data();
+    auto& swup_sfc = swup_sfc_ref_.get(state, "swup_sfc").get_mutable_device_data();
+    auto& swdn_sfc = swdn_sfc_ref_.get(state, "swdn_sfc").get_mutable_device_data();
+    auto& lwup_sfc = lwup_sfc_ref_.get(state, "lwup_sfc").get_mutable_device_data();
+    auto& lwdn_sfc = lwdn_sfc_ref_.get(state, "lwdn_sfc").get_mutable_device_data();
 
-    const auto& topo = state.get_field<2>("topo").get_device_data();
+    const auto& topo = topo_ref_.get(state, "topo").get_device_data();
 
     // Fortran VVM RRTMG uses h2ovmr = mwdry/mwh2o*qv, not qv/(1-qv).
     constexpr Real mwdry = 28.966;
@@ -811,11 +811,11 @@ void RRTMGPRadiation::run(VVM::Core::State& state, const double dt) {
 
         Kokkos::deep_copy(h_gas_concs,  m_gas_concs_k.concs);
 
-        auto h_topo = state.get_field<2>("topo").get_host_data();
-        auto h_tg   = state.get_field<2>("Tg").get_host_data();
-        auto h_qc   = state.get_field<3>("qc").get_host_data();
-        auto h_qi   = state.get_field<3>("qi").get_host_data();
-        auto h_qv   = state.get_field<3>("qv").get_host_data();
+        auto h_topo = topo_ref_.get(state, "topo").get_host_data();
+        auto h_tg   = Tg_ref_.get(state, "Tg").get_host_data();
+        auto h_qc   = qc_ref_.get(state, "qc").get_host_data();
+        auto h_qi   = qi_ref_.get(state, "qi").get_host_data();
+        auto h_qv   = qv_ref_.get(state, "qv").get_host_data();
 
         const int ih2o = m_gas_concs_k.find_gas("h2o");
 
@@ -985,11 +985,11 @@ void RRTMGPRadiation::calculate_tendencies(VVM::Core::State& state) {
     const int nx = m_grid.get_local_total_points_x();
     const int h = m_grid.get_halo_cells();
 
-    state.get_field<3>("fe_tendency_th").set_to_zero();
-    auto fe_tend = state.get_field<3>("fe_tendency_th").get_mutable_device_data();
+    fe_tendency_th_ref_.get(state, "fe_tendency_th").set_to_zero();
+    auto fe_tend = fe_tendency_th_ref_.get(state, "fe_tendency_th").get_mutable_device_data();
     
-    const auto& net_heating = state.get_field<3>("net_heating").get_device_data(); 
-    const auto& pibar = state.get_field<1>("pibar").get_device_data();
+    const auto& net_heating = net_heating_ref_.get(state, "net_heating").get_device_data();
+    const auto& pibar = pibar_ref_.get(state, "pibar").get_device_data();
 
     Kokkos::parallel_for("Apply_RRTMGP_Heating_FE",
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {nz-h, ny-h, nx-h}),

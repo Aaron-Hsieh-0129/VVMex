@@ -323,18 +323,18 @@ void AreaMeanNudging::initialize(Core::State& state) {
                 "area-mean nudging y-wind target"});
     }
 
-    const auto& xi   = state.get_field<3>("xi").get_device_data();
-    const auto& eta  = state.get_field<3>("eta").get_device_data();
-    const auto& zeta = state.get_field<3>("zeta").get_device_data();
-    const auto& u    = state.get_field<3>("u").get_device_data();
-    const auto& v    = state.get_field<3>("v").get_device_data();
+    const auto& xi   = xi_ref_.get(state, "xi").get_device_data();
+    const auto& eta  = eta_ref_.get(state, "eta").get_device_data();
+    const auto& zeta = zeta_ref_.get(state, "zeta").get_device_data();
+    const auto& u    = u_ref_.get(state, "u").get_device_data();
+    const auto& v    = v_ref_.get(state, "v").get_device_data();
 
-    auto& l_sum_xi = state.get_field<1>("areamn_local_sum_xi").get_mutable_device_data();
-    auto& l_sum_eta = state.get_field<1>("areamn_local_sum_eta").get_mutable_device_data();
-    auto& g_sum_xi = state.get_field<1>("areamn_global_sum_xi").get_mutable_device_data();
-    auto& g_sum_eta = state.get_field<1>("areamn_global_sum_eta").get_mutable_device_data();
-    auto& l_sum_zeta = state.get_field<0>("areamn_local_sum_zeta_top").get_mutable_device_data();
-    auto& g_sum_zeta = state.get_field<0>("areamn_global_sum_zeta_top").get_mutable_device_data();
+    auto& l_sum_xi = areamn_local_sum_xi_ref_.get(state, "areamn_local_sum_xi").get_mutable_device_data();
+    auto& l_sum_eta = areamn_local_sum_eta_ref_.get(state, "areamn_local_sum_eta").get_mutable_device_data();
+    auto& g_sum_xi = areamn_global_sum_xi_ref_.get(state, "areamn_global_sum_xi").get_mutable_device_data();
+    auto& g_sum_eta = areamn_global_sum_eta_ref_.get(state, "areamn_global_sum_eta").get_mutable_device_data();
+    auto& l_sum_zeta = areamn_local_sum_zeta_top_ref_.get(state, "areamn_local_sum_zeta_top").get_mutable_device_data();
+    auto& g_sum_zeta = areamn_global_sum_zeta_top_ref_.get(state, "areamn_global_sum_zeta_top").get_mutable_device_data();
 
     Kokkos::View<VVM::Real> l_sum_u("l_sum_u");
     Kokkos::View<VVM::Real> g_sum_u("g_sum_u");
@@ -406,14 +406,14 @@ void AreaMeanNudging::initialize(Core::State& state) {
     deterministic_global_sum(state, l_sum_u.data(), g_sum_u.data(), 1);
     deterministic_global_sum(state, l_sum_v.data(), g_sum_v.data(), 1);
 
-    auto& xi0 = state.get_field<1>("areamn_xi0").get_mutable_device_data();
-    auto& eta0 = state.get_field<1>("areamn_eta0").get_mutable_device_data();
-    auto& zeta0_top = state.get_field<0>("areamn_zeta0_top").get_mutable_device_data();
-    auto& utopmn0 = state.get_field<0>("areamn_utopmn0").get_mutable_device_data();
-    auto& vtopmn0 = state.get_field<0>("areamn_vtopmn0").get_mutable_device_data();
+    auto& xi0 = areamn_xi0_ref_.get(state, "areamn_xi0").get_mutable_device_data();
+    auto& eta0 = areamn_eta0_ref_.get(state, "areamn_eta0").get_mutable_device_data();
+    auto& zeta0_top = areamn_zeta0_top_ref_.get(state, "areamn_zeta0_top").get_mutable_device_data();
+    auto& utopmn0 = areamn_utopmn0_ref_.get(state, "areamn_utopmn0").get_mutable_device_data();
+    auto& vtopmn0 = areamn_vtopmn0_ref_.get(state, "areamn_vtopmn0").get_mutable_device_data();
 
-    auto& utopmn = state.get_field<0>("utopmn").get_mutable_device_data();
-    auto& vtopmn = state.get_field<0>("vtopmn").get_mutable_device_data();
+    auto& utopmn = utopmn_ref_.get(state, "utopmn").get_mutable_device_data();
+    auto& vtopmn = vtopmn_ref_.get(state, "vtopmn").get_mutable_device_data();
 
     VVM::Real inv_pts = inv_total_xy_pts_;
 
@@ -474,12 +474,12 @@ void AreaMeanNudging::update_forcing_target(
     const int h = grid_.get_halo_cells();
     const int top_k = nz - h - 1;
 
-    auto& xi_target = state.get_field<1>("areamn_xi0").get_mutable_device_data();
-    auto& eta_target = state.get_field<1>("areamn_eta0").get_mutable_device_data();
-    auto& utop_target = state.get_field<0>("areamn_utopmn0").get_mutable_device_data();
-    auto& vtop_target = state.get_field<0>("areamn_vtopmn0").get_mutable_device_data();
-    auto& u_target = state.get_field<1>("areamn_u_target").get_mutable_device_data();
-    auto& v_target = state.get_field<1>("areamn_v_target").get_mutable_device_data();
+    auto& xi_target = areamn_xi0_ref_.get(state, "areamn_xi0").get_mutable_device_data();
+    auto& eta_target = areamn_eta0_ref_.get(state, "areamn_eta0").get_mutable_device_data();
+    auto& utop_target = areamn_utopmn0_ref_.get(state, "areamn_utopmn0").get_mutable_device_data();
+    auto& vtop_target = areamn_vtopmn0_ref_.get(state, "areamn_vtopmn0").get_mutable_device_data();
+    auto& u_target = areamn_u_target_ref_.get(state, "areamn_u_target").get_mutable_device_data();
+    auto& v_target = areamn_v_target_ref_.get(state, "areamn_v_target").get_mutable_device_data();
 
     const auto u_T1 = u_T1_;
     const auto u_T2 = u_T2_;
@@ -525,19 +525,19 @@ void AreaMeanNudging::apply_vorticity(Core::State& state, VVM::Real dt) {
     int h  = grid_.get_halo_cells();
     int top_k = nz - h - 1;
 
-    auto& xi = state.get_field<3>("xi").get_mutable_device_data();
-    auto& eta = state.get_field<3>("eta").get_mutable_device_data();
-    auto& zeta = state.get_field<3>("zeta").get_mutable_device_data();
+    auto& xi = xi_ref_.get(state, "xi").get_mutable_device_data();
+    auto& eta = eta_ref_.get(state, "eta").get_mutable_device_data();
+    auto& zeta = zeta_ref_.get(state, "zeta").get_mutable_device_data();
 
-    const auto& itypeu = state.get_field<3>("ITYPEU").get_device_data();
-    const auto& itypev = state.get_field<3>("ITYPEV").get_device_data();
+    const auto& itypeu = ITYPEU_ref_.get(state, "ITYPEU").get_device_data();
+    const auto& itypev = ITYPEV_ref_.get(state, "ITYPEV").get_device_data();
 
-    auto& l_sum_xi = state.get_field<1>("areamn_local_sum_xi").get_mutable_device_data();
-    auto& l_sum_eta = state.get_field<1>("areamn_local_sum_eta").get_mutable_device_data();
-    auto& g_sum_xi = state.get_field<1>("areamn_global_sum_xi").get_mutable_device_data();
-    auto& g_sum_eta = state.get_field<1>("areamn_global_sum_eta").get_mutable_device_data();
-    auto& l_sum_zeta = state.get_field<0>("areamn_local_sum_zeta_top").get_mutable_device_data();
-    auto& g_sum_zeta = state.get_field<0>("areamn_global_sum_zeta_top").get_mutable_device_data();
+    auto& l_sum_xi = areamn_local_sum_xi_ref_.get(state, "areamn_local_sum_xi").get_mutable_device_data();
+    auto& l_sum_eta = areamn_local_sum_eta_ref_.get(state, "areamn_local_sum_eta").get_mutable_device_data();
+    auto& g_sum_xi = areamn_global_sum_xi_ref_.get(state, "areamn_global_sum_xi").get_mutable_device_data();
+    auto& g_sum_eta = areamn_global_sum_eta_ref_.get(state, "areamn_global_sum_eta").get_mutable_device_data();
+    auto& l_sum_zeta = areamn_local_sum_zeta_top_ref_.get(state, "areamn_local_sum_zeta_top").get_mutable_device_data();
+    auto& g_sum_zeta = areamn_global_sum_zeta_top_ref_.get(state, "areamn_global_sum_zeta_top").get_mutable_device_data();
 
     Kokkos::deep_copy(l_sum_xi, 0.0);
     Kokkos::deep_copy(l_sum_eta, 0.0);
@@ -592,9 +592,9 @@ void AreaMeanNudging::apply_vorticity(Core::State& state, VVM::Real dt) {
     deterministic_global_sum(state, l_sum_eta.data(), g_sum_eta.data(), nz);
     deterministic_global_sum(state, l_sum_zeta.data(), g_sum_zeta.data(), 1);
 
-    const auto& xi0 = state.get_field<1>("areamn_xi0").get_device_data();
-    const auto& eta0 = state.get_field<1>("areamn_eta0").get_device_data();
-    const auto& z0_top = state.get_field<0>("areamn_zeta0_top").get_device_data();
+    const auto& xi0 = areamn_xi0_ref_.get(state, "areamn_xi0").get_device_data();
+    const auto& eta0 = areamn_eta0_ref_.get(state, "areamn_eta0").get_device_data();
+    const auto& z0_top = areamn_zeta0_top_ref_.get(state, "areamn_zeta0_top").get_device_data();
     const auto& z_coords = params_.z_up.get_device_data();
 
     VVM::Real uvtau = uvtau_;
@@ -631,11 +631,11 @@ void AreaMeanNudging::apply_vorticity(Core::State& state, VVM::Real dt) {
 void AreaMeanNudging::apply_uvtopmn(Core::State& state, VVM::Real dt) {
     if (!enable_) return;
 
-    auto& utopmn = state.get_field<0>("utopmn").get_mutable_device_data();
-    auto& vtopmn = state.get_field<0>("vtopmn").get_mutable_device_data();
+    auto& utopmn = utopmn_ref_.get(state, "utopmn").get_mutable_device_data();
+    auto& vtopmn = vtopmn_ref_.get(state, "vtopmn").get_mutable_device_data();
 
-    const auto& utopmn0 = state.get_field<0>("areamn_utopmn0").get_device_data();
-    const auto& vtopmn0 = state.get_field<0>("areamn_vtopmn0").get_device_data();
+    const auto& utopmn0 = areamn_utopmn0_ref_.get(state, "areamn_utopmn0").get_device_data();
+    const auto& vtopmn0 = areamn_vtopmn0_ref_.get(state, "areamn_vtopmn0").get_device_data();
 
     VVM::Real uvtau = uvtau_;
 
