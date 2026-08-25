@@ -75,6 +75,29 @@ private:
     void check_nc_error(int status, const std::string& message) const;
     mutable Kokkos::View<VVM::Real*> gather_buffer_;
 
+    Core::FieldRef<0> utopmn_ref_;
+    Core::FieldRef<0> vtopmn_ref_;
+    Core::FieldRef<0> areamn_utopmn0_ref_;
+    Core::FieldRef<0> areamn_vtopmn0_ref_;
+    Core::FieldRef<0> areamn_zeta0_top_ref_;
+    Core::FieldRef<0> areamn_local_sum_zeta_top_ref_;
+    Core::FieldRef<0> areamn_global_sum_zeta_top_ref_;
+    Core::FieldRef<1> areamn_xi0_ref_;
+    Core::FieldRef<1> areamn_eta0_ref_;
+    Core::FieldRef<1> areamn_u_target_ref_;
+    Core::FieldRef<1> areamn_v_target_ref_;
+    Core::FieldRef<1> areamn_local_sum_xi_ref_;
+    Core::FieldRef<1> areamn_local_sum_eta_ref_;
+    Core::FieldRef<1> areamn_global_sum_xi_ref_;
+    Core::FieldRef<1> areamn_global_sum_eta_ref_;
+    Core::FieldRef<3> u_ref_;
+    Core::FieldRef<3> v_ref_;
+    Core::FieldRef<3> xi_ref_;
+    Core::FieldRef<3> eta_ref_;
+    Core::FieldRef<3> zeta_ref_;
+    Core::FieldRef<3> ITYPEU_ref_;
+    Core::FieldRef<3> ITYPEV_ref_;
+
 
 #if defined(ENABLE_NCCL)
     ncclComm_t nccl_comm_; 

@@ -30,6 +30,14 @@ private:
     std::vector<std::unique_ptr<TendencyTerm>> fe_tendency_terms_;
     std::vector<std::unique_ptr<TendencyTerm>> multistage_tendency_terms_;
 
+    std::string hist_0_name_;
+    std::string hist_1_name_;
+    std::string fe_tendency_name_;
+    Core::FieldRef<3> var_ref_;
+    Core::FieldRef<3> hist_0_ref_;
+    Core::FieldRef<3> hist_1_ref_;
+    Core::FieldRef<3> fe_tendency_ref_;
+
     std::unique_ptr<Core::Field<3>> temp_tendency_field_ = nullptr;
     std::unique_ptr<Core::Field<3>> multistage_tendency_field_ = nullptr;
 };

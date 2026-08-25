@@ -63,7 +63,7 @@ void RandomForcing::apply(Core::State& state) {
 
     Kokkos::Random_XorShift64_Pool<> rand_pool(seed_ + state.get_step() + 10000*grid_.get_mpi_rank());
 
-    auto& th = state.get_field<3>("th").get_mutable_device_data();
+    auto& th = th_ref_.get(state, "th").get_mutable_device_data();
     VVM::Real amp = amplitude_;
     int k_start = k_start_;
     int k_end = k_end_ + 1;

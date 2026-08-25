@@ -23,6 +23,14 @@ public:
 private:
     const Core::Grid& grid_;
     std::vector<std::string> target_vars_;
+
+    struct SourcePair {
+        Core::Field<3>* tracer = nullptr;
+        Core::Field<3>* source = nullptr;
+        std::string kernel_label;
+    };
+    mutable std::vector<SourcePair> source_pairs_;
+    Core::FieldRef<3> ITYPEW_ref_;
 };
 
 } // namespace Dynamics

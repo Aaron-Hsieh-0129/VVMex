@@ -2,7 +2,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
+#include <string>
 #include <mpi.h>
 #include <omp.h>
 #include <memory>
@@ -29,9 +31,6 @@
 
 #include "driver/Model.hpp"
 #include "io/IOServer.hpp"
-
-#define STRINGIFY(x) #x
-#define TOSTRING(x) STRINGIFY(x)
 
 #if defined(ENABLE_NCCL)
 void init_nccl(ncclComm_t* comm, int rank, int size, MPI_Comm mpi_comm) {
@@ -66,16 +65,101 @@ int get_io_tasks(int argc, char *argv[]) {
     return 0;
 }
 
-int run_vvm(int argc, char *argv[], int world_rank, int world_size) {
-    // Load configuration file
-    std::string config_file_path = TOSTRING(VVM_ROOT_DIR) "/rundata/input_configs/default_config.json";
-    for(int i=1; i<argc; ++i) {
+struct CommandLine {
+    std::string config_file_path;
+    bool help_requested = false;
+};
+
+CommandLine parse_command_line(int argc, char *argv[]) {
+    CommandLine cli;
+    for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if(arg == "--io-tasks") { i++; continue; } 
+        if (arg == "-h" || arg == "--help") { cli.help_requested = true; continue; }
+        if (arg == "--io-tasks") { i++; continue; }
         // An empty argv element would index past the end and, worse, blank the
         // config path.
-        if(!arg.empty() && arg[0] != '-') config_file_path = arg;
+        if (!arg.empty() && arg[0] != '-') cli.config_file_path = arg;
     }
+    return cli;
+}
+
+bool is_launcher_rank_zero() {
+    const char* rank_vars[] = {"OMPI_COMM_WORLD_RANK", "PMIX_RANK", "PMI_RANK",
+                               "MV2_COMM_WORLD_RANK", "SLURM_PROCID"};
+    for (const char* var : rank_vars) {
+        if (const char* value = std::getenv(var)) return std::string(value) == "0";
+    }
+    return true;
+}
+
+std::string project_root() {
+    return std::string(VVM_ROOT_DIR);
+}
+
+void print_usage(const char* argv0) {
+    const std::string exe = (argv0 && *argv0) ? std::string(argv0) : std::string("./build/vvm");
+    const std::string root = project_root();
+    const std::string prefix = root.empty() ? std::string("$VVM_ROOT") : root;
+    const std::string case_dir = prefix + "/rundata/input_configs/default_cases";
+    const std::string example = case_dir + "/advection_u.json";
+
+    std::cout <<
+"VVMex -- Vector Vorticity cloud-resolving Model (Kokkos + MPI)\n"
+"\n"
+"vvm takes one required argument: the path to a run configuration file (JSON).\n"
+"There is no built-in default configuration, which is why a bare `" << exe << "`\n"
+"has nothing to run.\n"
+"\n"
+"USAGE\n"
+"  mpirun -np <ranks> " << exe << " <config.json> [--io-tasks <n>]\n"
+"\n"
+"  Recommended instead of mpirun: ./submit.py, which derives the environment from\n"
+"  the CMake preset and places ranks, GPUs and threads for you.\n"
+"\n"
+"    ./submit.py --local --preset <preset> -c <config.json> --compute <ranks>\n"
+"    ./submit.py                 # no arguments: asks for each value in turn\n"
+"\n"
+"YOUR FIRST RUN\n"
+"  1. export VVM_ROOT=<repository root>\n"
+"     Relative paths inside a configuration resolve against it, not the shell's\n"
+"     working directory.\n"
+"  2. Pick a case:\n"
+"       ls " << case_dir << "\n"
+"  3. In that file, point output.output_dir at a directory you can write, and\n"
+"     check initial_conditions.source_file / netcdf_reader.source_file exist.\n"
+"  4. Run it:\n"
+"       ./submit.py --local --preset <preset> -c " << example << " --compute 1\n"
+"     or, bypassing the wrapper:\n"
+"       mpirun -np 1 " << exe << " " << example << "\n"
+"\n"
+"ARGUMENTS\n"
+"  <config.json>   First non-option argument. Required.\n"
+"  --io-tasks <n>  Reserve n of the MPI ranks as dedicated I/O servers. Valid only\n"
+"                  when output.engine is \"SST\"; the remaining ranks run the model.\n"
+"  -h, --help      Print this message and exit.\n"
+"\n"
+"WHERE TO READ MORE (under " << (root.empty() ? std::string("the repository root") : root) << ")\n"
+"  docs/quick-start.md                    build the code, configure and run a case\n"
+"  docs/user-guides/configuration.md      every configuration key and its default\n"
+"  docs/user-guides/job-submission.md     ranks, GPUs, OpenMP threads, SLURM\n"
+"  docs/user-guides/output.md             HDF5 / SST / BP5 engines, precision, restart\n"
+"  docs/developer-guides/architecture.md  how the model is put together\n"
+              << std::flush;
+}
+
+int run_vvm(int argc, char *argv[], int world_rank, int world_size) {
+    const std::string config_file_path = parse_command_line(argc, argv).config_file_path;
+
+    if (!std::ifstream(config_file_path).good()) {
+        if (world_rank == 0) {
+            std::cerr << "[Main] ERROR: cannot open configuration file: "
+                      << config_file_path << "\n"
+                      << "  Run `" << argv[0] << " --help` for how to pick one."
+                      << std::endl;
+        }
+        return 1;
+    }
+
     VVM::Utils::ConfigurationManager config(config_file_path);
 
     // clean existing SST file to prevent errors
@@ -337,6 +421,12 @@ int run_vvm(int argc, char *argv[], int world_rank, int world_size) {
 }
 
 int main(int argc, char *argv[]) {
+    const CommandLine cli = parse_command_line(argc, argv);
+    if (cli.help_requested || cli.config_file_path.empty()) {
+        if (is_launcher_rank_zero()) print_usage(argv[0]);
+        return 0;
+    }
+
     MPI_Init(&argc, &argv);
 
     int world_rank, world_size;

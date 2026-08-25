@@ -266,6 +266,41 @@ protected:
     Kokkos::View<Real*, DefaultDevice> m_ch4_profile;
     Kokkos::View<Real*, DefaultDevice> m_n2o_profile;
     Kokkos::View<Real*, DefaultDevice> m_o2_profile;
+
+    VVM::Core::FieldRef<1> pbar_ref_;
+    VVM::Core::FieldRef<1> pbar_up_ref_;
+    VVM::Core::FieldRef<1> pibar_ref_;
+    VVM::Core::FieldRef<1> thbar_ref_;
+    VVM::Core::FieldRef<1> dpbar_mid_ref_;
+    VVM::Core::FieldRef<2> lon_ref_;
+    VVM::Core::FieldRef<2> lat_ref_;
+    VVM::Core::FieldRef<2> Tg_ref_;
+    VVM::Core::FieldRef<2> albedo_ref_;
+    VVM::Core::FieldRef<2> topo_ref_;
+    VVM::Core::FieldRef<2> swup_toa_ref_;
+    VVM::Core::FieldRef<2> swdn_toa_ref_;
+    VVM::Core::FieldRef<2> lwup_toa_ref_;
+    VVM::Core::FieldRef<2> lwdn_toa_ref_;
+    VVM::Core::FieldRef<2> swup_sfc_ref_;
+    VVM::Core::FieldRef<2> swdn_sfc_ref_;
+    VVM::Core::FieldRef<2> lwup_sfc_ref_;
+    VVM::Core::FieldRef<2> lwdn_sfc_ref_;
+    VVM::Core::FieldRef<3> th_ref_;
+    VVM::Core::FieldRef<3> qv_ref_;
+    VVM::Core::FieldRef<3> qc_ref_;
+    VVM::Core::FieldRef<3> qi_ref_;
+    VVM::Core::FieldRef<3> nc_ref_;
+    VVM::Core::FieldRef<3> diag_eff_radius_qc_ref_;
+    VVM::Core::FieldRef<3> diag_eff_radius_qi_ref_;
+    VVM::Core::FieldRef<3> sw_heating_ref_;
+    VVM::Core::FieldRef<3> lw_heating_ref_;
+    VVM::Core::FieldRef<3> net_heating_ref_;
+    VVM::Core::FieldRef<3> net_sw_flux_ref_;
+    VVM::Core::FieldRef<3> net_lw_flux_ref_;
+    VVM::Core::FieldRef<3> swdn_ref_;
+    VVM::Core::FieldRef<3> lwdn_ref_;
+    VVM::Core::FieldRef<3> lwup_ref_;
+    VVM::Core::FieldRef<3> fe_tendency_th_ref_;
 };
 
 } // namespace RRTMGP

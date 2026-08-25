@@ -219,6 +219,10 @@ Manual MPI is useful for small debug sessions after the environment has already 
 mpirun -np 1 ./build/vvm ./rundata/input_configs/default_cases/advection_u.json
 ```
 
+The configuration path is required — there is no default. Run `./build/vvm` with no
+arguments (or `--help`) and it prints a short tutorial covering the first run, the
+`--io-tasks` flag and where to read more; it does so without starting MPI.
+
 ### Asynchronous I/O (optional)
 
 Reserve ranks for dedicated I/O servers that consume an ADIOS2 **SST** stream and write HDF5 (`output.engine` must be `SST`):

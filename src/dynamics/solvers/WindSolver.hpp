@@ -65,7 +65,31 @@ private:
     mutable Core::Field<2> psi_tmp_field_;   // was ATEMP, now one per field
     mutable Core::Field<2> chi_tmp_field_;
 
+    // Default layout coalesces across columns on CUDA and along levels on host.
+    Kokkos::View<VVM::Real**> tri_tmp_;
+
     Core::HaloExchanger& halo_exchanger_;
+
+    Core::FieldRef<0> utopmn_ref_;
+    Core::FieldRef<0> vtopmn_ref_;
+    Core::FieldRef<0> utop_mean_tmp_ref_;
+    Core::FieldRef<0> vtop_mean_tmp_ref_;
+    Core::FieldRef<1> rhobar_ref_;
+    Core::FieldRef<1> rhobar_up_ref_;
+    Core::FieldRef<2> psi_ref_;
+    Core::FieldRef<2> psinm1_ref_;
+    Core::FieldRef<2> chi_ref_;
+    Core::FieldRef<2> chinm1_ref_;
+    Core::FieldRef<2> utop_ref_;
+    Core::FieldRef<2> vtop_ref_;
+    Core::FieldRef<3> u_ref_;
+    Core::FieldRef<3> v_ref_;
+    Core::FieldRef<3> w_ref_;
+    Core::FieldRef<3> zeta_ref_;
+    Core::FieldRef<3> xi_topo_ref_;
+    Core::FieldRef<3> eta_topo_ref_;
+    Core::FieldRef<3> W3DNM1_ref_;
+    mutable std::vector<Core::Field<3>*> uv_fields_;
 
     VVM::Real h_inv_C0_;
 

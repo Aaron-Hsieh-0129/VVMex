@@ -56,6 +56,12 @@ WindSolver::WindSolver(const Core::Grid& grid, const Utils::ConfigurationManager
     int ny = grid_.get_local_total_points_y();
     int nx = grid_.get_local_total_points_x();
 
+    if (w_solver_method_ == WSolverMethod::TRIDIAGONAL) {
+        const int h = grid_.get_halo_cells();
+        const size_t ncols = static_cast<size_t>(ny - 2 * h) * static_cast<size_t>(nx - 2 * h);
+        tri_tmp_ = Kokkos::View<VVM::Real**>("tri_tmp", ncols, nz);
+    }
+
     if (!state_.has_field("utop_mean_tmp")) state_.add_field<0>("utop_mean_tmp", {});
     if (!state_.has_field("vtop_mean_tmp")) state_.add_field<0>("vtop_mean_tmp", {});
     if (!state_.has_field("W3DNM1")) state_.add_field<3>("W3DNM1", {nz, ny, nx}, Core::FieldMetadata{Core::GridStaggering::StaggeredZ, "m s-1", "previous-step vertical wind"});
@@ -87,31 +93,13 @@ void WindSolver::solve_w() {
     const auto& BGAU = params_.BGAU.get_device_data();
     const auto& CGAU = params_.CGAU.get_device_data();
 
-    const auto& rhobar_up = state_.get_field<1>("rhobar_up").get_device_data();
-    const auto& xi = state_.get_field<3>("xi_topo").get_device_data();
-    const auto& eta = state_.get_field<3>("eta_topo").get_device_data();
+    const auto& rhobar_up = rhobar_up_ref_.get(state_, "rhobar_up").get_device_data();
+    const auto& xi = xi_topo_ref_.get(state_, "xi_topo").get_device_data();
+    const auto& eta = eta_topo_ref_.get(state_, "eta_topo").get_device_data();
 
-    auto& w = state_.get_field<3>("w").get_mutable_device_data();
+    auto& w = w_ref_.get(state_, "w").get_mutable_device_data();
 
     auto YTEM = YTEM_field_.get_mutable_device_data();
-
-    // One column per thread; scratch holds that column's forward-elimination
-    // temporaries. LayoutLeft puts the column index fastest, so adjacent threads hit
-    // adjacent banks. 32 columns x nz doubles is ~19 KB per team at nz=73; the count
-    // is capped so a taller grid shrinks the team rather than overrunning the 48 KB
-    // per-block scratch budget.
-    using ScratchPad = Kokkos::View<VVM::Real**, Kokkos::LayoutLeft,
-                                    Kokkos::DefaultExecutionSpace::scratch_memory_space,
-                                    Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
-    constexpr size_t kScratchBudget = 48 * 1024;
-    const int cols_that_fit = static_cast<int>(kScratchBudget / (sizeof(VVM::Real) * nz));
-    // Host backends cap a team at the thread-pool size, so clamp by concurrency or
-    // Kokkos aborts with "Requested Team Size is too large". On CUDA concurrency is
-    // orders of magnitude above 32, so the GPU team size is unchanged. Columns are
-    // independent -- team size only sets how they are grouped -- so this does not
-    // touch the per-column arithmetic.
-    const int max_team = std::max(1, Kokkos::DefaultExecutionSpace().concurrency());
-    const int kTeamCols = std::max(1, std::min(std::min(32, cols_that_fit), max_team));
 
     Kokkos::parallel_for("Poisson", Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h,h,h}, {nz-h-1,ny-h,nx-h}),
         KOKKOS_LAMBDA(int k, int j, int i) {
@@ -121,7 +109,7 @@ void WindSolver::solve_w() {
     );
 
     // Linear extrapolation of initial guess
-    auto& W3DNM1 = state_.get_field<3>("W3DNM1").get_mutable_device_data();
+    auto& W3DNM1 = W3DNM1_ref_.get(state_, "W3DNM1").get_mutable_device_data();
     Kokkos::parallel_for("W3DNP1", Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0,0,0}, {nz,ny,nx}),
         KOKKOS_LAMBDA(int k, int j, int i) {
             VVM::Real w_val = w(k,j,i);
@@ -176,47 +164,34 @@ void WindSolver::solve_w() {
                 auto P = prv->get_mutable_device_data();
                 auto C = cur->get_mutable_device_data();
 
-                // One kernel per sweep. The right-hand side is evaluated inline as the
-                // forward pass walks k (RHSV never materialises); the forward-elimination
-                // temporaries live in team scratch rather than a global array (they are
-                // written and read back by the same thread, so global memory was acting
-                // as a spill buffer); and the backward pass writes w straight out,
-                // carrying pm(k+1) in a register (no pm array). Every expression is
-                // unchanged and in the same order, so the result is bit-for-bit what the
-                // original four-kernel version produced.
                 const int nj = jhi - jlo, ni = ihi - ilo;
                 const int ncols = nj * ni;
-                const int nteams = (ncols + kTeamCols - 1) / kTeamCols;
-                const size_t shmem = ScratchPad::shmem_size(kTeamCols, nz);
+                auto tmp = tri_tmp_;
 
                 Kokkos::parallel_for("fused_tridiagonal_solver",
-                    Kokkos::TeamPolicy<>(nteams, kTeamCols).set_scratch_size(0, Kokkos::PerTeam(shmem)),
-                    KOKKOS_LAMBDA(const Kokkos::TeamPolicy<>::member_type& team) {
-                        ScratchPad tmp(team.team_scratch(0), kTeamCols, nz);
-                        const int c = team.team_rank();
-                        const int idx = team.league_rank() * kTeamCols + c;
-                        if (idx >= ncols) return;
+                    Kokkos::RangePolicy<>(0, ncols),
+                    KOKKOS_LAMBDA(const int idx) {
                         const int j = jlo + idx / ni;
                         const int i = ilo + idx % ni;
 
                         // Forward elimination)
-                        tmp(c,h) = (WRXMU() * P(h,j,i)
-                                 + (P(h,j,i+1)+P(h,j,i-1))*rdx2()
-                                 + (P(h,j+1,i)+P(h,j-1,i))*rdy2()
-                                 + YTEM(h,j,i)) / BGAU(h);
+                        tmp(idx,h) = (WRXMU() * P(h,j,i)
+                                   + (P(h,j,i+1)+P(h,j,i-1))*rdx2()
+                                   + (P(h,j+1,i)+P(h,j-1,i))*rdy2()
+                                   + YTEM(h,j,i)) / BGAU(h);
                         for (int k = h+1; k <= nz-h-2; k++) {
                             const VVM::Real rhs_k = WRXMU() * P(k,j,i)
                                                   + (P(k,j,i+1)+P(k,j,i-1))*rdx2()
                                                   + (P(k,j+1,i)+P(k,j-1,i))*rdy2()
                                                   + YTEM(k,j,i);
-                            tmp(c,k) = (rhs_k - AGAU(k) * tmp(c,k-1)) / bn_new(k);
+                            tmp(idx,k) = (rhs_k - AGAU(k) * tmp(idx,k-1)) / bn_new(k);
                         }
 
                         // Backward substitution
-                        VVM::Real pm_next = tmp(c,nz-h-2);
+                        VVM::Real pm_next = tmp(idx,nz-h-2);
                         C(nz-h-2,j,i) = pm_next / rhobar_up(nz-h-2);
                         for (int k = nz-h-3; k >= h; k--) {
-                            const VVM::Real pm_k = tmp(c,k) - cn_new(k) * pm_next;
+                            const VVM::Real pm_k = tmp(idx,k) - cn_new(k) * pm_next;
                             C(k,j,i) = pm_k / rhobar_up(k);
                             pm_next = pm_k;
                         }
@@ -271,7 +246,7 @@ void WindSolver::solve_w() {
             KOKKOS_LAMBDA(int k, int j, int i) { w(k,j,i) = RES(k,j,i); }
         );
     }
-    halo_exchanger_.exchange_halos(state_.get_field<3>("w"), 1);
+    halo_exchanger_.exchange_halos(w_ref_.get(state_, "w"), 1);
 
 #if defined(ENABLE_NCCL)
     cudaGraph_t graph = nullptr;
@@ -296,20 +271,20 @@ void WindSolver::solve_uv() {
     const int h = grid_.get_halo_cells();
     const auto& flex_height_coef_mid = params_.flex_height_coef_mid.get_device_data();
     const auto& flex_height_coef_up = params_.flex_height_coef_up.get_device_data();
-    const auto& rhobar = state_.get_field<1>("rhobar").get_device_data();
-    const auto& rhobar_up = state_.get_field<1>("rhobar_up").get_device_data();
+    const auto& rhobar = rhobar_ref_.get(state_, "rhobar").get_device_data();
+    const auto& rhobar_up = rhobar_up_ref_.get(state_, "rhobar_up").get_device_data();
     const auto& rdz = params_.rdz;
 
-    auto& psi_field = state_.get_field<2>("psi");
-    auto& psinm1_field = state_.get_field<2>("psinm1");
+    auto& psi_field = psi_ref_.get(state_, "psi");
+    auto& psinm1_field = psinm1_ref_.get(state_, "psinm1");
     auto& psi = psi_field.get_mutable_device_data();
     const auto& psinm1 = psinm1_field.get_device_data();
-    const auto& zeta = state_.get_field<3>("zeta").get_device_data();
+    const auto& zeta = zeta_ref_.get(state_, "zeta").get_device_data();
 
-    auto& w = state_.get_field<3>("w").get_mutable_device_data();
-    auto& chi_field = state_.get_field<2>("chi");
+    auto& w = w_ref_.get(state_, "w").get_mutable_device_data();
+    auto& chi_field = chi_ref_.get(state_, "chi");
     auto& chi = chi_field.get_mutable_device_data();
-    auto& chinm1_field = state_.get_field<2>("chinm1");
+    auto& chinm1_field = chinm1_ref_.get(state_, "chinm1");
     const auto& chinm1 = chinm1_field.get_device_data();
 
     {
@@ -356,8 +331,8 @@ void WindSolver::solve_uv() {
     halo_exchanger_.exchange_halos(chinm1_field);
 
     // Calculate utop, vtop
-    auto& utop_field = state_.get_field<2>("utop");
-    auto& vtop_field = state_.get_field<2>("vtop");
+    auto& utop_field = utop_ref_.get(state_, "utop");
+    auto& vtop_field = vtop_ref_.get(state_, "vtop");
     auto& utop = utop_field.get_mutable_device_data();
     auto& vtop = vtop_field.get_mutable_device_data();
     const auto& rdx = params_.rdx;
@@ -370,18 +345,18 @@ void WindSolver::solve_uv() {
     );
     
     // calculate u
-    auto& u_field = state_.get_field<3>("u");
+    auto& u_field = u_ref_.get(state_, "u");
     auto& u = u_field.get_mutable_device_data();
-    auto& v_field = state_.get_field<3>("v");
+    auto& v_field = v_ref_.get(state_, "v");
     auto& v = v_field.get_mutable_device_data();
 
-    auto& utopm = state_.get_field<0>("utop_mean_tmp").get_mutable_device_data();
-    auto& vtopm = state_.get_field<0>("vtop_mean_tmp").get_mutable_device_data();
+    auto& utopm = utop_mean_tmp_ref_.get(state_, "utop_mean_tmp").get_mutable_device_data();
+    auto& vtopm = vtop_mean_tmp_ref_.get(state_, "vtop_mean_tmp").get_mutable_device_data();
     state_.calculate_horizontal_mean(utop_field, utopm);
     state_.calculate_horizontal_mean(vtop_field, vtopm);
 
-    auto& utopmn = state_.get_field<0>("utopmn").get_device_data();
-    auto& vtopmn = state_.get_field<0>("vtopmn").get_device_data();
+    auto& utopmn = utopmn_ref_.get(state_, "utopmn").get_device_data();
+    auto& vtopmn = vtopmn_ref_.get(state_, "vtopmn").get_device_data();
 
     // Note: this data clipping is necessary to prevent too small values and this makes CPU and GPU VVM same.
     Kokkos::parallel_for("DataClipZero", 1, KOKKOS_LAMBDA(const int i) {
@@ -401,8 +376,8 @@ void WindSolver::solve_uv() {
         }
     );
 
-    const auto& xi = state_.get_field<3>("xi_topo").get_mutable_device_data();
-    const auto& eta = state_.get_field<3>("eta_topo").get_mutable_device_data();
+    const auto& xi = xi_topo_ref_.get(state_, "xi_topo").get_mutable_device_data();
+    const auto& eta = eta_topo_ref_.get(state_, "eta_topo").get_mutable_device_data();
     const auto& dz = params_.dz;
     Kokkos::parallel_for("u_downward_integration",
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny-h, nx-h}),
@@ -423,7 +398,10 @@ void WindSolver::solve_uv() {
                       + ((w(nz-h-1,j+1,i) - w(nz-h-1,j,i))*rdy() -  xi(nz-h-1,j,i)) * dz() / flex_height_coef_up(nz-h-1); 
         }
     );
-    halo_exchanger_.exchange_multiple_halos({"u", "v"}, state_);
+    if (uv_fields_.empty()) {
+        uv_fields_ = {&u_ref_.get(state_, "u"), &v_ref_.get(state_, "v")};
+    }
+    halo_exchanger_.exchange_multiple_halos(uv_fields_);
     return;
 }
 

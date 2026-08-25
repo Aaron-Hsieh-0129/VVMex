@@ -36,8 +36,8 @@ void SurfaceProcess::initialize(Core::State& state) {
     if (!state.has_field("gwet")) state.add_field<2>("gwet", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "1", "surface wetness"}); // Surface Wetness
     if (!state.has_field("zrough")) state.add_field<2>("zrough", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m", "surface roughness length"}); // Roughness Length
     if (!state.has_field("VEN2D")) state.add_field<2>("VEN2D", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m s-1", "surface momentum exchange coefficient"}); // Roughness Length
-    Kokkos::deep_copy(state.get_field<2>("gwet").get_mutable_device_data(), -1.);
-    Kokkos::deep_copy(state.get_field<2>("zrough").get_mutable_device_data(), 2e-4);
+    Kokkos::deep_copy(gwet_ref_.get(state, "gwet").get_mutable_device_data(), -1.);
+    Kokkos::deep_copy(zrough_ref_.get(state, "zrough").get_mutable_device_data(), 2e-4);
     
     if (!state.has_field("ustar")) state.add_field<2>("ustar", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m s-1", "surface friction velocity"});
     if (!state.has_field("molen")) state.add_field<2>("molen", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m", "Monin-Obukhov length"});
@@ -279,37 +279,37 @@ void SurfaceProcess::sflux_tc_2d(VVM::Real sigmau, VVM::Real thvm, VVM::Real thv
 
 
 void SurfaceProcess::compute_coefficients(Core::State& state) {
-    const auto& u = state.get_field<3>("u").get_device_data();
-    const auto& v = state.get_field<3>("v").get_device_data();
-    const auto& th = state.get_field<3>("th").get_device_data();
-    const auto& qv = state.get_field<3>("qv").get_device_data();
-    const auto& qc = state.get_field<3>("qc").get_device_data();
-    const auto& qi = state.get_field<3>("qi").get_device_data();
+    const auto& u = u_ref_.get(state, "u").get_device_data();
+    const auto& v = v_ref_.get(state, "v").get_device_data();
+    const auto& th = th_ref_.get(state, "th").get_device_data();
+    const auto& qv = qv_ref_.get(state, "qv").get_device_data();
+    const auto& qc = qc_ref_.get(state, "qc").get_device_data();
+    const auto& qi = qi_ref_.get(state, "qi").get_device_data();
     
-    const auto& pbar = state.get_field<1>("pbar").get_device_data();
-    const auto& pibar = state.get_field<1>("pibar").get_device_data();
+    const auto& pbar = pbar_ref_.get(state, "pbar").get_device_data();
+    const auto& pibar = pibar_ref_.get(state, "pibar").get_device_data();
     const auto& z_mid = params_.z_mid.get_device_data(); const auto& z_up = params_.z_up.get_device_data();
-    const auto& rhobar = state.get_field<1>("rhobar").get_device_data();
-    const auto& rhobar_up = state.get_field<1>("rhobar_up").get_device_data();
-    const auto& thbar = state.get_field<1>("thbar").get_device_data();
+    const auto& rhobar = rhobar_ref_.get(state, "rhobar").get_device_data();
+    const auto& rhobar_up = rhobar_up_ref_.get(state, "rhobar_up").get_device_data();
+    const auto& thbar = thbar_ref_.get(state, "thbar").get_device_data();
     const auto& flex_height_coef_mid = params_.flex_height_coef_mid.get_device_data();
 
-    const auto& Tg = state.get_field<2>("Tg").get_device_data();
-    const auto& gwet = state.get_field<2>("gwet").get_device_data();
-    const auto& zrough = state.get_field<2>("zrough").get_device_data();
-    const auto& sea_land_ice_mask = state.get_field<2>("sea_land_ice_mask").get_device_data();
+    const auto& Tg = Tg_ref_.get(state, "Tg").get_device_data();
+    const auto& gwet = gwet_ref_.get(state, "gwet").get_device_data();
+    const auto& zrough = zrough_ref_.get(state, "zrough").get_device_data();
+    const auto& sea_land_ice_mask = sea_land_ice_mask_ref_.get(state, "sea_land_ice_mask").get_device_data();
 
-    auto& sfc_flux_th = state.get_field<2>("sfc_flux_th").get_mutable_device_data();
-    auto& sfc_flux_qv = state.get_field<2>("sfc_flux_qv").get_mutable_device_data();
-    auto& sfc_flux_u = state.get_field<2>("sfc_flux_u").get_mutable_device_data();
-    auto& sfc_flux_v = state.get_field<2>("sfc_flux_v").get_mutable_device_data();
-    auto& ustar_view = state.get_field<2>("ustar").get_mutable_device_data();
-    auto& molen_view = state.get_field<2>("molen").get_mutable_device_data();
-    auto& VEN2D = state.get_field<2>("VEN2D").get_mutable_device_data();
+    auto& sfc_flux_th = sfc_flux_th_ref_.get(state, "sfc_flux_th").get_mutable_device_data();
+    auto& sfc_flux_qv = sfc_flux_qv_ref_.get(state, "sfc_flux_qv").get_mutable_device_data();
+    auto& sfc_flux_u = sfc_flux_u_ref_.get(state, "sfc_flux_u").get_mutable_device_data();
+    auto& sfc_flux_v = sfc_flux_v_ref_.get(state, "sfc_flux_v").get_mutable_device_data();
+    auto& ustar_view = ustar_ref_.get(state, "ustar").get_mutable_device_data();
+    auto& molen_view = molen_ref_.get(state, "molen").get_mutable_device_data();
+    auto& VEN2D = VEN2D_ref_.get(state, "VEN2D").get_mutable_device_data();
 
-    const auto& hx     = state.get_field<2>("topo").get_device_data();
-    const auto& hxu    = state.get_field<2>("topou").get_device_data();
-    const auto& hxv    = state.get_field<2>("topov").get_device_data();
+    const auto& hx     = topo_ref_.get(state, "topo").get_device_data();
+    const auto& hxu    = topou_ref_.get(state, "topou").get_device_data();
+    const auto& hxv    = topov_ref_.get(state, "topov").get_device_data();
 
     int ny = grid_.get_local_total_points_y();
     int nx = grid_.get_local_total_points_x();
@@ -413,7 +413,7 @@ void SurfaceProcess::compute_coefficients(Core::State& state) {
     }
 
     if (land_scheme_ == "noahlsm") {
-        const auto& cmx = state.get_field<2>("cmx").get_device_data();
+        const auto& cmx = cmx_ref_.get(state, "cmx").get_device_data();
 
         if (mode_ == "sflux_2d" || mode_ == "sflux_tc_2d") {
             Kokkos::parallel_for("OverwriteLandVEN2D",
@@ -434,7 +434,7 @@ void SurfaceProcess::compute_coefficients(Core::State& state) {
             );
         }
     }
-    halo_exchanger_.exchange_halos(state.get_field<2>("VEN2D"));
+    halo_exchanger_.exchange_halos(VEN2D_ref_.get(state, "VEN2D"));
 
     bool has_topo = (params_.max_topo_idx > h);
     Kokkos::parallel_for("SFlux_uv",
@@ -484,19 +484,19 @@ void SurfaceProcess::calculate_tendencies(Core::State& state,
     int nx = grid_.get_local_total_points_x();
 
     int h = grid_.get_halo_cells();
-    const auto& hxu    = state.get_field<2>("topou").get_device_data();
-    const auto& hxv    = state.get_field<2>("topov").get_device_data();
+    const auto& hxu    = topou_ref_.get(state, "topou").get_device_data();
+    const auto& hxv    = topov_ref_.get(state, "topov").get_device_data();
 
-    const auto& rhobar = state.get_field<1>("rhobar").get_device_data(); // Density
-    const auto& hx     = state.get_field<2>("topo").get_device_data();
+    const auto& rhobar = rhobar_ref_.get(state, "rhobar").get_device_data(); // Density
+    const auto& hx     = topo_ref_.get(state, "topo").get_device_data();
     const auto& rdz = params_.rdz; 
     const auto& rdz2 = params_.rdz2; 
     const auto& flex_height_coef_mid = params_.flex_height_coef_mid.get_device_data();
     const auto& flex_height_coef_up = params_.flex_height_coef_up.get_device_data();
-    const auto& sea_land_ice_mask = state.get_field<2>("sea_land_ice_mask").get_device_data();
+    const auto& sea_land_ice_mask = sea_land_ice_mask_ref_.get(state, "sea_land_ice_mask").get_device_data();
 
     if (var_name == "th") {
-        const auto& flux = state.get_field<2>("sfc_flux_th").get_device_data();
+        const auto& flux = sfc_flux_th_ref_.get(state, "sfc_flux_th").get_device_data();
         Kokkos::parallel_for("SfcFlux_Tendency_TH",
             Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny-h, nx-h}}),
             KOKKOS_LAMBDA(const int j, const int i) {
@@ -509,7 +509,7 @@ void SurfaceProcess::calculate_tendencies(Core::State& state,
         );
     } 
     else if (var_name == "qv") {
-        const auto& flux = state.get_field<2>("sfc_flux_qv").get_device_data();
+        const auto& flux = sfc_flux_qv_ref_.get(state, "sfc_flux_qv").get_device_data();
         Kokkos::parallel_for("SfcFlux_Tendency_QV",
             Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny-h, nx-h}}),
             KOKKOS_LAMBDA(const int j, const int i) {
@@ -522,7 +522,7 @@ void SurfaceProcess::calculate_tendencies(Core::State& state,
         );
     }
     else if (var_name == "xi") {
-        const auto& flux = state.get_field<2>("sfc_flux_v").get_device_data();
+        const auto& flux = sfc_flux_v_ref_.get(state, "sfc_flux_v").get_device_data();
         Kokkos::parallel_for("SfcFlux_Tendency_XI",
             Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny-h, nx-h}}),
             KOKKOS_LAMBDA(const int j, const int i) {
@@ -535,7 +535,7 @@ void SurfaceProcess::calculate_tendencies(Core::State& state,
         );
     }
     else if (var_name == "eta") {
-        const auto& flux = state.get_field<2>("sfc_flux_u").get_device_data();
+        const auto& flux = sfc_flux_u_ref_.get(state, "sfc_flux_u").get_device_data();
         Kokkos::parallel_for("SfcFlux_Tendency_ETA",
             Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny-h, nx-h}}),
             KOKKOS_LAMBDA(const int j, const int i) {

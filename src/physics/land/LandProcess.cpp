@@ -116,19 +116,19 @@ LandProcess::LandProcess(const Utils::ConfigurationManager& config,
 }
 
 void LandProcess::init() {
-    const auto& th_v = state_.get_field<3>("th").get_device_data();
-    const auto& pibar_v = state_.get_field<1>("pibar").get_device_data();
-    const auto& topo_v = state_.get_field<2>("topo").get_device_data();
-    auto& Tg = state_.get_field<2>("Tg").get_mutable_device_data(); 
-    const auto& sm1_v = state_.get_field<2>("sm1").get_device_data();
-    const auto& sm2_v = state_.get_field<2>("sm2").get_device_data();
-    const auto& sm3_v = state_.get_field<2>("sm3").get_device_data();
-    const auto& sm4_v = state_.get_field<2>("sm4").get_device_data();
+    const auto& th_v = th_ref_.get(state_, "th").get_device_data();
+    const auto& pibar_v = pibar_ref_.get(state_, "pibar").get_device_data();
+    const auto& topo_v = topo_ref_.get(state_, "topo").get_device_data();
+    auto& Tg = Tg_ref_.get(state_, "Tg").get_mutable_device_data();
+    const auto& sm1_v = sm1_ref_.get(state_, "sm1").get_device_data();
+    const auto& sm2_v = sm2_ref_.get(state_, "sm2").get_device_data();
+    const auto& sm3_v = sm3_ref_.get(state_, "sm3").get_device_data();
+    const auto& sm4_v = sm4_ref_.get(state_, "sm4").get_device_data();
 
-    const auto& sl1_v = state_.get_field<2>("sl1").get_device_data();
-    const auto& sl2_v = state_.get_field<2>("sl2").get_device_data();
-    const auto& sl3_v = state_.get_field<2>("sl3").get_device_data();
-    const auto& sl4_v = state_.get_field<2>("sl4").get_device_data();
+    const auto& sl1_v = sl1_ref_.get(state_, "sl1").get_device_data();
+    const auto& sl2_v = sl2_ref_.get(state_, "sl2").get_device_data();
+    const auto& sl3_v = sl3_ref_.get(state_, "sl3").get_device_data();
+    const auto& sl4_v = sl4_ref_.get(state_, "sl4").get_device_data();
     
     Kokkos::parallel_for("InitLandStates", 
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {m_nx, m_ny}),
@@ -176,25 +176,25 @@ void LandProcess::init() {
 }
 
 void LandProcess::prepare_static_data() {
-    auto& topo_v = state_.get_field<2>("topo").get_device_data();
-    auto& pbar_v = state_.get_field<1>("pbar").get_device_data();
-    auto& pbar_up_v = state_.get_field<1>("pbar_up").get_device_data();
+    auto& topo_v = topo_ref_.get(state_, "topo").get_device_data();
+    auto& pbar_v = pbar_ref_.get(state_, "pbar").get_device_data();
+    auto& pbar_up_v = pbar_up_ref_.get(state_, "pbar_up").get_device_data();
 
     auto z_mid_v = params_.z_mid.get_device_data();
     auto z_up_v = params_.z_up.get_device_data();
 
-    auto& pibar_v = state_.get_field<1>("pibar").get_device_data();
-    auto& pibar_up_v = state_.get_field<1>("pibar_up").get_device_data();
+    auto& pibar_v = pibar_ref_.get(state_, "pibar").get_device_data();
+    auto& pibar_up_v = pibar_up_ref_.get(state_, "pibar_up").get_device_data();
 
-    auto& sea_land_ice_mask = state_.get_field<2>("sea_land_ice_mask").get_device_data();
-    auto& vegtype = state_.get_field<2>("vegtype").get_device_data();
-    auto& soiltype = state_.get_field<2>("soiltype").get_device_data();
-    auto& slopetype = state_.get_field<2>("slopetype").get_device_data();
-    auto& shdmin = state_.get_field<2>("shdmin").get_device_data();
-    auto& shdmax = state_.get_field<2>("shdmax").get_device_data();
-    auto& albedo = state_.get_field<2>("albedo").get_device_data();
-    auto& gvf = state_.get_field<2>("gvf").get_device_data();
-    auto& lai = state_.get_field<2>("lai").get_device_data();
+    auto& sea_land_ice_mask = sea_land_ice_mask_ref_.get(state_, "sea_land_ice_mask").get_device_data();
+    auto& vegtype = vegtype_ref_.get(state_, "vegtype").get_device_data();
+    auto& soiltype = soiltype_ref_.get(state_, "soiltype").get_device_data();
+    auto& slopetype = slopetype_ref_.get(state_, "slopetype").get_device_data();
+    auto& shdmin = shdmin_ref_.get(state_, "shdmin").get_device_data();
+    auto& shdmax = shdmax_ref_.get(state_, "shdmax").get_device_data();
+    auto& albedo = albedo_ref_.get(state_, "albedo").get_device_data();
+    auto& gvf = gvf_ref_.get(state_, "gvf").get_device_data();
+    auto& lai = lai_ref_.get(state_, "lai").get_device_data();
 
     Kokkos::parallel_for("PrepareLandStaticData", 
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {m_nx, m_ny}),
@@ -231,21 +231,21 @@ void LandProcess::prepare_static_data() {
 }
 
 void LandProcess::preprocessing_and_packing() {
-    auto& u_v  = state_.get_field<3>("u").get_device_data();
-    auto& v_v  = state_.get_field<3>("v").get_device_data();
-    auto& qv_v = state_.get_field<3>("qv").get_device_data();
+    auto& u_v  = u_ref_.get(state_, "u").get_device_data();
+    auto& v_v  = v_ref_.get(state_, "v").get_device_data();
+    auto& qv_v = qv_ref_.get(state_, "qv").get_device_data();
     // The surface radiation has considered topography
-    auto& swdn_sfc_v = state_.get_field<2>("swdn_sfc").get_device_data();
-    auto& swup_sfc_v = state_.get_field<2>("swup_sfc").get_device_data();
-    auto& lwdn_sfc_v = state_.get_field<2>("lwdn_sfc").get_device_data();
-    auto& th_v = state_.get_field<3>("th").get_device_data();
+    auto& swdn_sfc_v = swdn_sfc_ref_.get(state_, "swdn_sfc").get_device_data();
+    auto& swup_sfc_v = swup_sfc_ref_.get(state_, "swup_sfc").get_device_data();
+    auto& lwdn_sfc_v = lwdn_sfc_ref_.get(state_, "lwdn_sfc").get_device_data();
+    auto& th_v = th_ref_.get(state_, "th").get_device_data();
 
-    auto& pibar_v = state_.get_field<1>("pibar").get_device_data();
-    auto& topo_v = state_.get_field<2>("topo").get_device_data();
+    auto& pibar_v = pibar_ref_.get(state_, "pibar").get_device_data();
+    auto& topo_v = topo_ref_.get(state_, "topo").get_device_data();
     
-    auto& canopy_v = state_.get_field<2>("canopy").get_device_data();
-    auto& precip_liq_surf_2d = state_.get_field<2>("precip_liq_surf_flux").get_mutable_device_data();
-    auto& precip_ice_surf_2d = state_.get_field<2>("precip_ice_surf_flux").get_mutable_device_data();
+    auto& canopy_v = canopy_ref_.get(state_, "canopy").get_device_data();
+    auto& precip_liq_surf_2d = precip_liq_surf_flux_ref_.get(state_, "precip_liq_surf_flux").get_mutable_device_data();
+    auto& precip_ice_surf_2d = precip_ice_surf_flux_ref_.get(state_, "precip_ice_surf_flux").get_mutable_device_data();
 
     Kokkos::parallel_for("PackToLand", 
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {m_nx, m_ny}),
@@ -286,30 +286,30 @@ void LandProcess::preprocessing_and_packing() {
 }
 
 void LandProcess::postprocessing_and_unpacking() {
-    auto& hfx_v    = state_.get_field<2>("hfx").get_mutable_device_data();
-    auto& le_v     = state_.get_field<2>("le").get_mutable_device_data();
-    auto& gfx_v     = state_.get_field<2>("gfx").get_mutable_device_data();
+    auto& hfx_v    = hfx_ref_.get(state_, "hfx").get_mutable_device_data();
+    auto& le_v     = le_ref_.get(state_, "le").get_mutable_device_data();
+    auto& gfx_v     = gfx_ref_.get(state_, "gfx").get_mutable_device_data();
     
-    auto& canopy_v = state_.get_field<2>("canopy").get_mutable_device_data();
-    auto& snwdph_v = state_.get_field<2>("snwdph").get_mutable_device_data();
-    auto& sneqv_v = state_.get_field<2>("sneqv").get_mutable_device_data();
-    auto& st1_v    = state_.get_field<2>("st1").get_mutable_device_data();
-    auto& st2_v    = state_.get_field<2>("st2").get_mutable_device_data();
-    auto& st3_v    = state_.get_field<2>("st3").get_mutable_device_data();
-    auto& st4_v    = state_.get_field<2>("st4").get_mutable_device_data();
-    auto& sm1_v    = state_.get_field<2>("sm1").get_mutable_device_data();
-    auto& sm2_v    = state_.get_field<2>("sm2").get_mutable_device_data();
-    auto& sm3_v    = state_.get_field<2>("sm3").get_mutable_device_data();
-    auto& sm4_v    = state_.get_field<2>("sm4").get_mutable_device_data();
-    auto& sl1_v    = state_.get_field<2>("sl1").get_mutable_device_data();
-    auto& sl2_v    = state_.get_field<2>("sl2").get_mutable_device_data();
-    auto& sl3_v    = state_.get_field<2>("sl3").get_mutable_device_data();
-    auto& sl4_v    = state_.get_field<2>("sl4").get_mutable_device_data();
-    auto& Tg = state_.get_field<2>("Tg").get_mutable_device_data(); 
-    auto& zorl = state_.get_field<2>("zorl").get_mutable_device_data(); 
-    auto& cmx = state_.get_field<2>("cmx").get_mutable_device_data(); 
-    auto& chx = state_.get_field<2>("chx").get_mutable_device_data(); 
-    auto& sfemis = state_.get_field<2>("sfemis").get_mutable_device_data(); 
+    auto& canopy_v = canopy_ref_.get(state_, "canopy").get_mutable_device_data();
+    auto& snwdph_v = snwdph_ref_.get(state_, "snwdph").get_mutable_device_data();
+    auto& sneqv_v = sneqv_ref_.get(state_, "sneqv").get_mutable_device_data();
+    auto& st1_v    = st1_ref_.get(state_, "st1").get_mutable_device_data();
+    auto& st2_v    = st2_ref_.get(state_, "st2").get_mutable_device_data();
+    auto& st3_v    = st3_ref_.get(state_, "st3").get_mutable_device_data();
+    auto& st4_v    = st4_ref_.get(state_, "st4").get_mutable_device_data();
+    auto& sm1_v    = sm1_ref_.get(state_, "sm1").get_mutable_device_data();
+    auto& sm2_v    = sm2_ref_.get(state_, "sm2").get_mutable_device_data();
+    auto& sm3_v    = sm3_ref_.get(state_, "sm3").get_mutable_device_data();
+    auto& sm4_v    = sm4_ref_.get(state_, "sm4").get_mutable_device_data();
+    auto& sl1_v    = sl1_ref_.get(state_, "sl1").get_mutable_device_data();
+    auto& sl2_v    = sl2_ref_.get(state_, "sl2").get_mutable_device_data();
+    auto& sl3_v    = sl3_ref_.get(state_, "sl3").get_mutable_device_data();
+    auto& sl4_v    = sl4_ref_.get(state_, "sl4").get_mutable_device_data();
+    auto& Tg = Tg_ref_.get(state_, "Tg").get_mutable_device_data();
+    auto& zorl = zorl_ref_.get(state_, "zorl").get_mutable_device_data();
+    auto& cmx = cmx_ref_.get(state_, "cmx").get_mutable_device_data();
+    auto& chx = chx_ref_.get(state_, "chx").get_mutable_device_data();
+    auto& sfemis = sfemis_ref_.get(state_, "sfemis").get_mutable_device_data();
 
 
     Kokkos::parallel_for("UnpackToVVM", 
@@ -423,13 +423,13 @@ void LandProcess::calculate_tendencies(const std::string& var_name,
     int ny = grid_.get_local_total_points_y();
     int nx = grid_.get_local_total_points_x();
     int h = grid_.get_halo_cells();
-    const auto& rhobar = state_.get_field<1>("rhobar").get_device_data(); // Density
-    const auto& hx     = state_.get_field<2>("topo").get_device_data();
+    const auto& rhobar = rhobar_ref_.get(state_, "rhobar").get_device_data(); // Density
+    const auto& hx     = topo_ref_.get(state_, "topo").get_device_data();
     const auto& rdz = params_.rdz; 
     const auto& flex_height_coef_mid = params_.flex_height_coef_mid.get_device_data();
 
     if (var_name == "th") {
-        const auto& flux = state_.get_field<2>("hfx").get_device_data();
+        const auto& flux = hfx_ref_.get(state_, "hfx").get_device_data();
         Kokkos::parallel_for("SfcFlux_Tendency_TH",
             Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny-h, nx-h}}),
             KOKKOS_LAMBDA(const int j, const int i) {
@@ -439,7 +439,7 @@ void LandProcess::calculate_tendencies(const std::string& var_name,
         );
     } 
     else if (var_name == "qv") {
-        const auto& flux = state_.get_field<2>("le").get_device_data();
+        const auto& flux = le_ref_.get(state_, "le").get_device_data();
         Kokkos::parallel_for("SfcFlux_Tendency_QV",
             Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny-h, nx-h}}),
             KOKKOS_LAMBDA(const int j, const int i) {

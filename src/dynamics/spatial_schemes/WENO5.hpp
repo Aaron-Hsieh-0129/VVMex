@@ -146,6 +146,10 @@ private:
     Options options_;
     const Core::Grid& grid_;
     Takacs vertical_scheme_;
+
+    Core::ConstFieldRef<3> ITYPEU_ref_;
+    Core::ConstFieldRef<3> ITYPEV_ref_;
+    Core::ConstFieldRef<3> ITYPEW_ref_;
 };
 
 } // namespace Dynamics

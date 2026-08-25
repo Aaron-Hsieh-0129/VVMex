@@ -16,6 +16,18 @@ class Takacs : public SpatialScheme {
 public:
     explicit Takacs(const Utils::ConfigurationManager& config, const Core::Grid& grid, Core::HaloExchanger& halo_exchanger, const Core::BoundaryConditionManager& bc_manager);
 
+    void calculate_advection_tendency(
+        const Core::State& state,
+        const Core::Field<3>& scalar,
+        const Core::Field<3>& mass_flux_x,
+        const Core::Field<3>& mass_flux_y,
+        const Core::Field<3>& mass_flux_z,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_tendency,
+        const std::string& var_name,
+        VVM::Real stage_dt) const override;
+
     void calculate_flux_convergence_x(
         const Core::Field<3>& scalar, const Core::Field<3>& u,
         const Core::Grid& grid, const Core::Parameters& params, Core::Field<3>& out_tendency, const std::string& var_name) const override;
@@ -83,6 +95,25 @@ private:
 
     using TeamPolicy = Kokkos::TeamPolicy<Kokkos::DefaultExecutionSpace>;
     using MemberType = TeamPolicy::member_type;
+
+    Core::ConstFieldRef<3> u_ref_;
+    Core::ConstFieldRef<3> v_ref_;
+    Core::ConstFieldRef<3> w_ref_;
+    Core::ConstFieldRef<3> xi_ref_;
+    Core::ConstFieldRef<3> eta_ref_;
+    Core::ConstFieldRef<3> zeta_ref_;
+    Core::ConstFieldRef<3> R_xi_ref_;
+    Core::ConstFieldRef<3> R_eta_ref_;
+    Core::ConstFieldRef<3> R_zeta_ref_;
+    Core::ConstFieldRef<3> th_ref_;
+    Core::ConstFieldRef<3> qv_ref_;
+    Core::ConstFieldRef<3> qp_ref_;
+    Core::ConstFieldRef<3> ITYPEU_ref_;
+    Core::ConstFieldRef<3> ITYPEV_ref_;
+    Core::ConstFieldRef<2> f_2d_ref_;
+    Core::ConstFieldRef<1> rhobar_ref_;
+    Core::ConstFieldRef<1> rhobar_up_ref_;
+    Core::ConstFieldRef<1> thbar_ref_;
 };
 
 } // namespace Dynamics

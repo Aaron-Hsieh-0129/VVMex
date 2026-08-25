@@ -10,16 +10,23 @@ AdvectionTerm::AdvectionTerm(
     std::string var_name,
     VVM::Core::HaloExchanger& halo_exchanger,
     const Core::BoundaryConditionManager& bc_manager,
+    std::shared_ptr<MeanWindState> mean_wind_state,
     bool force_anelastic_scalar_normalization)
     : scheme_(std::move(scheme)),
       variable_name_(std::move(var_name)),
       force_anelastic_scalar_normalization_(
           force_anelastic_scalar_normalization),
       halo_exchanger_(halo_exchanger),
-      bc_manager_(bc_manager) {
+      bc_manager_(bc_manager),
+      mean_wind_state_(std::move(mean_wind_state)) {
 
     thermodynamics_vars_ = {"th", "qv", "qc", "qr", "qi", "nc", "nr", "ni"};
     dynamics_vars_ = {"xi", "eta", "zeta"};
+
+    if (variable_name_ == "xi") mean_wind_variant_ = MeanWindState::Variant::Xi;
+    else if (variable_name_ == "eta") mean_wind_variant_ = MeanWindState::Variant::Eta;
+    else if (variable_name_ == "zeta") mean_wind_variant_ = MeanWindState::Variant::Zeta;
+    else mean_wind_variant_ = MeanWindState::Variant::Scalar;
 }
 
 AdvectionTerm::~AdvectionTerm() = default;
@@ -49,20 +56,20 @@ void AdvectionTerm::compute_tendency_impl(
     Core::Field<3>& out_tendency,
     VVM::Real stage_dt) const {
     // Get scalar field that needs to be advected
-    const auto& advected_field = state.get_field<3>(variable_name_);
-    auto& u_field = state.get_field<3>("u");
-    auto& v_field = state.get_field<3>("v");
-    auto& w_field = state.get_field<3>("w");
-    auto& u_mean_field = state.get_field<3>("u_mean");
-    auto& v_mean_field = state.get_field<3>("v_mean");
-    auto& w_mean_field = state.get_field<3>("w_mean");
+    const auto& advected_field = advected_ref_.get(state, variable_name_);
+    auto& u_field = u_ref_.get(state, "u");
+    auto& v_field = v_ref_.get(state, "v");
+    auto& w_field = w_ref_.get(state, "w");
+    auto& u_mean_field = u_mean_ref_.get(state, "u_mean");
+    auto& v_mean_field = v_mean_ref_.get(state, "v_mean");
+    auto& w_mean_field = w_mean_ref_.get(state, "w_mean");
 
     const auto& u = u_field.get_device_data();
     const auto& v = v_field.get_device_data();
     const auto& w = w_field.get_device_data();
-    const auto& rhobar_field = state.get_field<1>("rhobar");
+    const auto& rhobar_field = rhobar_ref_.get(state, "rhobar");
     const auto& rhobar = rhobar_field.get_device_data();
-    const auto& rhobar_up_field = state.get_field<1>("rhobar_up");
+    const auto& rhobar_up_field = rhobar_up_ref_.get(state, "rhobar_up");
     const auto& rhobar_up = rhobar_up_field.get_device_data();
 
     const int nz = grid.get_local_total_points_z();
@@ -81,8 +88,12 @@ void AdvectionTerm::compute_tendency_impl(
     const int num_i = nx - 2 * h;
     const int league_size = num_j * num_i;
 
+    const bool mean_winds_ready = mean_wind_state_ && mean_wind_state_->holds(mean_wind_variant_, state.get_step());
 
-    if (variable_name_ == "xi") {
+    if (mean_winds_ready) {
+        // Reuse the current variant.
+    }
+    else if (variable_name_ == "xi") {
         const auto& fact1_xi_eta = params.fact1_xi_eta.get_device_data();
         const auto& fact2_xi_eta = params.fact2_xi_eta.get_device_data();
 
@@ -181,32 +192,37 @@ void AdvectionTerm::compute_tendency_impl(
         );
     }
 
-    // No need of vertical boundary process
-    halo_exchanger_.exchange_halos(u_mean_field);
-    halo_exchanger_.exchange_halos(v_mean_field);
-    halo_exchanger_.exchange_halos(w_mean_field);
-    bc_manager_.apply_horizontal_bcs(u_mean_field);
-    bc_manager_.apply_horizontal_bcs(v_mean_field);
-    bc_manager_.apply_horizontal_bcs(w_mean_field);
+    if (!mean_winds_ready) {
+        // No need of vertical boundary process
+        halo_exchanger_.exchange_halos(u_mean_field);
+        halo_exchanger_.exchange_halos(v_mean_field);
+        halo_exchanger_.exchange_halos(w_mean_field);
+        bc_manager_.apply_horizontal_bcs(u_mean_field);
+        bc_manager_.apply_horizontal_bcs(v_mean_field);
+        bc_manager_.apply_horizontal_bcs(w_mean_field);
 
-    if (scheme_->handles_multidimensional_advection()) {
-        scheme_->calculate_advection_tendency(
-            state, advected_field, u_mean_field, v_mean_field, w_mean_field,
-            grid, params, out_tendency, variable_name_, stage_dt);
-    } else {
-        scheme_->calculate_flux_convergence_x(advected_field, u_mean_field, grid, params, out_tendency, variable_name_);
-        scheme_->calculate_flux_convergence_y(advected_field, v_mean_field, grid, params, out_tendency, variable_name_);
-        scheme_->calculate_flux_convergence_z(advected_field, w_mean_field, grid, params, out_tendency, variable_name_);
+        if (mean_wind_state_) {
+            mean_wind_state_->set(mean_wind_variant_, state.get_step());
+        }
     }
+
+    scheme_->calculate_advection_tendency(
+        state, advected_field, u_mean_field, v_mean_field, w_mean_field,
+        grid, params, out_tendency, variable_name_, stage_dt);
 
     auto& tendency = out_tendency.get_mutable_device_data();
 
     // Divide rho in tendency for thermodynamics variables
-    if (force_anelastic_scalar_normalization_ ||
-        state.is_tracer(variable_name_) ||
-        std::find(thermodynamics_vars_.begin(),
-                  thermodynamics_vars_.end(),
-                  variable_name_) != thermodynamics_vars_.end()) {
+    if (normalize_by_rhobar_ < 0) {
+        normalize_by_rhobar_ =
+            (force_anelastic_scalar_normalization_ ||
+             state.is_tracer(variable_name_) ||
+             std::find(thermodynamics_vars_.begin(),
+                       thermodynamics_vars_.end(),
+                       variable_name_) != thermodynamics_vars_.end()) ? 1 : 0;
+    }
+
+    if (normalize_by_rhobar_ == 1) {
         const int full_league_size = ny * nx;
         
         Kokkos::parallel_for("Divide_rho_for_thermovariables_team", 

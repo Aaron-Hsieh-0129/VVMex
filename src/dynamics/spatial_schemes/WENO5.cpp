@@ -135,9 +135,9 @@ void WENO5::calculate_advection_tendency(
     const auto q = scalar.get_device_data();
     const auto mx = mass_flux_x.get_device_data();
     const auto my = mass_flux_y.get_device_data();
-    const auto fluid = state.get_field<3>("ITYPEW").get_device_data();
-    const auto face_x = state.get_field<3>("ITYPEU").get_device_data();
-    const auto face_y = state.get_field<3>("ITYPEV").get_device_data();
+    const auto fluid = ITYPEW_ref_.get(state, "ITYPEW").get_device_data();
+    const auto face_x = ITYPEU_ref_.get(state, "ITYPEU").get_device_data();
+    const auto face_y = ITYPEV_ref_.get(state, "ITYPEV").get_device_data();
     const auto rdx = params.rdx;
     const auto rdy = params.rdy;
     auto tendency = out_tendency.get_mutable_device_data();

@@ -133,7 +133,70 @@ void Model::init() {
     }
 }
 
+void Model::ensure_field_cache() {
+    if (field_cache_ready_) return;
+
+    auto build = [&](const std::vector<std::string>& var_names, bool with_fe_tendency) {
+        std::vector<FeTarget> targets;
+        targets.reserve(var_names.size());
+        for (const auto& var_name : var_names) {
+            FeTarget target;
+            target.name = var_name;
+            target.field = &state_.get_field<3>(var_name);
+            target.zero_gradient_top = (var_name == "th" || var_name == "qv");
+            if (with_fe_tendency) {
+                const std::string fe_name = "fe_tendency_" + var_name;
+                if (var_name == "zeta") target.fe_2d = &state_.get_field<2>(fe_name);
+                else target.fe_3d = &state_.get_field<3>(fe_name);
+            }
+            targets.push_back(std::move(target));
+        }
+        return targets;
+    };
+    auto fields_of = [](const std::vector<FeTarget>& targets) {
+        std::vector<Core::Field<3>*> fields;
+        fields.reserve(targets.size());
+        for (const auto& target : targets) fields.push_back(target.field);
+        return fields;
+    };
+
+    if (tracer_source_) {
+        tracer_source_targets_ = build(tracer_source_->get_target_vars(), false);
+        tracer_source_fields_ = fields_of(tracer_source_targets_);
+    }
+    if (turbulence_) {
+        turbulence_thermo_targets_ = build(turbulence_->get_thermodynamics_vars(), true);
+        turbulence_dynamics_targets_ = build(turbulence_->get_dynamics_vars(), true);
+    }
+    if (enable_surface_process_) {
+        surface_thermo_targets_ = build(sfc_thermodynamics_vars_, true);
+        surface_dynamics_targets_ = build(sfc_dynamics_vars_, true);
+    }
+    if (turbulence_ || enable_surface_process_) {
+        integrate_thermo_targets_ =
+            turbulence_ ? turbulence_thermo_targets_ : surface_thermo_targets_;
+        integrate_dynamics_targets_ =
+            turbulence_ ? turbulence_dynamics_targets_ : surface_dynamics_targets_;
+    }
+    if (sponge_layer_) {
+        sponge_thermo_targets_ = build(sponge_layer_->get_thermodynamics_vars(), true);
+        sponge_dynamics_targets_ = build(sponge_layer_->get_dynamics_vars(), true);
+    }
+    if (lateral_boundary_nudging_) {
+        lateral_nudging_targets_ = build(lateral_boundary_nudging_->get_target_vars(), true);
+    }
+
+    thermo_boundary_targets_ = build(thermodynamics_vars_, false);
+    thermo_boundary_fields_ = fields_of(thermo_boundary_targets_);
+    dynamics_boundary_targets_ = build(dynamics_vars_, false);
+    dynamics_boundary_fields_ = fields_of(dynamics_boundary_targets_);
+
+    field_cache_ready_ = true;
+}
+
 void Model::run_step(VVM::Real dt) {
+    ensure_field_cache();
+
     size_t current_step = state_.get_step();
     VVM::Real current_time = state_.get_time();
 
@@ -176,11 +239,10 @@ void Model::run_step(VVM::Real dt) {
     if (tracer_source_) {
         VVM::Utils::Timer timer("tracer_source");
         tracer_source_->apply(state_, dt);
-        const auto& target_vars = tracer_source_->get_target_vars();
-        halo_exchanger_.exchange_multiple_halos(target_vars, state_);
-        for (const auto& tracer_name : target_vars) {
-            bc_manager_.apply_horizontal_bcs(state_.get_field<3>(tracer_name));
-            bc_manager_.apply_zero_gradient_bottom_zero_top(state_.get_field<3>(tracer_name));
+        halo_exchanger_.exchange_multiple_halos(tracer_source_fields_);
+        for (const auto& target : tracer_source_targets_) {
+            bc_manager_.apply_horizontal_bcs(*target.field);
+            bc_manager_.apply_zero_gradient_bottom_zero_top(*target.field);
         }
     }
 
@@ -199,11 +261,9 @@ void Model::run_step(VVM::Real dt) {
     if (turbulence_) {
         VVM::Utils::Timer timer("turbulence");
         turbulence_->compute_coefficients(state_, dt);
-        for (const auto& var_name : turbulence_->get_thermodynamics_vars()) {
-            std::string fe_name = "fe_tendency_" + var_name;
-            auto& fe_tend_field = state_.get_field<3>(fe_name);
-            fe_tend_field.set_to_zero(); 
-            turbulence_->calculate_tendencies(state_, var_name, fe_tend_field);
+        for (const auto& target : turbulence_thermo_targets_) {
+            target.fe_3d->set_to_zero();
+            turbulence_->calculate_tendencies(state_, target.name, *target.fe_3d);
         }
     }
 
@@ -237,65 +297,56 @@ void Model::run_step(VVM::Real dt) {
             }
         }
 
-        for (const auto& var_name : sfc_thermodynamics_vars_) {
-            std::string fe_name = "fe_tendency_" + var_name;
-            auto& fe_tend_field = state_.get_field<3>(fe_name);
-            if (!turbulence_) fe_tend_field.set_to_zero(); 
+        for (const auto& target : surface_thermo_targets_) {
+            if (!turbulence_) target.fe_3d->set_to_zero();
             if (surface_) {
                 VVM::Utils::Timer timer("surface");
-                surface_->calculate_tendencies(state_, var_name, fe_tend_field);
+                surface_->calculate_tendencies(state_, target.name, *target.fe_3d);
             }
             if (land_) {
                 VVM::Utils::Timer timer("land");
-                land_->calculate_tendencies(var_name, fe_tend_field);
+                land_->calculate_tendencies(target.name, *target.fe_3d);
             }
         }
     }
 
     if (turbulence_ || enable_surface_process_) {
         VVM::Utils::Timer timer("time_integrator_thermo");
-        for (const auto& var_name : (turbulence_ ? turbulence_->get_thermodynamics_vars() : sfc_thermodynamics_vars_) ) {
-            std::string fe_name = "fe_tendency_" + var_name;
-            auto& fe_tend_field = state_.get_field<3>(fe_name);
-            VVM::Dynamics::TimeIntegrator::apply_forward_update(state_, var_name, grid_, dt, fe_tend_field);
+        for (const auto& target : integrate_thermo_targets_) {
+            VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field, target.name, grid_, dt, *target.fe_3d);
         }
     }
 
     // Apply sponge layer
     if (sponge_layer_) {
         VVM::Utils::Timer timer("sponge_layer");
-        for (const auto& var_name : sponge_layer_->get_thermodynamics_vars()) {
-            std::string fe_name = "fe_tendency_" + var_name;
-            auto& fe_tend_field = state_.get_field<3>(fe_name);
-            fe_tend_field.set_to_zero(); 
-            sponge_layer_->calculate_tendencies(state_, var_name, fe_tend_field);
+        for (const auto& target : sponge_thermo_targets_) {
+            target.fe_3d->set_to_zero();
+            sponge_layer_->calculate_tendencies(state_, target.name, *target.fe_3d);
 
-            VVM::Dynamics::TimeIntegrator::apply_forward_update(state_, var_name, grid_, dt, fe_tend_field);
+            VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field, target.name, grid_, dt, *target.fe_3d);
         }
     }
     
     // Apply lateral boundary nudge
     if (lateral_boundary_nudging_) {
         VVM::Utils::Timer timer("lateral_boundary_nudging");
-        for (const auto& var_name : lateral_boundary_nudging_->get_target_vars()) {
-            std::string fe_name = "fe_tendency_" + var_name;
-            auto& fe_tend_field = state_.get_field<3>(fe_name);
-            
-            fe_tend_field.set_to_zero(); 
-            lateral_boundary_nudging_->calculate_tendencies(state_, var_name, fe_tend_field);
-            VVM::Dynamics::TimeIntegrator::apply_forward_update(state_, var_name, grid_, dt, fe_tend_field);
+        for (const auto& target : lateral_nudging_targets_) {
+            target.fe_3d->set_to_zero();
+            lateral_boundary_nudging_->calculate_tendencies(state_, target.name, *target.fe_3d);
+            VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field, target.name, grid_, dt, *target.fe_3d);
         }
     }
 
     if (turbulence_ || sponge_layer_ || enable_surface_process_ || lateral_boundary_nudging_) {
         VVM::Utils::Timer timer("halo_exchange");
-        halo_exchanger_.exchange_multiple_halos(thermodynamics_vars_, state_);
-        for (const auto& var_name : thermodynamics_vars_) {
-            if (var_name == "th" || var_name == "qv") {
-                 bc_manager_.apply_zero_gradient(state_.get_field<3>(var_name));
+        halo_exchanger_.exchange_multiple_halos(thermo_boundary_fields_);
+        for (const auto& target : thermo_boundary_targets_) {
+            if (target.zero_gradient_top) {
+                 bc_manager_.apply_zero_gradient(*target.field);
             }
             else {
-                bc_manager_.apply_zero_gradient_bottom_zero_top(state_.get_field<3>(var_name));
+                bc_manager_.apply_zero_gradient_bottom_zero_top(*target.field);
             }
         }
     }
@@ -315,62 +366,50 @@ void Model::run_step(VVM::Real dt) {
     // Vorticity diffusion
     if (turbulence_) {
         VVM::Utils::Timer timer("turbulence");
-        for (const auto& var_name : turbulence_->get_dynamics_vars()) {
-            std::string fe_name = "fe_tendency_" + var_name;
-            
-            if (var_name == "zeta") {
-                auto& fe_tend_field = state_.get_field<2>(fe_name);
-                fe_tend_field.set_to_zero(); 
-                turbulence_->calculate_tendencies(state_, var_name, fe_tend_field);
+        for (const auto& target : turbulence_dynamics_targets_) {
+            if (target.fe_2d != nullptr) {
+                target.fe_2d->set_to_zero();
+                turbulence_->calculate_tendencies(state_, target.name, *target.fe_2d);
             }
             else {
-                auto& fe_tend_field = state_.get_field<3>(fe_name);
-                fe_tend_field.set_to_zero(); 
-                turbulence_->calculate_tendencies(state_, var_name, fe_tend_field);
+                target.fe_3d->set_to_zero();
+                turbulence_->calculate_tendencies(state_, target.name, *target.fe_3d);
             }
         }
     }
 
     if (enable_surface_process_) {
         VVM::Utils::Timer timer("surface");
-        for (const auto& var_name : sfc_dynamics_vars_) {
-            std::string fe_name = "fe_tendency_" + var_name;
-            auto& fe_tend_field = state_.get_field<3>(fe_name);
-            if (!turbulence_) fe_tend_field.set_to_zero(); 
-            surface_->calculate_tendencies(state_, var_name, fe_tend_field);
+        for (const auto& target : surface_dynamics_targets_) {
+            if (!turbulence_) target.fe_3d->set_to_zero();
+            surface_->calculate_tendencies(state_, target.name, *target.fe_3d);
         }
     }
 
     if (turbulence_ || enable_surface_process_) {
         VVM::Utils::Timer timer("time_integrator_vorticity");
-        for (const auto& var_name : (turbulence_ ? turbulence_->get_dynamics_vars() : sfc_dynamics_vars_)) {
-            std::string fe_name = "fe_tendency_" + var_name;
-            if (var_name == "zeta") {
-                auto& fe_tend_field = state_.get_field<2>(fe_name);
-                VVM::Dynamics::TimeIntegrator::apply_forward_update(state_, var_name, grid_, dt, fe_tend_field);
-            } else {
-                auto& fe_tend_field = state_.get_field<3>(fe_name);
-                VVM::Dynamics::TimeIntegrator::apply_forward_update(state_, var_name, grid_, dt, fe_tend_field);
+        for (const auto& target : integrate_dynamics_targets_) {
+            if (target.fe_2d != nullptr) {
+                VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field, target.name, grid_, dt, *target.fe_2d);
+            } 
+            else {
+                VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field, target.name, grid_, dt, *target.fe_3d);
             }
         }
     }
 
     if (sponge_layer_) {
         VVM::Utils::Timer timer("sponge_layer");
-        for (const auto& var_name : sponge_layer_->get_dynamics_vars()) {
-            if (var_name == "zeta") {
-                std::string fe_name = "fe_tendency_" + var_name;
-                auto& fe_tend_field = state_.get_field<2>(fe_name);
-                fe_tend_field.set_to_zero(); 
-                sponge_layer_->calculate_tendencies(state_, var_name, fe_tend_field);
-                VVM::Dynamics::TimeIntegrator::apply_forward_update(state_, var_name, grid_, dt, fe_tend_field);
+        for (const auto& target : sponge_dynamics_targets_) {
+            if (target.fe_2d != nullptr) {
+                target.fe_2d->set_to_zero();
+                sponge_layer_->calculate_tendencies(state_, target.name, *target.fe_2d);
+                VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field, target.name, grid_, dt, *target.fe_2d);
             }
             else {
-                std::string fe_name = "fe_tendency_" + var_name;
-                auto& fe_tend_field = state_.get_field<3>(fe_name);
-                fe_tend_field.set_to_zero(); 
-                sponge_layer_->calculate_tendencies(state_, var_name, fe_tend_field);
-                VVM::Dynamics::TimeIntegrator::apply_forward_update(state_, var_name, grid_, dt, fe_tend_field);
+                target.fe_3d->set_to_zero();
+                sponge_layer_->calculate_tendencies(state_, target.name, *target.fe_3d);
+                VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field, target.name, grid_, dt, *target.fe_3d);
             }
         }
     }
@@ -382,9 +421,9 @@ void Model::run_step(VVM::Real dt) {
 
     if (turbulence_ || sponge_layer_ || enable_surface_process_ || area_mean_nudging_) {
         VVM::Utils::Timer timer("halo_exchange");
-        halo_exchanger_.exchange_multiple_halos(dynamics_vars_, state_);
-        for (const auto& var_name : dynamics_vars_) {
-            bc_manager_.apply_vorticity_bc(state_.get_field<3>(var_name));
+        halo_exchanger_.exchange_multiple_halos(dynamics_boundary_fields_);
+        for (const auto& target : dynamics_boundary_targets_) {
+            bc_manager_.apply_vorticity_bc(*target.field);
         }
         dycore_->compute_zeta_vertical_structure(state_);
     }

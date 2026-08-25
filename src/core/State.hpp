@@ -9,8 +9,9 @@
 #include "Parameters.hpp"
 #include "vvm_types.hpp"
 #include <algorithm>
-#include <map>
+#include <cassert>
 #include <string>
+#include <unordered_map>
 #include <memory>
 #include <stdexcept>
 #include <variant>
@@ -318,6 +319,11 @@ public:
         return fields_.find(name) != fields_.end();
     }
 
+    const AnyField* find_any(const std::string& name) const {
+        auto it = fields_.find(name);
+        return it == fields_.end() ? nullptr : &it->second;
+    }
+
     const std::vector<std::string>& get_tracer_names() const {
         return tracer_names_;
     }
@@ -343,7 +349,7 @@ private:
     const Utils::ConfigurationManager& config_ref_;
     const Grid& grid_;
     const Parameters& parameters_;
-    std::map<std::string, AnyField> fields_;
+    std::unordered_map<std::string, AnyField> fields_;
     std::vector<std::string> tracer_names_;
     std::vector<std::string> tracer_source_targets_;
     std::vector<std::string> tracer_source_names_;
@@ -362,6 +368,44 @@ private:
     ncclComm_t nccl_comm_;
     cudaStream_t nccl_stream_;
 #endif
+};
+
+template<size_t Dim>
+class FieldRef {
+public:
+    Field<Dim>& get(State& state, const char* name) const {
+        if (!field_) field_ = &state.get_field<Dim>(name);
+        assert(field_->get_name() == name && "FieldRef reused for a second field name");
+        return *field_;
+    }
+    Field<Dim>& get(State& state, const std::string& name) const {
+        if (!field_) field_ = &state.get_field<Dim>(name);
+        assert(field_->get_name() == name && "FieldRef reused for a second field name");
+        return *field_;
+    }
+    bool resolved() const { return field_ != nullptr; }
+
+private:
+    mutable Field<Dim>* field_ = nullptr;
+};
+
+template<size_t Dim>
+class ConstFieldRef {
+public:
+    const Field<Dim>& get(const State& state, const char* name) const {
+        if (!field_) field_ = &state.get_field<Dim>(name);
+        assert(field_->get_name() == name && "ConstFieldRef reused for a second field name");
+        return *field_;
+    }
+    const Field<Dim>& get(const State& state, const std::string& name) const {
+        if (!field_) field_ = &state.get_field<Dim>(name);
+        assert(field_->get_name() == name && "ConstFieldRef reused for a second field name");
+        return *field_;
+    }
+    bool resolved() const { return field_ != nullptr; }
+
+private:
+    mutable const Field<Dim>* field_ = nullptr;
 };
 
 } // namespace Core

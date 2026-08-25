@@ -76,14 +76,14 @@ void SpongeLayer::initialize(Core::State& state) {
 
     auto& z_mid = params_.z_mid.get_device_data();
     auto& z_up = params_.z_up.get_device_data();
-    auto& CGR_thermo = state.get_field<1>("CGR_thermo").get_mutable_device_data();
+    auto& CGR_thermo = CGR_thermo_ref_.get(state, "CGR_thermo").get_mutable_device_data();
     Kokkos::parallel_for("assign_coefficient", Kokkos::RangePolicy<>(k_start_thermo, nz-h),
         KOKKOS_LAMBDA(const int k) {
             CGR_thermo(k) = CRAD*(z_mid(k)-z_mid(k_start_thermo-1))/(z_mid(nz-h-1)-z_mid(k_start_thermo-1));
         }
     );
     
-    auto& CGR_vort = state.get_field<1>("CGR_vort").get_mutable_device_data();
+    auto& CGR_vort = CGR_vort_ref_.get(state, "CGR_vort").get_mutable_device_data();
     Kokkos::parallel_for("assign_coefficient", Kokkos::RangePolicy<>(k_start_vort, nz-h),
         KOKKOS_LAMBDA(const int k) {
             // CGR_vort(k) = CRAD*(z_up(k)-z_mid(k_start_vort-1))/(z_mid(nz-h-1)-z_mid(k_start_vort-1));
@@ -107,8 +107,8 @@ void SpongeLayer::calculate_tendencies(Core::State& state,
         return;
     }
 
-    const auto& CGR_thermo = state.get_field<1>("CGR_thermo").get_device_data();
-    const auto& CGR_vort = state.get_field<1>("CGR_vort").get_device_data();
+    const auto& CGR_thermo = CGR_thermo_ref_.get(state, "CGR_thermo").get_device_data();
+    const auto& CGR_vort = CGR_vort_ref_.get(state, "CGR_vort").get_device_data();
     const auto& var = state.get_field<3>(var_name).get_device_data();
     auto& tend = out_tendency.get_mutable_device_data();
     
@@ -119,10 +119,10 @@ void SpongeLayer::calculate_tendencies(Core::State& state,
 
     auto& ref_profile = ref_profile_;
     if (var_name == "th") {
-        ref_profile = state.get_field<1>("thbar").get_device_data();
+        ref_profile = thbar_ref_.get(state, "thbar").get_device_data();
     } 
     else if (var_name == "qv") {
-        ref_profile = state.get_field<1>("qvbar").get_device_data();
+        ref_profile = qvbar_ref_.get(state, "qvbar").get_device_data();
     }
 
     const auto& k_start_thermo = k_start_thermo_;

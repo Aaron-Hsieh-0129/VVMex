@@ -60,11 +60,15 @@ public:
 
     void exchange_multiple_halos(const std::vector<std::string>& field_names, State& state) const;
 
+    void exchange_multiple_halos(const std::vector<Field<3>*>& fields) const;
+
     // Batched exchange for fields not registered in State (e.g. solver-private work
     // arrays). All fields must share the same halo width and extents.
     void exchange_multiple_halos(const std::vector<Field<2>*>& fields, int depth = -1) const;
 
 private:
+    mutable std::vector<Field<3>*> batch_fields_;
+
     const Grid& grid_ref_;
     MPI_Comm cart_comm_;
     ncclComm_t nccl_comm_;
@@ -191,11 +195,20 @@ inline HaloExchanger::~HaloExchanger() {
 }
 
 inline void HaloExchanger::exchange_multiple_halos(const std::vector<std::string>& field_names, State& state) const {
-    if (field_names.empty()) return;
+    batch_fields_.clear();
+    batch_fields_.reserve(field_names.size());
+    for (const auto& field_name : field_names) {
+        batch_fields_.push_back(&state.get_field<3>(field_name));
+    }
+    exchange_multiple_halos(batch_fields_);
+}
+
+inline void HaloExchanger::exchange_multiple_halos(const std::vector<Field<3>*>& fields) const {
+    if (fields.empty()) return;
     const int h = grid_ref_.get_halo_cells();
     if (h == 0) return;
 
-    size_t num_fields = field_names.size();
+    size_t num_fields = fields.size();
     size_t count_x_total = num_fields * buffer_size_x_3d_;
     size_t count_y_total = num_fields * buffer_size_y_3d_;
 
@@ -232,7 +245,7 @@ inline void HaloExchanger::exchange_multiple_halos(const std::vector<std::string
 
     if (count_x_total > 0) {
         for (size_t f = 0; f < num_fields; ++f) {
-            auto data = state.get_field<3>(field_names[f]).get_mutable_device_data();
+            auto data = fields[f]->get_mutable_device_data();
             size_t offset = f * buffer_size_x_3d_;
             auto send_l = Kokkos::subview(send_x_left_, std::make_pair(offset, offset + buffer_size_x_3d_));
             auto send_r = Kokkos::subview(send_x_right_, std::make_pair(offset, offset + buffer_size_x_3d_));
@@ -272,7 +285,7 @@ inline void HaloExchanger::exchange_multiple_halos(const std::vector<std::string
         }
 
         for (size_t f = 0; f < num_fields; ++f) {
-            auto data = state.get_field<3>(field_names[f]).get_mutable_device_data();
+            auto data = fields[f]->get_mutable_device_data();
             size_t offset = f * buffer_size_x_3d_;
             auto recv_l = Kokkos::subview(recv_x_left_, std::make_pair(offset, offset + buffer_size_x_3d_));
             auto recv_r = Kokkos::subview(recv_x_right_, std::make_pair(offset, offset + buffer_size_x_3d_));
@@ -288,7 +301,7 @@ inline void HaloExchanger::exchange_multiple_halos(const std::vector<std::string
 
     if (count_y_total > 0) {
         for (size_t f = 0; f < num_fields; ++f) {
-            auto data = state.get_field<3>(field_names[f]).get_mutable_device_data();
+            auto data = fields[f]->get_mutable_device_data();
             size_t offset = f * buffer_size_y_3d_;
             auto send_b = Kokkos::subview(send_y_bottom_, std::make_pair(offset, offset + buffer_size_y_3d_));
             auto send_t = Kokkos::subview(send_y_top_, std::make_pair(offset, offset + buffer_size_y_3d_));
@@ -328,7 +341,7 @@ inline void HaloExchanger::exchange_multiple_halos(const std::vector<std::string
         }
 
         for (size_t f = 0; f < num_fields; ++f) {
-            auto data = state.get_field<3>(field_names[f]).get_mutable_device_data();
+            auto data = fields[f]->get_mutable_device_data();
             size_t offset = f * buffer_size_y_3d_;
             auto recv_b = Kokkos::subview(recv_y_bottom_, std::make_pair(offset, offset + buffer_size_y_3d_));
             auto recv_t = Kokkos::subview(recv_y_top_, std::make_pair(offset, offset + buffer_size_y_3d_));
@@ -1049,6 +1062,8 @@ public:
     // definition follows below.
     void exchange_multiple_halos(const std::vector<std::string>& field_names, State& state) const;
 
+    void exchange_multiple_halos(const std::vector<Field<3>*>& fields) const;
+
     // Interface parity with the NCCL implementation. Not batched here: without NCCL
     // groups there is nothing to gain from packing the fields together.
     void exchange_multiple_halos(const std::vector<Field<2>*>& fields, int depth = -1) const {
@@ -1078,6 +1093,8 @@ public:
     }
 
 private:
+    mutable std::vector<Field<3>*> batch_fields_;
+
     const Grid& grid_ref_;
     MPI_Comm cart_comm_;
     int neighbor_left_, neighbor_right_;
@@ -1467,11 +1484,20 @@ void HaloExchanger::wait_exchange_halo_y(FieldT& field, HaloExchangeRequests& re
 }
 
 inline void HaloExchanger::exchange_multiple_halos(const std::vector<std::string>& field_names, State& state) const {
-    if (field_names.empty()) return;
+    batch_fields_.clear();
+    batch_fields_.reserve(field_names.size());
+    for (const auto& field_name : field_names) {
+        batch_fields_.push_back(&state.get_field<3>(field_name));
+    }
+    exchange_multiple_halos(batch_fields_);
+}
+
+inline void HaloExchanger::exchange_multiple_halos(const std::vector<Field<3>*>& fields) const {
+    if (fields.empty()) return;
     const int h = grid_ref_.get_halo_cells();
     if (h == 0) return;
 
-    size_t num_fields = field_names.size();
+    size_t num_fields = fields.size();
     size_t count_x_total = num_fields * buffer_size_x_3d_;
     size_t count_y_total = num_fields * buffer_size_y_3d_;
 
@@ -1499,7 +1525,7 @@ inline void HaloExchanger::exchange_multiple_halos(const std::vector<std::string
     // --- X Direction ---
     if (count_x_total > 0) {
         for (size_t f = 0; f < num_fields; ++f) {
-            auto data = state.get_field<3>(field_names[f]).get_mutable_device_data();
+            auto data = fields[f]->get_mutable_device_data();
             size_t offset = f * buffer_size_x_3d_;
             auto send_l = Kokkos::subview(send_x_left_, std::make_pair(offset, offset + buffer_size_x_3d_));
             auto send_r = Kokkos::subview(send_x_right_, std::make_pair(offset, offset + buffer_size_x_3d_));
@@ -1531,7 +1557,7 @@ inline void HaloExchanger::exchange_multiple_halos(const std::vector<std::string
         }
 
         for (size_t f = 0; f < num_fields; ++f) {
-            auto data = state.get_field<3>(field_names[f]).get_mutable_device_data();
+            auto data = fields[f]->get_mutable_device_data();
             size_t offset = f * buffer_size_x_3d_;
             auto recv_l_f = Kokkos::subview(recv_x_left_, std::make_pair(offset, offset + buffer_size_x_3d_));
             auto recv_r_f = Kokkos::subview(recv_x_right_, std::make_pair(offset, offset + buffer_size_x_3d_));
@@ -1548,7 +1574,7 @@ inline void HaloExchanger::exchange_multiple_halos(const std::vector<std::string
     // --- Y Direction ---
     if (count_y_total > 0) {
         for (size_t f = 0; f < num_fields; ++f) {
-            auto data = state.get_field<3>(field_names[f]).get_mutable_device_data();
+            auto data = fields[f]->get_mutable_device_data();
             size_t offset = f * buffer_size_y_3d_;
             auto send_b = Kokkos::subview(send_y_bottom_, std::make_pair(offset, offset + buffer_size_y_3d_));
             auto send_t = Kokkos::subview(send_y_top_, std::make_pair(offset, offset + buffer_size_y_3d_));
@@ -1580,7 +1606,7 @@ inline void HaloExchanger::exchange_multiple_halos(const std::vector<std::string
         }
 
         for (size_t f = 0; f < num_fields; ++f) {
-            auto data = state.get_field<3>(field_names[f]).get_mutable_device_data();
+            auto data = fields[f]->get_mutable_device_data();
             size_t offset = f * buffer_size_y_3d_;
             auto recv_b_f = Kokkos::subview(recv_y_bottom_, std::make_pair(offset, offset + buffer_size_y_3d_));
             auto recv_t_f = Kokkos::subview(recv_y_top_, std::make_pair(offset, offset + buffer_size_y_3d_));

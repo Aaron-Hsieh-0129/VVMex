@@ -48,14 +48,19 @@ public:
     // This is for sequential splitting due to the order of physics doesn't have to be the same with the dynamics.
     // This method is designed for update State in any physical process that can be called directly to do integration.
     // These process generally uses forward Euler.
-    template<size_t Dim> 
-    static void apply_forward_update(Core::State& state,const std::string var_name, const Core::Grid& grid, VVM::Real dt, Core::Field<Dim>& tend_field) {
+    template<size_t Dim>
+    static void apply_forward_update(Core::State& state, const std::string& var_name, const Core::Grid& grid, VVM::Real dt, Core::Field<Dim>& tend_field) {
+        apply_forward_update(state.get_field<3>(var_name), var_name, grid, dt, tend_field);
+    }
+
+    template<size_t Dim>
+    static void apply_forward_update(Core::Field<3>& target, const std::string& var_name, const Core::Grid& grid, VVM::Real dt, Core::Field<Dim>& tend_field) {
         const int nz = grid.get_local_total_points_z();
         const int ny = grid.get_local_total_points_y();
         const int nx = grid.get_local_total_points_x();
         const int h = grid.get_halo_cells();
 
-        auto& field_new_view = state.get_field<3>(var_name).get_mutable_device_data();
+        auto& field_new_view = target.get_mutable_device_data();
 
         if constexpr (Dim == 2) {
             const auto& fe_tendency_data = tend_field.get_device_data();
@@ -91,6 +96,20 @@ private:
     bool has_ab2_terms_;
     bool has_fe_terms_;
     std::unique_ptr<TemporalScheme> multistage_scheme_;
+
+    std::string prev_state_name_;
+    std::string hist_0_name_;
+    std::string hist_1_name_;
+    std::string fe_tendency_name_;
+
+    Core::FieldRef<3> var_ref_;
+    Core::FieldRef<3> var_prev_ref_;
+    Core::FieldRef<3> hist_0_ref_;
+    Core::FieldRef<3> hist_1_ref_;
+    Core::FieldRef<3> fe_tendency_ref_;
+    Core::ConstFieldRef<3> itypeu_ref_;
+    Core::ConstFieldRef<3> itypev_ref_;
+    Core::ConstFieldRef<3> itypew_ref_;
 };
 
 } // namespace Dynamics

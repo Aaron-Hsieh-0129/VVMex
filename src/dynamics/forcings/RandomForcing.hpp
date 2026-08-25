@@ -28,6 +28,8 @@ private:
     int k_start_;
     int k_end_;
     int seed_;
+
+    Core::FieldRef<3> th_ref_;
 };
 
 } // namespace Dynamics
