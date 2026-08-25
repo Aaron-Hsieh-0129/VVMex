@@ -12,8 +12,10 @@ CPU-only build agree with a GPU build bit-for-bit.
 | a different `output.precision` | identical to the model state, then rounded once on write |
 | a different backend (GPU vs CPU-only) | **not** identical by default — see below |
 
-Random perturbation is off in every regression case, which is what makes the
-first row an exact statement rather than a statistical one.
+Random perturbations are derived from the seed, timestep, and global cell
+coordinates, so repeating a run or changing its MPI decomposition does not
+change the perturbation field. Regression cases still disable the forcing so
+changes to the pseudorandom mapping do not obscure physics regressions.
 
 ## Why GPU and CPU-only differ
 

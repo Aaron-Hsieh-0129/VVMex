@@ -388,7 +388,7 @@ Useful for triggering convection in otherwise smooth initial states.
 | `time_s` | real | `50.0` | Apply perturbations until this simulated time. |
 | `amplitude` | real | `1.0` | Perturbation magnitude. |
 | `z_start_m`, `z_end_m` | real | `0` | Vertical layer where perturbations are applied. |
-| `random_seed` | int | `12345` | Seed, for repeatable perturbations. |
+| `random_seed` | int | `12345` | Seed for deterministic perturbations. A seed, timestep, and global cell coordinate always produce the same value, independent of scheduling and MPI decomposition. |
 
 ### `dynamics.forcings.lateral_boundary_nudging`
 
