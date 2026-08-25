@@ -1,4 +1,5 @@
 #include "RandomForcing.hpp"
+#include "DeterministicPerturbation.hpp"
 
 namespace VVM {
 namespace Dynamics {
@@ -61,23 +62,27 @@ void RandomForcing::apply(Core::State& state) {
     int nx = grid_.get_local_total_points_x();
     int h = grid_.get_halo_cells();
 
-    Kokkos::Random_XorShift64_Pool<> rand_pool(seed_ + state.get_step() + 10000*grid_.get_mpi_rank());
-
     auto& th = th_ref_.get(state, "th").get_mutable_device_data();
     VVM::Real amp = amplitude_;
     int k_start = k_start_;
     int k_end = k_end_ + 1;
+    int seed = seed_;
+    std::uint64_t step = static_cast<std::uint64_t>(state.get_step());
+    int global_z_start = grid_.get_local_physical_start_z();
+    int global_y_start = grid_.get_local_physical_start_y();
+    int global_x_start = grid_.get_local_physical_start_x();
 
     if (k_end > grid_.get_local_total_points_z()) k_end = grid_.get_local_total_points_z();
 
     Kokkos::parallel_for("RandomForcing_Apply",
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({k_start, h, h}, {k_end, ny-h, nx-h}),
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            auto gen = rand_pool.get_state();
-            VVM::Real noise = gen.drand(-1.0, 1.0) * amp;
+            const std::uint64_t global_k = static_cast<std::uint64_t>(global_z_start + k - h);
+            const std::uint64_t global_j = static_cast<std::uint64_t>(global_y_start + j - h);
+            const std::uint64_t global_i = static_cast<std::uint64_t>(global_x_start + i - h);
+            const VVM::Real noise = RandomForcingDetail::signed_unit_random(
+                seed, step, global_k, global_j, global_i) * amp;
             th(k, j, i) += noise;
-            
-            rand_pool.free_state(gen);
         }
     );
     return;

@@ -4,7 +4,6 @@
 #include "core/Parameters.hpp"
 #include "core/vvm_types.hpp"
 #include "utils/ConfigurationManager.hpp"
-#include <Kokkos_Random.hpp>
 
 namespace VVM {
 namespace Dynamics {

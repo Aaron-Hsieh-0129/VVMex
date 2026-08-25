@@ -5,9 +5,8 @@ Only run length, output cadence, output location, and the stochastic forcing are
 touched. Grid, physics, numerics and input files stay exactly as the shipped case
 defines them, so the test exercises the real configuration.
 
-random_perturbation is disabled because it is stochastic: with it on, two runs of
-the same binary differ (measured: 51M of 105M values on sea_grass_mountain), which
-makes bit-for-bit comparison meaningless.
+random_perturbation is disabled so changes to the pseudorandom mapping do not
+obscure regressions in the model physics and numerics.
 """
 import argparse, json, os, sys
 
