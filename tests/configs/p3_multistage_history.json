@@ -1,0 +1,52 @@
+{
+  "grid": {
+    "nx": 8,
+    "ny": 8,
+    "nz": 9,
+    "n_halo_cells": 2,
+    "dx": 100.0,
+    "dy": 100.0,
+    "dz": 100.0
+  },
+  "simulation": {
+    "dt_s": 1.0
+  },
+  "physics": {
+    "p3": { "enable_p3": true },
+    "turbulence": { "enable_turbulence": false },
+    "rrtmgp": { "enable_rrtmgp": false }
+  },
+  "dynamics": {
+    "solver": {
+      "w_solver_method": "tridiagonal",
+      "iteration": 1,
+      "WRXMU": 2.5e-7
+    },
+    "prognostic_variables": {
+      "th": {
+        "tendency_terms": {
+          "advection": {
+            "enable": true,
+            "temporal_scheme": "SSPRK2",
+            "spatial_scheme": "MUSCL"
+          }
+        }
+      },
+      "qv": {
+        "tendency_terms": {
+          "advection": {
+            "enable": true,
+            "temporal_scheme": "SSPRK2",
+            "spatial_scheme": "MUSCL"
+          }
+        }
+      }
+    }
+  },
+  "constants": {
+    "gravity": 9.806,
+    "Rd": 287.04,
+    "P0": 100000.0,
+    "Cp": 1004.5
+  }
+}
