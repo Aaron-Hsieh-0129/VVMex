@@ -116,7 +116,7 @@ fills the rest in for you.
 | `--io-cpus N` | `1` | Cores reserved per I/O rank. Does **not** create I/O ranks. |
 | `--nodes N` | `1` | Nodes to spread the total rank count over. |
 | `--gpus N` | `ceil(compute / nodes)` | GPUs **per node**, covering compute ranks only. Ignored on CPU-only presets, which request no GPUs at all. |
-| `--cpus N` | fills the node | `--cpus-per-task`, and the base for `OMP_NUM_THREADS`. Left unset, the wrapper reads the partition's `CPUEfctv` and divides by tasks per node; it falls back to `1` where SLURM cannot answer. See [CPU allocation](#cpu-allocation). |
+| `--cpus N` | fills the node, capped per GPU | `--cpus-per-task`, and the base for `OMP_NUM_THREADS`. Left unset, the wrapper divides the smaller of the partition's `CPUEfctv` and the CPUs the requested GPUs entitle the job to by tasks per node; it falls back to `1` where SLURM cannot answer. See [CPU allocation](#cpu-allocation). |
 | `--omp-threads N` | `--cpus` | OpenMP/Kokkos threads per compute rank, held fixed while `--cpus` varies. Useful on GPU runs where a rank wants cores for the launch loop but not an OpenMP worker on each. |
 
 ### SLURM job
@@ -127,7 +127,7 @@ Ignored under `--local`.
 | --- | --- | --- |
 | `-t`, `--time HH:MM:SS` | `24:00:00` | Wall-time limit. |
 | `-A`, `--account NAME` | `MST114418` | Charging account. Override this on any other system. |
-| `-p`, `--partition NAME` | `normal` | Partition. Also the partition the wrapper queries when sizing `--cpus`. |
+| `-p`, `--partition NAME` | `normal` | Partition. Also the partition the wrapper queries when sizing `--cpus`. A name SLURM does not know falls back to the cluster's default partition. |
 | `--job-name NAME` | `VVMex` | `--job-name`. |
 | `--out PATH` | `<output.output_dir>/%j.out` | Standard output file; `%j` expands to the job ID. Defaults into the run's output directory. Its directory is created. |
 | `--err PATH` | `<output.output_dir>/%j.err` | Standard error file, alongside the standard output file. |
@@ -210,22 +210,54 @@ CPUs per node = --cpus x tasks per node
 
 Under-request it and the rest of the node is not merely unused, it is
 unavailable: the cgroup confines every rank and every thread they spawn to the
-CPUs that were asked for.
+CPUs that were asked for. Over-request it on a site that rations cores per GPU
+and the job never schedules at all. Note that `--exclusive`, the default here,
+hands the job the whole node regardless, so the request matters most on shared
+GPU partitions -- run those with `--no-exclusive`.
 
 ### Leave it unset
 
-Omitted, the wrapper fills the node. It takes a node name from the partition with
-`sinfo`, reads that node's effective CPU count with `scontrol`, and divides by
-tasks per node:
+Omitted, the wrapper fills the node, but never asks for more CPUs than the
+requested GPUs entitle the job to. It takes a node name from the partition with
+`sinfo`, reads that node's effective CPU count and GPU count with `scontrol`,
+and divides the smaller of the two budgets by tasks per node:
 
 ```text
-[Info] CPUs per task: 6  (104 usable CPUs/node / 16 tasks/node)
+[Info] CPUs per task: 6   (104 usable CPUs/node / 16 tasks/node)
+[Info] CPUs per task: 28  (2 GPUs/node x 28 CPUs/GPU / 2 tasks/node)
 ```
+
+The GPU cap matters on sites that ration cores per GPU. Dividing a whole node by
+this job's task count over-requests whenever the job uses fewer GPUs than the
+node has -- a single-GPU run on a 4-GPU node would ask for four times its share,
+and be rejected or left pending rather than scheduled. The per-GPU figure comes
+from the partition's `DefCpuPerGPU` where the site sets one, otherwise from the
+node's CPU count divided by its GPU count. A partition-level `MaxCPUsPerNode`
+caps the budget as well. CPU-backend runs request no GPUs, so no cap applies and
+they still fill the node.
 
 It reads `CPUEfctv` rather than `CPUTot` on purpose. A node can advertise more
 CPUs than a job is permitted to hold, and requesting the difference gets the job
-rejected rather than scheduled. Where SLURM cannot answer -- unknown partition,
-`--local`, no SLURM at all -- it falls back to `1` and prints the reason.
+rejected rather than scheduled. Where SLURM cannot answer -- `--local`, no SLURM
+at all -- it falls back to `1` and prints the reason. A `--partition` SLURM does
+not know is replaced by the cluster's default partition, since every query above
+depends on the partition being real:
+
+```text
+[Info] partition 'normal' not found; using default partition 'gpu'
+```
+
+Two situations get a warning rather than a silent number, both of which appear
+when many I/O ranks share a rationed node with few GPUs. `--cpus-per-task` is one
+value for every rank in the job, so a node's entitlement has to cover compute and
+I/O ranks alike:
+
+```text
+[Warning] 9 tasks/node x 1 CPU needs 9 CPUs, above the 4 this job is entitled to.
+[Warning] about 1 core(s) per compute rank: CPU affinity stays off below 2.
+```
+
+Lower `--io`, or set `--cpus` explicitly where the site permits it.
 
 ### Why `--cpus 1` is slow
 
@@ -315,7 +347,8 @@ If you use fewer GPUs than *compute* tasks per node, the wrapper will warn that 
 - Runs `tools/core_run.sh` locally or submits it through `sbatch`.
 - Maps local MPI ranks to visible GPU IDs and exports runtime variables used by the executable.
 - Hides all GPUs from I/O server ranks, and gives them `--io-cpus` cores each.
-- Sizes `--cpus` to fill the node when it is not given.
+- Sizes `--cpus` to fill the node when it is not given, capped by the CPUs the requested GPUs entitle the job to.
+- Falls back to the cluster's default partition when `--partition` names one SLURM does not have.
 - Pins each rank to its own cores, compute ranks NUMA-local to their GPU.
 - Lets waiting I/O ranks yield the CPU while compute ranks keep spinning, so a
   blocked I/O rank does not take cycles from the compute ranks it is waiting on.
