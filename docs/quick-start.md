@@ -1,34 +1,47 @@
-# Quick Start
+# Quick start
 
-This guide covers dependencies, building VVMex, and running jobs through the recommended `submit.py` wrapper.
+Use this guide when the dependency stack is already installed or when you need
+the shortest path from a fresh clone to a small run. If the dependencies are not
+available yet, begin with the [environment guide](environment/index.md).
+
+## First-run workflow
+
+1. Clone the repository.
+2. Select or create a machine entry in `CMakePresets.json`.
+3. Configure and build the matching GPU or CPU preset.
+4. Copy a case from `rundata/input_configs/default_cases/`.
+5. Launch it with `submit.py`.
+
+The sections below provide the commands for each step.
 
 ## Requirements
 
 ### Compilers and runtime
 
 | Component | Minimum | Notes |
-| --------- | ------- | ----- |
-| C++ compiler | GCC 11+ | C++17 |
-| CUDA | 11.4+ | NVIDIA GPUs are the tested target |
-| MPI | OpenMPI 4.x+ | Use `mpic++` / `mpicc` / `mpifort` consistent with your toolchain |
+| --- | --- | --- |
+| C++ compiler | GCC 11+ | C++17 support |
+| CUDA | 11.4+ | Required only for GPU builds |
+| MPI | Open MPI 4.x+ | Keep `mpicc`, `mpic++`, and `mpifort` in one toolchain |
 
-**NVHPC 24.9+** is recommended on NVIDIA systems: it bundles CUDA, OpenMPI, and math libraries that align with the CMake hints used in `CMakePresets.json`.
+NVHPC is required by the current build because the Noah land component and
+`libnvcpumath` are linked even in a CPU-only configuration. The installation
+guides document validated NVHPC setups.
 
 ### Libraries
 
-This guide covers dependencies, building VVMex, and running the `vvm` executable. For detailed instructions on building the full dependency stack from source, please refer to the **[Environment Installation Guide](environment/index.md)** — [GPU](environment/gpu.md) and [CPU-only](environment/cpu.md) stacks are documented separately.
+| Library | Tested baseline | Role |
+| --- | --- | --- |
+| CMake | 3.20+ | Configure and build |
+| Kokkos | 4.7+ | CPU/GPU parallel execution |
+| HDF5 | 1.14.5+ | HDF5 output and the NetCDF stack |
+| NetCDF-C / Fortran | 4.4+ | Initial data and physics coefficient files |
+| PnetCDF | 1.14+ | Parallel NetCDF input |
+| ADIOS2 | 2.11+ | HDF5, SST, and BP5 output |
 
-| Library | Minimum (tested) | Role |
-| ------- | ------------------ | ---- |
-| CMake | 3.20 | Build |
-| Kokkos | 4.7+ | If not found, CMake may fetch Kokkos 4.5.x via `FetchContent` |
-| HDF5 | 1.14.5+ | NetCDF / ADIOS2 stack |
-| NetCDF-C | 4.4+ | I/O |
-| NetCDF-Fortran | 4.4+ | Fortran interfaces |
-| PnetCDF | 1.14+ | Parallel I/O |
-| ADIOS2 | 2.11+ | Model output (`HDF5` / `SST`; `BP5` needs 2.12+) |
-
-The root `CMakeLists.txt` also expects **NVIDIA CPU Math Library** (`libnvcpumath`) and, when `ENABLE_NCCL` is ON (default), **NCCL** under `NVHPC_DIR`. Turn off NCCL with `-DENABLE_NCCL=OFF` only if you have a matching build and know the implications for halo exchange.
+The root build also expects NVIDIA CPU Math Library under `NVHPC_DIR`. GPU
+builds enable NCCL by default; disable it only when using the matching
+CPU-oriented communication configuration.
 
 ## Build
 

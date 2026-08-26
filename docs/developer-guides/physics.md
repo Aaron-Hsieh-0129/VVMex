@@ -1,6 +1,8 @@
 # Physics implementation
 
-Physics and parameterizations are assembled in `src/driver/Model.cpp` according to boolean flags in the JSON configuration. The dynamical core (`Dynamics::DynamicalCore`) always participates; optional components are constructed only when enabled.
+Use this page to see which component owns each parameterization and where it
+runs in `Model::run_step`. The dynamical core always participates; optional
+physics and forcing components are constructed from the case JSON.
 
 ## Components and toggles
 
@@ -33,10 +35,13 @@ The following order is implemented in `Model::run_step` (abbreviated):
 12. **Halo exchange** for thermodynamic variables and boundary application.
 13. **Vorticity** — `calculate_vorticity_tendencies`, `update_vorticity`, then turbulence/sponge updates on vorticity-related fields, halos, vertical structure for `zeta`, optional **wind diagnosis** (`diagnose_wind_fields`) unless in idealized modes that disable the wind solver.
 
-Radiation frequency, surface frequency, and land frequency are controlled by `rad_frequency_step`, `physics.surface.frequency_step`, and `physics.land.frequency_step` (interpreted against the model step index in code).
+Radiation, surface, and land frequencies are evaluated against the model step
+index.
 
-Crucially, the P3 scheme requires both the previous and current states for its calculations. In the procedure above, var_prev represents the state before the advection update, while var_now represents the state after advection.
-This is why `microphysics_->run` is called after `dycore_->update_thermodynamics(dt)`—this sequence ensures that the original var_now is shifted to var_prev, and the newly advected state becomes the current var_now.
+P3 needs both the state before advection (`var_prev`) and the state after
+advection (`var_now`). It therefore runs after
+`dycore_->update_thermodynamics(dt)`: that update moves the old current state
+into `var_prev` and exposes the newly advected state as `var_now`.
 
 ## P3
 

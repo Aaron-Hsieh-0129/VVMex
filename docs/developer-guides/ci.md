@@ -1,5 +1,9 @@
 # Continuous integration
 
+This guide is for maintainers changing GitHub Actions, test tiers, self-hosted
+runners, or branch protection. For ordinary local test commands, start with the
+[Quick start](../quick-start.md).
+
 ## Why there are two kinds of job
 
 Every shipped preset compiles with NVHPC's `mpic++` and `mpifort` against TPLs

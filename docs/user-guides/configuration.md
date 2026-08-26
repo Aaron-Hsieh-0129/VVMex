@@ -1,8 +1,12 @@
 # Model configuration
 
-Runtime settings are loaded from a **single JSON file**. The recommended `submit.py` workflow passes this path to the executable for you. If you run the executable directly, pass the JSON path as the first non-option argument (see [Command-line options](#command-line-options)).
+VVMex reads runtime settings from one JSON file. Start by copying a runnable
+case from `rundata/input_configs/default_cases/`, then use this page as a
+reference while editing it. Writing a complete case from scratch is rarely the
+fastest route.
 
-This page is the complete key reference: every key the model actually reads, with its type, its value when omitted, and what it does. The repository ships runnable sample configurations under `rundata/input_configs/default_cases/`. Each default-case JSON references a matching profile under `rundata/initial_conditions/profiles/default_cases/` and, when needed, a spatial NetCDF file under `rundata/initial_conditions/spatial/default_cases/`.
+`submit.py` passes the selected file to VVMex. Direct invocations may instead
+provide the JSON path as the first non-option argument.
 
 ## How to read this page
 
@@ -11,7 +15,7 @@ This page is the complete key reference: every key the model actually reads, wit
 | *required* | The key must be present. The run stops at startup with `Configuration error: Key '<path>' not found.` |
 | a value | The key is optional and this is what the code uses when it is absent. |
 
-Three things about how the file is parsed are worth knowing before you edit one:
+Four things about how the file is parsed are worth knowing before you edit one:
 
 - **Keys are looked up by dotted path, not validated as a schema.** A key the model does not know is simply never read.
 - **A misspelled optional key is therefore silent.** `"enable_p3"` written as `"enable_P3"` leaves P3 off and prints no warning. When a setting appears to have no effect, check the spelling and nesting against this page first.
@@ -53,6 +57,24 @@ Most experiments follow the same editing order:
 
 Keep JSON paths relative to the directory where `submit.py` starts the model, normally the project root.
 
+## Copy-and-edit defaults
+
+Start every new experiment by copying a complete, runnable case. This is the
+fastest and safest way to obtain all required values and a consistent set of
+fields:
+
+```bash
+cp rundata/input_configs/default_cases/advection_u.json my_case.json
+```
+
+Then replace the top-level blocks below in `my_case.json` as needed. Each block
+is valid JSON and can be copied directly; it uses documented defaults wherever
+a default exists. Required settings have no model default, so the starter values
+for those keys are intentionally small and should be changed for the experiment.
+
+The reference tables remain the complete source for every supported key,
+constraint, and engine-specific behavior.
+
 ## Default-case inputs
 
 Use the default cases when you want a known sample setup before designing your own experiment:
@@ -90,6 +112,27 @@ Global mesh, halo width, horizontal boundary behavior, and vertical coordinate c
 
 Use `taiwanvvm` when you need the TaiwanVVM-style vertical coordinate and output coordinate handling. Use `default` for ordinary idealized or simple real-case tests unless the case explicitly requires another coordinate.
 
+Copy and edit this starter grid:
+
+```json
+{
+  "grid": {
+    "nx": 32,
+    "ny": 32,
+    "nz": 33,
+    "n_halo_cells": 2,
+    "dx": 100.0,
+    "dy": 100.0,
+    "dz": 500.0,
+    "dz1": 100.0,
+    "boundary_condition": { "x": "periodic", "y": "periodic" },
+    "fix_lonlat": false,
+    "vertical_coordinate_type": "default",
+    "rcemip_grid_data_path": "./rundata/initial_conditions/profiles/snd_rcemip_anal300_v3.txt"
+  }
+}
+```
+
 ## `simulation`
 
 | Key | Type | Default | Meaning |
@@ -100,6 +143,19 @@ Use `taiwanvvm` when you need the TaiwanVVM-style vertical coordinate and output
 | `idealized_test` | string | `"none"` | Built-in dynamics test: `none`, `advection_u`, `advection_v`, `advection_w`, `stretching`, `twisting`, or `2dbubble`. |
 
 Setting `idealized_test` to anything but `none` replaces normal initialization with the test's analytic state and disables the spatial NetCDF read. For production-like runs, keep it `none`.
+
+Copy and edit these small-run values:
+
+```json
+{
+  "simulation": {
+    "total_time_s": 1500.0,
+    "dt_s": 1.0,
+    "output_interval_s": 50.0,
+    "idealized_test": "none"
+  }
+}
+```
 
 ## `initial_conditions`
 
@@ -142,6 +198,25 @@ A run with `simulation.idealized_test: "none"` — that is, any real case — **
 
 Default-case profiles live under `rundata/initial_conditions/profiles/default_cases/`. The profile must be consistent with the vertical coordinate choice and the physics you enable.
 
+For an ordinary, non-idealized run, copy this input block and replace the
+profile path:
+
+```json
+{
+  "initial_conditions": {
+    "format": "txt",
+    "source_file": "./rundata/initial_conditions/profiles/default_cases/profile_dry.txt",
+    "perturbation": "none",
+    "constant_upper_wind": {
+      "enable": false,
+      "pressure_threshold_Pa": 25000.0
+    },
+    "reapply_spatial_initial_conditions": false,
+    "rcemip_consistent_reference_state": false
+  }
+}
+```
+
 ## `netcdf_reader`
 
 Spatial two-dimensional fields such as longitude, latitude, topography, land mask, vegetation, soil, and surface parameters.
@@ -155,6 +230,23 @@ Spatial two-dimensional fields such as longitude, latitude, topography, land mas
 | `variables_to_read.3d` | list | *(empty)* | 3-D variables to read. Enabled tracers and their `_source` fields are always appended to this list, whether or not it is given. |
 
 Every listed variable must exist in the file — a missing one is an error, not a warning. The default spatial NetCDF files can be generated with `tools/generate_init_nc.py`. For Taiwan-style cases, generate or prepare the file before submission; see [TaiwanVVM example](../examples/taiwan-vvm.md).
+
+For the small default cases, this is the matching spatial-input block. Remove
+fields from the list when the file does not contain them:
+
+```json
+{
+  "netcdf_reader": {
+    "source_file": "./rundata/initial_conditions/spatial/default_cases/init_regression_test.nc",
+    "Tg_source": "atmosphere",
+    "variables_to_read": {
+      "1d": [],
+      "2d": ["lon", "lat", "topo", "sea_land_ice_mask"],
+      "3d": []
+    }
+  }
+}
+```
 
 ## `restart`
 
@@ -211,58 +303,124 @@ Restart files are ordinary output files; there is no separate restart output pat
 
 The keys above are the same for all three; only `step_index` is engine-specific, because only BP5 stores more than one time per source. Field selection and clock recovery are shared code, so the same run resumes identically whichever of the three wrote its source.
 
-### Worked examples
+### Copy-ready restart configurations
 
-Resuming an HDF5 (or SST) run from the file written at t = 3600 s:
+Copy the example matching the desired output behavior and merge its top-level
+blocks into the case file. These examples resume at t = 3600 s and run
+until t = 7200 s.
+
+#### HDF5 restart into a new output directory
+
+This also applies to an `.h5` restart file produced by SST.
 
 ```json
-"restart": {
-  "enable": true,
-  "source_file": "./output/my_case/vvm_output_000006.h5"
-},
-"simulation": {
-  "total_time_s": 7200.0,
-  "dt_s": 1.0,
-  "output_interval_s": 600.0
-},
-"output": {
-  "engine": "HDF5",
-  "output_dir": "./output/my_case_resumed",
-  "output_filename_prefix": "vvm_output",
-  "fields_to_output": ["thbar", "rhobar", "topo", "u", "v", "w", "th", "qv", "xi", "eta", "zeta"]
+{
+  "simulation": {
+    "total_time_s": 7200.0,
+    "dt_s": 1.0,
+    "output_interval_s": 600.0
+  },
+  "restart": {
+    "enable": true,
+    "source_file": "./output/my_case/vvm_output_000006.h5"
+  },
+  "output": {
+    "engine": "HDF5",
+    "output_dir": "./output/my_case_resumed",
+    "output_filename_prefix": "vvm_output",
+    "output_initial_step": true,
+    "precision": "native",
+    "fields_to_output": [
+      "thbar", "rhobar", "topo", "u", "v", "w",
+      "th", "qv", "xi", "eta", "zeta"
+    ]
+  }
 }
 ```
 
-The same run resuming from a BP5 dataset instead:
+#### BP5 restart into a new dataset
+
+Use this when the original history should remain unchanged and the resumed run
+should create `./output/my_case_resumed/vvm_output.bp`.
 
 ```json
-"restart": {
-  "enable": true,
-  "source_file": "./output/my_case/vvm_output.bp",
-  "step_index": -1
-},
-"simulation": {
-  "total_time_s": 7200.0,
-  "dt_s": 1.0,
-  "output_interval_s": 600.0
-},
-"output": {
-  "engine": "BP5",
-  "output_dir": "./output/my_case_resumed",
-  "output_filename_prefix": "vvm_output",
-  "fields_to_output": ["thbar", "rhobar", "topo", "u", "v", "w", "th", "qv", "xi", "eta", "zeta"],
-  "bp5": { "num_subfiles": 2, "overwrite": false }
+{
+  "simulation": {
+    "total_time_s": 7200.0,
+    "dt_s": 1.0,
+    "output_interval_s": 600.0
+  },
+  "restart": {
+    "enable": true,
+    "source_file": "./output/my_case/vvm_output.bp",
+    "step_index": -1
+  },
+  "output": {
+    "engine": "BP5",
+    "output_dir": "./output/my_case_resumed",
+    "output_filename_prefix": "vvm_output",
+    "output_initial_step": true,
+    "precision": "native",
+    "fields_to_output": [
+      "thbar", "rhobar", "topo", "u", "v", "w",
+      "th", "qv", "xi", "eta", "zeta"
+    ],
+    "bp5": {
+      "num_subfiles": 2,
+      "existing_dataset": "error"
+    }
+  }
 }
 ```
 
-Four things decide whether these work:
+#### BP5 restart and append to the same dataset
 
-- **`total_time_s` is absolute, not additional.** The clock resumes at the time stored in the source, so `7200.0` means "run until t = 7200 s", which is one more hour after resuming at 3600 s. Setting it to the restart time produces a run that takes no steps and writes only the loaded state.
-- **`fields_to_output` has to contain what the restart needs.** The inferred variable list is filtered through it, so a field that was never written cannot be recovered. List it explicitly under `restart.variables_to_read` only when you want a set other than the inferred one.
-- **Write somewhere else.** Both examples resume into `my_case_resumed`. Writing back into `my_case` re-emits the same numbered HDF5 files, and on BP5 the writer refuses outright rather than deleting the dataset it just read.
-- **The first step after any restart is first order.** The AB2 tendency history is not stored, so a resumed run is not bit-for-bit with an uninterrupted one. The model warns about this on every restart.
+Use this to preserve the old steps and add new steps to
+`./output/my_case/vvm_output.bp`.
 
-Output resumes on the same index grid: the example above writes `vvm_output_000006` (the restart state, from `output_initial_step`) and then `000007` onward.
+```json
+{
+  "simulation": {
+    "total_time_s": 7200.0,
+    "dt_s": 1.0,
+    "output_interval_s": 600.0
+  },
+  "restart": {
+    "enable": true,
+    "source_file": "./output/my_case/vvm_output.bp",
+    "step_index": -1
+  },
+  "output": {
+    "engine": "BP5",
+    "output_dir": "./output/my_case",
+    "output_filename_prefix": "vvm_output",
+    "output_initial_step": false,
+    "precision": "native",
+    "fields_to_output": [
+      "thbar", "rhobar", "topo", "u", "v", "w",
+      "th", "qv", "xi", "eta", "zeta"
+    ],
+    "bp5": {
+      "num_subfiles": 2,
+      "existing_dataset": "append"
+    }
+  }
+}
+```
+
+The append safeguards are intentional: the source and destination must resolve
+to the same `.bp` dataset, `step_index` must be `-1`, and
+`output_initial_step` must be `false`. This prevents truncating later history or
+writing the restart step twice.
+
+For every restart:
+
+- `total_time_s` is the absolute end time, not time to add after restarting.
+- Required restart fields must exist in the source. Keep them in
+  `output.fields_to_output`, or set `restart.variables_to_read` explicitly.
+- The first step uses first-order history initialization because AB2 tendency
+  history is not stored, so a restart is not bit-for-bit identical to an
+  uninterrupted run.
 
 ## `output`
 
@@ -279,6 +437,29 @@ ADIOS2 output, field selection, and optional subsetting. Engine trade-offs and s
 | `output_grid.x_start`, `.y_start`, `.z_start` | int | `0` | Inclusive lower index bound per direction. |
 | `output_grid.x_end`, `.y_end`, `.z_end` | int | `-1` | Inclusive upper index bound; `-1` means "to the end". Halo cells are never written. |
 
+For normal HDF5 history, copy this block and set the output directory and field
+list. `hdf5_collective_mpio` is included at its default so it is easy to change
+when a parallel filesystem benefits from collective I/O.
+
+```json
+{
+  "output": {
+    "output_dir": "./output/my_run",
+    "output_filename_prefix": "vvm_output",
+    "engine": "HDF5",
+    "fields_to_output": ["u", "v", "w", "th", "qv"],
+    "precision": "native",
+    "output_initial_step": true,
+    "output_grid": {
+      "x_start": 0, "x_end": -1,
+      "y_start": 0, "y_end": -1,
+      "z_start": 0, "z_end": -1
+    },
+    "hdf5_collective_mpio": false
+  }
+}
+```
+
 ### `output` — HDF5 only
 
 | Key | Type | Default | Meaning |
@@ -293,19 +474,84 @@ ADIOS2 output, field selection, and optional subsetting. Engine trade-offs and s
 | `data_transport` | string | `"WAN"` | SST data plane: `WAN` (sockets), `RDMA`, or empty/`AUTO` to let ADIOS2 choose. Case-insensitive. |
 | `control_transport` | string | `"sockets"` | SST control plane. |
 
+For SST, replace the HDF5 `output` block with this one and launch with
+`submit.py --io <number-of-io-ranks>`:
+
+```json
+{
+  "output": {
+    "output_dir": "./output/my_run",
+    "output_filename_prefix": "vvm_output",
+    "engine": "SST",
+    "fields_to_output": ["u", "v", "w", "th", "qv"],
+    "precision": "native",
+    "output_initial_step": true,
+    "output_grid": {
+      "x_start": 0, "x_end": -1,
+      "y_start": 0, "y_end": -1,
+      "z_start": 0, "z_end": -1
+    },
+    "queue_limit": 1,
+    "data_transport": "WAN",
+    "control_transport": "sockets"
+  }
+}
+```
+
 ### `output.bp5`
 
-Read only when `engine` is `BP5`. Unlike the rest of the file, **unknown keys and invalid values here are errors**, and every resolved setting is compared across all compute ranks before the dataset is opened.
+Read only when `engine` is `BP5`. Unknown keys and invalid values are errors,
+and every resolved setting is compared across compute ranks before opening the
+dataset.
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `aggregation_type` | string | `"TwoLevelShm"` | Currently the only accepted value. |
-| `num_subfiles` | int | `10` | Requested data subfile count; must be positive. ADIOS2 caps it at the compute-rank count, so you get `min(num_subfiles, ranks)` `data.*` files. See below. |
-| `stats_level` | int | `0` | `0` minimises statistics work; `1` enables BP5 statistics. No other value is accepted. |
-| `async_write` | bool | `false` | Let ADIOS2 write to disk in the background. VVMex switches to `Mode::Sync` puts so the model may modify its fields immediately. |
-| `buffer_mode` | string | `"direct"` | `direct` hands compatible CPU memory to ADIOS2 with a memory selection; `pack` (or `packed`) stages into persistent contiguous buffers. Resolves to `pack` automatically under CUDA or whenever precision converts. |
-| `overwrite` | bool | `false` | When `false`, refuse to replace an existing dataset in `output_dir`. |
-| `precision` | string | *deprecated* | Superseded by the engine-neutral [`output.precision`](#output). Still read, and still overrides it, so configurations written before the key moved keep producing the same dataset; the writer notes it once on rank 0. Do not use it in new configurations. |
+For a normal run, copy this block and change the directory, prefix, fields, and
+subfile count:
+
+```json
+{
+  "output": {
+    "engine": "BP5",
+    "output_dir": "./output/my_run",
+    "output_filename_prefix": "vvm_output",
+    "output_initial_step": true,
+    "precision": "native",
+    "fields_to_output": ["u", "v", "w", "th", "qv"],
+    "bp5": {
+      "aggregation_type": "TwoLevelShm",
+      "num_subfiles": 10,
+      "stats_level": 0,
+      "async_write": false,
+      "buffer_mode": "direct",
+      "existing_dataset": "error"
+    }
+  }
+}
+```
+
+Choose how an existing target is handled:
+
+| `existing_dataset` | Behavior |
+| --- | --- |
+| `"error"` | Safe default. Stop if `<output_dir>/<prefix>.bp` already exists. |
+| `"replace"` | Delete and recreate an existing dataset. Use only when its history is disposable; it cannot replace the active restart source. |
+| `"append"` | Continue the same BP5 restart dataset. Use the complete [in-place append example](#bp5-restart-and-append-to-the-same-dataset). |
+
+Most runs only need `num_subfiles` and `existing_dataset`. The remaining keys
+are optional performance controls:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `aggregation_type` | `"TwoLevelShm"` | Currently the only accepted value. |
+| `num_subfiles` | `10` | Positive requested data subfile count. ADIOS2 caps it at the compute-rank count. |
+| `stats_level` | `0` | `0` minimises statistics work; `1` enables BP5 statistics. Other values are rejected. |
+| `async_write` | `false` | Enables ADIOS2 background writing. |
+| `buffer_mode` | `"direct"` | `direct` uses CPU memory selection when compatible; `pack` uses staging buffers. CUDA and precision conversion automatically resolve to packed staging. |
+
+Do not use `output.bp5.overwrite` or `output.bp5.precision` in new cases. They
+remain accepted only for compatibility: `overwrite: false/true` maps to
+`existing_dataset: "error"/"replace"`, while BP5-scoped `precision` overrides
+the engine-neutral `output.precision`. A configuration cannot contain both
+`overwrite` and `existing_dataset`.
 
 !!! note "`num_subfiles` can only ever reduce the file count"
 
@@ -322,29 +568,6 @@ Read only when `engine` is `BP5`. Unlike the rest of the file, **unknown keys an
     ranks — a 4-rank run writes 4 subfiles whatever you ask for. The knob is
     only useful downwards: lower it to concentrate output into fewer, larger
     files when a filesystem dislikes many concurrent writers.
-
-Copy this block and edit `output_dir`:
-
-```json
-{
-  "output": {
-    "engine": "BP5",
-    "output_dir": "./output/my_run",
-    "output_filename_prefix": "vvm_output",
-    "precision": "native",
-    "output_initial_step": true,
-    "fields_to_output": ["u", "v", "w", "th", "qv"],
-    "bp5": {
-      "aggregation_type": "TwoLevelShm",
-      "num_subfiles": 10,
-      "stats_level": 0,
-      "async_write": false,
-      "buffer_mode": "direct",
-      "overwrite": false
-    }
-  }
-}
-```
 
 Use `fields_to_output` deliberately. A large list is convenient for diagnostics but increases file size and I/O cost. Common field groups are:
 
@@ -365,6 +588,21 @@ Use `fields_to_output` deliberately. A large list is convenient for diagnostics 
 | `w_solver_method` | string | *required* | Vertical velocity solver: `tridiagonal` for the original method, `jacobi` for the 3D-parallel iteration path. |
 | `iteration` | int | *required* | Fixed iteration count for the iterative solver path. |
 | `WRXMU` | real | *required* | Relaxation/control parameter used by the wind solver. |
+
+The solver settings are required. This is the small-case starting point used by
+the shipped examples:
+
+```json
+{
+  "dynamics": {
+    "solver": {
+      "w_solver_method": "tridiagonal",
+      "iteration": 200,
+      "WRXMU": 2.5e-7
+    }
+  }
+}
+```
 
 ### `dynamics.forcings.sponge_layer`
 
@@ -389,6 +627,27 @@ Useful for triggering convection in otherwise smooth initial states.
 | `amplitude` | real | `1.0` | Perturbation magnitude. |
 | `z_start_m`, `z_end_m` | real | `0` | Vertical layer where perturbations are applied. |
 | `random_seed` | int | `12345` | Seed for deterministic perturbations. A seed, timestep, and global cell coordinate always produce the same value, independent of scheduling and MPI decomposition. |
+
+Copy this block to make the perturbation settings explicit. Leave `enable`
+false for the model default, or turn it on and adjust only the layer, duration,
+amplitude, and seed.
+
+```json
+{
+  "dynamics": {
+    "forcings": {
+      "random_perturbation": {
+        "enable": false,
+        "time_s": 50.0,
+        "amplitude": 1.0,
+        "z_start_m": 0.0,
+        "z_end_m": 0.0,
+        "random_seed": 12345
+      }
+    }
+  }
+}
+```
 
 ### `dynamics.forcings.lateral_boundary_nudging`
 
@@ -423,17 +682,75 @@ Stores and relaxes area-mean vorticity/wind reference quantities.
 | `forcing_data.file_prefix` | string | `"ls_forcing_"` | Prefix for the forcing files. |
 | `forcing_data.update_interval_s` | real | `3600.0` | Time spacing between forcing files. Must be positive. |
 
+Copy this complete default forcing block when you want every forcing setting to
+be explicit. All forcings remain off until their individual `enable` key is set
+to `true`.
+
+```json
+{
+  "dynamics": {
+    "forcings": {
+      "sponge_layer": {
+        "enable": false,
+        "damp_thermo": true,
+        "damp_vort": true,
+        "sponge_layer_base": -1.0,
+        "inv_CRAD": -1.0
+      },
+      "random_perturbation": {
+        "enable": false,
+        "time_s": 50.0,
+        "amplitude": 1.0,
+        "z_start_m": 0.0,
+        "z_end_m": 0.0,
+        "random_seed": 12345
+      },
+      "lateral_boundary_nudging": {
+        "enable": false,
+        "boundaries": {
+          "west": false, "east": false, "south": false, "north": false
+        },
+        "tau_b": 300.0,
+        "offset": 2500.0,
+        "width": 600.0,
+        "radius": 2500.0,
+        "target_vars": ["th", "qv"],
+        "forcing_data": {
+          "time_varying": false,
+          "directory": "../rundata/LS_forcings/",
+          "file_name_for_not_varying": "ls_forcing_constant.nc",
+          "file_prefix": "ls_forcing_",
+          "update_interval_s": 3600.0
+        }
+      },
+      "areamn": {
+        "enable": false,
+        "uvtau": 0.0,
+        "nudge_start_m": 0.0,
+        "target_source": "initial"
+      }
+    }
+  }
+}
+```
+
 ### `dynamics.prognostic_variables`
 
 An object whose keys are field names. Each names the tendency terms that advance it and the schemes each term uses.
 
 ```json
-"th": {
-  "tendency_terms": {
-    "advection": {
-      "enable": true,
-      "temporal_scheme": "AdamsBashforth2",
-      "spatial_scheme": "Takacs"
+{
+  "dynamics": {
+    "prognostic_variables": {
+      "th": {
+        "tendency_terms": {
+          "advection": {
+            "enable": true,
+            "temporal_scheme": "AdamsBashforth2",
+            "spatial_scheme": "Takacs"
+          }
+        }
+      }
     }
   }
 }
@@ -471,21 +788,68 @@ Rejected combinations stop the run at startup rather than silently degrading:
 | `lower_bound` | real | `0.0` | Nonnegative floor applied by the limiter. |
 | `max_cfl` | real | `0.9` | CFL cap; must be greater than zero. |
 
+Use MUSCL only for the **advection** of one thermodynamic scalar or configured
+tracer. Its temporal scheme must be `SSPRK2`, and that field cannot have any
+other enabled tendency. Merge this into a copied case; the `grid` block shows
+the minimum halo requirement and must retain the case's other grid keys.
+
+```json
+{
+  "grid": {
+    "n_halo_cells": 2
+  },
+  "dynamics": {
+    "prognostic_variables": {
+      "th": {
+        "tendency_terms": {
+          "advection": {
+            "enable": true,
+            "temporal_scheme": "SSPRK2",
+            "spatial_scheme": "MUSCL",
+            "scheme_options": {
+              "limiter": "vanLeer",
+              "lower_bound": 0.0,
+              "max_cfl": 0.9
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
 #### `scheme_options` for WENO5
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `epsilon` | real | `1.0e-6` | Nonlinear-weight epsilon; must be finite and positive. No other key is accepted here. |
 
+WENO5 is only for passive-tracer advection. It requires `SSPRK2`, no other
+enabled tendency for that tracer, and at least three halo cells. Each MPI rank
+also needs at least three physical x and y cells when those directions have
+more than one global cell.
+
 ```json
-"tracer1": {
-  "enable": true,
-  "tendency_terms": {
-    "advection": {
-      "enable": true,
-      "temporal_scheme": "SSPRK2",
-      "spatial_scheme": "weno5",
-      "scheme_options": { "epsilon": 1.0e-6 }
+{
+  "grid": {
+    "n_halo_cells": 3
+  },
+  "dynamics": {
+    "tracers": {
+      "tracer1": {
+        "enable": true,
+        "tendency_terms": {
+          "advection": {
+            "enable": true,
+            "temporal_scheme": "SSPRK2",
+            "spatial_scheme": "weno5",
+            "scheme_options": {
+              "epsilon": 1.0e-6
+            }
+          }
+        }
+      }
     }
   }
 }
@@ -506,6 +870,10 @@ An object of passive tracers, each allocated as a 3-D field and advanced by the 
 Tracer names are validated against every field VVMex allocates and every name reserved by the initial-condition and output formats, and against internal suffixes (`d_*`, `fe_tendency_*`, `*_m`, `*_ls`). A collision is an error at startup, not a silent overwrite.
 
 ## `physics`
+
+Copy this default physics block, then enable only the packages needed by the
+case. `column_chunk_size` is deliberately omitted: its default is every column
+on the rank, so no fixed number is correct for all runs.
 
 ### `physics.p3`
 
@@ -570,26 +938,51 @@ Surface values, mol/mol. Used for any gas in `active_gases` that the model does 
 | `fixed_total_solar_irradiance` | real | `-9999.0` | When positive, prescribes an invariant TOA solar constant (W m⁻²) instead of the orbital one. For idealized experiments such as RCE. |
 | `fixed_solar_zenith_angle` | real | `-9999.0` | When positive, this value is used directly as the cosine of the solar zenith angle for every column, bypassing the orbital calculation. |
 
-#### Data files
 
-| Key | Type | Default |
-| --- | --- | --- |
-| `coefficients_file_lw` | string | `<VVM_ROOT>/rundata/rrtmgp/rrtmgp-data-lw-g128-210809.nc` |
-| `coefficients_file_sw` | string | `<VVM_ROOT>/rundata/rrtmgp/rrtmgp-data-sw-g112-210809.nc` |
-| `cloud_optics_file_lw` | string | `<VVM_ROOT>/rundata/rrtmgp/rrtmgp-cloud-optics-coeffs-lw.nc` |
-| `cloud_optics_file_sw` | string | `<VVM_ROOT>/rundata/rrtmgp/rrtmgp-cloud-optics-coeffs-sw.nc` |
-
-The g-point counts in the default file names must match the top-level `nlwgpts`/`nswgpts` below. Change both together or radiation allocates the wrong buffer sizes.
-
-### Top-level radiation keys
-
-Three RRTMGP settings are read from the **root** of the JSON, not from under `physics.rrtmgp`. This is inherited from the EAMxx interface and is easy to miss.
-
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `nlwgpts` | int | `128` | Longwave g-points. Must match `coefficients_file_lw`. |
-| `nswgpts` | int | `112` | Shortwave g-points. Must match `coefficients_file_sw`. |
-| `do_subcol_sampling` | bool | `true` | Use McICA sub-column sampling for cloud overlap. |
+```json
+{
+  "physics": {
+    "p3": {
+      "enable_p3": false,
+      "make_lookup_table": false,
+      "do_predict_nc": true,
+      "do_prescribed_ccn": false,
+      "max_total_ni": 2000000.0
+    },
+    "turbulence": { "enable_turbulence": false },
+    "surface_process": {
+      "enable": false,
+      "frequency_s": 1.0,
+      "land_scheme": "none",
+      "ocean_scheme": "none"
+    },
+    "rrtmgp": {
+      "enable_rrtmgp": false,
+      "rad_frequency_s": 1.0,
+      "pool_size_multiplier": 1.0,
+      "active_gases": ["h2o", "co2", "o3", "n2o", "co", "ch4", "o2", "n2"],
+      "co2vmr": 0.00035503,
+      "o2vmr": 0.209,
+      "n2ovmr": 3.2e-7,
+      "n2vmr": 0.7906,
+      "ch4vmr": 1.7e-6,
+      "f11vmr": 0.0,
+      "f12vmr": 0.0,
+      "covmr": 1.0e-7,
+      "o3vmr": 3.017e-8,
+      "time": {
+        "year": -9999, "month": -9999, "day": -9999,
+        "hour": -9999, "minute": -9999, "second": -9999
+      },
+      "orbital_eccentricity": -9999.0,
+      "orbital_obliquity": -9999.0,
+      "orbital_mvelp": -9999.0,
+      "fixed_total_solar_irradiance": -9999.0,
+      "fixed_solar_zenith_angle": -9999.0
+    }
+  }
+}
+```
 
 ## `optimization`
 
@@ -610,6 +1003,22 @@ Controls the built-in timing instrumentation. All optional.
 | `fence_gpu` | bool | `false` | Fence the device around each timed region. Gives correct per-region GPU times at the cost of removing asynchrony — use it for attribution, not for headline throughput numbers. |
 | `print_interval_steps` | int | `0` | Print the timing report every N steps. `0` prints only at the end of the run. |
 | `reset_after_interval_print` | bool | `false` | Zero the accumulators after each interval print, so each report covers only the interval rather than the run so far. |
+
+Copy this block when you need explicit timing controls:
+
+```json
+{
+  "performance": {
+    "timing": {
+      "enable": true,
+      "warmup_steps": 0,
+      "fence_gpu": false,
+      "print_interval_steps": 0,
+      "reset_after_interval_print": false
+    }
+  }
+}
+```
 
 ## `constants`
 
@@ -634,6 +1043,24 @@ Present `constants.coriolis_parameter` and the latitude-dependent formula is rep
 | `coriolis_reference_y_m` | real | domain centre | `y_ref`, in meters. |
 
 Change constants only for controlled sensitivity experiments.
+
+These are the required constants and the default Earth rotation rate. Copy the
+block only when creating a case from scratch; ordinary cases should retain the
+values already supplied by the chosen default case.
+
+```json
+{
+  "constants": {
+    "gravity": 9.806,
+    "Rd": 287.04,
+    "Cp": 1004.5,
+    "Lv": 2500000.0,
+    "P0": 100000.0,
+    "PI": 3.14159265,
+    "OMEGA": 7.292e-5
+  }
+}
+```
 
 ## Keys that look real but are not read
 
