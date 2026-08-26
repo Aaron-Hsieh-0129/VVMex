@@ -1,22 +1,27 @@
-# VVMex CPU-Only Installation Guide
+# CPU-only environment installation
 
-This is a complete, self-contained guide to building VVMex and every dependency it
-needs for **CPU-only execution**. Nothing here depends on having built the GPU
-stack first; everything is installed into a single prefix of its own.
+This guide builds VVMex and its dependencies for CPU-only execution in one
+isolated prefix. Kokkos uses OpenMP, halo exchange uses MPI instead of NCCL, and
+no GPU is opened at run time.
 
-In a CPU build, Kokkos runs on its OpenMP backend, the standard-MPI communication
-path replaces NCCL, and the Noah land model's OpenACC directives compile as
-comments. No GPU is used at run time.
+NVHPC is still required because VVMex links `libnvcpumath` and the Noah land
+model uses `nvfortran`. The SDK supplies compilers only in this configuration;
+a pure GCC/gfortran build is not currently supported.
 
-Why NVHPC is still required: VVMex links `libnvcpumath` unconditionally and the
-Noah land model is written for `nvfortran` flags (`-Mallocatable=03`, `-Mfreeform`,
-`-Mextend`, `-r8`). Configuration fails without it. The SDK is only being used as a
-compiler and MPI stack here — its CUDA backend stays unused. A pure GCC/gfortran
-build is **not** currently supported.
+## Build map
 
-Build order matters: each library below is used by the ones after it.
+Build the components in numbered order. Later libraries depend on earlier ones:
 
----
+1. GCC, NVHPC, and CMake
+2. CPU-only Open MPI
+3. zlib, HDF5, NetCDF-C, PnetCDF, and NetCDF-Fortran
+4. OpenMP Kokkos
+5. libfabric and Kokkos-free ADIOS2
+6. VVMex
+
+Keep the prefix separate from the GPU stack. CPU and CUDA builds of Kokkos and
+ADIOS2 use identical shared-library names, so mixing prefixes can load the wrong
+backend without an obvious error.
 
 ## 0. Preparation
 
@@ -47,7 +52,7 @@ the build directory so cached detection results are not reused.
 
 ---
 
-## 1. Compiler & Core Tools
+## 1. Compiler and core tools
 
 ### GCC 11.4
 
@@ -228,7 +233,7 @@ zeros into the C++ file.
 
 ---
 
-## 3. Compression and I/O Libraries
+## 3. Compression and I/O libraries
 
 ### ZLIB 1.3.1 (optional)
 
@@ -526,7 +531,7 @@ direct BP5 path does not use SST or its transports.
 
 ---
 
-## 7. Environment Setup Script
+## 7. Environment setup script
 
 Create `env_setup_cpu.sh` in your workspace and source it before every build or
 run.
@@ -558,7 +563,7 @@ echo "VVMex CPU Environment Loaded Successfully!"
 
 ---
 
-## 8. Configure and Build VVMex
+## 8. Configure and build VVMex
 
 Add a CPU preset to `CMakePresets.json`. Substitute your real paths.
 

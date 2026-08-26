@@ -1,68 +1,50 @@
 # Environment installation
 
-VVMex needs a dependency stack built from source. There are two guides, one per
-execution backend:
+VVMex has separate dependency stacks for GPU and CPU-only execution. Choose one
+guide and keep its install prefix and build directory isolated from the other.
 
-- **[GPU environment](gpu.md)** — Kokkos on CUDA, NCCL for halo exchange, and
-  the Noah land model with OpenACC. This is the validated production path.
+## Choose a backend
 
-- **[CPU-only environment](cpu.md)** — Kokkos on OpenMP and standard MPI in
-  place of NCCL, with no device required at run time. This stack is
-  self-contained and does not require the GPU stack to be built first.
-
-## Which one do I need?
-
-| | GPU | CPU-only |
-|---|---|---|
+| | [GPU](gpu.md) | [CPU-only](cpu.md) |
+| --- | --- | --- |
+| Use when | NVIDIA GPUs are available | No GPU should be used at run time |
 | Kokkos backend | CUDA | OpenMP |
 | Halo exchange | NCCL | MPI |
-| Noah land model | OpenACC offload | directives compile as comments |
-| NVIDIA driver at run time | required | not required |
-| Validated output engines | HDF5, SST, BP5 | HDF5, BP5 |
-| Reference test data | `tests/baselines/`, `tests/references/` | `tests/baselines_cpu/`, `tests/references_cpu/` |
+| Build directory | `build/` | `build_cpu/` |
+| Reference data | `tests/baselines/` | `tests/baselines_cpu/` |
+| Main output paths | HDF5, SST, BP5 | HDF5, BP5 |
 
-Both are complete on their own — pick the one matching the machine you will run
-on. If you need both on the same machine, read the warning below first.
+The GPU stack is the production path for large simulations. The CPU-only stack
+is useful for development, portability checks, and systems without accessible
+GPUs. Each stack is complete; neither must be built before the other.
 
-## Shared requirements
+## Requirements shared by both guides
 
-Both stacks need the same things, and neither guide will work without them:
+- **NVHPC is required.** VVMex links `libnvcpumath`, and the Noah land model
+  uses `nvfortran` flags. A pure GCC/gfortran build is not currently supported.
+- **GCC 11** provides the C++ standard library used by NVHPC.
+- **`VVM_ROOT`** must point to the repository.
+- **A machine-specific CMake preset** must describe the dependency prefixes and
+  backend. `submit.py` reads the same preset when launching the model.
 
-- **NVHPC is mandatory in both cases.** VVMex links `libnvcpumath`
-  unconditionally, and the Noah land model is written for `nvfortran` flags
-  (`-Mallocatable=03`, `-Mfreeform`, `-Mextend`, `-r8`). Configuration fails
-  without it. In a CPU build the SDK is used only as a compiler and MPI stack;
-  its CUDA backend stays unused. A pure GCC/gfortran build is **not** supported.
-- **GCC 11** supplies the C++ standard library NVHPC compiles against. Pinning
-  it avoids a class of ABI failures where the binary builds but will not start.
-- **`VVM_ROOT`** must point at the repository before configuring or running.
-- **A `CMakePresets.json` entry** describing your machine. `submit.py` reads
-  the same preset that built the code, so the launcher can never disagree with
-  the binary about which backend it is.
+## Keep the stacks isolated
 
-## Keep prefixes and build directories separate
+Use a different install prefix for each backend and never place both prefixes
+on `LD_LIBRARY_PATH` at the same time. CPU and CUDA builds of Kokkos and ADIOS2
+use the same library names. If both are visible, the loader may silently select
+the wrong backend.
 
-Install each stack into its own prefix, and keep one build directory per
-backend: every GPU preset must use `${sourceDir}/build`, while every CPU preset
-must use `${sourceDir}/build_cpu`. `submit.py` reads the selected preset's
-`binaryDir`, so the same choice also routes the launcher to the matching
-binary. Both trees may remain configured and built at the same time; never
-reconfigure one tree for the other backend.
+Typical symptoms include:
 
-This is not tidiness — CPU and CUDA
-Kokkos ship `libkokkoscore.so` with the *same* SONAME, and so do the ADIOS2
-libraries. If both prefixes end up on `LD_LIBRARY_PATH`, the loader picks
-whichever comes first, and a CPU binary will happily load the CUDA Kokkos and
-open a GPU context.
+- a CPU-only test unexpectedly opening a GPU context;
+- a CUDA build finding CPU Kokkos headers;
+- startup or finalization failures caused by libraries from different prefixes.
 
-The symptoms are confusing rather than obvious: tests occupy a GPU on a machine
-you thought was CPU-only, or a build fails with
-`#error ... __CUDACC__ macro as expected` because a CUDA Kokkos header directory
-reached the include path. Both guides have troubleshooting tables covering this.
+The [GPU guide](gpu.md) and [CPU-only guide](cpu.md) provide copy-ready build
+commands and troubleshooting checks for their respective stacks.
 
-## After the stack is built
+## After installation
 
-Continue with the [Quick Start](../quick-start.md) for configuring, building,
-and running the model, then [Output](../user-guides/output.md) for choosing an
-output engine — the choice is backend-dependent, so it is worth reading before
-your first production run.
+Continue with the [Quick start](../quick-start.md) to configure and build VVMex.
+Before a production run, read [Output](../user-guides/output.md) and select an
+engine appropriate for the chosen backend.

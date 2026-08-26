@@ -30,15 +30,21 @@ cost and workflow, never on results.
 ## Options common to every engine
 
 ```json
-"output": {
-  "output_dir": "./output/my_case",
-  "output_filename_prefix": "vvm_output",
-  "output_initial_step": true,
-  "fields_to_output": ["u", "v", "w", "th", "qv"],
-  "output_grid": {
-    "x_start": 0, "x_end": -1,
-    "y_start": 0, "y_end": -1,
-    "z_start": 0, "z_end": -1
+{
+  "output": {
+    "output_dir": "./output/my_case",
+    "output_filename_prefix": "vvm_output",
+    "output_initial_step": true,
+    "precision": "native",
+    "fields_to_output": ["u", "v", "w", "th", "qv"],
+    "output_grid": {
+      "x_start": 0,
+      "x_end": -1,
+      "y_start": 0,
+      "y_end": -1,
+      "z_start": 0,
+      "z_end": -1
+    }
   }
 }
 ```
@@ -62,7 +68,7 @@ double-precision build can write `float32` history without changing how it
 computes — roughly halving the output for a run dominated by 3-D fields.
 
 ```json
-"output": { "precision": "float32" }
+{ "output": { "precision": "float32" } }
 ```
 
 | Value | On-disk field type |
@@ -103,7 +109,7 @@ The default. Compute ranks write directly through ADIOS2's HDF5 engine, one file
 per output time, named `<prefix>_NNNNNN.h5`.
 
 ```json
-"output": { "engine": "HDF5" }
+{ "output": { "engine": "HDF5" } }
 ```
 
 Synchronous, so the model waits for each write. This is the reference output
@@ -144,17 +150,18 @@ Direct compute-rank output to a single multi-step `.bp` dataset. No I/O ranks,
 no SST, no relay, and no patched ADIOS2. Both CPU and GPU builds support it.
 
 ```json
-"output": {
-  "engine": "BP5",
-  "output_dir": "./output/taiwanvvm_2048_bp5",
-  "output_filename_prefix": "vvm_output",
-  "bp5": {
-    "aggregation_type": "TwoLevelShm",
-    "num_subfiles": 20,
-    "stats_level": 0,
-    "async_write": false,
-    "buffer_mode": "direct",
-    "overwrite": false
+{
+  "output": {
+    "engine": "BP5",
+    "output_dir": "./output/taiwanvvm_2048_bp5",
+    "output_filename_prefix": "vvm_output",
+    "output_initial_step": true,
+    "precision": "native",
+    "fields_to_output": ["u", "v", "w", "th", "qv"],
+    "bp5": {
+      "num_subfiles": 20,
+      "existing_dataset": "error"
+    }
   }
 }
 ```
@@ -173,48 +180,26 @@ nonzero `--io` is rejected.
     --compute 8 --nodes 1 --gpus 8 -t 04:00:00
 ```
 
-### BP5 options
-
-| Key | Meaning |
-|---|---|
-| `aggregation_type` | Currently must be `TwoLevelShm`. |
-| `num_subfiles` | Data subfile count. Start with the number of nodes. |
-| `stats_level` | `0` minimises statistics work; `1` enables BP5 statistics. |
-| `async_write` | Background file writing. Default `false`. |
-| `buffer_mode` | `direct` passes compatible CPU memory with a memory selection; `pack` stages into persistent contiguous buffers. CUDA builds always resolve this to `pack` for host staging. |
-| `precision` | BP5-only override of [`output.precision`](#output-precision). Omit it to follow that key. |
-| `overwrite` | When `false`, refuse to replace an existing dataset. |
-
-Unknown keys and invalid values are errors. Every resolved setting is compared
-across all compute ranks before the dataset is opened, so ranks cannot disagree.
+The configuration guide contains the canonical copy-ready blocks for a
+[normal BP5 run](configuration.md#outputbp5), a
+[restart into a new dataset](configuration.md#bp5-restart-into-a-new-dataset),
+and an [in-place append](configuration.md#bp5-restart-and-append-to-the-same-dataset),
+followed by the optional performance controls. Unknown BP5 keys and invalid
+values are errors.
 
 ### Restarting from a BP5 dataset
 
-A `.bp` dataset is a restart source like an HDF5 file, with one extra choice: it
-holds every output time, so the run has to say which one to resume from.
+A `.bp` dataset holds every output time. `restart.step_index: -1` (the default)
+resumes from the last stored step; a non-negative index selects an earlier step.
+The rank count may change when restarting because each rank reads its own slab
+of the global arrays.
 
-```json
-"restart": {
-  "enable": true,
-  "source_file": "./output/taiwanvvm_2048_bp5/vvm_output.bp",
-  "step_index": -1
-}
-```
-
-`step_index: -1` (the default) resumes from the last step written; any valid
-index picks an earlier one. Everything else matches the HDF5 route — the same
-`restart.variables_to_read` selection, the same clock recovery from
-`model_time_s` / `model_step`, and the same rule that a field must be in
-`output.fields_to_output` to be recoverable.
-
-Two things are worth knowing:
-
-- **The reader does not care how many ranks wrote the dataset.** A run written by
-  8 ranks restarts on 1, or on 64: each rank reads its own slab of the global
-  array.
-- **The run must not overwrite the dataset it resumed from.** Point
-  `output.output_dir` (or the prefix) somewhere else for the resumed run; the
-  writer refuses to start otherwise, rather than deleting the history mid-run.
+The resumed run can either create a new dataset or append to the source. Append
+is deliberately limited to the last stored step: the source and output paths
+must resolve to the same dataset, `step_index` must be `-1`, and
+`output_initial_step` must be `false`. Use the complete
+[copy-ready restart configurations](configuration.md#copy-ready-restart-configurations)
+instead of combining partial snippets.
 
 A narrowed dataset (`precision: float32`) restarts too, from float32 numbers —
 the same caveat as narrowed HDF5 output.
@@ -330,8 +315,8 @@ committing to a long job:
     every aggregator at once, and the uncaught exception takes down all ranks.
     Automatic dataset rotation is not implemented, so one run writes one dataset
     however large it grows. Check headroom with `lfs quota -h -u $USER <path>`
-    before submitting, and remember that `overwrite: false` will refuse to start
-    if a previous dataset is still sitting in `output_dir`.
+    before submitting, and remember that `existing_dataset: "error"` will
+    refuse to start if a previous dataset is still sitting in `output_dir`.
 
 ## Reading the output
 
@@ -446,7 +431,7 @@ and readers wait for steps that will never arrive. ADIOS2 ships
 Two ready-made cases exercise this end to end:
 `rundata/input_configs/default_cases/bp5_live_test.json` and its `_async` twin.
 Both are a 32×32×33 bubble writing 101 output steps over a run long enough to
-attach a converter mid-flight, with `overwrite: true` so they can be re-run
+attach a converter mid-flight, with `existing_dataset: "replace"` so they can be re-run
 freely.
 
 The BP5 reader also accepts `SelectSteps`, which converts a step range instead of

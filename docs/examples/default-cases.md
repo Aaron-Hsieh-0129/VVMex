@@ -1,14 +1,26 @@
 # Default cases
 
-VVMex ships a set of ready-to-run sample cases under `rundata/`. These cases are intended as starting points for new users: choose one JSON file, run it through `submit.py`, then copy it and edit the copy for your own experiment.
+VVMex ships ready-to-run cases under `rundata/`. Copy the closest case, verify
+its input and output paths, and change one part at a time.
 
-The default-case inputs are organized in three matching directories:
+## Choose a starting case
+
+| Goal | Suggested case |
+| --- | --- |
+| Smallest dynamics check | `advection_u.json` |
+| Warm-bubble dynamics | `2dbubble.json` |
+| P3 microphysics | `p3_bubble_shear.json` |
+| Radiative-convective equilibrium | `rcemip.json` |
+| Land and terrain physics | `sea_grass_mountain.json` |
+| Large Taiwan workflow | `taiwanvvm_2048.json` |
+
+Each JSON refers to matching input files:
 
 | Directory | Contents |
-| --------- | -------- |
-| `rundata/input_configs/default_cases/` | JSON runtime configurations passed to `submit.py -c` or directly to `build/vvm`. |
-| `rundata/initial_conditions/profiles/default_cases/` | One-dimensional sounding/profile text files referenced by `initial_conditions.source_file`. |
-| `rundata/initial_conditions/spatial/default_cases/` | Spatial NetCDF files referenced by `netcdf_reader.source_file`. These files can be generated with `tools/generate_init_nc.py`. |
+| --- | --- |
+| `rundata/input_configs/default_cases/` | Runtime JSON configurations |
+| `rundata/initial_conditions/profiles/default_cases/` | One-dimensional sounding profiles |
+| `rundata/initial_conditions/spatial/default_cases/` | Spatial NetCDF inputs; regenerate them with `tools/generate_init_nc.py` |
 
 ## Run a sample case
 

@@ -1,21 +1,14 @@
 # Video gallery
 
-## Dynamics benchmarks (regression-aligned)
+The videos below show idealized dynamics benchmarks and larger full-physics
+experiments. Use the linked example guides when you want to reproduce a case;
+the videos are visual references, not validation data.
 
-These cases match the **idealized** modes and **automated regression** configs in [`tests/configs/`](idealized.md#automated-regression-tests). They isolate the dynamical core (no full topography or land physics in those tests).
+## Dynamics benchmarks
 
-| Case | Config / mode | Embed |
-| ---- | ------------- | ----- |
-| Advection u | `advection_u` | below |
-| Advection v | `advection_v` | below |
-| Advection w | `advection_w` | below |
-| Stretching | `stretching` | below |
-| Twisting | `twisting` | below |
-| 2D bubble | `2dbubble` (e.g. `tests/configs/2dbubble.json`) | below |
-| 3D bubble | Warm-bubble dynamics in 3D visualization (same idealized family as 2D bubble; see [Idealized simulations](idealized.md)) | below |
-| TaiwanVVM | TaiwanVVM -- topography, land, and physics | below |   
-| RCE self-aggregation (SST 300 K) | RCE self-aggregation (SST 300 K) 100 days | below |   
-| RCE self-aggregation (RCEMIP, SST 305 K) | RCE self-aggregation (RCEMIP, SST 305 K) 200 days | below |   
+These cases correspond to the idealized modes and regression configurations
+described in [Idealized simulations](idealized.md). They isolate the dynamical
+core without the full Taiwan topography and land workflow.
 
 ### Advection u
 

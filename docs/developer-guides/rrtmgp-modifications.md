@@ -1,4 +1,4 @@
-# VVMex RRTMGP Modifications from Original RRTMGP
+# RRTMGP single-precision modifications
 
 VVMex uses the Kokkos-based **RRTMGP radiation scheme** from E3SM EAMxx, vendored under
 `src/physics/rrtmgp/external/`. Two kernels there carry constants and expression groupings
@@ -10,7 +10,7 @@ Both changes are selected at compile time on `sizeof(RealT)`. **A double-precisi
 compiles to byte-identical device code**, verified by comparing `cuobjdump -sass` output for
 `eamxx_rrtmgp_interface.cpp` before and after. Nothing about the FP64 reference path moves.
 
-## Modification Comparison
+## Modification comparison
 
 | Kernel | VVMex modification | Original RRTMGP / RTE behavior |
 | ------ | ------------------ | ------------------------------ |
@@ -119,10 +119,11 @@ scattering solution once `k*tau` stops being small. For a thick cloud layer with
 0.13%. In a cloud-resolving model that difference matters more than the remaining 1e-5 in
 clear sky, so `1e-5` is used.
 
-## Tracking the Code Changes
+## Finding the changes
 
-Both changes are marked with `// Aaron - differs from original ...` at the call site, in
-`src/physics/rrtmgp/external/cpp/rrtmgp/kernels/mo_gas_optics_kernels.h` and
-`src/physics/rrtmgp/external/cpp/rte/kernels/mo_rte_solver_kernels.h`. Neither has any effect
-on a double-precision build. See [Reproducibility](reproducibility.md) for how to configure a
-single-precision build and what else changes in one.
+The minor-gas grouping is in
+`src/physics/rrtmgp/external/cpp/rrtmgp/kernels/mo_gas_optics_kernels.h`.
+The two-stream floor is in
+`src/physics/rrtmgp/external/cpp/rte/kernels/mo_rte_solver_kernels.h`.
+Neither changes a double-precision build. See
+[Reproducibility](reproducibility.md) for other precision-dependent behavior.

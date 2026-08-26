@@ -1,40 +1,40 @@
 # VVMex
 
-**VVMex** is a GPU-accelerated, [Kokkos](https://kokkos.org/)-based C++ implementation of the **Vector Vorticity equation cloud-resolving Model (VVM)**. It uses **MPI** for domain decomposition, **CUDA** through Kokkos on NVIDIA GPUs, and **ADIOS2** for scalable output.
+VVMex is a C++17 cloud-resolving model based on the Vector Vorticity Model
+(VVM). It uses Kokkos for CPU and NVIDIA GPU parallelism, MPI for domain
+decomposition, and ADIOS2 for model output.
 
-The source code is at [VVMex](https://github.com/Aaron-Hsieh-0129/VVMex).
+## Start here
 
-**Recommended run path:** Use `submit.py` for production and routine test runs. It reads `CMakePresets.json`, prepares the runtime environment, separates compute and I/O tasks, and helps keep CPU/GPU allocation aligned.
+| I want to… | Go to |
+| --- | --- |
+| Build and run a small example | [Quick start](quick-start.md) |
+| Build the dependency stack | [Environment installation](environment/index.md) |
+| Choose a ready-made case | [Default cases](examples/default-cases.md) |
+| Edit a case JSON | [Model configuration](user-guides/configuration.md) |
+| Run locally or submit through SLURM | [Job submission](user-guides/job-submission.md) |
+| Choose HDF5, SST, or BP5 output | [Output](user-guides/output.md) |
+| Understand or modify the code | [Developer guides](developer-guides/index.md) |
 
-## Features
+For routine runs, use `submit.py`. It reads the selected CMake preset, prepares
+the runtime environment, assigns compute and I/O ranks, and keeps CPU/GPU
+resources consistent with the binary that was built.
 
-- **3D cloud-resolving dynamics** — Vector vorticity formulation with configurable tendencies, sponge layer, and idealized test modes.
-- **Microphysics: Modified P3 Scheme** — E3SM EAMxx lineage with restored vapor-cloud water ($q_v \leftrightarrow q_c$) conversion processes from the original Fortran P3 formulation. See [P3 modifications](developer-guides/p3-modifications.md).
-- **Radiation** — RRTMGP (E3SM EAMxx lineage, Kokkos-enabled build).
-- **Turbulence and surface** — Subgrid turbulence and surface flux options.
-- **Land** — Noah land surface model (Fortran OpenACC), with contributions from the Central Weather Administration (CWA) of Taiwan.
-- **Taiwan-oriented workflows** — NetCDF-based topography and land fields; see [TaiwanVVM](examples/taiwan-vvm.md).
+## What VVMex includes
 
-## Documentation map
+- Three-dimensional vector-vorticity dynamics with configurable tendencies,
+  forcings, and idealized benchmarks.
+- Modified P3 microphysics based on E3SM EAMxx and the original Fortran P3
+  process coupling.
+- Kokkos-enabled RRTMGP radiation.
+- Turbulence, surface fluxes, and the Noah land-surface model.
+- HDF5, SST, and BP5 output, including restart support.
+- Taiwan-oriented workflows using NetCDF topography and land fields.
 
-| Section | Description |
-| -------- | ----------- |
-| [Environment Installation](environment/index.md) | Building the dependency stack from source — [GPU](environment/gpu.md) and [CPU-only](environment/cpu.md) |
-| [Quick Start](quick-start.md) | Dependencies, build, first run through `submit.py` |
-| [Job submission](user-guides/job-submission.md) | Local and SLURM workflows, CPU/GPU allocation, asynchronous I/O ranks |
-| [Output](user-guides/output.md) | Choosing an engine, HDF5 / SST / BP5 options, precision, sizing |
-| [User guides](user-guides/index.md) | JSON configuration and I/O |
-| [Developer guides](developer-guides/index.md) | Architecture and physics hooks |
-| [Examples](examples/index.md) | Default cases and view gallery |
+## Project links
 
-## Source repository
+- Source: [VVMex on GitHub](https://github.com/Aaron-Hsieh-0129/VVMex)
+- License: [Apache License 2.0](https://opensource.org/licenses/Apache-2.0)
+- Questions: **B08209006@ntu.edu.tw**
 
-Clone and build instructions use the project root layout (`CMakePresets.json`, `src/`, `rundata/`). The upstream repository is [`VVMex`](https://github.com/Aaron-Hsieh-0129/VVMex) on GitHub.
-
-## License
-
-This project is licensed under the [Apache License 2.0](https://opensource.org/licenses/Apache-2.0).
-
-## Contact
-
-For bugs, feature requests, or contributions, open an issue on the GitHub repository. For questions about the model or usage: **B08209006@ntu.edu.tw**.
+For bugs and feature requests, open an issue in the source repository.

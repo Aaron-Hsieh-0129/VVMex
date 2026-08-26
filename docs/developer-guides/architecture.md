@@ -1,6 +1,8 @@
 # System architecture
 
-VVMex is a **C++17** cloud-resolving model using **Kokkos** for on-device parallelism (CUDA backend enabled in CMake), **MPI** for distributed memory, and optional **NCCL** for collectives on NVIDIA GPUs when `ENABLE_NCCL` is on.
+Use this page to find ownership boundaries and follow a run from process startup
+to output shutdown. VVMex is a C++17 model built around Kokkos, MPI, and
+optional NCCL on NVIDIA GPUs.
 
 ## Repository layout (application code)
 
@@ -14,18 +16,25 @@ VVMex is a **C++17** cloud-resolving model using **Kokkos** for on-device parall
 | `src/io/` | `OutputManager` (ADIOS2 HDF5/SST), `IOServer` (SST consumer to HDF5), `history/` (neutral `HistoryWriter` interface), `bp5/` (direct BP5 writer; see [BP5 output internals](bp5-output.md)) |
 | `src/utils/` | `ConfigurationManager` (JSON via nlohmann), timing and timers |
 | `src/share/` | Shared EAMxx-derived utilities, constants, physics helpers |
-| `externals/ekat/` | EKAT submodule: logging, YAML, testing utilities, Kokkos integration (this only used in EAMxx-related things) |
+| `externals/ekat/` | EKAT submodule: logging, YAML, test utilities, and Kokkos integration used by EAMxx-derived components |
 | `rundata/` | Default-case JSON configs, initial profiles, spatial initial fields, P3 lookup tables |
 
 Fortran pieces (e.g. Noah OpenACC) are linked through the physics/land subtree as required by CMake.
 
 ## Execution model
 
-1. **MPI:** `MPI_Init`, then optional **shared-memory** communicator sizing to set OpenMP threads per rank (`omp_set_num_threads`).
-2. **GPU:** `cudaGetDeviceCount` / `cudaGetDevice`; Kokkos is initialized with `set_device_id` from the node-local rank modulo GPU count.
-3. **Configuration:** `ConfigurationManager` loads the JSON path passed on the command line or by `submit.py`; runnable samples live under `rundata/input_configs/default_cases/`.
-4. **I/O split:** If `--io-tasks N` > 0, ranks are colored into simulation vs I/O; I/O ranks call `run_io_server` and exit; simulation ranks continue.
-5. **Simulation ranks:** NCCL communicator is created when enabled; `Grid` builds a Cartesian MPI decomposition; `State` and `HaloExchanger` are constructed; `Model::init` runs initializer and optional physics `initialize`/`init`; a `HistoryWriter` is constructed (`Bp5HistoryWriter` when `output.engine` is `BP5`, otherwise `LegacyHistoryWriter` wrapping `OutputManager`) and writes the initial step; the loop calls `model.run_step(dt)` until `simulation.total_time_s` is reached, then `close()` runs before Kokkos and MPI finalize.
+1. `MPI_Init` starts every rank. Shared-memory communicator sizing determines
+   the OpenMP threads available to each rank.
+2. GPU builds select a device from the node-local rank, then initialize Kokkos.
+3. `ConfigurationManager` loads the case JSON.
+4. When `--io-tasks N` is nonzero, ranks split into simulation and SST I/O
+   communicators. I/O ranks enter `run_io_server`; simulation ranks continue.
+5. Simulation ranks construct NCCL when enabled, followed by `Grid`, `State`,
+   `HaloExchanger`, and `Model`.
+6. `Model::init` loads initial or restart state and initializes enabled physics.
+7. The selected `HistoryWriter` writes the initial state when configured. The
+   time loop calls `model.run_step(dt)` until `simulation.total_time_s`.
+8. The writer closes before Kokkos and MPI finalize.
 
 ## Major libraries (CMake targets)
 

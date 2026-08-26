@@ -1,20 +1,18 @@
 # BP5 output internals
 
-!!! note "Looking for how to use it?"
+!!! note "Looking for configuration examples?"
 
-    This page documents how the direct BP5 writer is built and what it
-    guarantees. For engine selection, configuration keys, precision, submission,
-    and dataset sizing, see [Output](../user-guides/output.md).
+    This page is for developers changing the writer or restart implementation.
+    For engine selection, copy-ready JSON, submission, and dataset sizing, see
+    [Output](../user-guides/output.md).
 
-VVMex has an independent **CPU** history-output path that writes a multi-step
-ADIOS2 BP5 dataset directly from the compute ranks. It uses no `IOServer`, no
-SST transport, and no patched ADIOS2 — an unmodified upstream 2.12.1 install is
-enough. The original HDF5 and SST writers are untouched and remain available.
+BP5 is a direct compute-rank output path used by both CPU and GPU builds. GPU
+fields are staged to host memory before ADIOS2 sees them. The path uses no
+`IOServer`, SST transport, or patched ADIOS2.
 
-It follows the ADIOS2 multi-step BP pattern: open one dataset, repeat
-`BeginStep`/`Put`/`EndStep`, close once. One `*.bp` dataset therefore holds every
-output time rather than one file per time, and BP5 manages its own metadata and
-data subfiles inside it.
+The writer opens one `.bp` dataset, repeats
+`BeginStep`/`Put`/`EndStep` for each output time, and closes once. ADIOS2 stores
+metadata and data subfiles inside that dataset directory.
 
 ## Architecture
 
@@ -24,7 +22,7 @@ implementations share a call site and nothing else:
 ```text
 output.engine = BP5
     -> Bp5HistoryWriter
-    -> CPU field selections or persistent packed buffers
+    -> host field selections or persistent packed buffers
     -> ADIOS2 BP5 TwoLevelShm aggregation
     -> parallel filesystem
 
@@ -61,7 +59,7 @@ and `MPI_Finalize()`. The destructor is a fallback, not the normal path.
 | `src/io/bp5/Bp5BufferSet.hpp` | Persistent per-field staging buffers, one map per element type |
 | `src/io/bp5/CpuFieldSource.*` | Direct-selection and packing strategies |
 | `src/io/bp5/FieldInput.hpp` | Staging descriptor: pointer, element count, memory space |
-| `src/io/bp5/Bp5PathPolicy.hpp` | Dataset path resolution and overwrite safety |
+| `src/io/bp5/Bp5PathPolicy.hpp` | Dataset path resolution and existing-target safety |
 | `src/io/bp5/Bp5CollectiveValidation.hpp` | Cross-rank agreement on resolved settings |
 
 No BP5 source includes `IOServer.hpp` or any SST helper.
@@ -205,14 +203,18 @@ the rank count at restart is independent of the rank count that wrote the
 dataset. Halo exchange after loading uses the per-field overload, for the same
 CUDA-graph reason the HDF5 reader documents.
 
-One guard is specific to BP5: because a `.bp` dataset is a directory the writer
-may be asked to overwrite, `Bp5HistoryWriter` refuses to start when its target
-resolves to the same path as `restart.source_file`. Without it, a resumed run
-with `overwrite: true` would delete the history it had just read.
+One guard is specific to BP5: because a `.bp` dataset is a directory, replacing
+the restart source would delete the history just loaded. The default
+`existing_dataset: "error"` refuses that target and `replace` is still rejected
+when source and target resolve to the same path. Explicit `append` instead opens
+ADIOS2 with `Mode::Append` and `AppendAfterSteps=-1`. It is limited to
+`restart.step_index=-1` and requires `output_initial_step=false`, preserving
+all existing steps and avoiding a duplicate restart step. The BP5 writer's
+`CurrentStep()` supplies the retained step count for logging and the GrADS TDEF.
 
-## CPU staging
+## Host staging
 
-`CpuFieldSource` implements two equivalent routes to the same bytes, selected by
+`CpuFieldSource` implements two routes to the same bytes, selected by
 `output.bp5.buffer_mode`:
 
 **Direct** — pass the model's own ghosted `LayoutRight` allocation to ADIOS2 and
@@ -300,8 +302,8 @@ Buffer mode, async and precision are all per-rank-local choices, so they are
 pinned at 2 ranks rather than swept: repeating them at 1 and 4 ranks re-tested
 the same slab arithmetic and cost 4 more GPUs.
 
-The full matrix passes against an unmodified ADIOS2 2.12.1. Precision tests
-carry their own label:
+The matrix is exercised with the project's supported unmodified ADIOS2 stacks.
+Precision tests carry their own label:
 
 ```bash
 ctest --test-dir build --output-on-failure -L precision

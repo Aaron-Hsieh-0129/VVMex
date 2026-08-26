@@ -1,10 +1,16 @@
 # Examples
 
-This section describes representative ways to use VVMex: ready-to-run **default cases** and a **[view gallery](gallery.md)** of sample dynamics and full-physics simulations.
+Start from a repository example whenever possible. It provides consistent grid,
+initial-condition, physics, and output settings that can be changed one piece at
+a time.
 
-| Example | Description |
-| ------- | ----------- |
-| [Default cases](default-cases.md) | Runnable sample JSONs under `rundata/input_configs/default_cases/` with matching profiles and spatial NetCDF inputs |
-| [View gallery](gallery.md) | YouTube clips: regression-aligned dynamics, TaiwanVVM, RCE self-aggregation |
+| I want to… | Start with |
+| --- | --- |
+| Run a supplied JSON case | [Default cases](default-cases.md) |
+| Test a controlled dynamics problem | [Idealized simulations](idealized.md) |
+| Prepare a Taiwan topography and land case | [TaiwanVVM-style simulations](taiwan-vvm.md) |
+| See representative model output | [Video gallery](gallery.md) |
 
-For build and run commands, see [Quick Start](../quick-start.md). For every JSON knob, see [Model configuration](../user-guides/configuration.md).
+Build and launch instructions are in the [Quick start](../quick-start.md).
+Configuration keys are documented in
+[Model configuration](../user-guides/configuration.md).

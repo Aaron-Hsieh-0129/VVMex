@@ -1,28 +1,40 @@
-# VVMex Installation Guide
-This guide provides step-by-step instructions for building the dependencies required for VVMex from source.
+# GPU environment installation
+
+This guide builds a self-contained dependency stack for NVIDIA GPU execution.
+The commands use the versions validated by the `blaze` preset; adjust CUDA,
+HPC-X, and the Kokkos architecture for the installed NVHPC release and GPU.
+
+## Build map
+
+Build in this order:
+
+1. GCC and CMake
+2. NVHPC environment
+3. HDF5, zlib, NetCDF-C, PnetCDF, and NetCDF-Fortran
+4. CUDA Kokkos
+5. libfabric and Kokkos-free ADIOS2
+6. VVMex
+
+Keep this GPU prefix separate from every CPU-only prefix. Kokkos and ADIOS2 use
+the same shared-library names in both builds.
 
 ## 0. Preparation
-To make this guide easy to copy and paste, please define your target installation directory first. All libraries will be installed under this directory.
+
+Choose one installation prefix and clear inherited compiler search paths before
+building GCC:
 
 ```bash
-# Replace this with your desired installation path
-export INSTALL_DIR=/path/to/your/custom/libs
-mkdir -p $INSTALL_DIR
+export INSTALL_DIR=/path/to/your/gpu/libs
+mkdir -p "$INSTALL_DIR"
 
-export PATH=$INSTALL_DIR/bin:$PATH
-export C_INCLUDE_PATH=$INSTALL_DIR/include:$C_INCLUDE_PATH
-export LIBRARY_PATH=$INSTALL_DIR/lib64:$INSTALL_DIR/$LIB/lib:$LIBRARY_PATH
-export LD_LIBRARY_PATH=$INSTALL_DIR/lib64:$INSTALL_DIR/lib:$LD_LIBRARY_PATH
-```
-Before compiling the base compiler (GCC), it is recommended to clear your library paths to avoid linking conflicts with system libraries:
-
-```bash
+unset CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH
 unset LIBRARY_PATH LD_LIBRARY_PATH
 ```
 
----
+If a previous configure used a contaminated environment, recreate that
+dependency's build directory before retrying.
 
-## 1. Compiler & Core Tools
+## 1. Compiler and core tools
 
 ### GCC 11.4
 VVMex requires C++17 support. If your system GCC is too old, build GCC 11.4:
@@ -47,38 +59,38 @@ export PATH=$INSTALL_DIR/gcc11/bin:$PATH
 export LD_LIBRARY_PATH=$INSTALL_DIR/gcc11/lib64:$INSTALL_DIR/gcc11/lib:$LD_LIBRARY_PATH
 
 ```
-*(Note: If your system has a higher version of GCC but you still want to force CMake to use this GCC 11, you will need to add `-DCMAKE_C_FLAGS="--gcc-toolchain=$INSTALL_DIR/gcc11"` and `-DCMAKE_CXX_FLAGS="--gcc-toolchain=$INSTALL_DIR/gcc11"` during the configuration.)*
 
-### NVIDIA HPC SDK (NVHPC 24.9)
-Download and install NVHPC 24.9 from the official NVIDIA website. Assuming it is installed at `/path/to/nvhpc_24_9`, export its path so we can use its MPI and CUDA wrappers for the rest of the installation:
+!!! note "Keep NVHPC on the same GCC toolchain"
+
+    Set `VVM_GCC_TOOLCHAIN` to `$INSTALL_DIR/gcc11` in the VVMex CMake preset.
+    VVMex then applies `--gcc-toolchain` consistently to C, C++, and Fortran.
+
+### NVIDIA HPC SDK and HPC-X
+
+Install NVHPC, then set these values to match that installation. The example
+below matches the validated NVHPC 24.9 stack:
 
 ```bash
-export NVHPC_DEFAULT_CUDA=13.0
-export NVHPC_VERSION=25.9
-export NVHPC_HPCX_VERSION=2.24
+export NVHPC_VERSION=24.9
+export NVHPC_DEFAULT_CUDA=12.6
+export NVHPC_HPCX_VERSION=2.20
 export NVHPC_ROOT=/path/to/nvhpc/Linux_x86_64/${NVHPC_VERSION}
 
-# Just give info above
-
 export CUDA_HOME=${NVHPC_ROOT}/cuda/${NVHPC_DEFAULT_CUDA}
-export C_INCLUDE_PATH=$CUDA_HOME/include:$C_INCLUDE_PATH
-export LIBRARY_PATH=$CUDA_HOME/lib64:$LIBRARY_PATH
-export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
-export PATH=${NVHPC_ROOT}/compilers/bin:$PATH
-export LIBRARY_PATH=${NVHPC_ROOT}/compilers/lib:$LIBRARY_PATH
-export LD_LIBRARY_PATH=${NVHPC_ROOT}/compilers/lib:$LD_LIBRARY_PATH
-export C_INCLUDE_PATH=${NVHPC_ROOT}/math_libs/include:$C_INCLUDE_PATH
-export LIBRARY_PATH=${NVHPC_ROOT}/math_libs/lib64:$LIBRARY_PATH
-export LD_LIBRARY_PATH=${NVHPC_ROOT}/math_libs/lib64:$LD_LIBRARY_PATH
-
-export HPCX_HOME=${NVHPC_ROOT}/comm_libs/${NVHPC_DEFAULT_CUDA}/hpcx/hpcx-${NVHPC_HPX_VERSION}
-export PATH=${HPCX_HOME}/ompi/bin:${HPCX_HOME}/ucx/bin:${PATH}
-export LD_LIBRARY_PATH=${HPCX_HOME}/ompi/lib:${HPCX_HOME}/ucx/lib:${HPCX_HOME}/sharp/lib:${HPCX_HOME}/nccl_rdma_sharp_plugin/lib:${LD_LIBRARY_PATH}
-export LIBRARY_PATH=${HPCX_HOME}/ompi/lib:${HPCX_HOME}/ucx/lib:${HPCX_HOME}/sharp/lib:${HPCX_HOME}/nccl_rdma_sharp_plugin/lib:${LIBRARY_PATH}
-export C_INCLUDE_PATH=${HPCX_HOME}/ompi/include:${HPCX_HOME}/ucx/include:${C_INCLUDE_PATH}
-export CPLUS_INCLUDE_PATH=${HPCX_HOME}/ompi/include:${HPCX_HOME}/ucx/include:${CPLUS_INCLUDE_PATH}
+export HPCX_HOME=${NVHPC_ROOT}/comm_libs/${NVHPC_DEFAULT_CUDA}/hpcx/hpcx-${NVHPC_HPCX_VERSION}
 export OPAL_PREFIX=${HPCX_HOME}/ompi
+
+export PATH=${CUDA_HOME}/bin:${NVHPC_ROOT}/compilers/bin:${HPCX_HOME}/ompi/bin:${HPCX_HOME}/ucx/bin:${PATH}
+export C_INCLUDE_PATH=${CUDA_HOME}/include:${NVHPC_ROOT}/math_libs/include:${HPCX_HOME}/ompi/include:${HPCX_HOME}/ucx/include:${C_INCLUDE_PATH}
+export CPLUS_INCLUDE_PATH=${HPCX_HOME}/ompi/include:${HPCX_HOME}/ucx/include:${CPLUS_INCLUDE_PATH}
+export LIBRARY_PATH=${CUDA_HOME}/lib64:${NVHPC_ROOT}/compilers/lib:${NVHPC_ROOT}/math_libs/lib64:${HPCX_HOME}/ompi/lib:${HPCX_HOME}/ucx/lib:${LIBRARY_PATH}
+export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${NVHPC_ROOT}/compilers/lib:${NVHPC_ROOT}/math_libs/lib64:${HPCX_HOME}/ompi/lib:${HPCX_HOME}/ucx/lib:${LD_LIBRARY_PATH}
 ```
+
+Confirm that `$CUDA_HOME`, `$HPCX_HOME`, and the compiler directory exist
+before building dependencies. Other NVHPC releases may bundle different CUDA
+or HPC-X versions; use the directory names shipped by that SDK rather than
+copying the example unchanged.
 
 ### CMake 4.2.0
 
@@ -97,7 +109,7 @@ export PATH=$INSTALL_DIR/cmake/bin:$PATH
 
 ---
 
-## 2. I/O Libraries
+## 2. I/O libraries
 
 ### HDF5 1.14.5
 Must be compiled with MPI wrappers for parallel I/O.
@@ -114,7 +126,7 @@ make install
 cd ..
 ```
 
-### ZLIB 1.3.1 (Optional)
+### zlib 1.3.1 (optional)
 *(Skip this step if zlib is already available on your system.)*
 
 ```bash
@@ -127,7 +139,12 @@ cd ..
 ```
 
 ### NetCDF-C 4.4.1.1
-IMPORTANT WARNING: Do NOT use MPI wrappers (mpicc, mpic++) to compile NetCDF-C and NetCDF-Fortran. Using MPI wrappers here will cause errors in the RRTMGP NetCDF reader. Use standard serial compilers (gcc, g++, gfortran) instead.
+
+!!! warning "Use serial compilers for NetCDF-C"
+
+    Build NetCDF-C with `gcc` and `g++`, not MPI wrappers. In this stack, an
+    MPI-wrapper build causes failures in the RRTMGP NetCDF reader.
+
 ```bash
 wget https://github.com/Unidata/netcdf-c/archive/refs/tags/v4.4.1.1.tar.gz
 tar -zxvf v4.4.1.1.tar.gz
@@ -160,7 +177,10 @@ cd ..
 ```
 
 ### NetCDF-Fortran 4.4.1
-IMPORTANT WARNING: Again, use standard serial compilers (gcc, gfortran), NOT MPI wrappers. The -fallow-argument-mismatch flag is required for modern GCC.
+
+Use `gfortran`, not `mpifort`. Modern GCC also needs
+`-fallow-argument-mismatch` for this release.
+
 ```bash
 wget https://github.com/Unidata/netcdf-fortran/archive/refs/tags/v4.4.1.tar.gz
 tar -zxvf v4.4.1.tar.gz
@@ -318,49 +338,42 @@ the first, taking `libfabric`, `libhdf5` and `libz` from it. `submit.py` puts
 must -- both prefixes carry `libadios2_*.so` with identical SONAMEs, so whichever
 comes first is the one that loads.
 
-Warning: If using less than 2.11.0, some errors may appear when compiling VVM. You need to modify adios2/cxx/KokkosView.h to adios2/cxx11/KokkosView.h in the code and cmakelist.
+ADIOS2 2.11 or newer is required. Keep the ADIOS2 source unchanged and point
+`ADIOS2_DIR` at the installation selected for this VVMex build.
 
 ---
 
-## 4. Environment Setup Script
-To avoid cluttering your `.bashrc`, create a file named `env_setup.sh` in your workspace. Source this file (`source env_setup.sh`) every time before compiling or running VVMex.
-**env_setup.sh:**
+## 4. Environment setup script
+
+Put the runtime paths in a small script rather than mixing them into
+`.bashrc`. Update the three version variables to match the SDK, then run
+`source env_setup.sh` before configuring, compiling, or launching VVMex.
 
 ```bash
-#!/bin/bash
+#!/usr/bin/env bash
 
-# --- 1. Base Paths ---
-export INSTALL_DIR=/path/to/your/custom/libs
-export NVHPC_ROOT=/path/to/nvhpc_24_9/Linux_x86_64/24.9
+export INSTALL_DIR=/path/to/your/gpu/libs
+export NVHPC_VERSION=24.9
+export NVHPC_DEFAULT_CUDA=12.6
+export NVHPC_HPCX_VERSION=2.20
+export NVHPC_ROOT=/path/to/nvhpc/Linux_x86_64/${NVHPC_VERSION}
 
-# --- 2. NVHPC & MPI & CUDA ---
-export CUDA_HOME=$NVHPC_ROOT/cuda/12.6
-export OPAL_PREFIX=$NVHPC_ROOT/comm_libs/openmpi/openmpi-3.1.5
+export CUDA_HOME=${NVHPC_ROOT}/cuda/${NVHPC_DEFAULT_CUDA}
+export HPCX_HOME=${NVHPC_ROOT}/comm_libs/${NVHPC_DEFAULT_CUDA}/hpcx/hpcx-${NVHPC_HPCX_VERSION}
+export OPAL_PREFIX=${HPCX_HOME}/ompi
 
-export PATH=$CUDA_HOME/bin:$OPAL_PREFIX/bin:$NVHPC_ROOT/compilers/bin:$PATH
-export C_INCLUDE_PATH=$CUDA_HOME/include:$OPAL_PREFIX/include:$NVHPC_ROOT/math_libs/include:$C_INCLUDE_PATH
-export LIBRARY_PATH=$CUDA_HOME/lib64:$OPAL_PREFIX/lib:$NVHPC_ROOT/compilers/lib:$NVHPC_ROOT/math_libs/lib64:$LIBRARY_PATH
-export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$OPAL_PREFIX/lib:$NVHPC_ROOT/compilers/lib:$NVHPC_ROOT/math_libs/lib64:$LD_LIBRARY_PATH
+export PATH=${INSTALL_DIR}/bin:${INSTALL_DIR}/gcc11/bin:${INSTALL_DIR}/cmake/bin:${CUDA_HOME}/bin:${NVHPC_ROOT}/compilers/bin:${HPCX_HOME}/ompi/bin:${PATH}
+export C_INCLUDE_PATH=${INSTALL_DIR}/include:${CUDA_HOME}/include:${NVHPC_ROOT}/math_libs/include:${HPCX_HOME}/ompi/include:${C_INCLUDE_PATH}
+export CPLUS_INCLUDE_PATH=${INSTALL_DIR}/include:${HPCX_HOME}/ompi/include:${CPLUS_INCLUDE_PATH}
+export LIBRARY_PATH=${INSTALL_DIR}/lib64:${INSTALL_DIR}/lib:${INSTALL_DIR}/gcc11/lib64:${CUDA_HOME}/lib64:${NVHPC_ROOT}/compilers/lib:${NVHPC_ROOT}/math_libs/lib64:${HPCX_HOME}/ompi/lib:${LIBRARY_PATH}
+export LD_LIBRARY_PATH=${INSTALL_DIR}/lib64:${INSTALL_DIR}/lib:${INSTALL_DIR}/gcc11/lib64:${CUDA_HOME}/lib64:${NVHPC_ROOT}/compilers/lib:${NVHPC_ROOT}/math_libs/lib64:${HPCX_HOME}/ompi/lib:${LD_LIBRARY_PATH}
 
-# --- 3. GCC 11 & CMake ---
-export PATH=$INSTALL_DIR/gcc11/bin:$INSTALL_DIR/cmake/bin:$PATH
-export C_INCLUDE_PATH=$INSTALL_DIR/gcc11/include:$C_INCLUDE_PATH
-export LIBRARY_PATH=$INSTALL_DIR/gcc11/lib64:$INSTALL_DIR/gcc11/lib:$LIBRARY_PATH
-export LD_LIBRARY_PATH=$INSTALL_DIR/gcc11/lib64:$INSTALL_DIR/gcc11/lib:$LD_LIBRARY_PATH
-
-# --- 4. I/O & Framework Libraries ---
-export PATH=$INSTALL_DIR/bin:$PATH
-export C_INCLUDE_PATH=$INSTALL_DIR/include:$C_INCLUDE_PATH
-export LIBRARY_PATH=$INSTALL_DIR/lib64:$INSTALL_DIR/$LIB/lib:$LIBRARY_PATH
-export LD_LIBRARY_PATH=$INSTALL_DIR/lib64:$INSTALL_DIR/lib:$LD_LIBRARY_PATH
-
-echo "VVMex Environment Loaded Successfully!"
-
+echo "VVMex GPU environment loaded"
 ```
 
 ---
 
-## 5. Configure and Build VVMex
+## 5. Configure and build VVMex
 
 Add a GPU preset to `CMakePresets.json` describing your machine, then:
 

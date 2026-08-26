@@ -1,10 +1,22 @@
-# Job Submission
+# Job submission
 
-VVMex jobs should normally be launched with the root-level `submit.py` wrapper. The wrapper is the supported path because it reads `CMakePresets.json`, prepares library paths, creates run directories, separates compute and I/O ranks, and requests CPU/GPU resources consistently for local or SLURM execution.
+Use the root-level `submit.py` wrapper for normal runs. It selects the binary
+from `CMakePresets.json`, prepares library paths, creates output directories,
+assigns compute and I/O ranks, and requests matching CPU/GPU resources.
 
-**Use `submit.py` first:** Direct `mpirun` commands are kept only for advanced debugging. For performance runs, incorrect CPU/GPU assignment can make ranks share GPUs, starve I/O tasks, or slow the model substantially.
+## Choose a launch mode
 
-## Interactive mode
+| Situation | Use |
+| --- | --- |
+| First run or unfamiliar machine | Interactive `./submit.py` |
+| Repeatable local test | `./submit.py --local ...` |
+| Production batch run | `./submit.py ...` without `--local` |
+| Low-level launcher debugging | Direct MPI commands at the end of this page |
+
+Direct `mpirun` is intentionally the last option: an incorrect mapping can make
+ranks share GPUs, leave I/O ranks without CPU time, or load libraries from the
+wrong preset.
+
 
 If you do not know which inputs to provide, run the wrapper without arguments and answer the prompts step by step:
 
