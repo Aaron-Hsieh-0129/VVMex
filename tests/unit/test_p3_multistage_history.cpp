@@ -62,7 +62,7 @@ int main(int argc, char* argv[]) {
         }
 
         if (exit_code == 0) {
-            parameters.max_topo_idx = grid.get_halo_cells() - 1;
+            parameters.max_topo_idx = grid.get_halo_cells();
 
             auto fill_state_field = [&](const char* name, VVM::Real value) {
                 Kokkos::deep_copy(
