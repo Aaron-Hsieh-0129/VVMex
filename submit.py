@@ -403,38 +403,107 @@ def infer_gpus_per_node(compute_tasks, nodes, gpus):
     return max(1, math.ceil(compute_tasks / nodes))
 
 
-def query_cpus_per_node(partition):
+def _slurm_query(cmd, timeout=15):
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def query_partitions():
+    out = _slurm_query(["sinfo", "-h", "-o", "%P"])
+    if not out:
+        return [], None
+
+    names, default = [], None
+    for entry in out.split():
+        name = entry.rstrip("*")
+        names.append(name)
+        if entry.endswith("*"):
+            default = name
+    return names, default
+
+
+def resolve_partition(partition):
     """
-    Usable CPUs on a node of `partition`, or None if SLURM cannot say.
+    Fall back to the cluster's default partition when the requested one does not
+    exist. The shipped default is one site's name for it, and a partition SLURM
+    does not know silently defeats every query the CPU sizing depends on.
+    """
+    names, default = query_partitions()
+    if not names:
+        return partition, None
+
+    if partition in names:
+        return partition, None
+
+    if default:
+        return default, f"partition {partition!r} not found; using default partition {default!r}"
+
+    return partition, f"partition {partition!r} not found and SLURM reports no default"
+
+
+def _parse_gpu_count(detail):
+    for key in ("Gres", "CfgTRES"):
+        m = re.search(rf"\b{key}=(\S+)", detail)
+        if not m:
+            continue
+        for entry in m.group(1).split(","):
+            entry = re.sub(r"\(.*?\)", "", entry)
+            if not entry.startswith(("gpu:", "gres/gpu")):
+                continue
+            tail = entry.split("=")[-1].split(":")[-1]
+            if tail.isdigit() and int(tail) > 0:
+                return int(tail)
+    return None
+
+
+def query_node_resources(partition):
+    """
+    What one node of `partition` offers, or None if SLURM cannot say.
 
     CPUEfctv, not CPUTot: a node can advertise more CPUs than a job is allowed
     to hold, and asking for the difference gets the job rejected rather than
     scheduled. sinfo has no field for the effective count, so this takes a node
     name from the partition and asks scontrol about it.
     """
-    try:
-        node = subprocess.run(
-            ["sinfo", "-h", "-p", partition, "-o", "%n"],
-            capture_output=True, text=True, timeout=15,
-        ).stdout.split()
-        if not node:
-            return None
+    out = _slurm_query(["sinfo", "-h", "-p", partition, "-o", "%n"])
+    if not out or not out.split():
+        return None
 
-        detail = subprocess.run(
-            ["scontrol", "show", "node", node[0]],
-            capture_output=True, text=True, timeout=15,
-        ).stdout
+    detail = _slurm_query(["scontrol", "show", "node", out.split()[0]])
+    if not detail:
+        return None
 
-        for key in ("CPUEfctv", "CPUTot"):
-            m = re.search(rf"\b{key}=(\d+)", detail)
-            if m and int(m.group(1)) > 0:
-                return int(m.group(1))
-    except (OSError, subprocess.SubprocessError, ValueError):
-        pass
-    return None
+    resources = {"cpus": None, "gpus": _parse_gpu_count(detail)}
+
+    for key in ("CPUEfctv", "CPUTot"):
+        m = re.search(rf"\b{key}=(\d+)", detail)
+        if m and int(m.group(1)) > 0:
+            resources["cpus"] = int(m.group(1))
+            break
+
+    part = _slurm_query(["scontrol", "show", "partition", partition]) or ""
+
+    m = re.search(r"\bDefCpuPerGPU=(\d+)", part)
+    resources["def_cpu_per_gpu"] = int(m.group(1)) if m else None
+
+    m = re.search(r"\bMaxCPUsPerNode=(\d+)", part)
+    resources["max_cpus_per_node"] = int(m.group(1)) if m else None
+
+    return resources
 
 
-def infer_cpus_per_task(cpus, partition, tasks_per_node):
+def query_cpus_per_node(partition):
+    resources = query_node_resources(partition)
+    return resources["cpus"] if resources else None
+
+
+def infer_cpus_per_task(cpus, partition, tasks_per_node, gpus_per_node=0,
+                        compute_per_node=0, io_per_node=0, io_cpus=1):
     """
     CPU request policy when --cpus is not given.
 
@@ -444,20 +513,59 @@ def infer_cpus_per_task(cpus, partition, tasks_per_node):
     ranks that is 16 CPUs used and 88 idle, which starves the host side of every
     compute rank and shows up as low GPU utilization.
 
-    So fill the node instead, and let the caller override.
+    So fill the node, but no further than the CPUs the requested GPUs entitle
+    the job to. Where a site rations cores per GPU, dividing the whole node by
+    this job's task count over-requests whenever the job uses fewer GPUs than
+    the node has, and the job is rejected or held rather than scheduled.
     """
     if cpus is not None:
-        return cpus, "explicit"
+        return cpus, "explicit", []
 
     if not partition or tasks_per_node <= 0:
-        return 1, "fallback (no partition to query)"
+        return 1, "fallback (no partition to query)", []
 
-    per_node = query_cpus_per_node(partition)
-    if not per_node:
-        return 1, "fallback (SLURM did not report CPUs per node)"
+    resources = query_node_resources(partition)
+    if not resources or not resources["cpus"]:
+        return 1, "fallback (SLURM did not report CPUs per node)", []
 
-    inferred = max(1, per_node // tasks_per_node)
-    return inferred, f"{per_node} usable CPUs/node / {tasks_per_node} tasks/node"
+    budget = resources["cpus"]
+    reason = f"{budget} usable CPUs/node"
+
+    max_per_node = resources.get("max_cpus_per_node")
+    if max_per_node and max_per_node < budget:
+        budget = max_per_node
+        reason = f"{budget} CPUs/node allowed by the partition"
+
+    cpus_per_gpu = resources.get("def_cpu_per_gpu")
+    if not cpus_per_gpu and resources.get("gpus"):
+        cpus_per_gpu = resources["cpus"] // resources["gpus"]
+
+    if gpus_per_node > 0 and cpus_per_gpu:
+        gpu_budget = gpus_per_node * cpus_per_gpu
+        if gpu_budget < budget:
+            budget = gpu_budget
+            reason = f"{gpus_per_node} GPUs/node x {cpus_per_gpu} CPUs/GPU"
+
+    inferred = max(1, budget // tasks_per_node)
+    warnings = []
+
+    if inferred * tasks_per_node > budget:
+        warnings.append(
+            f"{tasks_per_node} tasks/node x {inferred} CPU needs "
+            f"{inferred * tasks_per_node} CPUs, above the {budget} this job is "
+            "entitled to. Reduce --io, or set --cpus explicitly if the site allows it."
+        )
+
+    if compute_per_node > 0:
+        allocated = inferred * tasks_per_node
+        per_compute = (allocated - io_per_node * io_cpus) // compute_per_node
+        if per_compute < 2:
+            warnings.append(
+                f"about {max(per_compute, 0)} core(s) per compute rank: CPU affinity "
+                "stays off below 2, and the host side of each GPU will be tight."
+            )
+
+    return inferred, f"{reason} / {tasks_per_node} tasks/node", warnings
 
 
 # ==============================================================================
@@ -793,7 +901,8 @@ def interactive_wizard():
     print(" Automatic and Advanced Options")
     print("--------------------------------------------------------------------")
     print(" --cpus N         : Host CPUs allocated per MPI task; OpenMP defaults to this.")
-    print("                    SLURM default: fill each node across its tasks.")
+    print("                    SLURM default: fill each node across its tasks, capped by the")
+    print("                    CPUs the requested GPUs entitle the job to.")
     print("                    Local CLI default: 1, because no partition can be queried.")
     print("                    For a local CPU preset, this wizard prompts with a full-node suggestion.")
     print("")
@@ -1138,6 +1247,13 @@ def main():
     # Derived defaults.
     args.io = infer_io_tasks(io_engine, args.compute, args.io)
 
+    if not args.local and args.partition:
+        requested_partition = args.partition
+        args.partition, partition_note = resolve_partition(args.partition)
+        if partition_note:
+            level = "Info" if args.partition != requested_partition else "Warning"
+            print(f"[{level}] {partition_note}")
+
     cpu_backend = env.get("VVM_BACKEND", "gpu") == "cpu"
     if cpu_backend:
         # A CPU build has no device to request or map. Requesting GPUs from SLURM
@@ -1207,11 +1323,19 @@ def main():
     tasks_per_node = math.ceil(total_tasks / args.nodes)
 
     # Needs tasks_per_node, so it cannot sit with the other derived defaults.
-    args.cpus, cpus_origin = infer_cpus_per_task(
-        args.cpus, None if args.local else args.partition, tasks_per_node
+    args.cpus, cpus_origin, cpus_warnings = infer_cpus_per_task(
+        args.cpus,
+        None if args.local else args.partition,
+        tasks_per_node,
+        args.gpus,
+        compute_per_node,
+        io_per_node,
+        args.io_cpus,
     )
     if cpus_origin != "explicit":
         print(f"[Info] CPUs per task: {args.cpus}  ({cpus_origin})")
+    for warning in cpus_warnings:
+        print(f"[Warning] {warning}")
 
     env["VVM_CONFIG_FILE"] = config_path_user
     env["VVM_COMPUTE_TASKS"] = str(args.compute)
