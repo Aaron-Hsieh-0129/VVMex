@@ -19,7 +19,7 @@
     "rcemip_grid_data_path": "./rundata/initial_conditions/profiles/snd_rcemip_anal300_v3.txt"
   },
   "simulation": {
-    "total_time_s": 10.0,
+    "total_time_s": 11.0,
     "dt_s": 1.0,
     "output_interval_s": 1.0,
     "idealized_test": "advection_u",
@@ -65,14 +65,22 @@
     }
   },
   "output": {
-    "output_dir": "./build/testing_output_bp5_model_smoke",
+    "output_dir": "./build/testing_output_bp5_restart_source",
     "engine": "BP5",
     "output_filename_prefix": "history",
-    "output_initial_step": true,
+    "output_initial_step": false,
     "fields_to_output": [
       "thbar",
+      "rhobar",
       "topo",
-      "u"
+      "u",
+      "v",
+      "w",
+      "th",
+      "qv",
+      "xi",
+      "eta",
+      "zeta"
     ],
     "output_grid": {
       "x_start": 0,
@@ -88,7 +96,7 @@
       "stats_level": 0,
       "async_write": false,
       "buffer_mode": "direct",
-      "existing_dataset": "replace"
+      "existing_dataset": "append"
     }
   },
   "dynamics": {
@@ -96,7 +104,7 @@
       "w_solver_method": "tridiagonal",
       "_w_solver_method_options": "Choose 'tridiagonal' (original) or 'jacobi' (3D parallel)",
       "iteration": 200,
-      "WRXMU": 2.5E-7
+      "WRXMU": 2.5e-07
     },
     "forcings": {
       "sponge_layer": {
@@ -324,7 +332,7 @@
       "make_lookup_table": false,
       "do_predict_nc": true,
       "do_prescribed_ccn": false,
-      "max_total_ni": 7.400E+5
+      "max_total_ni": 740000.0
     },
     "rrtmgp": {
       "enable_rrtmgp": false,
@@ -386,8 +394,13 @@
     "PSFC": 100000,
     "P0": 100000,
     "Cp": 1004.5,
-    "Lv": 2.5E+6,
-    "OMEGA": 0.00007292,
+    "Lv": 2500000.0,
+    "OMEGA": 7.292e-05,
     "PI": 3.14159265
+  },
+  "restart": {
+    "enable": true,
+    "source_file": "./build/testing_output_bp5_restart_source/history.bp",
+    "step_index": -1
   }
 }

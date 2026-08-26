@@ -512,10 +512,15 @@ if(VVM_TEST_BP5)
             hdf5_model_smoke
             sst_model_smoke
             bp5_restart_source
+            bp5_restart_append
             bp5_restart_resume)
         file(READ ${TEST_DIR}/configs/${BP5_MODEL_CONFIG}.json VVM_BP5_MODEL_CFG)
+        set(VVM_BP5_MODEL_OUTPUT_NAME ${BP5_MODEL_CONFIG})
+        if(BP5_MODEL_CONFIG STREQUAL "bp5_restart_append")
+            set(VVM_BP5_MODEL_OUTPUT_NAME bp5_restart_source)
+        endif()
         string(REGEX REPLACE "\"output_dir\"[ \t]*:[ \t]*\"[^\"]*\""
-                             "\"output_dir\": \"${CMAKE_BINARY_DIR}/testing_output_${BP5_MODEL_CONFIG}\""
+                             "\"output_dir\": \"${CMAKE_BINARY_DIR}/testing_output_${VVM_BP5_MODEL_OUTPUT_NAME}\""
                              VVM_BP5_MODEL_CFG "${VVM_BP5_MODEL_CFG}")
         # The restart source has to follow the same tree, for the same reason.
         string(REGEX REPLACE "\"source_file\"[ \t]*:[ \t]*\"[^\"]*history.bp\""
@@ -593,6 +598,23 @@ if(VVM_TEST_BP5)
     set_tests_properties(Verify_bp5_restart PROPERTIES
                          DEPENDS Run_bp5_restart_resume
                          LABELS "bp5;integration;restart" TIMEOUT 60)
+
+    add_test(NAME Run_bp5_restart_append
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+                     ${VVM_MPI_BIND_ARGS} ${GPU_WRAP} $<TARGET_FILE:vvm>
+                     ${bp5_restart_append_CONFIG}
+             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME Verify_bp5_restart_append
+             COMMAND $<TARGET_FILE:test_bp5_model_output>
+                     ${CMAKE_BINARY_DIR}/testing_output_bp5_restart_source/history.bp 12
+             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(Run_bp5_restart_append PROPERTIES
+                         DEPENDS Verify_bp5_restart
+                         LABELS "bp5;integration;restart;append" TIMEOUT 240)
+    _vvm_set_test_resources(Run_bp5_restart_append 2)
+    set_tests_properties(Verify_bp5_restart_append PROPERTIES
+                         DEPENDS Run_bp5_restart_append
+                         LABELS "bp5;integration;restart;append" TIMEOUT 60)
 
     # The three engines must agree bit-for-bit on the same run: same case, same
     # two compute ranks (SST adds one I/O rank on top), compared through each

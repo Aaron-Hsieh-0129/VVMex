@@ -31,6 +31,15 @@ const char* cpu_buffer_mode_name(CpuBufferMode mode) noexcept {
     return mode == CpuBufferMode::Direct ? "direct" : "pack";
 }
 
+const char* existing_dataset_policy_name(ExistingDatasetPolicy policy) noexcept {
+    switch (policy) {
+    case ExistingDatasetPolicy::Error: return "error";
+    case ExistingDatasetPolicy::Replace: return "replace";
+    case ExistingDatasetPolicy::Append: return "append";
+    }
+    return "unknown";
+}
+
 OutputElementType Bp5OutputConfig::element_type() const noexcept {
     return resolve_output_element_type(precision);
 }
@@ -55,7 +64,7 @@ Bp5OutputConfig Bp5OutputConfig::from_json(
 
     static const std::set<std::string> allowed = {
         "aggregation_type", "num_subfiles", "stats_level",
-        "async_write", "buffer_mode", "overwrite", "precision"
+        "async_write", "buffer_mode", "existing_dataset", "overwrite", "precision"
     };
     for (const auto& item : value.items()) {
         if (!item.key().empty() && item.key().front() == '_') continue;
@@ -75,7 +84,30 @@ Bp5OutputConfig Bp5OutputConfig::from_json(
         read_optional<unsigned int>(value, "stats_level", result.stats_level);
     result.async_write =
         read_optional<bool>(value, "async_write", result.async_write);
-    result.overwrite = read_optional<bool>(value, "overwrite", result.overwrite);
+    if (value.contains("existing_dataset") && value.contains("overwrite")) {
+        throw std::invalid_argument(
+            "output.bp5.existing_dataset and the legacy output.bp5.overwrite "
+            "cannot both be set.");
+    }
+    if (value.contains("existing_dataset")) {
+        const std::string policy = lower(
+            read_optional<std::string>(value, "existing_dataset", "error"));
+        if (policy == "error") {
+            result.existing_dataset = ExistingDatasetPolicy::Error;
+        } else if (policy == "replace") {
+            result.existing_dataset = ExistingDatasetPolicy::Replace;
+        } else if (policy == "append") {
+            result.existing_dataset = ExistingDatasetPolicy::Append;
+        } else {
+            throw std::invalid_argument(
+                "output.bp5.existing_dataset must be 'error', 'replace', or 'append'.");
+        }
+    } else if (value.contains("overwrite")) {
+        result.existing_dataset = read_optional<bool>(value, "overwrite", false)
+            ? ExistingDatasetPolicy::Replace
+            : ExistingDatasetPolicy::Error;
+        result.existing_dataset_from_legacy_overwrite = true;
+    }
 
     const std::string mode = lower(
         read_optional<std::string>(value, "buffer_mode", "direct"));

@@ -6,6 +6,7 @@
 #include <string>
 
 using VVM::IO::BP5::Bp5OutputConfig;
+using VVM::IO::BP5::ExistingDatasetPolicy;
 using VVM::IO::BP5::CpuBufferMode;
 using VVM::IO::BP5::OutputElementType;
 using VVM::IO::BP5::OutputPrecision;
@@ -53,7 +54,8 @@ int main() {
     check(defaults.stats_level == 0, "default stats");
     check(!defaults.async_write, "async defaults off");
     check(defaults.buffer_mode == CpuBufferMode::Direct, "direct defaults on");
-    check(!defaults.overwrite, "overwrite defaults off");
+    check(defaults.existing_dataset == ExistingDatasetPolicy::Error,
+          "existing datasets default to an error");
     // The default must stay lossless and byte-identical to the behaviour that
     // existed before precision was configurable.
     check(defaults.precision == OutputPrecision::Native, "precision defaults to native");
@@ -79,11 +81,25 @@ int main() {
     check(parsed.stats_level == 1, "configured stats");
     check(parsed.async_write, "configured async");
     check(parsed.buffer_mode == CpuBufferMode::Pack, "configured pack");
-    check(parsed.overwrite, "configured overwrite");
+    check(parsed.existing_dataset == ExistingDatasetPolicy::Replace,
+          "legacy overwrite maps to replace");
+    check(parsed.existing_dataset_from_legacy_overwrite, "legacy overwrite is tracked");
     check(parsed.adios_parameters().at("AsyncWrite") == "true", "ADIOS async parameter");
 
-    // Precision reaches BP5 as the resolved output.precision, not as a key of
-    // its own. Spelling and aliases are test_output_precision's business.
+    // The new policy is explicit, case-insensitive, and independent of the legacy key.
+    const auto append =
+        Bp5OutputConfig::from_json({{"existing_dataset", "ApPeNd"}});
+    check(append.existing_dataset == ExistingDatasetPolicy::Append,
+          "append policy is case-insensitive");
+    check(!append.existing_dataset_from_legacy_overwrite,
+          "new policy is not marked legacy");
+    const auto replace =
+        Bp5OutputConfig::from_json({{"existing_dataset", "replace"}});
+    check(replace.existing_dataset == ExistingDatasetPolicy::Replace,
+          "replace policy is parsed");
+
+    // Precision reaches BP5 as the resolved output.precision. Spelling and
+    // aliases are test_output_precision's business.
     const auto as_float32 =
         Bp5OutputConfig::from_json(nlohmann::json::object(), OutputPrecision::Float32);
     check(as_float32.precision == OutputPrecision::Float32, "float32 carried in");
@@ -144,6 +160,10 @@ int main() {
     expect_invalid({{"async_write", "yes"}}, "wrong async type accepted");
     // Deprecated, but not a licence to accept nonsense.
     expect_invalid({{"precision", "float16"}}, "unsupported precision accepted");
+    expect_invalid({{"existing_dataset", "truncate"}}, "invalid existing-dataset policy accepted");
+    expect_invalid({{"existing_dataset", 1}}, "wrong existing-dataset policy type accepted");
+    expect_invalid({{"existing_dataset", "append"}, {"overwrite", false}},
+                   "conflicting existing-dataset policies accepted");
     expect_invalid({{"precision", 32}}, "wrong precision type accepted");
 
     if (failures == 0) std::puts("test_bp5_output_config: PASS");

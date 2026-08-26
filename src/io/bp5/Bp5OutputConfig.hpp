@@ -12,6 +12,7 @@
 namespace VVM::IO::BP5 {
 
 enum class CpuBufferMode { Direct, Pack };
+enum class ExistingDatasetPolicy { Error, Replace, Append };
 
 using VVM::IO::OutputElementType;
 using VVM::IO::OutputPrecision;
@@ -21,6 +22,7 @@ using VVM::IO::output_element_type_name;
 using VVM::IO::output_precision_name;
 
 const char* cpu_buffer_mode_name(CpuBufferMode mode) noexcept;
+const char* existing_dataset_policy_name(ExistingDatasetPolicy policy) noexcept;
 
 struct Bp5OutputConfig {
     std::string aggregation_type = "TwoLevelShm";
@@ -29,7 +31,8 @@ struct Bp5OutputConfig {
     bool async_write = false;
     CpuBufferMode buffer_mode = CpuBufferMode::Direct;
     OutputPrecision precision = OutputPrecision::Native;
-    bool overwrite = false;
+    ExistingDatasetPolicy existing_dataset = ExistingDatasetPolicy::Error;
+    bool existing_dataset_from_legacy_overwrite = false;
 
     // Set when precision came from the deprecated output.bp5.precision rather
     // than output.precision, so the writer can say so once on rank 0.

@@ -96,7 +96,7 @@
       "stats_level": 0,
       "async_write": false,
       "buffer_mode": "direct",
-      "overwrite": true
+      "existing_dataset": "replace"
     }
   },
   "dynamics": {

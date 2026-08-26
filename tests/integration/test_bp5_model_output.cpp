@@ -19,11 +19,13 @@ void check(bool condition, const char* message) {
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 2) {
-        std::fprintf(stderr, "usage: test_bp5_model_output DATASET\n");
+    if (argc < 2 || argc > 3) {
+        std::fprintf(stderr, "usage: test_bp5_model_output DATASET [EXPECTED_STEPS]\n");
         return 2;
     }
     try {
+        const int expected_steps = argc == 3 ? std::stoi(argv[2]) : 11;
+
         adios2::ADIOS adios;
         auto io = adios.DeclareIO("VVM_BP5_MODEL_SMOKE_READER");
         auto reader = io.Open(argv[1], adios2::Mode::Read);
@@ -56,7 +58,7 @@ int main(int argc, char** argv) {
             ++steps;
         }
         reader.Close();
-        check(steps == 11, "initial plus ten computed BP5 steps are readable");
+        check(steps == expected_steps, "the expected number of BP5 steps are readable");
 
         const auto units = io.InquireAttribute<std::string>("units", "u");
         const auto staggering =
