@@ -129,8 +129,8 @@ Ignored under `--local`.
 | `-A`, `--account NAME` | `MST114418` | Charging account. Override this on any other system. |
 | `-p`, `--partition NAME` | `normal` | Partition. Also the partition the wrapper queries when sizing `--cpus`. |
 | `--job-name NAME` | `VVMex` | `--job-name`. |
-| `--out PATH` | `log/%j.out` | Standard output file; `%j` expands to the job ID. Its directory is created. |
-| `--err PATH` | `log/%j.err` | Standard error file. |
+| `--out PATH` | `<output.output_dir>/%j.out` | Standard output file; `%j` expands to the job ID. Defaults into the run's output directory. Its directory is created. |
+| `--err PATH` | `<output.output_dir>/%j.err` | Standard error file, alongside the standard output file. |
 
 ### Advanced SLURM
 
@@ -309,6 +309,7 @@ If you use fewer GPUs than *compute* tasks per node, the wrapper will warn that 
 - Sets `VVM_ROOT` from the script location.
 - Loads compilers and library paths from the selected `CMakePresets.json` entry.
 - Creates the configured output and log directories.
+- Writes `submit_command.sh` and the `code_snapshot/` provenance into the output directory.
 - Requires `--io` when the JSON uses `output.engine = "SST"`.
 - Rejects nonzero `--io` for HDF5 and BP5 before an allocation is requested.
 - Runs `tools/core_run.sh` locally or submits it through `sbatch`.
@@ -318,6 +319,24 @@ If you use fewer GPUs than *compute* tasks per node, the wrapper will warn that 
 - Pins each rank to its own cores, compute ranks NUMA-local to their GPU.
 - Lets waiting I/O ranks yield the CPU while compute ranks keep spinning, so a
   blocked I/O rank does not take cycles from the compute ranks it is waiting on.
+
+## What the wrapper writes into the output directory
+
+Every run drops its provenance next to the model output, so a finished run can be
+read back and repeated without guessing what produced it.
+
+| Path | Contents |
+| --- | --- |
+| `%j.out` / `%j.err` | SLURM logs, unless `--out` / `--err` say otherwise. |
+| `submit_command.sh` | Executable script holding the exact `submit.py` command that started the run, with `VVM_ROOT` exported and a `cd` into it. Run it to repeat the run. |
+| `code_snapshot/` | Copy of the source tree as it was at submit time, plus the case JSON and any profile/spatial input files. |
+| `code_snapshot/ORIGINAL_GIT_VERSION.txt` | Commit, branch, `git describe`, upstream, remote, author, date, subject, and the `git status --porcelain` listing of the source repository at submit time. |
+| `code_snapshot/ORIGINAL_GIT_UNCOMMITTED.patch` | The uncommitted diff at submit time. Written only when the source tree was dirty. |
+
+The snapshot is itself a git repository. Its single commit reproduces the source
+repository's `HEAD` exactly, and any uncommitted local edits are left in the working
+tree, so `git -C <output_dir>/code_snapshot diff` shows precisely what the run
+carried on top of that commit.
 
 ## Direct MPI commands
 

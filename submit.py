@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 
 import argparse
+import fnmatch
 import glob
 import json
 import math
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -29,8 +31,10 @@ DEFAULT_CPUS = None               # SLURM fills the node; local mode falls back 
 DEFAULT_OMP_THREADS = None        # Defaults to allocated CPUs per task
 DEFAULT_IO_CPUS = 1               # IO ranks are host-only and effectively single-threaded
 DEFAULT_TIME = "24:00:00"
-DEFAULT_OUT = "log/%j.out"
-DEFAULT_ERR = "log/%j.err"
+DEFAULT_OUT = None                # None means <output.output_dir>/%j.out
+DEFAULT_ERR = None                # None means <output.output_dir>/%j.err
+DEFAULT_LOG_OUT_NAME = "%j.out"
+DEFAULT_LOG_ERR_NAME = "%j.err"
 DEFAULT_JOB_NAME = "VVMex"
 DEFAULT_ACCOUNT = "MST114418"
 DEFAULT_PARTITION = "normal"
@@ -350,6 +354,21 @@ def peek_io_engine(config_path):
         return "HDF5"
 
 
+def peek_output_dir(config_path):
+    try:
+        config_data, _ = read_config(config_path)
+        return config_data.get("output", {}).get("output_dir", "")
+    except Exception:
+        return ""
+
+
+def default_log_path(out_dir, name, root=None):
+    if not out_dir:
+        return name
+    base = out_dir if os.path.isabs(out_dir) else os.path.join(root or os.getcwd(), out_dir)
+    return os.path.join(os.path.normpath(base), name)
+
+
 def infer_io_tasks(io_engine, compute_tasks, io_tasks):
     """
     IO rank default policy:
@@ -445,6 +464,237 @@ def infer_cpus_per_task(cpus, partition, tasks_per_node):
 # Snapshot
 # ==============================================================================
 
+SNAPSHOT_IGNORE_NAMES = [
+    ".git",
+    ".vvm_runtime_libs",
+    "build",
+    "build_cpu",
+    "log",
+    "rundata",
+    "tests",
+    "docs",
+    "externals",
+    "tags",
+    "*.o",
+    "output",
+]
+
+SUBMIT_COMMAND_FILE = "submit_command.sh"
+
+SNAPSHOT_VERSION_FILE = "ORIGINAL_GIT_VERSION.txt"
+SNAPSHOT_PATCH_FILE = "ORIGINAL_GIT_UNCOMMITTED.patch"
+
+
+def git_text(repo_root, args):
+    try:
+        result = subprocess.run(
+            ["git"] + args,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:
+        return ""
+    if result.returncode != 0:
+        return ""
+    return result.stdout.rstrip("\n")
+
+
+def git_bytes(repo_root, args):
+    result = subprocess.run(["git"] + args, cwd=repo_root, capture_output=True)
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def collect_git_version_info(repo_root):
+    head = git_text(repo_root, ["rev-parse", "HEAD"])
+    if not head:
+        return None
+
+    branch = git_text(repo_root, ["rev-parse", "--abbrev-ref", "HEAD"])
+    if branch == "HEAD":
+        branch = "(detached HEAD)"
+
+    status = git_text(repo_root, ["status", "--porcelain"])
+
+    return {
+        "commit": head,
+        "short": git_text(repo_root, ["rev-parse", "--short", "HEAD"]),
+        "branch": branch,
+        "describe": git_text(repo_root, ["describe", "--tags", "--always", "--dirty"]),
+        "author_date": git_text(repo_root, ["log", "-1", "--format=%aI"]),
+        "author": git_text(repo_root, ["log", "-1", "--format=%an <%ae>"]),
+        "subject": git_text(repo_root, ["log", "-1", "--format=%s"]),
+        "remote": git_text(repo_root, ["config", "--get", "remote.origin.url"]),
+        "upstream": git_text(repo_root, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]),
+        "status": status,
+        "dirty": bool(status),
+    }
+
+
+def write_git_version_file(snapshot_dir, info, repo_root):
+    path = os.path.join(snapshot_dir, SNAPSHOT_VERSION_FILE)
+
+    lines = [
+        f"repository       : {repo_root}",
+        f"commit           : {info['commit']}",
+        f"short_commit     : {info['short']}",
+        f"branch           : {info['branch']}",
+        f"describe         : {info['describe']}",
+        f"upstream         : {info['upstream'] or '(none)'}",
+        f"remote_origin    : {info['remote'] or '(none)'}",
+        f"commit_author    : {info['author']}",
+        f"commit_date      : {info['author_date']}",
+        f"commit_subject   : {info['subject']}",
+        f"working_tree     : {'modified' if info['dirty'] else 'clean'}",
+        "",
+        "checkout command:",
+        f"  git checkout {info['commit']}",
+        "",
+    ]
+
+    if info["dirty"]:
+        lines.append("uncommitted changes at submit time (git status --porcelain):")
+        lines.extend("  " + line for line in info["status"].splitlines())
+        lines.append("")
+        lines.append(f"the same changes are applied in this snapshot and saved in {SNAPSHOT_PATCH_FILE}")
+    else:
+        lines.append("no uncommitted changes at submit time")
+
+    with open(path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def write_git_patch_file(snapshot_dir, repo_root, pathspecs):
+    args = ["diff", "HEAD", "--binary"]
+    if pathspecs:
+        args += ["--"] + pathspecs
+
+    patch = git_bytes(repo_root, args)
+    if not patch:
+        return
+
+    with open(os.path.join(snapshot_dir, SNAPSHOT_PATCH_FILE), "wb") as f:
+        f.write(patch)
+
+
+def snapshot_ignored(rel_path, ignore_names):
+    for part in rel_path.split("/"):
+        for pattern in ignore_names:
+            if fnmatch.fnmatch(part, pattern):
+                return True
+    return False
+
+
+def snapshot_tracked_paths(repo_root, ignore_names):
+    listing = git_text(repo_root, ["ls-files", "-z"])
+    paths = [p for p in listing.split("\0") if p]
+    return [p for p in paths if not snapshot_ignored(p, ignore_names)]
+
+
+def create_baseline_history(repo_root, snapshot_dir, info, ignore_names):
+    tracked = snapshot_tracked_paths(repo_root, ignore_names)
+    if not tracked:
+        return False
+
+    modified_state = {}
+
+    for rel in tracked:
+        dst = os.path.join(snapshot_dir, rel)
+        current = None
+        if os.path.isfile(dst) and not os.path.islink(dst):
+            with open(dst, "rb") as f:
+                current = f.read()
+        elif os.path.lexists(dst):
+            continue
+
+        original = git_bytes(repo_root, ["show", f"HEAD:{rel}"])
+        if original is None:
+            continue
+
+        modified_state[rel] = (current, os.stat(dst).st_mode if current is not None else None)
+
+        os.makedirs(os.path.dirname(dst) or snapshot_dir, exist_ok=True)
+        with open(dst, "wb") as f:
+            f.write(original)
+
+    restored = sorted(modified_state.keys())
+    if not restored:
+        return False
+
+    subprocess.run(["git", "init", "-q"], cwd=snapshot_dir, check=True)
+
+    exclude_lines = [SNAPSHOT_VERSION_FILE, SNAPSHOT_PATCH_FILE] + [
+        n for n in ignore_names if n != ".git"
+    ]
+    with open(os.path.join(snapshot_dir, ".git", "info", "exclude"), "a") as f:
+        f.write("\n" + "\n".join(exclude_lines) + "\n")
+
+    for start in range(0, len(restored), 200):
+        subprocess.run(
+            ["git", "add", "-f", "--"] + restored[start:start + 200],
+            cwd=snapshot_dir,
+            check=True,
+        )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Snapshot",
+            "-c",
+            "user.email=snap@local",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            f"Snapshot base of {info['short']} ({info['branch']})",
+            "-m",
+            f"Original commit: {info['commit']}\nOriginal subject: {info['subject']}",
+        ],
+        cwd=snapshot_dir,
+        check=True,
+    )
+
+    for rel, (content, mode) in modified_state.items():
+        dst = os.path.join(snapshot_dir, rel)
+        if content is None:
+            if os.path.exists(dst):
+                os.remove(dst)
+            continue
+        with open(dst, "wb") as f:
+            f.write(content)
+        if mode is not None:
+            os.chmod(dst, mode)
+
+    return True
+
+
+def write_submit_command(out_dir_abs, vvm_root, args):
+    script = os.path.abspath(sys.argv[0])
+
+    command = getattr(args, "equivalent_command", None)
+    if command:
+        if not os.path.isabs(sys.argv[0]):
+            command = command.replace(sys.argv[0], script, 1)
+    else:
+        command = shlex.join([script] + sys.argv[1:])
+
+    path = os.path.join(out_dir_abs, SUBMIT_COMMAND_FILE)
+    with open(path, "w") as f:
+        f.write(
+            "#!/usr/bin/env bash\n"
+            "set -e\n"
+            f"export VVM_ROOT={shlex.quote(vvm_root)}\n"
+            'cd "$VVM_ROOT"\n'
+            "\n"
+            f"{command}\n"
+        )
+    os.chmod(path, 0o755)
+
+    print(f"[Info] Submit command written to: {path}")
+
+
 def create_code_snapshot(repo_root, snapshot_dir, config_path, prof_path, spat_path, out_dir_raw):
     print(f"\n[Info] Creating code snapshot at: {snapshot_dir}")
 
@@ -455,21 +705,8 @@ def create_code_snapshot(repo_root, snapshot_dir, config_path, prof_path, spat_p
     if out_base in [".", "..", ""]:
         out_base = "output"
 
-    ignore_patterns = shutil.ignore_patterns(
-        ".git",
-        ".vvm_runtime_libs",
-        "build",
-        "build_cpu",
-        "log",
-        "rundata",
-        "tests",
-        "docs",
-        "externals",
-        "tags",
-        "*.o",
-        "output",
-        out_base,
-    )
+    ignore_names = SNAPSHOT_IGNORE_NAMES + [out_base]
+    ignore_patterns = shutil.ignore_patterns(*ignore_names)
 
     shutil.copytree(repo_root, snapshot_dir, ignore=ignore_patterns)
     shutil.copy2(config_path, snapshot_dir)
@@ -480,42 +717,43 @@ def create_code_snapshot(repo_root, snapshot_dir, config_path, prof_path, spat_p
     if spat_path and os.path.isfile(spat_path):
         shutil.copy2(spat_path, snapshot_dir)
 
-    gitignore_content = (
-        ".vvm_runtime_libs/\n"
-        "rundata/\n"
-        "tests/\n"
-        "docs/\n"
-        "externals/\n"
-        "build/\n"
-        "build_cpu/\n"
-        "log/\n"
-        "output/\n"
-        f"{out_base}/\n"
-    )
+    info = collect_git_version_info(repo_root)
 
-    with open(os.path.join(snapshot_dir, ".gitignore"), "w") as f:
-        f.write(gitignore_content)
+    if info is None:
+        print("[Warning] Source tree is not a git repository; snapshot has no baseline history")
+        try:
+            subprocess.run(["git", "init", "-q"], cwd=snapshot_dir, check=True)
+            with open(os.path.join(snapshot_dir, ".git", "info", "exclude"), "a") as f:
+                f.write("\n" + "\n".join(ignore_names) + "\n")
+            subprocess.run(["git", "add", "-A"], cwd=snapshot_dir, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Snapshot",
+                    "-c",
+                    "user.email=snap@local",
+                    "commit",
+                    "-q",
+                    "-m",
+                    "Auto Snapshot",
+                ],
+                cwd=snapshot_dir,
+                check=True,
+            )
+        except Exception as e:
+            print(f"[Warning] Git snapshot commit failed; ignored: {e}")
+        return
+
+    write_git_version_file(snapshot_dir, info, repo_root)
+    write_git_patch_file(snapshot_dir, repo_root, snapshot_tracked_paths(repo_root, ignore_names))
 
     try:
-        subprocess.run(["git", "init", "-q"], cwd=snapshot_dir, check=True)
-        subprocess.run(["git", "add", "."], cwd=snapshot_dir, check=True)
-        subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.name=Snapshot",
-                "-c",
-                "user.email=snap@local",
-                "commit",
-                "-q",
-                "-m",
-                "Auto Snapshot",
-            ],
-            cwd=snapshot_dir,
-            check=True,
-        )
+        if create_baseline_history(repo_root, snapshot_dir, info, ignore_names):
+            state = "with local edits kept as uncommitted changes" if info["dirty"] else "clean"
+            print(f"[Info] Snapshot git baseline: {info['short']} ({info['branch']}) {state}")
     except Exception as e:
-        print(f"[Warning] Git snapshot commit failed; ignored: {e}")
+        print(f"[Warning] Git snapshot baseline failed; ignored: {e}")
 
 
 # ==============================================================================
@@ -546,8 +784,8 @@ def interactive_wizard():
     print(f" --compute        : Compute MPI ranks (default: {DEFAULT_COMPUTE})")
     print(f" --nodes          : Number of SLURM nodes (default: {DEFAULT_NODES})")
     print(f" -t, --time       : Wall time limit (default: {DEFAULT_TIME})")
-    print(f" --out            : Standard output log file (default: {DEFAULT_OUT})")
-    print(f" --err            : Standard error log file (default: {DEFAULT_ERR})")
+    print(f" --out            : Standard output log file (default: <output.output_dir>/{DEFAULT_LOG_OUT_NAME})")
+    print(f" --err            : Standard error log file (default: <output.output_dir>/{DEFAULT_LOG_ERR_NAME})")
     print(f" --job-name       : SLURM job name (default: {DEFAULT_JOB_NAME})")
     print(f" -A, --account    : SLURM account (default: {DEFAULT_ACCOUNT})")
     print(f" -p, --partition  : SLURM partition (default: {DEFAULT_PARTITION})")
@@ -634,6 +872,7 @@ def interactive_wizard():
         args.nodes = 1
 
     io_engine = peek_io_engine(args.config)
+    peeked_out_dir = peek_output_dir(args.config)
     args.io = infer_io_tasks(io_engine, args.compute, args.io)
     inferred_gpus = infer_gpus_per_node(args.compute, args.nodes, args.gpus) if gpu_preset else 0
     if args.local and not gpu_preset:
@@ -679,8 +918,8 @@ def interactive_wizard():
         args.job_name = ask("Job name", DEFAULT_JOB_NAME)
         args.account = ask("SLURM account", DEFAULT_ACCOUNT)
         args.partition = ask("SLURM partition", DEFAULT_PARTITION)
-        args.out = ask("Standard output log", DEFAULT_OUT)
-        args.err = ask("Standard error log", DEFAULT_ERR)
+        args.out = ask("Standard output log", default_log_path(peeked_out_dir, DEFAULT_LOG_OUT_NAME, vvm_root))
+        args.err = ask("Standard error log", default_log_path(peeked_out_dir, DEFAULT_LOG_ERR_NAME, vvm_root))
     else:
         args.time = None
         args.job_name = DEFAULT_JOB_NAME
@@ -724,9 +963,11 @@ def interactive_wizard():
         cmd_parts.append(f'-A "{args.account}"')
         cmd_parts.append(f'-p "{args.partition}"')
 
+    args.equivalent_command = " ".join(cmd_parts)
+
     print("\n--- Setup Complete ---")
     print("\nEquivalent command:\n")
-    print(" " + " ".join(cmd_parts))
+    print(" " + args.equivalent_command)
     print("\nUse --help to see advanced command-line-only options.\n")
 
     return args
@@ -783,8 +1024,12 @@ def parse_args():
     )
 
     parser.add_argument("-t", "--time", type=str, default=DEFAULT_TIME, help="Wall time limit")
-    parser.add_argument("--out", type=str, default=DEFAULT_OUT, help="Standard output log")
-    parser.add_argument("--err", type=str, default=DEFAULT_ERR, help="Standard error log")
+    parser.add_argument("--out", type=str, default=DEFAULT_OUT,
+                        help="Standard output log (default: <output.output_dir>/"
+                             + DEFAULT_LOG_OUT_NAME.replace("%", "%%") + ")")
+    parser.add_argument("--err", type=str, default=DEFAULT_ERR,
+                        help="Standard error log (default: <output.output_dir>/"
+                             + DEFAULT_LOG_ERR_NAME.replace("%", "%%") + ")")
     parser.add_argument("--job-name", type=str, default=DEFAULT_JOB_NAME, help="SLURM job name")
     parser.add_argument("-A", "--account", type=str, default=DEFAULT_ACCOUNT, help="SLURM account")
     parser.add_argument("-p", "--partition", type=str, default=DEFAULT_PARTITION, help="SLURM partition")
@@ -925,6 +1170,12 @@ def main():
 
     os.makedirs(out_dir_abs, exist_ok=True)
 
+    if not args.out:
+        args.out = default_log_path(out_dir_abs, DEFAULT_LOG_OUT_NAME)
+
+    if not args.err:
+        args.err = default_log_path(out_dir_abs, DEFAULT_LOG_ERR_NAME)
+
     if args.out:
         out_log_dir = os.path.dirname(os.path.abspath(args.out))
         if out_log_dir:
@@ -934,6 +1185,8 @@ def main():
         err_log_dir = os.path.dirname(os.path.abspath(args.err))
         if err_log_dir:
             os.makedirs(err_log_dir, exist_ok=True)
+
+    write_submit_command(out_dir_abs, vvm_root, args)
 
     snapshot_dir = os.path.join(out_dir_abs, "code_snapshot")
     create_code_snapshot(
@@ -1014,6 +1267,8 @@ def main():
     if args.io > 0:
         print(f" CPUs/IO rank      : {args.io_cpus}  (host-only, no GPU)")
     if not args.local:
+        print(f" Stdout log        : {args.out}")
+        print(f" Stderr log        : {args.err}")
         print(f" Exclusive         : {args.exclusive}")
         print(f" Export            : {args.export}")
         if args.exclude:
