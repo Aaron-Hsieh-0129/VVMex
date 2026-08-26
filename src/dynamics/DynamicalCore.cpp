@@ -37,9 +37,10 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
     };
 
     std::vector<std::string> common_thermo = {"th", "qv"};
+    const bool p3_enabled = config.get_value<bool>("physics.p3.enable_p3", false);
     
     auto prognostic_config = config_.get_value<nlohmann::json>("dynamics.prognostic_variables");
-    if (!config.get_value<bool>("physics.p3.enable_p3", false)) {
+    if (!p3_enabled) {
         if (rank == 0) std::cout << "[WARNING] P3 is not turned on but the P3 variables are listed in prognostic variables so they are deleted!!" << std::endl;
         std::unordered_set<std::string> P3toRemove = {"qc", "qi", "qr", "qm", "nc", "ni", "nr", "bm"};
         std::vector<std::string> keysToDelete;
@@ -98,7 +99,9 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
         auto numerical_method = method_factory.create(var_name, var_conf, is_tracer, is_thermo, dims, has_external_forward_euler);
         const auto requirements = numerical_method->state_requirements();
 
-        if (requirements.previous_state) {
+        // P3 consumes the pre-dynamics th/qv values after this update.
+        const bool p3_previous_state = p3_enabled && (var_name == "th" || var_name == "qv");
+        if (requirements.previous_state || p3_previous_state) {
             state_.add_field<3>(var_name + "_m", dims);
         }
         if (requirements.ab2_tendency_history) {
@@ -572,6 +575,13 @@ void DynamicalCore::update_thermodynamics(VVM::Real dt) {
 
         auto& numerical_method = *var.method;
         if (numerical_method.uses_multistage_scheme()) {
+            const std::string previous_name = var.name + "_m";
+            if (state_.has_field(previous_name)) {
+                Kokkos::deep_copy(
+                    Kokkos::DefaultExecutionSpace(),
+                    state_.get_field<3>(previous_name).get_mutable_device_data(),
+                    var.field->get_device_data());
+            }
             numerical_method.advance(
                 state_, grid_, params_, dt,
                 [&]() { process_stage_field(var); });

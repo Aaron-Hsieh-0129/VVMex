@@ -714,6 +714,23 @@ add_vvm_device_unit_test(test_horizontal_mean ${TEST_DIR}/configs/2dbubble.json 
 # and only a value-level check keeps them exchanging the same cells.
 add_vvm_device_unit_test(test_halo_exchange ${TEST_DIR}/configs/2dbubble.json 2)
 
+add_executable(test_p3_multistage_history
+               ${TEST_DIR}/unit/test_p3_multistage_history.cpp)
+target_include_directories(test_p3_multistage_history
+                           PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_p3_multistage_history
+                      PRIVATE vvm_dynamics vvm_core vvm_utils
+                              Kokkos::kokkos MPI::MPI_CXX)
+add_test(NAME test_p3_multistage_history_r1
+         COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+                 ${VVM_MPI_BIND_ARGS} ${GPU_WRAP}
+                 $<TARGET_FILE:test_p3_multistage_history>
+                 ${TEST_DIR}/configs/p3_multistage_history.json
+         WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
+set_tests_properties(test_p3_multistage_history_r1
+                     PROPERTIES LABELS unit TIMEOUT 300)
+_vvm_set_test_resources(test_p3_multistage_history_r1 1)
+
 # --- default: 1 GPU, ~40 s -------------------------------------------------
 add_vvm_test(advection_u "u th xi eta zeta")
 add_vvm_test(advection_v "v th xi eta zeta")
