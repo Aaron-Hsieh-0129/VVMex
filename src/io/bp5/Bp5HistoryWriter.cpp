@@ -76,14 +76,32 @@ Bp5HistoryWriter::Bp5HistoryWriter(
     try {
         io_ = adios_.DeclareIO("VVM_BP5_HISTORY");
         io_.SetEngine("BP5");
-        io_.SetParameters(config_.adios_parameters());
+        auto adios_parameters = config_.adios_parameters();
+        if (config_.existing_dataset == ExistingDatasetPolicy::Append) {
+            adios_parameters["AppendAfterSteps"] = "-1";
+        }
+        io_.SetParameters(adios_parameters);
         define_schema();
         prepare_coordinates();
         validate_coverage();
+        const adios2::Mode open_mode =
+            config_.existing_dataset == ExistingDatasetPolicy::Append
+                ? adios2::Mode::Append
+                : adios2::Mode::Write;
+        writer_ = io_.Open(dataset_path_.string(), open_mode, comm_);
+        if (config_.existing_dataset == ExistingDatasetPolicy::Append) {
+            existing_steps_ = writer_.CurrentStep();
+            steps_written_ = existing_steps_;
+            if (rank_ == 0) {
+                std::cout << "  [BP5] Appending after " << existing_steps_
+                          << " existing step(s), restored model_time_s="
+                          << state_.get_time() << ", model_step="
+                          << state_.get_step() << std::endl;
+            }
+        }
+        writer_.LockWriterDefinitions();
         write_grads_ctl_file(config);
         print_configuration();
-        writer_ = io_.Open(dataset_path_.string(), adios2::Mode::Write, comm_);
-        writer_.LockWriterDefinitions();
     } catch (const std::exception& e) {
         throw_operation("construct/open", e);
     }
@@ -103,7 +121,7 @@ void Bp5HistoryWriter::validate_collective_configuration(
              << ':' << static_cast<int>(config_.precision)
              << ':' << static_cast<int>(element_type_)
              << ':' << static_cast<int>(effective_buffer_mode_)
-             << ':' << config_.overwrite << ':';
+             << ':' << static_cast<int>(config_.existing_dataset) << ':';
     const auto& bounds = schema_.bounds();
     resolved << bounds.x_start << ':' << bounds.x_end << ':'
              << bounds.y_start << ':' << bounds.y_end << ':'
@@ -136,26 +154,60 @@ void Bp5HistoryWriter::prepare_dataset_path(
     int path_status = 0;
     if (rank_ == 0) {
         try {
-            if (config.get_value<bool>("restart.enable", false) &&
-                config.has_key("restart.source_file")) {
-                std::error_code ec;
+            const bool restart_enabled =
+                config.get_value<bool>("restart.enable", false);
+            const bool has_restart_source = config.has_key("restart.source_file");
+            const bool append =
+                config_.existing_dataset == ExistingDatasetPolicy::Append;
+
+            if (append) {
+                if (!restart_enabled || !has_restart_source) {
+                    throw std::runtime_error(
+                        "output.bp5.existing_dataset='append' requires restart.enable=true "
+                        "and restart.source_file");
+                }
+                if (config.get_value<std::int64_t>("restart.step_index", -1) != -1) {
+                    throw std::runtime_error(
+                        "BP5 append is only allowed with restart.step_index=-1 so existing "
+                        "history is never truncated");
+                }
+                if (config.get_value<bool>("output.output_initial_step", true)) {
+                    throw std::runtime_error(
+                        "BP5 append requires output.output_initial_step=false to avoid "
+                        "duplicating the restart step");
+                }
+            }
+
+            if (restart_enabled && has_restart_source) {
+                std::error_code source_ec;
+                std::error_code target_ec;
                 const auto source = std::filesystem::weakly_canonical(
                     std::filesystem::path(
-                        config.get_value<std::string>("restart.source_file")), ec);
+                        config.get_value<std::string>("restart.source_file")), source_ec);
                 const auto target =
-                    std::filesystem::weakly_canonical(dataset_path_, ec);
-                if (!ec && source == target) {
+                    std::filesystem::weakly_canonical(dataset_path_, target_ec);
+                if (source_ec || target_ec) {
+                    throw std::runtime_error(
+                        "cannot resolve BP5 restart source and output target");
+                }
+                const bool same_dataset = source == target;
+                if (append && !same_dataset) {
+                    throw std::runtime_error(
+                        "BP5 append requires restart.source_file and the output dataset "
+                        "to resolve to the same path");
+                }
+                if (!append && same_dataset) {
                     throw std::runtime_error(
                         "restart.source_file is the dataset this run would write ('" +
                         dataset_path_.string() +
-                        "'); choose a different output.output_dir or "
-                        "output.output_filename_prefix so the resumed history survives");
+                        "'); select output.bp5.existing_dataset='append' with "
+                        "output.output_initial_step=false, or choose a different output path");
                 }
             }
 
             dataset_path_ = prepare_bp5_dataset_path(
-                output_dir, prefix, config_.overwrite);
-        } 
+                output_dir, prefix, config_.existing_dataset);
+        }
         catch (const std::exception& e) {
             std::cerr << "[BP5 rank 0] path preparation failed for '"
                       << dataset_path_.string() << "': " << e.what() << std::endl;
@@ -352,7 +404,7 @@ void Bp5HistoryWriter::write_grads_ctl_file(
         return std::floor(time / output_interval + 1e-6);
     };
     const double start_time = static_cast<double>(state_.get_time());
-    ctl.time_count = static_cast<std::size_t>(
+    ctl.time_count = existing_steps_ + static_cast<std::size_t>(
         std::max(0.0, intervals_before(total_time) - intervals_before(start_time)));
     if (config.get_value<bool>("output.output_initial_step", true)) ++ctl.time_count;
     const int start_hour = (config.get_value<int>("physics.rrtmgp.time.hour", 16) + 8) % 24;
@@ -458,6 +510,8 @@ void Bp5HistoryWriter::print_configuration() const {
               << "  [BP5] NumSubFiles: " << config_.num_subfiles << "\n"
               << "  [BP5] StatsLevel: " << config_.stats_level << "\n"
               << "  [BP5] AsyncWrite: " << (config_.async_write ? "true" : "false") << "\n"
+              << "  [BP5] Existing dataset: "
+              << existing_dataset_policy_name(config_.existing_dataset) << "\n"
               << "  [BP5] Field precision: " << output_element_type_name(element_type_)
               << " (requested '" << output_precision_name(config_.precision)
               << "', model VVM::Real is "
@@ -476,6 +530,10 @@ void Bp5HistoryWriter::print_configuration() const {
     std::cout << "\n"
               << "  [BP5] Estimated logical bytes/step: " << global_bytes_per_step_
               << std::endl;
+    if (config_.existing_dataset_from_legacy_overwrite) {
+        std::cout << "  [BP5] NOTE: 'output.bp5.overwrite' is deprecated; use "
+                     "'output.bp5.existing_dataset'." << std::endl;
+    }
     if (config_.precision_from_bp5_block) {
         std::cout << "  [BP5] NOTE: 'output.bp5.precision' is deprecated and now "
                      "overrides\n         the engine-neutral 'output.precision'. "

@@ -4,12 +4,14 @@
 #include <filesystem>
 #include <string>
 
+#include "Bp5OutputConfig.hpp"
+
 namespace VVM::IO::BP5 {
 
 std::filesystem::path prepare_bp5_dataset_path(
     const std::string& output_dir,
     const std::string& prefix,
-    bool overwrite);
+    ExistingDatasetPolicy policy);
 
 } // namespace VVM::IO::BP5
 
