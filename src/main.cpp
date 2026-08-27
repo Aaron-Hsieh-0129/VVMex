@@ -438,6 +438,13 @@ int main(int argc, char *argv[]) {
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
+    if (H5set_free_list_limits(0, 0, 0, 0, 0, 0) < 0) {
+        if (world_rank == 0)
+            std::cerr << "[Main] ERROR: unable to configure HDF5 free-list limits." << std::endl;
+        MPI_Abort(MPI_COMM_WORLD, 1);
+        return 1;
+    }
+
     int status = 0;
     try {
         status = run_vvm(argc, argv, world_rank, world_size);
@@ -453,13 +460,6 @@ int main(int argc, char *argv[]) {
         std::cerr.flush();
         MPI_Abort(MPI_COMM_WORLD, 1);
         return 1;
-    }
-
-    if (H5close() < 0) {
-        if (world_rank == 0) {
-            std::cerr << "[Main] ERROR: HDF5 library shutdown failed." << std::endl;
-        }
-        status = 1;
     }
 
     MPI_Finalize();
