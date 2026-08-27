@@ -7,6 +7,7 @@
 #include <string>
 #include <mpi.h>
 #include <omp.h>
+#include <hdf5.h>
 #include <memory>
 #if defined(KOKKOS_ENABLE_CUDA)
 #include <cuda_runtime.h>
@@ -416,6 +417,10 @@ int run_vvm(int argc, char *argv[], int world_rank, int world_size) {
         model.finalize();
         Kokkos::fence();
     }
+#if defined(ENABLE_NCCL)
+    ncclCommDestroy(nccl_comm);
+#endif
+    MPI_Comm_free(&split_comm);
     Kokkos::finalize();
     return 0;
 }
@@ -448,6 +453,13 @@ int main(int argc, char *argv[]) {
         std::cerr.flush();
         MPI_Abort(MPI_COMM_WORLD, 1);
         return 1;
+    }
+
+    if (H5close() < 0) {
+        if (world_rank == 0) {
+            std::cerr << "[Main] ERROR: HDF5 library shutdown failed." << std::endl;
+        }
+        status = 1;
     }
 
     MPI_Finalize();
