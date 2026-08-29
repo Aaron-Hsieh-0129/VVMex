@@ -1,4 +1,7 @@
 #include "Parameters.hpp"
+
+#include <cmath>
+#include <stdexcept>
 #include <iostream>
 
 namespace VVM {
@@ -47,6 +50,18 @@ Parameters::Parameters(const Utils::ConfigurationManager& config, const Grid& gr
     VVM::Real dy_val = config.get_value<VVM::Real>("grid.dy");
     VVM::Real dz_val = config.get_value<VVM::Real>("grid.dz");
     VVM::Real dt_val = config.get_value<VVM::Real>("simulation.dt_s");
+
+    const auto require_finite_positive = [](VVM::Real value, const char* key) {
+        if (!std::isfinite(value) || value <= VVM::real(0.0)) {
+            throw std::runtime_error(
+                std::string("Configuration error: '") + key +
+                "' must be finite and greater than zero.");
+        }
+    };
+    require_finite_positive(dx_val, "grid.dx");
+    require_finite_positive(dy_val, "grid.dy");
+    require_finite_positive(dz_val, "grid.dz");
+    require_finite_positive(dt_val, "simulation.dt_s");
 
     Kokkos::deep_copy(dx, dx_val);
     Kokkos::deep_copy(dy, dy_val);

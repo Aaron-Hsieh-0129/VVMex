@@ -3,7 +3,12 @@
 
 #include "p3_functions.hpp" // for ETI only but harmless for GPU
 
+#include <cmath>
 #include <fstream>
+#include <limits>
+#include <sstream>
+#include <stdexcept>
+#include <type_traits>
 
 namespace scream {
 namespace p3 {
@@ -34,16 +39,22 @@ void read_ice_lookup_tables(const bool masterproc, const char* p3_lookup_base, c
 
   std::ifstream in(filename);
   if (!in.is_open()) {
-    printf("ERROR: can't find file or can't open the file, please check：%s\n", filename.c_str());
-    return;
+    throw std::runtime_error("P3 could not open ice lookup table '" + filename + "'.");
   }
 
   // read header
   std::string version, version_val;
-  in >> version >> version_val;
-
-  // EKAT_REQUIRE_MSG(version == "VERSION", "Bad " << filename << ", expected VERSION X.Y.Z header");
-  // EKAT_REQUIRE_MSG(version_val == p3_version, "Bad " << filename << ", expected version " << p3_version << ", but got " << version_val);
+  if (!(in >> version >> version_val)) {
+    throw std::runtime_error("P3 ice lookup table '" + filename + "' has a truncated header.");
+  }
+  if (version != "LOOKUP_TABLE_1-version:" ||
+      version_val.rfind(p3_version, 0) != 0) {
+    std::ostringstream message;
+    message << "P3 ice lookup table '" << filename
+            << "' has header '" << version << " " << version_val
+            << "'; expected LOOKUP_TABLE_1-version: " << p3_version << "*.";
+    throw std::runtime_error(message.str());
+  }
 
   // Aaron - Change the loaded lookup table from 4.1.1 to v6.4
   std::string dum_str;
@@ -67,9 +78,15 @@ void read_ice_lookup_tables(const bool masterproc, const char* p3_lookup_base, c
             }
           }
           */
-          in >> dum_str >> dum_str >> dum_str >> dum_str;
+          if (!(in >> dum_str >> dum_str >> dum_str >> dum_str)) {
+            throw std::runtime_error(
+              "P3 ice lookup table '" + filename + "' is truncated in an ice record header.");
+          }
           for (int j = 0; j < 19; ++j) {
-            in >> dum_s;
+            if (!(in >> dum_s) || !std::isfinite(dum_s)) {
+              throw std::runtime_error(
+                "P3 ice lookup table '" + filename + "' contains a missing or non-finite ice value.");
+            }
             if (ll == 0) {
               ice_table_vals_h(jj, ii, i, j) = dum_s;
             }
@@ -89,8 +106,11 @@ void read_ice_lookup_tables(const bool masterproc, const char* p3_lookup_base, c
               }
             }
             */
-            in >> dum_str >> dum_str >> dum_str >> dum_str;
-            in >> dum_s1 >> dum_s2;
+            if (!(in >> dum_str >> dum_str >> dum_str >> dum_str >> dum_s1 >> dum_s2) ||
+                !std::isfinite(dum_s1) || !std::isfinite(dum_s2)) {
+              throw std::runtime_error(
+                "P3 ice lookup table '" + filename + "' contains a truncated or non-finite collection record.");
+            }
             if (ll == 0) {
               collect_table_vals_h(jj, ii, i, j, 0) = dum_s1;
               collect_table_vals_h(jj, ii, i, j, 1) = dum_s2;
@@ -234,14 +254,71 @@ void compute_tables(const bool masterproc, MuRT& mu_r_table_vals, VNT& vn_table_
   revap_table_vals = revap_table_vals_nc;
 }
 
+template <typename S>
+static std::streamsize checked_byte_count(const size_t size, const std::string& filename)
+{
+  if (size > std::numeric_limits<size_t>::max() / sizeof(S)) {
+    throw std::runtime_error("P3 lookup table '" + filename + "' is too large to address.");
+  }
+  const size_t bytes = sizeof(S) * size;
+  if (bytes > static_cast<size_t>(std::numeric_limits<std::streamsize>::max())) {
+    throw std::runtime_error("P3 lookup table '" + filename + "' is too large for stream I/O.");
+  }
+  return static_cast<std::streamsize>(bytes);
+}
+
+template <typename S>
+static void validate_binary_input(std::ifstream& stream, const size_t size,
+                                  const std::string& filename)
+{
+  if (!stream.is_open()) {
+    throw std::runtime_error("P3 could not open binary lookup table '" + filename + "'.");
+  }
+  const std::streamsize expected = checked_byte_count<S>(size, filename);
+  stream.seekg(0, std::ios::end);
+  const std::streampos actual = stream.tellg();
+  if (actual < 0 || actual != std::streampos(expected)) {
+    std::ostringstream message;
+    message << "P3 binary lookup table '" << filename << "' has "
+            << (actual < 0 ? -1 :
+                static_cast<long long>(static_cast<std::streamoff>(actual)))
+            << " bytes; expected exactly " << expected << ".";
+    throw std::runtime_error(message.str());
+  }
+  stream.seekg(0, std::ios::beg);
+  if (!stream) {
+    throw std::runtime_error("P3 could not seek binary lookup table '" + filename + "'.");
+  }
+}
+
 template <typename StreamT, typename S>
-static void action(StreamT& stream, S* data, const size_t size)
+static void action(StreamT& stream, S* data, const size_t size,
+                   const std::string& filename)
 {
   constexpr bool IsRead = std::is_same_v<StreamT,std::ifstream>;
+  const std::streamsize bytes = checked_byte_count<S>(size, filename);
   if constexpr (IsRead) {
-    stream.read(reinterpret_cast<char*>(data),sizeof(S)*size);
+    stream.read(reinterpret_cast<char*>(data), bytes);
+    if (!stream || stream.gcount() != bytes) {
+      throw std::runtime_error("P3 failed while reading binary lookup table '" + filename + "'.");
+    }
+    if constexpr (std::is_floating_point_v<S>) {
+      for (size_t i = 0; i < size; ++i) {
+        if (!std::isfinite(data[i])) {
+          throw std::runtime_error(
+            "P3 binary lookup table '" + filename + "' contains a non-finite value.");
+        }
+      }
+    }
   } else {
-    stream.write(reinterpret_cast<const char*>(data),sizeof(S)*size);
+    if (!stream.is_open()) {
+      throw std::runtime_error("P3 could not create binary lookup table '" + filename + "'.");
+    }
+    stream.write(reinterpret_cast<const char*>(data), bytes);
+    stream.flush();
+    if (!stream) {
+      throw std::runtime_error("P3 failed while writing binary lookup table '" + filename + "'.");
+    }
   }
 }
 
@@ -280,6 +357,17 @@ void io_impl(const bool masterproc, const char* dir, MuRT& mu_r_table_vals, VNT&
   stream_t vn_file(vn_filename.c_str(), std::ios::binary);
   stream_t vm_file(vm_filename, std::ios::binary);
 
+  if constexpr (IsRead) {
+    using MuS = std::remove_pointer_t<decltype(mu_r_table_vals_h.data())>;
+    using RevapS = std::remove_pointer_t<decltype(revap_table_vals_h.data())>;
+    using VnS = std::remove_pointer_t<decltype(vn_table_vals_h.data())>;
+    using VmS = std::remove_pointer_t<decltype(vm_table_vals_h.data())>;
+    validate_binary_input<MuS>(mu_r_file, mu_r_table_vals.size(), mu_r_filename);
+    validate_binary_input<RevapS>(revap_file, revap_table_vals.size(), revap_filename);
+    validate_binary_input<VnS>(vn_file, vn_table_vals.size(), vn_filename);
+    validate_binary_input<VmS>(vm_file, vm_table_vals.size(), vm_filename);
+  }
+
   if constexpr (!IsRead) {
     Kokkos::deep_copy(mu_r_table_vals_h, mu_r_table_vals);
     Kokkos::deep_copy(revap_table_vals_h, revap_table_vals);
@@ -288,10 +376,10 @@ void io_impl(const bool masterproc, const char* dir, MuRT& mu_r_table_vals, VNT&
   }
 
   // Read files
-  action(mu_r_file, mu_r_table_vals_h.data(), mu_r_table_vals.size());
-  action(revap_file, revap_table_vals_h.data(), revap_table_vals.size());
-  action(vn_file, vn_table_vals_h.data(), vn_table_vals.size());
-  action(vm_file, vm_table_vals_h.data(), vm_table_vals.size());
+  action(mu_r_file, mu_r_table_vals_h.data(), mu_r_table_vals.size(), mu_r_filename);
+  action(revap_file, revap_table_vals_h.data(), revap_table_vals.size(), revap_filename);
+  action(vn_file, vn_table_vals_h.data(), vn_table_vals.size(), vn_filename);
+  action(vm_file, vm_table_vals_h.data(), vm_table_vals.size(), vm_filename);
 
   // Copy back to device
   if constexpr (IsRead) {
@@ -373,7 +461,11 @@ typename Functions<S,D>::P3LookupTables Functions<S,D>
   if (write_tables) {
     //p3_init_b (computes tables mu_r_table, revap_table, vn_table, vm_table)
     compute_tables<S, P3C>(masterproc, lookup_tables.mu_r_table_vals, lookup_tables.vn_table_vals, lookup_tables.vm_table_vals, lookup_tables.revap_table_vals);
-    write_computed_tables(masterproc, dir, lookup_tables.mu_r_table_vals, lookup_tables.vn_table_vals, lookup_tables.vm_table_vals, lookup_tables.revap_table_vals);
+    // Every rank computes the same tables, but only the designated root writes
+    // the shared files. Concurrent truncating writes can corrupt them.
+    if (masterproc) {
+      write_computed_tables(masterproc, dir, lookup_tables.mu_r_table_vals, lookup_tables.vn_table_vals, lookup_tables.vm_table_vals, lookup_tables.revap_table_vals);
+    }
   }
   else {
     read_computed_tables(masterproc, dir, lookup_tables.mu_r_table_vals, lookup_tables.vn_table_vals, lookup_tables.vm_table_vals, lookup_tables.revap_table_vals);

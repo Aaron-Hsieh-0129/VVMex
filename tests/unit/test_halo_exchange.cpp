@@ -103,6 +103,30 @@ int main(int argc, char* argv[]) {
         const int gny = grid.get_global_points_y();
         const int gnx = grid.get_global_points_x();
 
+        // Grid ownership must be derived from the rank in cart_comm_, not the
+        // original communicator rank: MPI_Cart_create may reorder them.
+        int cart_rank = MPI_PROC_NULL;
+        int cart_dims[2] = {0, 0};
+        int cart_periods[2] = {0, 0};
+        int cart_coords[2] = {0, 0};
+        MPI_Comm_rank(grid.get_cart_comm(), &cart_rank);
+        MPI_Cart_get(grid.get_cart_comm(), 2, cart_dims, cart_periods, cart_coords);
+        MPI_Cart_coords(grid.get_cart_comm(), cart_rank, 2, cart_coords);
+
+        const auto expected_start = [](int global_size, int process_count, int coord) {
+            const int base = global_size / process_count;
+            const int remainder = global_size % process_count;
+            return coord * base + (coord < remainder ? coord : remainder);
+        };
+        int bad_ownership = 0;
+        if (gny > 1 && j0 != expected_start(gny, cart_dims[0], cart_coords[0])) {
+            ++bad_ownership;
+        }
+        if (gnx > 1 && i0 != expected_start(gnx, cart_dims[1], cart_coords[1])) {
+            ++bad_ownership;
+        }
+        report("grid ownership follows Cartesian rank coordinates", bad_ownership);
+
         int mpi_size = 1;
         MPI_Comm_size(MPI_COMM_WORLD, &mpi_size);
         if (g_rank == 0) {

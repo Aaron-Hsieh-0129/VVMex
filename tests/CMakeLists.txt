@@ -344,6 +344,15 @@ add_test(NAME test_output_precision
                  $<TARGET_FILE:test_output_precision>)
 set_tests_properties(test_output_precision PROPERTIES LABELS unit TIMEOUT 60)
 
+add_executable(test_numerical_configuration
+               ${TEST_DIR}/unit/test_numerical_configuration.cpp)
+target_include_directories(test_numerical_configuration PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_numerical_configuration PRIVATE vvm_utils MPI::MPI_CXX)
+add_test(NAME test_numerical_configuration
+         COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
+                 $<TARGET_FILE:test_numerical_configuration>)
+set_tests_properties(test_numerical_configuration PROPERTIES LABELS unit TIMEOUT 60)
+
 # --- output precision on the legacy writer ---------------------------------
 # output.precision decides the on-disk field type for HDF5 and SST as it does
 # for BP5. The HDF5 case writes a real file and reads its dataset types back;
@@ -826,7 +835,19 @@ if(NOT VVM_ENABLE_GPU)
     # values of 2dbubble, and mountain still matches its SHA-256 digest. Thread
     # count is not one of the axes that changes CPU arithmetic (unlike rank count
     # for the horizontal mean), so raising it costs no reference data.
-    set(VVM_TEST_ENV_MODS "OMP_NUM_THREADS=set:${VVM_TEST_CPU_THREADS}")
+    # OMP_PROC_BIND from the caller's environment undoes --bind-to none one level
+    # down: with every rank holding the same full CPU mask, "spread" puts every
+    # rank's master thread on place 0, so all the ranks of one test busy-spin
+    # their MPI progress loops on CPU 0 while the workers idle elsewhere. It
+    # only bites the multi-rank tiers -- a single-rank test has CPU 0 to itself
+    # and is unaffected. Measured on blaze with OMP_PROC_BIND=spread exported,
+    # multirank_twisting_r4 took 1323 s against 4 s for the same case at one
+    # rank; pinning OMP_PROC_BIND=false here brings it to 6 s. core_run.sh
+    # passes -x OMP_PROC_BIND=false for the same reason, and ctest is the one
+    # launcher that does not go through it. Binding does not affect results, so
+    # this costs no reference data.
+    set(VVM_TEST_ENV_MODS "OMP_NUM_THREADS=set:${VVM_TEST_CPU_THREADS}"
+                          "OMP_PROC_BIND=set:false")
 
     if(VVM_CPU_RUNTIME_DIRS)
         string(REPLACE ";" ":" VVM_CPU_LD_PREPEND "${VVM_CPU_RUNTIME_DIRS}")

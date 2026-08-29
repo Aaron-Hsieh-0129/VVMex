@@ -1,11 +1,13 @@
 set(VVM_UTILS_SOURCES
     ConfigurationManager.cpp
+    NumericalConfigurationValidation.cpp
     TimingManager.cpp
     Timer.cpp
 )
 
 set(VVM_UTILS_HEADERS
     ConfigurationManager.hpp
+    NumericalConfigurationValidation.hpp
     ProcessScheduling.hpp
     SstPath.hpp
     TimingManager.hpp
@@ -22,4 +24,3 @@ target_link_libraries(vvm_utils
         Kokkos::kokkos
         MPI::MPI_CXX
 )
-
