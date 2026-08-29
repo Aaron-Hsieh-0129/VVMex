@@ -83,6 +83,7 @@ private:
 
     int mpi_rank_;                      // Rank of the current MPI process
     int mpi_size_;                      // Total number of processes in MPI communicator
+    int cart_rank_ = MPI_PROC_NULL;     // Rank in cart_comm_ (may differ when MPI reorders)
     MPI_Comm cart_comm_;                // MPI Cartesian communicator for halo exchange
     MPI_Comm comm_;
     bool radiation_enabled_ = false;    // Radiation needs an even column split; see the check in the .cpp

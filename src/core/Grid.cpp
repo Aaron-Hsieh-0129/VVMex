@@ -2,6 +2,7 @@
 
 #include <sstream>
 #include <stdexcept>
+#include <cmath>
 
 namespace VVM {
 namespace Core {
@@ -30,12 +31,18 @@ Grid::Grid(const VVM::Utils::ConfigurationManager& config, MPI_Comm comm)
             throw std::runtime_error("Grid dimensions must be positive integers.");
         }
 
+        for (int dim = 0; dim < 3; ++dim) {
+            if (!std::isfinite(dims_host_mirror_(dim).d_coord) || dims_host_mirror_(dim).d_coord <= VVM::real(0.0)) {
+                throw std::runtime_error("Grid spacings must be finite and greater than zero.");
+            }
+        }
+
         dims_host_mirror_(0).num_halo_cells = config.get_value<int>("grid.n_halo_cells");
         dims_host_mirror_(1).num_halo_cells = config.get_value<int>("grid.n_halo_cells");
         dims_host_mirror_(2).num_halo_cells = config.get_value<int>("grid.n_halo_cells");
 
-        if (dims_host_mirror_(0).num_halo_cells < 0 || dims_host_mirror_(1).num_halo_cells < 0 || dims_host_mirror_(2).num_halo_cells < 0) {
-            throw std::runtime_error("Number of halo cells cannot be negative.");
+        if (dims_host_mirror_(0).num_halo_cells < 2) {
+            throw std::runtime_error("Number of halo cells must be at least 2 for the Takacs stencil.");
         }
     }
     catch (const std::exception& e) {
@@ -72,7 +79,7 @@ void Grid::calculate_local_grid_distribution() {
     dims_host_mirror_(0).local_physical_end_idx = dims_host_mirror_(0).global_size - 1;
 
     // Decomposing the grid into a 2D topology (Y, X) using MPI Cartesian topology
-    // 1. Determine process topology: Px * Py = mpi_size_
+    // Determine process topology: Px * Py = mpi_size_
     // Try to find a process grid that is close to square
     int p_dims[2] = {1, 1}; // p_dims[0] for Y processes, p_dims[1] for X processes. p_dims represents the number of processes in each dimension
     int periods[2] = {1, 1}; // Periodic in Y and X 
@@ -81,7 +88,7 @@ void Grid::calculate_local_grid_distribution() {
 
     int ndims_cart = 2; // Default to 2D decomposition, even if we only decompose in X and Y
 
-    // 2. Set p_dims based on global grid size
+    // Set p_dims based on global grid size
     if (dims_host_mirror_(1).global_size == 1 && dims_host_mirror_(2).global_size > 1) {
         // Only x direction has multiple points, perform 1D X decomposition
         p_dims[0] = 1; // Y direction only uses 1 process
@@ -89,7 +96,9 @@ void Grid::calculate_local_grid_distribution() {
         ndims_cart = 2; // Still create 2D topology, but one dimension has only 1 process
 
         periods[0] = 0; // No periodic b.c. along y-axis
-        dims_host_mirror_(1).num_halo_cells = 0; // Make y-halo to be 0 
+        // Keep allocated Y halos even for a singleton physical dimension.
+        // HaloExchanger packs with the model stencil width in every direction;
+        // removing this storage made its Y pack kernels index outside the field.
         if (mpi_rank_ == 0) {
             std::cout << "Detected 1D X-decomposition (ny=1, nx>1)" << std::endl;
         }
@@ -161,11 +170,19 @@ void Grid::calculate_local_grid_distribution() {
     }
 
     // 3. Create MPI Cartesian Communicator
-    MPI_Cart_create(comm_, ndims_cart, p_dims, periods, reorder, &cart_comm_);
+    const int cart_status =
+        MPI_Cart_create(comm_, ndims_cart, p_dims, periods, reorder, &cart_comm_);
+    if (cart_status != MPI_SUCCESS || cart_comm_ == MPI_COMM_NULL) {
+        throw std::runtime_error("MPI_Cart_create failed; the process-grid dimensions do not match the communicator.");
+    }
+
+    // When reorder is true, a rank in comm_ is not necessarily the same rank
+    // in cart_comm_. All Cartesian topology queries must use the latter.
+    MPI_Comm_rank(cart_comm_, &cart_rank_);
 
     // 4. Get current process coordinates in 2D topology
     int coords[2]; // coords[0] for Y-coordinate, coords[1] for X-coordinate
-    MPI_Cart_coords(cart_comm_, mpi_rank_, 2, coords);
+    MPI_Cart_coords(cart_comm_, cart_rank_, 2, coords);
 
     // 5. Calculate local grid range based on process coordinates
     // --- Y dimension decomposition (dims_[1]) ---
@@ -199,6 +216,15 @@ void Grid::calculate_local_grid_distribution() {
         dims_host_mirror_(2).local_physical_end_idx = dims_host_mirror_(2).local_physical_start_idx + dims_host_mirror_(2).local_physical_size - 1;
     }
 
+    const int halo_width = dims_host_mirror_(0).num_halo_cells;
+    if ((dims_host_mirror_(1).global_size > 1 &&
+         dims_host_mirror_(1).local_physical_size < halo_width) ||
+        (dims_host_mirror_(2).global_size > 1 &&
+         dims_host_mirror_(2).local_physical_size < halo_width)) {
+        throw std::runtime_error(
+            "Local horizontal domain is narrower than the configured halo width.");
+    }
+
     // Copy the updated data from host mirror back to the device view
     Kokkos::deep_copy(dims_device_view_, dims_host_mirror_);
     Kokkos::fence(); // Ensure data is on device after modification
@@ -218,9 +244,10 @@ void Grid::print_info() const {
 
     // Check if cart_comm_ is valid before using it
     if (cart_comm_ != MPI_COMM_NULL) {
-        MPI_Cart_coords(cart_comm_, mpi_rank_, 2, coords);
+        MPI_Cart_coords(cart_comm_, cart_rank_, 2, coords);
         MPI_Cart_get(cart_comm_, 2, p_dims_retrieved, periods_retrieved, coords);
-    } else {
+    } 
+    else {
         // Handle case where communicator is NULL (e.g., in a single-process run or error)
         coords[0] = -1; coords[1] = -1; // Indicate invalid coords
         p_dims_retrieved[0] = 0; p_dims_retrieved[1] = 0;

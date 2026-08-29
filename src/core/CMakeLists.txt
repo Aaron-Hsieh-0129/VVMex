@@ -10,6 +10,8 @@ set(VVM_CORE_HEADERS
     State.hpp
     Grid.hpp
     HaloExchanger.hpp
+    HaloExchangerMPI.hpp
+    HaloExchangerNCCL.hpp
     Initializer.hpp
     BoundaryConditionManager.hpp
     Parameters.hpp
