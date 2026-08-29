@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Grid.hpp"
+#include "HaloExchangeDegenerate.hpp"
 #include "Field.hpp"
 #include "State.hpp"
 #include "vvm_types.hpp"
@@ -188,6 +189,11 @@ HaloExchangeRequests HaloExchanger::post_exchange_halo_x(FieldT& field, int dept
     const int h = (depth == -1) ? grid_ref_.get_halo_cells() : depth;
 
     if (h == 0) return {};
+    if (grid_ref_.is_singleton_x()) {
+        Detail::fill_singleton_x_halo(
+            Kokkos::DefaultExecutionSpace{}, field, halo_start_offset, h);
+        return {};
+    }
 
     auto data = field.get_mutable_device_data();
     const int nx_phys = grid_ref_.get_local_physical_points_x();
@@ -333,6 +339,11 @@ HaloExchangeRequests HaloExchanger::post_exchange_halo_y(FieldT& field, int dept
     const int halo_start_offset = grid_ref_.get_halo_cells();
     const int h = (depth == -1) ? grid_ref_.get_halo_cells() : depth;
     if (h == 0) return {};
+    if (grid_ref_.is_singleton_y()) {
+        Detail::fill_singleton_y_halo(
+            Kokkos::DefaultExecutionSpace{}, field, halo_start_offset, h);
+        return {};
+    }
 
     auto data = field.get_mutable_device_data();
     const int ny_phys = grid_ref_.get_local_physical_points_y();
@@ -509,13 +520,33 @@ inline void HaloExchanger::exchange_multiple_halos(const std::vector<Field<3>*>&
     const int nx = grid_ref_.get_local_total_points_x();
     const int halo_start_offset = h;
 
+    // A reduced axis has no remote neighbor and no distinct boundary planes to
+    // pack. Replicate its sole physical plane locally before exchanging the
+    // remaining active direction, which also produces correct corner halos.
+    if (grid_ref_.is_singleton_y()) {
+        for (Field<3>* field : fields) {
+            if (field) {
+                Detail::fill_singleton_y_halo(
+                    Kokkos::DefaultExecutionSpace{}, *field, halo_start_offset, h);
+            }
+        }
+    }
+    if (grid_ref_.is_singleton_x()) {
+        for (Field<3>* field : fields) {
+            if (field) {
+                Detail::fill_singleton_x_halo(
+                    Kokkos::DefaultExecutionSpace{}, *field, halo_start_offset, h);
+            }
+        }
+    }
+
     const int neighbor_left = neighbor_left_;
     const int neighbor_right = neighbor_right_;
     const int neighbor_bottom = neighbor_bottom_;
     const int neighbor_top = neighbor_top_;
 
     // --- X Direction ---
-    if (count_x_total > 0) {
+    if (count_x_total > 0 && !grid_ref_.is_singleton_x()) {
         for (size_t f = 0; f < num_fields; ++f) {
             auto data = fields[f]->get_mutable_device_data();
             size_t offset = f * buffer_size_x_3d_;
@@ -564,7 +595,7 @@ inline void HaloExchanger::exchange_multiple_halos(const std::vector<Field<3>*>&
     }
 
     // --- Y Direction ---
-    if (count_y_total > 0) {
+    if (count_y_total > 0 && !grid_ref_.is_singleton_y()) {
         for (size_t f = 0; f < num_fields; ++f) {
             auto data = fields[f]->get_mutable_device_data();
             size_t offset = f * buffer_size_y_3d_;
@@ -623,8 +654,17 @@ inline void HaloExchanger::exchange_halos_slice(Field<3>& field, int k_layer) co
     const int ny = data.extent(1);
     const int nx = data.extent(2);
 
+    if (grid_ref_.is_singleton_y()) {
+        Detail::fill_singleton_y_slice(
+            Kokkos::DefaultExecutionSpace{}, field, k_layer, h, h);
+    }
+    if (grid_ref_.is_singleton_x()) {
+        Detail::fill_singleton_x_slice(
+            Kokkos::DefaultExecutionSpace{}, field, k_layer, h, h);
+    }
+
     // --- Y-direction exchange for the slice ---
-    {
+    if (!grid_ref_.is_singleton_y()) {
         size_t count = buffer_size_slice_y_;
         if (count > 0) {
             auto send_b = Kokkos::subview(send_y_bottom_, std::make_pair((size_t)0, count));
@@ -680,7 +720,7 @@ inline void HaloExchanger::exchange_halos_slice(Field<3>& field, int k_layer) co
     }
 
     // --- X-direction exchange for the slice ---
-    {
+    if (!grid_ref_.is_singleton_x()) {
         size_t count = buffer_size_slice_x_;
         if (count > 0) {
             auto send_l = Kokkos::subview(send_x_left_, std::make_pair((size_t)0, count));

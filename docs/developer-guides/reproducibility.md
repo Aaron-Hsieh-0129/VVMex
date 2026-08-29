@@ -14,8 +14,10 @@ CPU-only build agree with a GPU build bit-for-bit.
 
 Random perturbations are derived from the seed, timestep, and global cell
 coordinates, so repeating a run or changing its MPI decomposition does not
-change the perturbation field. Regression cases still disable the forcing so
-changes to the pseudorandom mapping do not obscure physics regressions.
+change the perturbation field. Regression cases disable the forcing by default;
+the RCEMIP CTest deliberately keeps it enabled because triggering convection is
+part of that case's contract. Its fixed seed makes the resulting regression
+bit-for-bit reproducible.
 
 ## Why GPU and CPU-only differ
 
