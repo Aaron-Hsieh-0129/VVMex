@@ -16,8 +16,11 @@ Random perturbations are derived from the seed, timestep, and global cell
 coordinates, so repeating a run or changing its MPI decomposition does not
 change the perturbation field. Regression cases disable the forcing by default;
 the RCEMIP CTest deliberately keeps it enabled because triggering convection is
-part of that case's contract. Its fixed seed makes the resulting regression
-bit-for-bit reproducible.
+part of that case's contract. Its fixed seed makes the perturbation itself
+bit-for-bit reproducible. The evolved FP64 fields can still differ in their low
+mantissa bits across GPU architectures or compiler versions, so the RCEMIP
+reference hashes every cell after canonical float32 narrowing. Other digest
+cases remain bit-for-bit checks.
 
 ## Why GPU and CPU-only differ
 

@@ -467,7 +467,9 @@ a bit-for-bit comparison with HDF5 from the same deterministic GPU run.
 
 GPU results are gated against `tests/baselines/` and `tests/references/`. The
 CPU backend has its own data under `*_cpu/`, because the two agree only to a few
-ulp and the SHA-256 digests tolerate nothing.
+ulp. SHA-256 digests tolerate nothing by default; RCEMIP is explicitly hashed
+after canonical float32 narrowing because its FP64 low bits vary across GPU
+architectures even though its perturbation field is deterministic.
 
 ---
 

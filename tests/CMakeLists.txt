@@ -83,10 +83,11 @@ set(VVM_TEST_SECONDS 120 CACHE STRING "Simulated seconds for default_cases tests
 # keeps it off a default run. Once enabled, each tier still carries a label, so
 # `ctest -L bp5` or `ctest -L multirank` selects it.
 #
-# Every tier is a bit-for-bit gate. Random perturbations are disabled unless a
-# case explicitly enables them; RCEMIP does, because its fixed seed and
-# global-coordinate mapping are deterministic. There is no tolerance to tune:
-# a failure means bits moved.
+# Regression digests are bit-for-bit by default. Random perturbations are
+# disabled unless a case explicitly enables them; RCEMIP does, because its
+# fixed seed and global-coordinate mapping are deterministic. RCEMIP's stored
+# reference is the one portability exception: it hashes every value after a
+# canonical float32 narrowing so harmless low FP64 bits may differ across GPUs.
 #
 # On a GPU build the multi-rank tiers need that many *physical* GPUs. Several
 # NCCL ranks sharing one device is unsupported and silently changes results, so
@@ -146,7 +147,7 @@ function(_report_test_tier LABEL STATE NEEDS OPT_NAME)
     endif()
 endfunction()
 
-message(STATUS "Test tiers (all are bit-for-bit gates; simulated seconds per case: ${VVM_TEST_SECONDS}):")
+message(STATUS "Test tiers (native digests are bit-for-bit; RCEMIP uses canonical float32; simulated seconds per case: ${VVM_TEST_SECONDS}):")
 if(VVM_ENABLE_GPU)
     message(STATUS "  Test tier default  : ON   (advection x3, stretching, twisting, 2dbubble, mountain, unit tests) -- 1 GPU")
 else()
@@ -200,9 +201,10 @@ function(add_vvm_test TEST_NAME VARS_TO_TEST)
     set_tests_properties(Verify_${TEST_NAME} PROPERTIES DEPENDS Run_${TEST_NAME} TIMEOUT 300)
 endfunction()
 
-# A default_cases case, checked bit-for-bit against a stored per-variable digest.
-# Full baselines do not scale here (rcemip output is ~1 GB), so check_output.py
-# compares SHA-256 digests instead.
+# A default_cases case, checked against a stored per-variable digest. Full
+# baselines do not scale here (rcemip output is ~1 GB), so check_output.py
+# compares SHA-256 digests instead. A reference can self-declare canonical
+# float32 narrowing when cross-machine FP64 low bits are not portable.
 #   add_case_test(<case> <ranks> <label>)   label "" => default tier
 function(add_case_test CASE_NAME RANKS LABEL)
     set(EXTRA_CFG_ARGS ${ARGN})
@@ -315,6 +317,10 @@ add_vvm_unit_test(test_sst_path)
 # decides, a stored time and step must agree, and a file with neither is only
 # usable through an explicit opt-in. Pure decision logic.
 add_vvm_unit_test(test_restart_time)
+
+add_test(NAME test_check_output_digest
+         COMMAND ${Python3_EXECUTABLE} ${TEST_DIR}/scripts/test_check_output.py)
+set_tests_properties(test_check_output_digest PROPERTIES LABELS unit TIMEOUT 60)
 
 add_executable(test_deterministic_perturbation
                ${TEST_DIR}/unit/test_deterministic_perturbation.cpp)

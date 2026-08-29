@@ -187,7 +187,7 @@ A run with `simulation.idealized_test: "none"` — that is, any real case — **
     v1.0.0 numbers. Turning it on shifts `Tbar` by 0.043 K, `pibar` by 5.9e-5,
     `rhobar` and `rhobar_up` by 0.37 % in the mean, and the surface fluxes by
     0.9 %, so `Verify_physics_rcemip` fails until the reference is regenerated
-    with `tests/scripts/check_output.py --update`.
+    with `tests/scripts/check_output.py --update --digest-dtype float32`.
 
 !!! note "`pressure_threshold_Pa` has two different fallbacks"
 
