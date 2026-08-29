@@ -83,9 +83,10 @@ set(VVM_TEST_SECONDS 120 CACHE STRING "Simulated seconds for default_cases tests
 # keeps it off a default run. Once enabled, each tier still carries a label, so
 # `ctest -L bp5` or `ctest -L multirank` selects it.
 #
-# Every tier is a bit-for-bit gate: with random_perturbation disabled (see
-# make_test_config.py) each case is exactly reproducible, so there is no
-# tolerance to tune. A failure means bits moved.
+# Every tier is a bit-for-bit gate. Random perturbations are disabled unless a
+# case explicitly enables them; RCEMIP does, because its fixed seed and
+# global-coordinate mapping are deterministic. There is no tolerance to tune:
+# a failure means bits moved.
 #
 # On a GPU build the multi-rank tiers need that many *physical* GPUs. Several
 # NCCL ranks sharing one device is unsupported and silently changes results, so
@@ -723,6 +724,47 @@ add_vvm_device_unit_test(test_horizontal_mean ${TEST_DIR}/configs/2dbubble.json 
 # and only a value-level check keeps them exchanging the same cells.
 add_vvm_device_unit_test(test_halo_exchange ${TEST_DIR}/configs/2dbubble.json 2)
 
+# Generate two shapes from the full test configuration so the same value-level
+# contract runs with each horizontal axis reduced away. At two ranks, the
+# remaining active axis is decomposed and still exercises MPI/NCCL.
+function(add_reduced_halo_tests AXIS NX NY RANKS)
+    file(READ ${TEST_DIR}/configs/2dbubble.json REDUCED_HALO_CONFIG)
+    string(REGEX REPLACE
+           "\"nx\"[ 	]*:[ 	]*[0-9]+"
+           "\"nx\": ${NX}"
+           REDUCED_HALO_CONFIG "${REDUCED_HALO_CONFIG}")
+    string(REGEX REPLACE
+           "\"ny\"[ 	]*:[ 	]*[0-9]+"
+           "\"ny\": ${NY}"
+           REDUCED_HALO_CONFIG "${REDUCED_HALO_CONFIG}")
+    set(REDUCED_CONFIG
+        ${CMAKE_BINARY_DIR}/test_configs/halo_exchange_${AXIS}.json)
+    file(WRITE ${REDUCED_CONFIG} "${REDUCED_HALO_CONFIG}")
+
+    add_test(NAME test_halo_exchange_${AXIS}_r1
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+                     ${VVM_MPI_BIND_ARGS} ${GPU_WRAP}
+                     $<TARGET_FILE:test_halo_exchange> ${REDUCED_CONFIG}
+             WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
+    set_tests_properties(test_halo_exchange_${AXIS}_r1
+                         PROPERTIES LABELS unit TIMEOUT 300)
+    _vvm_set_test_resources(test_halo_exchange_${AXIS}_r1 1)
+
+    if(VVM_TEST_MULTIRANK)
+        add_test(NAME test_halo_exchange_${AXIS}_r${RANKS}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${RANKS}
+                         ${VVM_MPI_BIND_ARGS} ${GPU_WRAP}
+                         $<TARGET_FILE:test_halo_exchange> ${REDUCED_CONFIG}
+                 WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
+        set_tests_properties(test_halo_exchange_${AXIS}_r${RANKS}
+                             PROPERTIES LABELS "unit;multirank" TIMEOUT 300)
+        _vvm_set_test_resources(test_halo_exchange_${AXIS}_r${RANKS} ${RANKS})
+    endif()
+endfunction()
+
+add_reduced_halo_tests(nx1 1 32 2)
+add_reduced_halo_tests(ny1 32 1 2)
+
 add_executable(test_p3_multistage_history
                ${TEST_DIR}/unit/test_p3_multistage_history.cpp)
 target_include_directories(test_p3_multistage_history
@@ -759,7 +801,7 @@ if(VVM_TEST_PHYSICS)
     add_case_test(urban              1 physics)
     add_case_test(sea_grass_mountain 1 physics)
     add_case_test(sea_urban_mountain 1 physics)
-    add_case_test(rcemip             1 physics)
+    add_case_test(rcemip             1 physics --enable-random-perturbation)
 endif()
 
 # --- multirank: needs 4 real GPUs, ~30 s ----------------------------------

@@ -55,6 +55,9 @@ public:
     int get_global_points_y() const { return dims_host_mirror_(1).global_size; }
     int get_global_points_x() const { return dims_host_mirror_(2).global_size; }
 
+    bool is_singleton_y() const { return get_global_points_y() == 1; }
+    bool is_singleton_x() const { return get_global_points_x() == 1; }
+
     VVM::Real get_dz() const { return dims_host_mirror_(0).d_coord; }
     VVM::Real get_dy() const { return dims_host_mirror_(1).d_coord; }
     VVM::Real get_dx() const { return dims_host_mirror_(2).d_coord; }

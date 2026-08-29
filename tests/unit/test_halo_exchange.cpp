@@ -219,6 +219,31 @@ int main(int argc, char* argv[]) {
             report("named batched exchange fills the whole halo", count_wrong(h));
         }
 
+        // --- a single horizontal slice, used by top-boundary updates ----------
+        {
+            fill_physical_only();
+            const int k_layer = h;
+            halo.exchange_halos_slice(field, k_layer);
+
+            int bad_slice = 0;
+            Kokkos::parallel_reduce(
+                "check_slice",
+                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
+                KOKKOS_LAMBDA(const int j, const int i, int& acc) {
+                    int gj = (j0 + (j - h)) % gny;
+                    if (gj < 0) gj += gny;
+                    int gi = (i0 + (i - h)) % gnx;
+                    if (gi < 0) gi += gnx;
+                    if (view(k_layer, j, i) !=
+                        expected_value(k_layer, gj, gi)) {
+                        ++acc;
+                    }
+                },
+                bad_slice);
+            Kokkos::fence();
+            report("slice exchange fills the whole horizontal halo", bad_slice);
+        }
+
         // --- 2D fields, including the batched form the wind solver relaxes with ---
         {
             auto& field2d = state.get_field<2>("utop");

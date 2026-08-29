@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Grid.hpp"
+#include "HaloExchangeDegenerate.hpp"
 #include "Field.hpp"
 #include "State.hpp"
 #include "vvm_types.hpp"
@@ -239,7 +240,24 @@ inline void HaloExchanger::exchange_multiple_halos(const std::vector<Field<3>*>&
     const int nx = grid_ref_.get_local_total_points_x();
     const int halo_start_offset = h;
 
-    if (count_x_total > 0) {
+    if (grid_ref_.is_singleton_x()) {
+        for (Field<3>* field : fields) {
+            if (field) {
+                Detail::fill_singleton_x_halo(
+                    exec_space_, *field, halo_start_offset, h);
+            }
+        }
+    }
+    if (grid_ref_.is_singleton_y()) {
+        for (Field<3>* field : fields) {
+            if (field) {
+                Detail::fill_singleton_y_halo(
+                    exec_space_, *field, halo_start_offset, h);
+            }
+        }
+    }
+
+    if (count_x_total > 0 && !grid_ref_.is_singleton_x()) {
         for (size_t f = 0; f < num_fields; ++f) {
             auto data = fields[f]->get_mutable_device_data();
             size_t offset = f * buffer_size_x_3d_;
@@ -295,7 +313,7 @@ inline void HaloExchanger::exchange_multiple_halos(const std::vector<Field<3>*>&
         }
     }
 
-    if (count_y_total > 0) {
+    if (count_y_total > 0 && !grid_ref_.is_singleton_y()) {
         for (size_t f = 0; f < num_fields; ++f) {
             auto data = fields[f]->get_mutable_device_data();
             size_t offset = f * buffer_size_y_3d_;
@@ -363,6 +381,15 @@ inline void HaloExchanger::exchange_multiple_halos(const std::vector<Field<2>*>&
     const int halo_start_offset = grid_ref_.get_halo_cells();
     const int h = (depth == -1) ? halo_start_offset : depth;
     if (h == 0) return;
+
+    // Keep the reduced-axis path centralized in the single-field exchange.
+    // It remains stream-ordered and safe during CUDA graph capture.
+    if (grid_ref_.is_singleton_x() || grid_ref_.is_singleton_y()) {
+        for (Field<2>* field : fields) {
+            if (field) exchange_halos_impl(*field, depth);
+        }
+        return;
+    }
 
     const size_t num_fields = fields.size();
     const int nx_phys = grid_ref_.get_local_physical_points_x();
@@ -570,6 +597,24 @@ void HaloExchanger::exchange_halos_impl(FieldT& field, int depth) const {
     const int nx_phys = grid_ref_.get_local_physical_points_x();
     const int ny_phys = grid_ref_.get_local_physical_points_y();
 
+    if (is_single_rank_ &&
+        (grid_ref_.is_singleton_x() || grid_ref_.is_singleton_y())) {
+        Detail::fill_periodic_x_halo(
+            exec_space_, field, halo_start_offset, nx_phys, h);
+        Detail::fill_periodic_y_halo(
+            exec_space_, field, halo_start_offset, ny_phys, h);
+        return;
+    }
+
+    if (grid_ref_.is_singleton_x()) {
+        Detail::fill_singleton_x_halo(
+            exec_space_, field, halo_start_offset, h);
+    }
+    if (grid_ref_.is_singleton_y()) {
+        Detail::fill_singleton_y_halo(
+            exec_space_, field, halo_start_offset, h);
+    }
+
     if (is_single_rank_) {
         // X-Direction Periodic Copy
         // Left Halo (start-h .. start) <== Right Phys (start+nx_phys-h .. start+nx_phys)
@@ -669,7 +714,7 @@ void HaloExchanger::exchange_halos_impl(FieldT& field, int depth) const {
         count_y = static_cast<size_t>(h) * data.extent(3) * data.extent(1) * data.extent(0);
     }
 
-    if (count_x > 0) {
+    if (count_x > 0 && !grid_ref_.is_singleton_x()) {
         auto send_l = Kokkos::subview(send_x_left_, std::make_pair((size_t)0, count_x));
         auto recv_l = Kokkos::subview(recv_x_left_, std::make_pair((size_t)0, count_x));
         auto send_r = Kokkos::subview(send_x_right_, std::make_pair((size_t)0, count_x));
@@ -769,7 +814,7 @@ void HaloExchanger::exchange_halos_impl(FieldT& field, int depth) const {
         }
     }
 
-    if (count_y > 0) {
+    if (count_y > 0 && !grid_ref_.is_singleton_y()) {
         auto send_b = Kokkos::subview(send_y_bottom_, std::make_pair((size_t)0, count_y));
         auto recv_b = Kokkos::subview(recv_y_bottom_, std::make_pair((size_t)0, count_y));
         auto send_t = Kokkos::subview(send_y_top_, std::make_pair((size_t)0, count_y));
@@ -888,6 +933,24 @@ inline void HaloExchanger::exchange_halos_slice(Field<3>& field, int k_layer) co
     const int ny = data.extent(1);
     const int nx = data.extent(2);
 
+    if (is_single_rank_ &&
+        (grid_ref_.is_singleton_x() || grid_ref_.is_singleton_y())) {
+        Detail::fill_periodic_x_slice(
+            exec_space_, field, k_layer, h, nx_phys, h);
+        Detail::fill_periodic_y_slice(
+            exec_space_, field, k_layer, h, ny_phys, h);
+        cudaStreamSynchronize(stream_);
+        return;
+    }
+    if (grid_ref_.is_singleton_x()) {
+        Detail::fill_singleton_x_slice(
+            exec_space_, field, k_layer, h, h);
+    }
+    if (grid_ref_.is_singleton_y()) {
+        Detail::fill_singleton_y_slice(
+            exec_space_, field, k_layer, h, h);
+    }
+
     const int neighbor_left = neighbor_left_;
     const int neighbor_right = neighbor_right_;
     const int neighbor_bottom = neighbor_bottom_;
@@ -901,7 +964,7 @@ inline void HaloExchanger::exchange_halos_slice(Field<3>& field, int k_layer) co
     // Kokkos::fence();
 
     // --- Y-Direction Slice ---
-    {
+    if (!grid_ref_.is_singleton_y()) {
         size_t count = buffer_size_slice_y_;
         if (count > 0) {
             auto send_b = Kokkos::subview(send_y_bottom_, std::make_pair((size_t)0, count));
@@ -950,7 +1013,7 @@ inline void HaloExchanger::exchange_halos_slice(Field<3>& field, int k_layer) co
     }
 
     // --- X-Direction Slice ---
-    {
+    if (!grid_ref_.is_singleton_x()) {
         size_t count = buffer_size_slice_x_;
         if (count > 0) {
             auto send_l = Kokkos::subview(send_x_left_, std::make_pair((size_t)0, count));

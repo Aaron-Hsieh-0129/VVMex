@@ -30,7 +30,7 @@ print(f"[Info] Change to VVM_ROOT: {VVM_ROOT}")
 # Set to False: Enter "Idealized Simulation" mode for user-defined ridge & land types
 USE_TAIWAN_TOPO = False
 
-CONFIG_PATH = os.environ.get('VVM_CONFIG_PATH', './rundata/input_configs/tracer_weno.json')
+CONFIG_PATH = os.environ.get('VVM_CONFIG_PATH', './rundata/input_configs/p3_bubble_10m.json')
 SOURCE_TW_DATA = './rundata/land/topolsm_TW.nc'
 
 # ==============================================================================
@@ -886,7 +886,7 @@ with nc.Dataset(FILENAME, 'w', format='NETCDF4') as ds:
             f"Generated spatial file '{FILENAME}' is missing required variables: {missing}")
     for coordinate_name in ('nx', 'ny', 'nz'):
         values = np.asarray(ds.variables[coordinate_name][:])
-        if values.size < 2 or not np.all(np.isfinite(values)) or not np.all(np.diff(values) > 0):
+        if values.size < 1 or not np.all(np.isfinite(values)) or not np.all(np.diff(values) > 0):
             raise ValueError(
                 f"Coordinate '{coordinate_name}' must be finite and strictly increasing")
     if not np.all((-90.0 <= ds.variables['ny'][:]) & (ds.variables['ny'][:] <= 90.0)):
