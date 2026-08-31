@@ -360,6 +360,38 @@ add_test(NAME test_numerical_configuration
                  $<TARGET_FILE:test_numerical_configuration>)
 set_tests_properties(test_numerical_configuration PROPERTIES LABELS unit TIMEOUT 60)
 
+
+# Generalized coordinate test
+add_executable(
+    test_horizontal_geometry_interface
+    ${TEST_DIR}/unit/test_horizontal_geometry_interface.cpp
+)
+target_include_directories(
+    test_horizontal_geometry_interface
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+# HorizontalGeometry.hpp contains Kokkos view types, and vvm_types.hpp includes
+# MPI definitions, although this particular test launches neither Kokkos nor MPI.
+target_link_libraries(
+    test_horizontal_geometry_interface
+    PRIVATE
+        Kokkos::kokkos
+        MPI::MPI_CXX
+)
+
+add_test(
+    NAME test_horizontal_geometry_interface
+    COMMAND test_horizontal_geometry_interface
+)
+
+set_tests_properties(
+    test_horizontal_geometry_interface
+    PROPERTIES
+        LABELS unit
+        TIMEOUT 60
+)
+
 # --- output precision on the legacy writer ---------------------------------
 # output.precision decides the on-disk field type for HDF5 and SST as it does
 # for BP5. The HDF5 case writes a real file and reads its dataset types back;
