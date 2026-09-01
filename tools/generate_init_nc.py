@@ -23,23 +23,25 @@ if not VVM_ROOT:
 os.chdir(VVM_ROOT)
 print(f"[Info] Change to VVM_ROOT: {VVM_ROOT}")
 
+CONFIG_PATH = os.environ.get('VVM_CONFIG_PATH', './rundata/input_configs/default_cases/sea_grass_mountain.json')
+SOURCE_TW_DATA = './rundata/land/topolsm_TW.nc'
+
+with open(CONFIG_PATH, 'r') as f:
+    config = json.load(f)
+
 # ==============================================================================
 # Experimental Mode Switch (User Toggle)
 # ==============================================================================
 # Set to True : Read high-resolution Taiwan topography and perform coarsening
 # Set to False: Enter "Idealized Simulation" mode for user-defined ridge & land types
 USE_TAIWAN_TOPO = False
-roll_idx_x = NX//4
-roll_idx_y = NY//4
+roll_idx_x = 0 # config['grid']['nx']//4
+roll_idx_y = 0 # config['grid']['ny']//4
 
-CONFIG_PATH = os.environ.get('VVM_CONFIG_PATH', './rundata/input_configs/p3_bubble_10m.json')
-SOURCE_TW_DATA = './rundata/land/topolsm_TW.nc'
 
 # ==============================================================================
 # Auto-read Configuration and Create Pure Physical Grid
 # ==============================================================================
-with open(CONFIG_PATH, 'r') as f:
-    config = json.load(f)
 
 NX = config['grid']['nx']
 NY = config['grid']['ny']
