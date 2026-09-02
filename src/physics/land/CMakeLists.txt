@@ -1,4 +1,4 @@
-set(LAND_SRCS
+set(LAND_FORTRAN_SRCS
     mod_rank.f90
     mod_index.f90
     machine.f90
@@ -17,47 +17,53 @@ set(LAND_SRCS
     vvm_land_interface.f90
 )
 
-set(LAND_CXX_SRCS
-    LandProcess.cpp
-)
+add_library(vvm_land_fortran SHARED ${LAND_FORTRAN_SRCS})
 
-add_library(vvm_land SHARED ${LAND_SRCS} ${LAND_CXX_SRCS})
+set_target_properties(vvm_land_fortran PROPERTIES LINKER_LANGUAGE Fortran)
 
-set_target_properties(vvm_land PROPERTIES LINKER_LANGUAGE Fortran)
-
-set_target_properties(vvm_land PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_target_properties(vvm_land_fortran PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if (CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
     # Without -acc the !$acc directives degrade to comments and the Noah routines
     # run serially on the host; LandProcess then skips the acc_map_data calls that
     # only make sense when device memory is distinct from host memory.
     if(VVM_ENABLE_GPU)
-        target_compile_options(vvm_land PRIVATE -fast -acc)
+        target_compile_options(vvm_land_fortran PRIVATE -fast -acc)
     else()
-        target_compile_options(vvm_land PRIVATE -fast)
+        target_compile_options(vvm_land_fortran PRIVATE -fast)
     endif()
 
-    target_compile_options(vvm_land PRIVATE
+    target_compile_options(vvm_land_fortran PRIVATE
         $<$<COMPILE_LANGUAGE:Fortran>:-Mallocatable=03;-Mfreeform;-Mextend;-Mpreprocess>
     )
 
     if(VVM_USE_DOUBLE_PRECISION)
-        target_compile_options(vvm_land PRIVATE $<$<COMPILE_LANGUAGE:Fortran>:-r8>)
+        target_compile_options(vvm_land_fortran PRIVATE $<$<COMPILE_LANGUAGE:Fortran>:-r8>)
     else()
-        target_compile_definitions(vvm_land PRIVATE $<$<COMPILE_LANGUAGE:Fortran>:SP>)
+        target_compile_definitions(vvm_land_fortran PRIVATE $<$<COMPILE_LANGUAGE:Fortran>:SP>)
     endif()
-    
+
     if(VVM_ENABLE_GPU)
-        target_link_options(vvm_land PRIVATE -acc -fortranlibs -c++libs)
+        target_link_options(vvm_land_fortran PRIVATE -acc -fortranlibs -c++libs)
     else()
-        target_link_options(vvm_land PRIVATE -fortranlibs -c++libs)
+        target_link_options(vvm_land_fortran PRIVATE -fortranlibs -c++libs)
     endif()
 endif()
 
-target_link_libraries(vvm_land PUBLIC Kokkos::kokkos vvm_core)
-target_link_libraries(eamxx_physics INTERFACE vvm_land)
-
-add_custom_command(TARGET vvm_land PRE_LINK
-    COMMAND rm -f $<TARGET_FILE:vvm_land>
+add_custom_command(TARGET vvm_land_fortran PRE_LINK
+    COMMAND rm -f $<TARGET_FILE:vvm_land_fortran>
     COMMENT "Auto-removing stale shared library to prevent pgacclnk incremental link crash..."
 )
+
+# LandProcess.cpp itself: STATIC, like every other Kokkos/CUDA physics module.
+add_library(vvm_land STATIC LandProcess.cpp)
+
+set_target_properties(vvm_land PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+if (VVM_ENABLE_GPU AND CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
+    target_compile_options(vvm_land PRIVATE -acc)
+    target_link_options(vvm_land PRIVATE -acc)
+endif()
+
+target_link_libraries(vvm_land PUBLIC Kokkos::kokkos vvm_core vvm_land_fortran)
+target_link_libraries(eamxx_physics INTERFACE vvm_land)
