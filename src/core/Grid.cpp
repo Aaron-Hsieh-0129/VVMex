@@ -1,8 +1,9 @@
-#include "Grid.hpp"
-
 #include <sstream>
 #include <stdexcept>
 #include <cmath>
+
+#include "Grid.hpp"
+#include "core/geometry/HorizontalGeometryFactory.hpp"
 
 namespace VVM {
 namespace Core {
@@ -26,6 +27,10 @@ Grid::Grid(const VVM::Utils::ConfigurationManager& config, MPI_Comm comm)
         dims_host_mirror_(0).d_coord = config.get_value<VVM::Real>("grid.dz");
         dims_host_mirror_(1).d_coord = config.get_value<VVM::Real>("grid.dy");
         dims_host_mirror_(2).d_coord = config.get_value<VVM::Real>("grid.dx");
+
+        horizontal_grid_spec_.kind = Geometry::GeometryKind::Cartesian;
+        horizontal_grid_spec_.dq1 = dims_host_mirror_(2).d_coord;
+        horizontal_grid_spec_.dq2 = dims_host_mirror_(1).d_coord;
 
         if (dims_host_mirror_(0).global_size <= 0 || dims_host_mirror_(1).global_size <= 0 || dims_host_mirror_(2).global_size <= 0) {
             throw std::runtime_error("Grid dimensions must be positive integers.");
@@ -57,6 +62,8 @@ Grid::Grid(const VVM::Utils::ConfigurationManager& config, MPI_Comm comm)
     radiation_enabled_ = config.get_value<bool>("physics.rrtmgp.enable_rrtmgp", false);
 
     calculate_local_grid_distribution();
+
+    initialize_horizontal_geometry();
 
     if (mpi_rank_ == 0) {
         std::cout << "Grid initialized successfully." << std::endl;
@@ -269,6 +276,25 @@ void Grid::print_info() const {
               << ", Physical Size=" << dims_host_mirror_(2).local_physical_size
               << ", Total Size (incl. Halo)=" << (dims_host_mirror_(2).local_physical_size + 2 * dims_host_mirror_(2).num_halo_cells) << std::endl;
     std::cout << "------------------------------------" << std::endl;
+}
+
+void Grid::initialize_horizontal_geometry() {
+    Geometry::HorizontalDomainLayout layout;
+
+    layout.global_nx = get_global_points_x();
+    layout.global_ny = get_global_points_y();
+    layout.local_physical_nx = get_local_physical_points_x();
+    layout.local_physical_ny = get_local_physical_points_y();
+    layout.global_start_i = get_local_physical_start_x();
+    layout.global_start_j = get_local_physical_start_y();
+    layout.halo = get_halo_cells();
+    layout.panel_id = -1;
+
+    geometry_ = Geometry::HorizontalGeometryFactory::create(horizontal_grid_spec_, layout);
+
+    if (!geometry_) {
+        throw std::runtime_error("HorizontalGeometryFactory returned a null geometry.");
+    }
 }
 
 } // namespace Core
