@@ -1,17 +1,15 @@
 #ifndef VVM_CORE_GEOMETRY_HORIZONTAL_GEOMETRY_HPP
 #define VVM_CORE_GEOMETRY_HORIZONTAL_GEOMETRY_HPP
 
-#include <cstdint>
-#include <optional>
-#include <stdexcept>
 #include <string>
 #include <Kokkos_Core.hpp>
 
 #include "core/GridStaggering.hpp"
-#include "core/vvm_types.hpp"
+#include "core/geometry/GeometryField2D.hpp"
 #include "core/geometry/GeometryKind.hpp"
 #include "core/geometry/HorizontalLocation.hpp"
 #include "core/geometry/HorizontalStaggering.hpp"
+#include "core/vvm_types.hpp"
 
 
 namespace VVM {
@@ -43,8 +41,6 @@ struct HorizontalDomainLayout {
 };
 
 // Concrete geometry classes own mutable Kokkos::View<VVM::Real**> arrays.
-using GeometryConstView2D = Kokkos::View<const VVM::Real**>;
-
 // A symmetric horizontal tensor:
 //
 //     [ a11  a12 ]
@@ -54,40 +50,28 @@ using GeometryConstView2D = Kokkos::View<const VVM::Real**>;
 //   - the covariant metric g_ij
 //   - the Jacobian-weighted contravariant metric J*g^ij
 struct SymmetricTensorDeviceView {
-    GeometryConstView2D a11;
-    GeometryConstView2D a12;
-    GeometryConstView2D a22;
+    GeometryField2D a11;
+    GeometryField2D a12;
+    GeometryField2D a22;
 
     KOKKOS_INLINE_FUNCTION
-    void apply(
-        const int j,
-        const int i,
-        const VVM::Real x1,
-        const VVM::Real x2,
-        VVM::Real& y1,
-        VVM::Real& y2) const noexcept {
-
+    void apply(const int j, const int i,
+               const VVM::Real x1, const VVM::Real x2,
+               VVM::Real& y1, VVM::Real& y2) const noexcept {
         y1 = a11(j, i) * x1 + a12(j, i) * x2;
         y2 = a12(j, i) * x1 + a22(j, i) * x2;
     }
 
     KOKKOS_INLINE_FUNCTION
-    VVM::Real component_1(
-        const int j,
-        const int i,
-        const VVM::Real x1,
-        const VVM::Real x2) const noexcept {
-
+    VVM::Real component_1(const int j, const int i,
+                          const VVM::Real x1, const VVM::Real x2) const noexcept {
         return a11(j, i) * x1 + a12(j, i) * x2;
     }
 
     KOKKOS_INLINE_FUNCTION
     VVM::Real component_2(
-        const int j,
-        const int i,
-        const VVM::Real x1,
-        const VVM::Real x2) const noexcept {
-
+        const int j, const int i,
+        const VVM::Real x1, const VVM::Real x2) const noexcept {
         return a12(j, i) * x1 + a22(j, i) * x2;
     }
 };
@@ -100,10 +84,10 @@ struct SymmetricTensorDeviceView {
 // This is used for transformations between computational contravariant
 // components and physical tangent-plane components.
 struct Matrix2DeviceView {
-    GeometryConstView2D a11;
-    GeometryConstView2D a12;
-    GeometryConstView2D a21;
-    GeometryConstView2D a22;
+    GeometryField2D a11;
+    GeometryField2D a12;
+    GeometryField2D a21;
+    GeometryField2D a22;
 
     KOKKOS_INLINE_FUNCTION
     void apply(
@@ -186,14 +170,14 @@ struct Matrix2DeviceView {
 // For Cartesian geometry, physical components are x/y velocity.
 // For spherical geometries, physical components are normally eastward and  northward velocity in metres per second.
 struct HorizontalGeometryDeviceView {
-    GeometryConstView2D q1;
-    GeometryConstView2D q2;
+    GeometryField2D q1;
+    GeometryField2D q2;
 
-    GeometryConstView2D longitude;
-    GeometryConstView2D latitude;
+    GeometryField2D longitude;
+    GeometryField2D latitude;
 
-    GeometryConstView2D sqrt_g;
-    GeometryConstView2D inv_sqrt_g;
+    GeometryField2D sqrt_g;
+    GeometryField2D inv_sqrt_g;
 
     SymmetricTensorDeviceView g_cov;
     SymmetricTensorDeviceView sqrt_g_g_contra;
