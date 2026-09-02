@@ -4,6 +4,8 @@ set(VVM_CORE_SOURCES
     Initializer.cpp
     BoundaryConditionManager.cpp
     Parameters.cpp
+
+    geometry/CartesianGeometry.cpp
 )
 
 set(VVM_CORE_HEADERS
@@ -17,6 +19,13 @@ set(VVM_CORE_HEADERS
     BoundaryConditionManager.hpp
     Parameters.hpp
     Field.hpp
+
+    geometry/GeometryKind.hpp
+    geometry/HorizontalLocation.hpp
+    geometry/HorizontalStaggering.hpp
+    geometry/GeometryField2D.hpp
+    geometry/HorizontalGeometry.hpp
+    geometry/CartesianGeometry.hpp
 )
 
 add_library(vvm_core STATIC

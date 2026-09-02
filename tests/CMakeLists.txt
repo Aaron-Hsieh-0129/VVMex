@@ -360,36 +360,77 @@ add_test(NAME test_numerical_configuration
                  $<TARGET_FILE:test_numerical_configuration>)
 set_tests_properties(test_numerical_configuration PROPERTIES LABELS unit TIMEOUT 60)
 
-
-# Generalized coordinate test
+# Compact generalized-coordinate field accessor test.
 add_executable(
-    test_horizontal_geometry_interface
-    ${TEST_DIR}/unit/test_horizontal_geometry_interface.cpp
+    test_geometry_field_2d
+    ${TEST_DIR}/unit/test_geometry_field_2d.cpp
 )
+
 target_include_directories(
-    test_horizontal_geometry_interface
+    test_geometry_field_2d
     PRIVATE
         ${CMAKE_SOURCE_DIR}/src
 )
-# HorizontalGeometry.hpp contains Kokkos view types, and vvm_types.hpp includes
-# MPI definitions, although this particular test launches neither Kokkos nor MPI.
+
 target_link_libraries(
-    test_horizontal_geometry_interface
+    test_geometry_field_2d
     PRIVATE
         Kokkos::kokkos
         MPI::MPI_CXX
 )
 
 add_test(
-    NAME test_horizontal_geometry_interface
-    COMMAND test_horizontal_geometry_interface
+    NAME test_geometry_field_2d
+    COMMAND test_geometry_field_2d
 )
 
 set_tests_properties(
-    test_horizontal_geometry_interface
+    test_geometry_field_2d
     PROPERTIES
         LABELS unit
         TIMEOUT 60
+)
+
+_vvm_set_test_resources(
+    test_geometry_field_2d
+    1
+)
+
+# Cartesian test
+add_executable(
+    test_cartesian_geometry
+    ${TEST_DIR}/unit/test_cartesian_geometry.cpp
+)
+
+target_include_directories(
+    test_cartesian_geometry
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(
+    test_cartesian_geometry
+    PRIVATE
+        vvm_core
+        Kokkos::kokkos
+        MPI::MPI_CXX
+)
+
+add_test(
+    NAME test_cartesian_geometry
+    COMMAND test_cartesian_geometry
+)
+
+set_tests_properties(
+    test_cartesian_geometry
+    PROPERTIES
+        LABELS unit
+        TIMEOUT 60
+)
+
+_vvm_set_test_resources(
+    test_cartesian_geometry
+    1
 )
 
 # --- output precision on the legacy writer ---------------------------------
