@@ -795,6 +795,10 @@ function(add_vvm_device_unit_test TEST_NAME CONFIG RANKS)
     endif()
 endfunction()
 
+# Grid owns a valid Cartesian geometry after decomposition. The multirank run
+# also verifies that each rank receives the correct global coordinate origin.
+add_vvm_device_unit_test(test_grid_geometry ${TEST_DIR}/configs/2dbubble.json 2)
+
 # State::calculate_horizontal_mean(): the API shared by the NCCL and the
 # standard-MPI backend. The 2-rank run is what pins the global reduction.
 add_vvm_device_unit_test(test_horizontal_mean ${TEST_DIR}/configs/2dbubble.json 2)

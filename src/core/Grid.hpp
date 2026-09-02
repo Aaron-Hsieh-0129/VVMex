@@ -6,12 +6,14 @@
 #ifndef VVM_CORE_GRID_HPP
 #define VVM_CORE_GRID_HPP
 
+#include <memory>
 #include <mpi.h>
 #include <Kokkos_Core.hpp>
 
 #include "utils/ConfigurationManager.hpp"
 #include "vvm_types.hpp"
 #include "core/geometry/HorizontalGeometry.hpp"
+#include "core/geometry/HorizontalGridSpec.hpp"
 
 namespace VVM {
 namespace Core {
@@ -27,11 +29,6 @@ struct GridDimension {
     int local_physical_size;      // Local physical region grid point count
     int num_halo_cells;           // Halo cell thickness in each direction
 };
-
-
-namespace Geometry {
-    class HorizontalGeometry;
-}
 
 class Grid {
 public:
@@ -80,8 +77,10 @@ public:
     // MPI info
     int get_mpi_rank() const { return mpi_rank_; }
     int get_mpi_size() const { return mpi_size_; }
+
     KOKKOS_INLINE_FUNCTION
     MPI_Comm get_cart_comm() const { return cart_comm_; }
+
     MPI_Comm get_comm() const { return comm_; }
 
     const Geometry::HorizontalGeometry& geometry() const noexcept {
@@ -104,7 +103,11 @@ private:
     // Private helper function: Calculate local grid distribution based on global grid size and MPI process count
     void calculate_local_grid_distribution();
 
+    Geometry::HorizontalGridSpec horizontal_grid_spec_;
     std::unique_ptr<Geometry::HorizontalGeometry> geometry_;
+
+    // Private helper function: Calculate local grid distribution based on global grid size and MPI process count
+    void initialize_horizontal_geometry();
 };
 
 }

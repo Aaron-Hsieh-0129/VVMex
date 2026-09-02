@@ -6,6 +6,7 @@ set(VVM_CORE_SOURCES
     Parameters.cpp
 
     geometry/CartesianGeometry.cpp
+    geometry/HorizontalGeometryFactory.cpp
 )
 
 set(VVM_CORE_HEADERS
@@ -24,8 +25,10 @@ set(VVM_CORE_HEADERS
     geometry/HorizontalLocation.hpp
     geometry/HorizontalStaggering.hpp
     geometry/GeometryField2D.hpp
+    geometry/HorizontalGridSpec.hpp
     geometry/HorizontalGeometry.hpp
     geometry/CartesianGeometry.hpp
+    geometry/HorizontalGeometryFactory.hpp
 )
 
 add_library(vvm_core STATIC
