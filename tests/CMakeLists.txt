@@ -775,7 +775,7 @@ add_vvm_file_unit_test(test_restart_metadata_io 2)
 function(add_vvm_device_unit_test TEST_NAME CONFIG RANKS)
     add_executable(${TEST_NAME} ${TEST_DIR}/unit/${TEST_NAME}.cpp)
     target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
-    target_link_libraries(${TEST_NAME} PRIVATE vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX)
+    target_link_libraries(${TEST_NAME} PRIVATE vvm_core vvm_io vvm_utils Kokkos::kokkos MPI::MPI_CXX)
 
     add_test(NAME ${TEST_NAME}_r1
              COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
@@ -849,7 +849,7 @@ add_executable(test_p3_multistage_history
 target_include_directories(test_p3_multistage_history
                            PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_p3_multistage_history
-                      PRIVATE vvm_dynamics vvm_core vvm_utils
+                      PRIVATE vvm_dynamics vvm_core vvm_io vvm_utils
                               Kokkos::kokkos MPI::MPI_CXX)
 add_test(NAME test_p3_multistage_history_r1
          COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
