@@ -33,9 +33,11 @@ struct ScalarStencilAtT {
     VVM::Real northeast = VVM::real(0.0);
 };
 
-struct ContravariantGradientAtPositiveFaces {
-    VVM::Real q1_at_u = VVM::real(0.0);
-    VVM::Real q2_at_v = VVM::real(0.0);
+struct ContravariantGradientAroundT {
+    VVM::Real q1_at_u_j_i = VVM::real(0.0);
+    VVM::Real q1_at_u_j_im1 = VVM::real(0.0);
+    VVM::Real q2_at_v_j_i = VVM::real(0.0);
+    VVM::Real q2_at_v_jm1_i = VVM::real(0.0);
 };
 
 template<typename ScalarView>
@@ -79,20 +81,37 @@ struct HorizontalScalarGradientDeviceView {
     Core::Geometry::HorizontalGeometryDeviceView v;
 
     KOKKOS_INLINE_FUNCTION
-    ContravariantGradientAtPositiveFaces at_positive_faces(const int j, const int i, const ScalarStencilAtT& scalar) const noexcept {
-
-        // Covariant derivatives at U(j, i).
+    VVM::Real calculate_q1_at_u(const int j, const int i, const ScalarStencilAtT& scalar) const noexcept {
         const VVM::Real dscalar_dq1_at_u = (scalar.east - scalar.center) / u.dq1;
         const VVM::Real dscalar_dq2_at_u = (scalar.north + scalar.northeast - scalar.south - scalar.southeast) / (VVM::real(4.0) * u.dq2);
 
-        // Covariant derivatives at V(j, i).
+        return u.g_contra_11(j, i) * dscalar_dq1_at_u + u.g_contra_12(j, i) * dscalar_dq2_at_u;
+    }
+
+    KOKKOS_INLINE_FUNCTION
+    VVM::Real calculate_q2_at_v(const int j, const int i, const ScalarStencilAtT& scalar) const noexcept {
         const VVM::Real dscalar_dq1_at_v = (scalar.east + scalar.northeast - scalar.west - scalar.northwest) / (VVM::real(4.0) * v.dq1);
         const VVM::Real dscalar_dq2_at_v = (scalar.north - scalar.center) / v.dq2;
 
-        ContravariantGradientAtPositiveFaces result;
+        return v.g_contra_12(j, i) * dscalar_dq1_at_v + v.g_contra_22(j, i) * dscalar_dq2_at_v;
+    }
 
-        result.q1_at_u = u.g_contra_11(j, i) * dscalar_dq1_at_u + u.g_contra_12(j, i) * dscalar_dq2_at_u;
-        result.q2_at_v = v.g_contra_12(j, i) * dscalar_dq1_at_v + v.g_contra_22(j, i) * dscalar_dq2_at_v;
+    KOKKOS_INLINE_FUNCTION
+    ContravariantGradientAroundT calculate_uv_around_t(const int j, const int i, const ScalarStencilAtT& scalar) const noexcept {
+
+        const VVM::Real dscalar_dq1_at_u_j_im1 = (scalar.center - scalar.west) / u.dq1;
+        const VVM::Real dscalar_dq2_at_u_j_im1 = (scalar.north + scalar.northwest - scalar.south - scalar.southwest) / (VVM::real(4.0) * u.dq2);
+
+        const VVM::Real dscalar_dq1_at_v_jm1_i = (scalar.east + scalar.southeast - scalar.west - scalar.southwest) / (VVM::real(4.0) * v.dq1);
+        const VVM::Real dscalar_dq2_at_v_jm1_i = (scalar.center - scalar.south) / v.dq2;
+
+        ContravariantGradientAroundT result;
+
+        result.q1_at_u_j_i = calculate_q1_at_u(j, i, scalar);
+        result.q2_at_v_j_i = calculate_q2_at_v(j, i, scalar);
+
+        result.q1_at_u_j_im1 = u.g_contra_11(j, i - 1) * dscalar_dq1_at_u_j_im1 + u.g_contra_12(j, i - 1) * dscalar_dq2_at_u_j_im1;
+        result.q2_at_v_jm1_i = v.g_contra_12(j - 1, i) * dscalar_dq1_at_v_jm1_i + v.g_contra_22(j - 1, i) * dscalar_dq2_at_v_jm1_i;
 
         return result;
     }
