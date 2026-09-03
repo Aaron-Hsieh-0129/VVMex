@@ -116,10 +116,8 @@ void test_cross_metric_affine_gradient() {
         "EvaluateCrossMetricGradient",
         Kokkos::RangePolicy<>(0, 1),
         KOKKOS_LAMBDA(const int) {
-            const auto value = gradient.at_positive_faces(0, 0, scalar);
-
-            result(0) = value.q1_at_u;
-            result(1) = value.q2_at_v;
+            result(0) = gradient.calculate_q1_at_u(0, 0, scalar);
+            result(1) = gradient.calculate_q2_at_v(0, 0, scalar);
         });
 
     const auto result_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), result);
@@ -154,10 +152,8 @@ void test_constant_cartesian_scalar() {
         "EvaluateConstantScalarGradient",
         Kokkos::RangePolicy<>(0, 1),
         KOKKOS_LAMBDA(const int) {
-            const auto value = gradient.at_positive_faces(layout.halo, layout.halo, scalar);
-
-            result(0) = value.q1_at_u;
-            result(1) = value.q2_at_v;
+            result(0) = gradient.calculate_q1_at_u(layout.halo, layout.halo, scalar);
+            result(1) = gradient.calculate_q2_at_v(layout.halo, layout.halo, scalar);
         });
 
     const auto result_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), result);
@@ -197,10 +193,9 @@ void test_cartesian_affine_scalar() {
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
         KOKKOS_LAMBDA(const int j, const int i) {
             const ScalarStencilAtT stencil = load_scalar_stencil_at_t(scalar, j, i);
-            const auto value = gradient.at_positive_faces(j, i, stencil);
 
-            gradient_q1(j, i) = value.q1_at_u;
-            gradient_q2(j, i) = value.q2_at_v;
+            gradient_q1(j, i) = gradient.calculate_q1_at_u(j, i, stencil);
+            gradient_q2(j, i) = gradient.calculate_q2_at_v(j, i, stencil);
         });
 
     const auto q1_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), gradient_q1);
@@ -296,10 +291,9 @@ VVM::Real periodic_gradient_error(const int n) {
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
         KOKKOS_LAMBDA(const int j, const int i) {
             const ScalarStencilAtT stencil = load_scalar_stencil_at_t(scalar, j, i);
-            const auto value = gradient.at_positive_faces(j, i, stencil);
 
-            gradient_q1(j, i) = value.q1_at_u;
-            gradient_q2(j, i) = value.q2_at_v;
+            gradient_q1(j, i) = gradient.calculate_q1_at_u(j, i, stencil);
+            gradient_q2(j, i) = gradient.calculate_q2_at_v(j, i, stencil);
         });
 
     const auto q1_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), gradient_q1);
@@ -329,7 +323,7 @@ void test_second_order_convergence() {
     const VVM::Real error_ratio = coarse_error / fine_error;
 
     check(coarse_error > fine_error, "Refining the Cartesian grid must reduce the gradient error");
-    check(error_ratio > VVM::real(3.5), "The centered face gradient must show second-order convergence");
+    check(error_ratio > VVM::real(3.5), "The centered U/V gradient must show second-order convergence");
 }
 
 } // namespace

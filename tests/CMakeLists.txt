@@ -457,6 +457,18 @@ set_tests_properties(test_horizontal_scalar_gradient
                      PROPERTIES LABELS unit TIMEOUT 60)
 _vvm_set_test_resources(test_horizontal_scalar_gradient 1)
 
+# Laplace-Beltrami composed from the scalar gradient and conservative divergence.
+add_executable(test_horizontal_laplace_beltrami
+               ${TEST_DIR}/unit/test_horizontal_laplace_beltrami.cpp)
+target_include_directories(test_horizontal_laplace_beltrami PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_horizontal_laplace_beltrami PRIVATE
+                      vvm_core Kokkos::kokkos MPI::MPI_CXX)
+add_test(NAME test_horizontal_laplace_beltrami
+         COMMAND test_horizontal_laplace_beltrami)
+set_tests_properties(test_horizontal_laplace_beltrami
+                     PROPERTIES LABELS unit TIMEOUT 60)
+_vvm_set_test_resources(test_horizontal_laplace_beltrami 1)
+
 # --- output precision on the legacy writer ---------------------------------
 # output.precision decides the on-disk field type for HDF5 and SST as it does
 # for BP5. The HDF5 case writes a real file and reads its dataset types back;
