@@ -469,6 +469,18 @@ set_tests_properties(test_horizontal_laplace_beltrami
                      PROPERTIES LABELS unit TIMEOUT 60)
 _vvm_set_test_resources(test_horizontal_laplace_beltrami 1)
 
+# Metric-aware vertical curl from covariant U/V components to Z.
+add_executable(test_horizontal_curl
+               ${TEST_DIR}/unit/test_horizontal_curl.cpp)
+target_include_directories(test_horizontal_curl PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_horizontal_curl PRIVATE
+                      vvm_core Kokkos::kokkos MPI::MPI_CXX)
+add_test(NAME test_horizontal_curl
+         COMMAND test_horizontal_curl)
+set_tests_properties(test_horizontal_curl
+                     PROPERTIES LABELS unit TIMEOUT 60)
+_vvm_set_test_resources(test_horizontal_curl 1)
+
 # --- output precision on the legacy writer ---------------------------------
 # output.precision decides the on-disk field type for HDF5 and SST as it does
 # for BP5. The HDF5 case writes a real file and reads its dataset types back;
