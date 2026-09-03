@@ -433,6 +433,18 @@ _vvm_set_test_resources(
     1
 )
 
+# Conservative generalized-coordinate flux divergence in the Cartesian limit.
+add_executable(test_horizontal_flux_divergence
+               ${TEST_DIR}/unit/test_horizontal_flux_divergence.cpp)
+target_include_directories(test_horizontal_flux_divergence PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_horizontal_flux_divergence PRIVATE
+                      vvm_core Kokkos::kokkos MPI::MPI_CXX)
+add_test(NAME test_horizontal_flux_divergence
+         COMMAND test_horizontal_flux_divergence)
+set_tests_properties(test_horizontal_flux_divergence
+                     PROPERTIES LABELS unit TIMEOUT 60)
+_vvm_set_test_resources(test_horizontal_flux_divergence 1)
+
 # --- output precision on the legacy writer ---------------------------------
 # output.precision decides the on-disk field type for HDF5 and SST as it does
 # for BP5. The HDF5 case writes a real file and reads its dataset types back;
