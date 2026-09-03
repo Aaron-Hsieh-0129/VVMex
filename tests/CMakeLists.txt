@@ -445,6 +445,18 @@ set_tests_properties(test_horizontal_flux_divergence
                      PROPERTIES LABELS unit TIMEOUT 60)
 _vvm_set_test_resources(test_horizontal_flux_divergence 1)
 
+# Metric-aware scalar gradient from T points to U/V faces.
+add_executable(test_horizontal_scalar_gradient
+               ${TEST_DIR}/unit/test_horizontal_scalar_gradient.cpp)
+target_include_directories(test_horizontal_scalar_gradient PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_horizontal_scalar_gradient PRIVATE
+                      vvm_core Kokkos::kokkos MPI::MPI_CXX)
+add_test(NAME test_horizontal_scalar_gradient
+         COMMAND test_horizontal_scalar_gradient)
+set_tests_properties(test_horizontal_scalar_gradient
+                     PROPERTIES LABELS unit TIMEOUT 60)
+_vvm_set_test_resources(test_horizontal_scalar_gradient 1)
+
 # --- output precision on the legacy writer ---------------------------------
 # output.precision decides the on-disk field type for HDF5 and SST as it does
 # for BP5. The HDF5 case writes a real file and reads its dataset types back;
