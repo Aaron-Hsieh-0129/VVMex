@@ -215,14 +215,14 @@ void RegularLatLonGeometry::initialize_coordinates() {
     const int nx = layout_.local_total_nx();
     const int ny = layout_.local_total_ny();
 
-    q1_centered_ =Kokkos::View<VVM::Real*>("regular_latlon_q1_centered", nx);
+    q1_centered_ = Kokkos::View<VVM::Real*>("regular_latlon_q1_centered", nx);
     q1_staggered_ = Kokkos::View<VVM::Real*>("regular_latlon_q1_staggered", nx);
     q2_centered_ = Kokkos::View<VVM::Real*>("regular_latlon_q2_centered", ny);
     q2_staggered_ = Kokkos::View<VVM::Real*>("regular_latlon_q2_staggered", ny);
 
     Kokkos::parallel_for("InitializeRegularLatLonQ1Centered",
         Kokkos::RangePolicy<>(0, nx),
-        InitializeRegularLatLonCoordinate(q1_centered_, 
+        InitializeRegularLatLonCoordinate(q1_centered_,
             layout_.global_start_i, layout_.halo,
             longitude_west_edge_, VVM::real(0.5), dlongitude_));
 
