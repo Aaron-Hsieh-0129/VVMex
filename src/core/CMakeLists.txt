@@ -1,6 +1,7 @@
 set(VVM_CORE_SOURCES
     State.cpp
     Grid.cpp
+    GridSpecification.cpp
     Initializer.cpp
     BoundaryConditionManager.cpp
     Parameters.cpp
@@ -13,6 +14,7 @@ set(VVM_CORE_SOURCES
 set(VVM_CORE_HEADERS
     State.hpp
     Grid.hpp
+    GridSpecification.hpp
     Initializer.hpp
     BoundaryConditionManager.hpp
     Parameters.hpp
