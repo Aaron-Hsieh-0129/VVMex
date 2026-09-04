@@ -505,6 +505,45 @@ set_tests_properties(test_vertical_vorticity
                      PROPERTIES LABELS unit TIMEOUT 60)
 _vvm_set_test_resources(test_vertical_vorticity 1)
 
+# Regular latitude-longitude coordinates, metrics, and vector transformations.
+# Runtime factory selection remains disabled until the configuration contract
+# is added in the following step.
+add_executable(
+    test_regular_latlon_geometry
+    ${TEST_DIR}/unit/test_regular_latlon_geometry.cpp
+)
+
+target_include_directories(
+    test_regular_latlon_geometry
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(
+    test_regular_latlon_geometry
+    PRIVATE
+        vvm_core
+        Kokkos::kokkos
+        MPI::MPI_CXX
+)
+
+add_test(
+    NAME test_regular_latlon_geometry
+    COMMAND test_regular_latlon_geometry
+)
+
+set_tests_properties(
+    test_regular_latlon_geometry
+    PROPERTIES
+        LABELS unit
+        TIMEOUT 60
+)
+
+_vvm_set_test_resources(
+    test_regular_latlon_geometry
+    1
+)
+
 # --- output precision on the legacy writer ---------------------------------
 # output.precision decides the on-disk field type for HDF5 and SST as it does
 # for BP5. The HDF5 case writes a real file and reads its dataset types back;
