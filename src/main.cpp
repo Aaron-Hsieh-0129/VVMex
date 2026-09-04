@@ -19,7 +19,7 @@
 
 #include "core/Field.hpp"
 #include "core/Grid.hpp"
-#include "core/HaloExchanger.hpp"
+#include "core/haloexchange/HaloExchanger.hpp"
 #include "core/Parameters.hpp"
 #include "core/State.hpp"
 #include "io/bp5/Bp5HistoryWriter.hpp"

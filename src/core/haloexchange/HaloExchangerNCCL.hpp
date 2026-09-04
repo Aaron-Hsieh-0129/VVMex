@@ -1,10 +1,10 @@
 #pragma once
 
-#include "Grid.hpp"
-#include "HaloExchangeDegenerate.hpp"
-#include "Field.hpp"
-#include "State.hpp"
-#include "vvm_types.hpp"
+#include "core/Grid.hpp"
+#include "core/haloexchange/HaloExchangeDegenerate.hpp"
+#include "core/Field.hpp"
+#include "core/State.hpp"
+#include "core/vvm_types.hpp"
 #include <algorithm>
 #include <vector>
 #include <Kokkos_Core.hpp>

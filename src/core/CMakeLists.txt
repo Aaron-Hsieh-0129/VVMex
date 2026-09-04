@@ -13,14 +13,15 @@ set(VVM_CORE_SOURCES
 set(VVM_CORE_HEADERS
     State.hpp
     Grid.hpp
-    HaloExchanger.hpp
-    HaloExchangeDegenerate.hpp
-    HaloExchangerMPI.hpp
-    HaloExchangerNCCL.hpp
     Initializer.hpp
     BoundaryConditionManager.hpp
     Parameters.hpp
     Field.hpp
+
+    haloexchange/HaloExchanger.hpp
+    haloexchange/HaloExchangeDegenerate.hpp
+    haloexchange/HaloExchangerMPI.hpp
+    haloexchange/HaloExchangerNCCL.hpp
 
     geometry/GeometryKind.hpp
     geometry/HorizontalLocation.hpp

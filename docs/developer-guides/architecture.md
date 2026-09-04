@@ -10,7 +10,7 @@ optional NCCL on NVIDIA GPUs.
 | ---- | ---- |
 | `src/main.cpp` | MPI init, Kokkos init, optional NCCL, config load, split communicators for I/O servers, `Grid` / `Parameters` / `State` / `HaloExchanger` / `Model` / `HistoryWriter`, time loop |
 | `src/driver/` | `Model`: orchestrates dynamical core, physics, and tendencies; implements `init`, `run_step`, `finalize` |
-| `src/core/` | `Grid`, `State`, `Field`, `Parameters`, `HaloExchanger`, initializer, boundary helpers |
+| `src/core/` | `Grid`, `State`, `Field`, `Parameters`, initializer, boundary helpers, `HaloExchanger` (`haloexchange/`), horizontal geometry (`geometry/`) |
 | `src/dynamics/` | Vector-vorticity dynamical core, time integration, forcings (sponge, nudging, random), idealized tests |
 | `src/physics/` | P3 (`p3/`), RRTMGP (`rrtmgp/`), turbulence, surface, land (Noah); CMake aggregates as `eamxx_physics` interface + static libs |
 | `src/io/` | `OutputManager` (ADIOS2 HDF5/SST), `IOServer` (SST consumer to HDF5), `history/` (neutral `HistoryWriter` interface), `bp5/` (direct BP5 writer; see [BP5 output internals](bp5-output.md)) |
