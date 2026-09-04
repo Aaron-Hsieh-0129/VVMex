@@ -279,6 +279,81 @@ VVM::Real periodic_sine_error(const int n) {
     return std::sqrt(squared_error / static_cast<VVM::Real>(n * n));
 }
 
+void test_periodic_global_flux_integral() {
+    const int physical_nx = 48;
+    const int physical_ny = 36;
+    const VVM::Real pi = std::acos(VVM::real(-1.0));
+    const VVM::Real domain_length = VVM::real(2.0) * pi;
+    const VVM::Real dx = domain_length / static_cast<VVM::Real>(physical_nx);
+    const VVM::Real dy = domain_length / static_cast<VVM::Real>(physical_ny);
+
+    const HorizontalDomainLayout layout = make_layout(physical_nx, physical_ny);
+    const CartesianGeometry geometry(layout, dx, dy);
+    const auto divergence = make_horizontal_flux_divergence_device_view(geometry);
+    const auto t = geometry.device_view(VVM::Core::Geometry::HorizontalLocation::T);
+    const auto u = geometry.device_view(VVM::Core::Geometry::HorizontalLocation::U);
+    const auto v = geometry.device_view(VVM::Core::Geometry::HorizontalLocation::V);
+
+    const int nx = layout.local_total_nx();
+    const int ny = layout.local_total_ny();
+    const int h = layout.halo;
+
+    Kokkos::View<VVM::Real**> flux_q1("periodic_integral_flux_q1", ny, nx);
+    Kokkos::View<VVM::Real**> flux_q2("periodic_integral_flux_q2", ny, nx);
+    Kokkos::View<VVM::Real**> divergence_at_t("periodic_integral_divergence", ny, nx);
+
+    Kokkos::parallel_for(
+        "InitializePeriodicIntegralFlux",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
+        KOKKOS_LAMBDA(const int j, const int i) {
+            flux_q1(j, i) =
+                Kokkos::sin(VVM::real(2.0) * u.q1(j, i)) +
+                VVM::real(0.37) * Kokkos::cos(VVM::real(3.0) * u.q2(j, i));
+
+            flux_q2(j, i) =
+                VVM::real(0.41) * Kokkos::sin(VVM::real(4.0) * v.q1(j, i)) -
+                VVM::real(0.65) * Kokkos::cos(VVM::real(2.0) * v.q2(j, i));
+        });
+
+    Kokkos::parallel_for(
+        "EvaluatePeriodicIntegralDivergence",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
+        KOKKOS_LAMBDA(const int j, const int i) {
+            divergence_at_t(j, i) = divergence.at_t(
+                j,
+                i,
+                flux_q1(j, i),
+                flux_q1(j, i - 1),
+                flux_q2(j, i),
+                flux_q2(j - 1, i));
+        });
+
+    Kokkos::View<VVM::Real> area_integral("periodic_divergence_area_integral");
+
+    Kokkos::parallel_reduce(
+        "IntegratePeriodicDivergence",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
+        KOKKOS_LAMBDA(const int j, const int i, VVM::Real& sum) {
+            const VVM::Real cell_area =
+                t.sqrt_g(j, i) * t.dq1 * t.dq2;
+
+            sum += divergence_at_t(j, i) * cell_area;
+        },
+        area_integral);
+
+    VVM::Real area_integral_host = VVM::real(0.0);
+    Kokkos::deep_copy(area_integral_host, area_integral);
+
+    const VVM::Real integral_tolerance =
+        sizeof(VVM::Real) == sizeof(double)
+            ? VVM::real(1.0e-10)
+            : VVM::real(1.0e-4);
+
+    check(
+        std::abs(area_integral_host) <= integral_tolerance,
+        "The area integral of periodic flux divergence must be zero");
+}
+
 void test_second_order_convergence() {
     const VVM::Real coarse_error = periodic_sine_error(32);
     const VVM::Real fine_error = periodic_sine_error(64);
@@ -299,6 +374,7 @@ int main(int argc, char** argv) {
             test_cartesian_equivalence();
             test_constant_flux();
             test_linear_flux();
+            test_periodic_global_flux_integral();
             test_second_order_convergence();
         } catch (const std::exception& error) {
             ++failures;
