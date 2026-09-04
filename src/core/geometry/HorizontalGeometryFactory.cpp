@@ -4,6 +4,7 @@
 #include <stdexcept>
 
 #include "core/geometry/CartesianGeometry.hpp"
+#include "core/geometry/RegularLatLonGeometry.hpp"
 
 namespace VVM {
 namespace Core {
@@ -17,7 +18,10 @@ std::unique_ptr<HorizontalGeometry> HorizontalGeometryFactory::create(
             return std::make_unique<CartesianGeometry>(layout, spec.dq1, spec.dq2);
 
         case GeometryKind::RegularLatLon:
-            throw std::invalid_argument("Regular latitude-longitude geometry is not implemented yet.");
+            return std::make_unique<RegularLatLonGeometry>(layout,
+                spec.dq1, spec.dq2,
+                spec.regular_lat_lon.longitude_west_edge, spec.regular_lat_lon.latitude_south_edge,
+                spec.regular_lat_lon.radius);
 
         case GeometryKind::CubedSphere:
             throw std::invalid_argument("Cubed-sphere geometry is not implemented.");

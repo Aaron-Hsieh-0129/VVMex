@@ -2,14 +2,15 @@
 #include "core/geometry/HorizontalGeometryFactory.hpp"
 #include "utils/ConfigurationManager.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <exception>
 #include <stdexcept>
 
-#include <mpi.h>
 #include <Kokkos_Core.hpp>
+#include <mpi.h>
 
 namespace {
 
@@ -22,6 +23,9 @@ using VVM::Core::Geometry::HorizontalLocation;
 int failures = 0;
 int mpi_rank = 0;
 
+constexpr VVM::Real relative_tolerance =
+    sizeof(VVM::Real) == sizeof(double) ? VVM::real(1.0e-12) : VVM::real(5.0e-5);
+
 void check(const bool condition, const char* message) {
     if (condition) {
         return;
@@ -32,7 +36,8 @@ void check(const bool condition, const char* message) {
 }
 
 bool close(const VVM::Real actual, const VVM::Real expected) {
-    return std::abs(actual - expected) < VVM::real(1.0e-5);
+    const VVM::Real scale = std::max(VVM::real(1.0), std::abs(expected));
+    return std::abs(actual - expected) <= relative_tolerance * scale;
 }
 
 void test_host_metadata(const Grid& grid) {
@@ -56,7 +61,7 @@ void test_host_metadata(const Grid& grid) {
     check(layout.local_total_ny() == grid.get_local_total_points_y(), "Geometry local_total_ny must match Grid");
 }
 
-void test_device_values(const Grid& grid) {
+void test_cartesian_device_values(const Grid& grid) {
     const auto& geometry = grid.geometry();
 
     const auto t = geometry.device_view(HorizontalLocation::T);
@@ -117,25 +122,88 @@ void test_device_values(const Grid& grid) {
     check(close(host_results(10), VVM::real(1.0)), "Cartesian g_cov.a11 must equal one");
     check(close(host_results(11), VVM::real(0.0)), "Cartesian g_cov.a12 must equal zero");
     check(close(host_results(12), VVM::real(1.0)), "Cartesian g_cov.a22 must equal one");
-    check(close(host_results(13), VVM::real(1.0)), "Cartesian sqrt_g_g_contra.a11 must equal one");
-    check(close(host_results(14), VVM::real(0.0)), "Cartesian sqrt_g_g_contra.a12 must equal zero");
-    check(close(host_results(15), VVM::real(1.0)), "Cartesian sqrt_g_g_contra.a22 must equal one");
+    check(close(host_results(13), VVM::real(1.0)), "Cartesian J g^11 must equal one");
+    check(close(host_results(14), VVM::real(0.0)), "Cartesian J g^12 must equal zero");
+    check(close(host_results(15), VVM::real(1.0)), "Cartesian J g^22 must equal one");
 
-    check(close(host_results(16), VVM::real(0.0)), "Cartesian geometry longitude must remain zero");
-    check(close(host_results(17), VVM::real(0.0)), "Cartesian geometry latitude must remain zero");
+    check(close(host_results(16), VVM::real(0.0)), "Cartesian longitude must remain zero");
+    check(close(host_results(17), VVM::real(0.0)), "Cartesian latitude must remain zero");
     check(close(host_results(18), dx), "Device geometry dq1 must equal Grid dx");
     check(close(host_results(19), dy), "Device geometry dq2 must equal Grid dy");
 }
 
-void expect_unimplemented_geometry(
-    const GeometryKind kind,
-    const Grid& grid,
-    const char* message) {
+HorizontalGridSpec make_regular_lat_lon_spec(const Grid& grid) {
+    const VVM::Real pi = std::acos(VVM::real(-1.0));
 
     HorizontalGridSpec spec;
-    spec.kind = kind;
-    spec.dq1 = grid.get_dx();
-    spec.dq2 = grid.get_dy();
+    spec.kind = GeometryKind::RegularLatLon;
+    spec.dq1 = VVM::real(2.0) * pi / static_cast<VVM::Real>(grid.get_global_points_x());
+    spec.dq2 = (pi / VVM::real(2.0)) / static_cast<VVM::Real>(grid.get_global_points_y());
+    spec.regular_lat_lon.longitude_west_edge = VVM::real(0.0);
+    spec.regular_lat_lon.latitude_south_edge = -pi / VVM::real(4.0);
+    spec.regular_lat_lon.radius = VVM::real(6371220.0);
+
+    return spec;
+}
+
+void test_regular_lat_lon_factory(const Grid& grid) {
+    const HorizontalGridSpec spec = make_regular_lat_lon_spec(grid);
+    const auto geometry = HorizontalGeometryFactory::create(spec, grid.geometry().layout());
+
+    check(geometry != nullptr, "Factory must return a regular latitude-longitude geometry");
+    check(geometry->kind() == GeometryKind::RegularLatLon, "Factory geometry must report RegularLatLon");
+    check(std::strcmp(geometry->name(), "regular_latlon") == 0, "Factory geometry must report the RLL name");
+    check(close(geometry->dq1(), spec.dq1), "Factory must forward the longitude increment");
+    check(close(geometry->dq2(), spec.dq2), "Factory must forward the latitude increment");
+
+    const auto t = geometry->device_view(HorizontalLocation::T);
+    const auto u = geometry->device_view(HorizontalLocation::U);
+    const auto v = geometry->device_view(HorizontalLocation::V);
+
+    Kokkos::View<VVM::Real*> results("regular_lat_lon_factory_results", 6);
+
+    const int h = grid.get_halo_cells();
+
+    Kokkos::parallel_for(
+        "EvaluateRegularLatLonFactoryGeometry",
+        Kokkos::RangePolicy<>(0, 1),
+        KOKKOS_LAMBDA(const int) {
+            results(0) = t.longitude(h, h);
+            results(1) = t.latitude(h, h);
+            results(2) = u.longitude(h, h);
+            results(3) = v.latitude(h, h);
+            results(4) = t.sqrt_g(h, h);
+            results(5) = t.g_cov.a22(h, h);
+        });
+
+    const auto host_results = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), results);
+
+    const VVM::Real start_i = static_cast<VVM::Real>(grid.get_local_physical_start_x());
+    const VVM::Real start_j = static_cast<VVM::Real>(grid.get_local_physical_start_y());
+    const VVM::Real expected_t_longitude =
+        spec.regular_lat_lon.longitude_west_edge + (start_i + VVM::real(0.5)) * spec.dq1;
+    const VVM::Real expected_t_latitude =
+        spec.regular_lat_lon.latitude_south_edge + (start_j + VVM::real(0.5)) * spec.dq2;
+    const VVM::Real expected_u_longitude =
+        spec.regular_lat_lon.longitude_west_edge + (start_i + VVM::real(1.0)) * spec.dq1;
+    const VVM::Real expected_v_latitude =
+        spec.regular_lat_lon.latitude_south_edge + (start_j + VVM::real(1.0)) * spec.dq2;
+    const VVM::Real radius_squared = spec.regular_lat_lon.radius * spec.regular_lat_lon.radius;
+
+    check(close(host_results(0), expected_t_longitude), "Factory RLL T longitude must use the rank's global start");
+    check(close(host_results(1), expected_t_latitude), "Factory RLL T latitude must use the rank's global start");
+    check(close(host_results(2), expected_u_longitude), "Factory RLL U longitude must use edge staggering");
+    check(close(host_results(3), expected_v_latitude), "Factory RLL V latitude must use edge staggering");
+    check(
+        close(host_results(4), radius_squared * std::cos(expected_t_latitude)),
+        "Factory must forward the Earth radius into the RLL Jacobian");
+    check(close(host_results(5), radius_squared), "Factory must forward the Earth radius into g22");
+}
+
+void expect_factory_failure(
+    const HorizontalGridSpec& spec,
+    const Grid& grid,
+    const char* message) {
 
     try {
         auto unused = HorizontalGeometryFactory::create(spec, grid.geometry().layout());
@@ -145,14 +213,22 @@ void expect_unimplemented_geometry(
     }
 }
 
-void test_unimplemented_geometry_rejection(const Grid& grid) {
-    expect_unimplemented_geometry(
-        GeometryKind::RegularLatLon,
-        grid,
-        "Factory must reject regular latitude-longitude until it is implemented");
+void test_factory_rejections(const Grid& grid) {
+    HorizontalGridSpec incomplete_regular_lat_lon = make_regular_lat_lon_spec(grid);
+    incomplete_regular_lat_lon.regular_lat_lon.radius = VVM::real(0.0);
 
-    expect_unimplemented_geometry(
-        GeometryKind::CubedSphere,
+    expect_factory_failure(
+        incomplete_regular_lat_lon,
+        grid,
+        "Factory must reject regular latitude-longitude geometry without a positive radius");
+
+    HorizontalGridSpec cubed_sphere;
+    cubed_sphere.kind = GeometryKind::CubedSphere;
+    cubed_sphere.dq1 = grid.get_dx();
+    cubed_sphere.dq2 = grid.get_dy();
+
+    expect_factory_failure(
+        cubed_sphere,
         grid,
         "Factory must reject cubed sphere until it is implemented");
 }
@@ -180,8 +256,9 @@ int main(int argc, char* argv[]) {
             const Grid grid(config, MPI_COMM_WORLD);
 
             test_host_metadata(grid);
-            test_device_values(grid);
-            test_unimplemented_geometry_rejection(grid);
+            test_cartesian_device_values(grid);
+            test_regular_lat_lon_factory(grid);
+            test_factory_rejections(grid);
         } catch (const std::exception& error) {
             ++failures;
             std::fprintf(stderr, "Rank %d unexpected exception: %s\n", mpi_rank, error.what());
