@@ -544,6 +544,16 @@ _vvm_set_test_resources(
     1
 )
 
+# Normalization of legacy and structured horizontal/vertical grid configuration.
+add_executable(test_grid_specification
+               ${TEST_DIR}/unit/test_grid_specification.cpp)
+target_include_directories(test_grid_specification PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_grid_specification PRIVATE vvm_core vvm_utils MPI::MPI_CXX)
+add_test(NAME test_grid_specification
+         COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
+                 $<TARGET_FILE:test_grid_specification>)
+set_tests_properties(test_grid_specification PROPERTIES LABELS unit TIMEOUT 60)
+
 # --- output precision on the legacy writer ---------------------------------
 # output.precision decides the on-disk field type for HDF5 and SST as it does
 # for BP5. The HDF5 case writes a real file and reads its dataset types back;
