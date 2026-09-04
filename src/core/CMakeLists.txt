@@ -6,6 +6,7 @@ set(VVM_CORE_SOURCES
     Parameters.cpp
 
     geometry/CartesianGeometry.cpp
+    geometry/RegularLatLonGeometry.cpp
     geometry/HorizontalGeometryFactory.cpp
 )
 
@@ -28,6 +29,7 @@ set(VVM_CORE_HEADERS
     geometry/HorizontalGridSpec.hpp
     geometry/HorizontalGeometry.hpp
     geometry/CartesianGeometry.hpp
+    geometry/RegularLatLonGeometry.hpp
     geometry/HorizontalGeometryFactory.hpp
 )
 
