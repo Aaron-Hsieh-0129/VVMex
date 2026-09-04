@@ -493,6 +493,18 @@ set_tests_properties(test_horizontal_vector_lowering
                      PROPERTIES LABELS unit TIMEOUT 60)
 _vvm_set_test_resources(test_horizontal_vector_lowering 1)
 
+# Vertical vorticity composed from stagger-aware vector lowering and covariant curl.
+add_executable(test_vertical_vorticity
+               ${TEST_DIR}/unit/test_vertical_vorticity.cpp)
+target_include_directories(test_vertical_vorticity PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_vertical_vorticity PRIVATE
+                      vvm_core Kokkos::kokkos MPI::MPI_CXX)
+add_test(NAME test_vertical_vorticity
+         COMMAND test_vertical_vorticity)
+set_tests_properties(test_vertical_vorticity
+                     PROPERTIES LABELS unit TIMEOUT 60)
+_vvm_set_test_resources(test_vertical_vorticity 1)
+
 # --- output precision on the legacy writer ---------------------------------
 # output.precision decides the on-disk field type for HDF5 and SST as it does
 # for BP5. The HDF5 case writes a real file and reads its dataset types back;
