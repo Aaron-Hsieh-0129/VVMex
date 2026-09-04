@@ -1,5 +1,5 @@
 // HaloExchanger, the part of it both communication backends must agree on
-// (src/core/HaloExchanger.hpp).
+// (src/core/haloexchange/HaloExchanger.hpp).
 //
 // The two backends are separate implementations of the same interface -- NCCL
 // sends on the device stream, standard MPI posts Isend/Irecv -- so nothing but a
@@ -18,7 +18,7 @@
 // <cstdio> rather than <iostream>: see test_horizontal_mean.cpp.
 
 #include "core/Grid.hpp"
-#include "core/HaloExchanger.hpp"
+#include "core/haloexchange/HaloExchanger.hpp"
 #include "core/Parameters.hpp"
 #include "core/State.hpp"
 #include "utils/ConfigurationManager.hpp"

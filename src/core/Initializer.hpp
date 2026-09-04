@@ -7,7 +7,7 @@
 #include "State.hpp"
 #include "utils/ConfigurationManager.hpp"
 #include "io/Reader.hpp"
-#include "HaloExchanger.hpp"
+#include "haloexchange/HaloExchanger.hpp"
 
 namespace VVM {
 namespace Core {

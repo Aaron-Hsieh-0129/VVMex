@@ -1,7 +1,7 @@
 #include "DynamicalCore.hpp"
 #include "numerical_methods/NumericalMethodFactory.hpp"
 #include "spatial_schemes/Takacs.hpp"
-#include "core/HaloExchanger.hpp"
+#include "core/haloexchange/HaloExchanger.hpp"
 #include <stdexcept>
 #include <iostream>
 #include <unordered_set>

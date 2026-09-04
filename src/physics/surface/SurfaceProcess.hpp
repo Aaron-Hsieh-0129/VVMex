@@ -8,7 +8,7 @@
 #include "core/State.hpp"
 #include "core/Grid.hpp"
 #include "core/Parameters.hpp"
-#include "core/HaloExchanger.hpp"
+#include "core/haloexchange/HaloExchanger.hpp"
 #include "core/Field.hpp"
 #include "core/vvm_types.hpp"
 #include "utils/ConfigurationManager.hpp"

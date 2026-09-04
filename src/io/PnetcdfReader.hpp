@@ -6,7 +6,7 @@
 #include "core/State.hpp"
 #include "core/Parameters.hpp"
 #include "core/vvm_types.hpp"
-#include "core/HaloExchanger.hpp"
+#include "core/haloexchange/HaloExchanger.hpp"
 #include "utils/ConfigurationManager.hpp"
 
 #include <string>

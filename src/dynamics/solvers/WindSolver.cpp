@@ -1,5 +1,5 @@
 #include "WindSolver.hpp"
-#include "core/HaloExchanger.hpp"
+#include "core/haloexchange/HaloExchanger.hpp"
 #if defined(KOKKOS_ENABLE_CUDA)
 #include <nvtx3/nvToolsExt.h>
 #endif

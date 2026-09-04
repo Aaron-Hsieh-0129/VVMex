@@ -5,7 +5,7 @@
 #include "dynamics/tendency_processes/AdvectionTerm.hpp"
 #include "core/BoundaryConditionManager.hpp"
 #include "core/Grid.hpp"
-#include "core/HaloExchanger.hpp"
+#include "core/haloexchange/HaloExchanger.hpp"
 #include "utils/ConfigurationManager.hpp"
 
 #include <array>

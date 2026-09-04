@@ -2,7 +2,7 @@
 #define VVM_DYNAMICS_TAKACS_HPP
 
 #include "SpatialScheme.hpp"
-#include "core/HaloExchanger.hpp"
+#include "core/haloexchange/HaloExchanger.hpp"
 #include "core/vvm_types.hpp"
 #include "core/BoundaryConditionManager.hpp"
 #include "utils/ConfigurationManager.hpp"

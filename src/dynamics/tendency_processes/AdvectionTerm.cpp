@@ -1,5 +1,5 @@
 #include "AdvectionTerm.hpp"
-#include "core/HaloExchanger.hpp"
+#include "core/haloexchange/HaloExchanger.hpp"
 #include "core/BoundaryConditionManager.hpp"
 
 namespace VVM {

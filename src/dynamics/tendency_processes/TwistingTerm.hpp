@@ -3,7 +3,7 @@
 
 #include "TendencyTerm.hpp"
 #include "dynamics/spatial_schemes/SpatialScheme.hpp"
-#include "core/HaloExchanger.hpp"
+#include "core/haloexchange/HaloExchanger.hpp"
 #include <string>
 
 namespace VVM {

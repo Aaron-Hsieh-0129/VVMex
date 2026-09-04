@@ -9,7 +9,7 @@
 #include <mpi.h>
 
 #include "core/Grid.hpp"
-#include "core/HaloExchanger.hpp"
+#include "core/haloexchange/HaloExchanger.hpp"
 #include "core/Parameters.hpp"
 #include "core/State.hpp"
 #include "io/Reader.hpp"
