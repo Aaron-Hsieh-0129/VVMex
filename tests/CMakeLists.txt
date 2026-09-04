@@ -875,6 +875,11 @@ add_vvm_device_unit_test(test_grid_geometry ${TEST_DIR}/configs/2dbubble.json 2)
 # standard-MPI backend. The 2-rank run is what pins the global reduction.
 add_vvm_device_unit_test(test_horizontal_mean ${TEST_DIR}/configs/2dbubble.json 2)
 
+# Geometry-aware horizontal mean. Cartesian J is uniform, so this pins
+# compatibility with the existing point mean before RegularLatLonGeometry adds
+# nonuniform area weights.
+add_vvm_device_unit_test(test_horizontal_area_weighted_mean ${TEST_DIR}/configs/2dbubble.json 2)
+
 # HaloExchanger: the NCCL and the standard-MPI implementation are separate code,
 # and only a value-level check keeps them exchanging the same cells.
 add_vvm_device_unit_test(test_halo_exchange ${TEST_DIR}/configs/2dbubble.json 2)
