@@ -302,6 +302,285 @@ public:
             });
     }
 
+    // Global area-weighted horizontal mean over the physical, halo-free
+    // points of every rank:
+    //
+    //     mean = sum(phi * J * dq1 * dq2) / sum(J * dq1 * dq2)
+    //
+    // The geometry is selected from the field's declared staggering. This is
+    // intentionally separate from calculate_horizontal_mean(), whose point-mean
+    // semantics remain unchanged.
+    //
+    // For 3D fields, k_level = -1 selects the highest physical level.
+    template<size_t Dim>
+    void calculate_horizontal_area_weighted_mean(
+        const Field<Dim>& field, ScalarView d_mean_result, int k_level = -1) const
+    {
+        static_assert(Dim == 2 || Dim == 3, "calculate_horizontal_area_weighted_mean supports 2D and 3D fields only.");
+
+        const auto view = field.get_device_data();
+        const auto geometry = grid_.geometry().device_view(field.get_metadata().grid_staggering, field.get_name());
+
+        const int ny_local = grid_.get_local_physical_points_y();
+        const int nx_local = grid_.get_local_physical_points_x();
+        const int h = grid_.get_halo_cells();
+
+        if constexpr (Dim == 3) {
+            const int nz = grid_.get_local_total_points_z();
+
+            if (k_level == -1) {
+                k_level = nz - h - 1;
+            }
+
+            if (k_level < h || k_level >= nz - h) {
+                throw std::out_of_range(
+                    "calculate_horizontal_area_weighted_mean: k_level " +
+                    std::to_string(k_level) +
+                    " is outside the physical range [" +
+                    std::to_string(h) + ", " +
+                    std::to_string(nz - h - 1) +
+                    "] of the 3D field '" +
+                    field.get_name() + "'.");
+            }
+        }
+
+        Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space> d_local_sums("horizontal_area_weighted_mean_local_sums", 2);
+
+        const VVM::Real computational_cell_area = geometry.dq1 * geometry.dq2;
+
+#if defined(VVM_DETERMINISTIC_FP)
+        if (static_cast<int>(area_weighted_row_sums_.extent(0)) != ny_local) {
+            area_weighted_row_sums_ =
+                Kokkos::View<VVM::Real**, Kokkos::DefaultExecutionSpace::memory_space>(
+                    "horizontal_area_weighted_mean_row_sums",
+                    ny_local,
+                    2);
+        }
+
+        auto row_sums = area_weighted_row_sums_;
+        const int nx_count = nx_local;
+        const int ny_count = ny_local;
+        const int halo = h;
+
+        if constexpr (Dim == 3) {
+            Kokkos::parallel_for("calculate_3d_area_weighted_row_sums",
+                Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, ny_local),
+                KOKKOS_LAMBDA(const int row) {
+                    VVM::Real weighted_sum = VVM::real(0.0);
+                    VVM::Real area_sum = VVM::real(0.0);
+                    const int j = halo + row;
+
+                    for (int i_offset = 0; i_offset < nx_count; ++i_offset) {
+                        const int i = halo + i_offset;
+                        const VVM::Real area =
+                            geometry.sqrt_g(j, i) * computational_cell_area;
+
+                        weighted_sum += view(k_level, j, i) * area;
+                        area_sum += area;
+                    }
+
+                    row_sums(row, 0) = weighted_sum;
+                    row_sums(row, 1) = area_sum;
+                });
+        }
+        else {
+            Kokkos::parallel_for("calculate_2d_area_weighted_row_sums",
+                Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, ny_local),
+                KOKKOS_LAMBDA(const int row) {
+                    VVM::Real weighted_sum = VVM::real(0.0);
+                    VVM::Real area_sum = VVM::real(0.0);
+                    const int j = halo + row;
+
+                    for (int i_offset = 0; i_offset < nx_count; ++i_offset) {
+                        const int i = halo + i_offset;
+                        const VVM::Real area =
+                            geometry.sqrt_g(j, i) * computational_cell_area;
+
+                        weighted_sum += view(j, i) * area;
+                        area_sum += area;
+                    }
+
+                    row_sums(row, 0) = weighted_sum;
+                    row_sums(row, 1) = area_sum;
+                });
+        }
+
+        Kokkos::parallel_for("calculate_area_weighted_local_sums",
+            Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, 1),
+            KOKKOS_LAMBDA(const int) {
+                VVM::Real weighted_sum = VVM::real(0.0);
+                VVM::Real area_sum = VVM::real(0.0);
+
+                for (int row = 0; row < ny_count; ++row) {
+                    weighted_sum += row_sums(row, 0);
+                    area_sum += row_sums(row, 1);
+                }
+
+                d_local_sums(0) = weighted_sum;
+                d_local_sums(1) = area_sum;
+            });
+#else
+        auto d_local_weighted_sum = Kokkos::subview(d_local_sums, 0);
+        auto d_local_area_sum = Kokkos::subview(d_local_sums, 1);
+
+        if constexpr (Dim == 3) {
+            Kokkos::parallel_reduce("calculate_3d_local_area_weighted_sum",
+                Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
+                    {h, h},
+                    {ny_local + h, nx_local + h}),
+                KOKKOS_LAMBDA(
+                    const int j,
+                    const int i,
+                    VVM::Real& update_sum) {
+
+                    const VVM::Real area =
+                        geometry.sqrt_g(j, i) * computational_cell_area;
+
+                    update_sum += view(k_level, j, i) * area;
+                },
+                d_local_weighted_sum);
+
+            Kokkos::parallel_reduce("calculate_3d_local_area_sum",
+                Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
+                    {h, h},
+                    {ny_local + h, nx_local + h}),
+                KOKKOS_LAMBDA(
+                    const int j,
+                    const int i,
+                    VVM::Real& update_sum) {
+
+                    update_sum +=
+                        geometry.sqrt_g(j, i) *
+                        computational_cell_area;
+                },
+                d_local_area_sum);
+        }
+        else {
+            Kokkos::parallel_reduce("calculate_2d_local_area_weighted_sum",
+                Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
+                    {h, h},
+                    {ny_local + h, nx_local + h}),
+                KOKKOS_LAMBDA(
+                    const int j,
+                    const int i,
+                    VVM::Real& update_sum) {
+
+                    const VVM::Real area =
+                        geometry.sqrt_g(j, i) * computational_cell_area;
+
+                    update_sum += view(j, i) * area;
+                },
+                d_local_weighted_sum);
+
+            Kokkos::parallel_reduce(
+                "calculate_2d_local_area_sum",
+                Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
+                    {h, h},
+                    {ny_local + h, nx_local + h}),
+                KOKKOS_LAMBDA(
+                    const int j,
+                    const int i,
+                    VVM::Real& update_sum) {
+
+                    update_sum +=
+                        geometry.sqrt_g(j, i) *
+                        computational_cell_area;
+                },
+                d_local_area_sum);
+        }
+#endif
+
+        Kokkos::fence();
+
+        int comm_size = 1;
+
+#if defined(ENABLE_NCCL)
+        const ncclResult_t count_result =
+            ncclCommCount(nccl_comm_, &comm_size);
+
+        if (count_result != ncclSuccess) {
+            throw std::runtime_error("calculate_horizontal_area_weighted_mean could not query "
+                "the NCCL communicator size: " +
+                std::string(ncclGetErrorString(count_result)));
+        }
+#else
+        MPI_Comm_size(grid_.get_comm(), &comm_size);
+#endif
+
+        constexpr int values_per_rank = 2;
+        const int gathered_value_count =
+            values_per_rank * comm_size;
+
+        if (static_cast<int>(area_weighted_rank_sums_.extent(0)) != gathered_value_count) {
+            area_weighted_rank_sums_ = Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space>("horizontal_area_weighted_mean_rank_sums", gathered_value_count);
+        }
+
+#if defined(ENABLE_NCCL)
+        const ncclResult_t result = ncclAllGather(
+            d_local_sums.data(),
+            area_weighted_rank_sums_.data(),
+            values_per_rank,
+            VVM_NCCL_REAL,
+            nccl_comm_,
+            nccl_stream_);
+
+        if (result != ncclSuccess) {
+            throw std::runtime_error(
+                "calculate_horizontal_area_weighted_mean NCCL all-gather "
+                "failed for '" +
+                field.get_name() +
+                "': " +
+                ncclGetErrorString(result));
+        }
+
+        cudaStreamSynchronize(nccl_stream_);
+#else
+        const auto host_local_sums =
+            Kokkos::create_mirror_view_and_copy(
+                Kokkos::HostSpace(),
+                d_local_sums);
+
+        std::vector<VVM::Real> host_rank_sums(
+            static_cast<size_t>(gathered_value_count),
+            VVM::real(0.0));
+
+        const int mpi_result = MPI_Allgather(
+            host_local_sums.data(),
+            values_per_rank,
+            VVM_MPI_REAL,
+            host_rank_sums.data(),
+            values_per_rank,
+            VVM_MPI_REAL,
+            grid_.get_comm());
+
+        if (mpi_result != MPI_SUCCESS) {
+            throw std::runtime_error(
+                "calculate_horizontal_area_weighted_mean MPI_Allgather "
+                "failed for '" + field.get_name() + "'.");
+        }
+
+        Kokkos::deep_copy(area_weighted_rank_sums_, Kokkos::View<const VVM::Real*, Kokkos::HostSpace>(host_rank_sums.data(), gathered_value_count));
+#endif
+
+        auto rank_sums = area_weighted_rank_sums_;
+        const int num_ranks = comm_size;
+
+        Kokkos::parallel_for(
+            "horizontal_area_weighted_mean_finalize",
+            Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, 1),
+            KOKKOS_LAMBDA(const int) {
+                VVM::Real global_weighted_sum = VVM::real(0.0);
+                VVM::Real global_area_sum = VVM::real(0.0);
+
+                for (int rank = 0; rank < num_ranks; ++rank) {
+                    global_weighted_sum += rank_sums(values_per_rank * rank);
+                    global_area_sum += rank_sums(values_per_rank * rank + 1);
+                }
+
+                d_mean_result() = global_weighted_sum / global_area_sum;
+            });
+    }
+
     // Provide iterators to loop over all fields
     auto begin() { return fields_.begin(); } // First value
     auto end() { return fields_.end(); } // Last value
@@ -367,6 +646,11 @@ private:
 #if defined(ENABLE_NCCL)
     ncclComm_t nccl_comm_;
     cudaStream_t nccl_stream_;
+#endif
+
+    mutable Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space> area_weighted_rank_sums_;
+#if defined(VVM_DETERMINISTIC_FP)
+    mutable Kokkos::View<VVM::Real**, Kokkos::DefaultExecutionSpace::memory_space> area_weighted_row_sums_;
 #endif
 };
 
