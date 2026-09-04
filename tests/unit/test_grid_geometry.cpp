@@ -41,6 +41,7 @@ bool close(const VVM::Real actual, const VVM::Real expected) {
 }
 
 void test_host_metadata(const Grid& grid) {
+    const auto& specification = grid.specification();
     const auto& geometry = grid.geometry();
     const auto& layout = geometry.layout();
 
@@ -48,6 +49,13 @@ void test_host_metadata(const Grid& grid) {
     check(std::strcmp(geometry.name(), "cartesian") == 0, "Grid geometry must report the Cartesian name");
     check(close(geometry.dq1(), grid.get_dx()), "Geometry dq1 must equal Grid dx");
     check(close(geometry.dq2(), grid.get_dy()), "Geometry dq2 must equal Grid dy");
+
+    check(specification.horizontal.nx == grid.get_global_points_x(), "Resolved horizontal nx must match Grid");
+    check(specification.horizontal.ny == grid.get_global_points_y(), "Resolved horizontal ny must match Grid");
+    check(specification.horizontal.n_halo_cells == grid.get_halo_cells(), "Resolved halo width must match Grid");
+    check(specification.vertical.nz == grid.get_global_points_z(), "Resolved vertical nz must match Grid");
+    check(close(specification.vertical.dz, grid.get_dz()), "Resolved vertical dz must match Grid");
+    check(close(specification.vertical.dz1, grid.get_dz1()), "Resolved vertical dz1 must match Grid");
 
     check(layout.global_nx == grid.get_global_points_x(), "Geometry global_nx must match Grid");
     check(layout.global_ny == grid.get_global_points_y(), "Geometry global_ny must match Grid");
