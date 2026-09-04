@@ -554,6 +554,31 @@ add_test(NAME test_grid_specification
                  $<TARGET_FILE:test_grid_specification>)
 set_tests_properties(test_grid_specification PROPERTIES LABELS unit TIMEOUT 60)
 
+# The structured Cartesian configuration must produce the same Grid contract
+# as the legacy flat configuration.
+add_test(NAME test_grid_geometry_structured_r1
+         COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
+                 ${GPU_WRAP} $<TARGET_FILE:test_grid_geometry>
+                 ${TEST_DIR}/configs/grid_structured_cartesian.json
+         WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
+set_tests_properties(test_grid_geometry_structured_r1 PROPERTIES LABELS unit TIMEOUT 300)
+_vvm_set_test_resources(test_grid_geometry_structured_r1 1)
+
+# RLL configuration is parsed, but it must not reach the legacy Cartesian
+# topology or dynamical core until those paths have been migrated.
+add_executable(test_grid_rll_guard
+               ${TEST_DIR}/unit/test_grid_rll_guard.cpp)
+target_include_directories(test_grid_rll_guard PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_grid_rll_guard PRIVATE
+                      vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX)
+add_test(NAME test_grid_rll_guard
+         COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
+                 ${GPU_WRAP} $<TARGET_FILE:test_grid_rll_guard>
+                 ${TEST_DIR}/configs/grid_structured_rll.json
+         WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
+set_tests_properties(test_grid_rll_guard PROPERTIES LABELS unit TIMEOUT 300)
+_vvm_set_test_resources(test_grid_rll_guard 1)
+
 # --- output precision on the legacy writer ---------------------------------
 # output.precision decides the on-disk field type for HDF5 and SST as it does
 # for BP5. The HDF5 case writes a real file and reads its dataset types back;

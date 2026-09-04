@@ -1,0 +1,26 @@
+{
+    "grid": {
+        "horizontal": {
+            "nx": 400,
+            "ny": 100,
+            "n_halo_cells": 2,
+            "geometry": {
+                "kind": "regular_latlon",
+                "fix_lonlat": false,
+                "earth_radius_m": 6371220.0,
+                "longitude_bounds_deg": [0.0, 360.0],
+                "latitude_bounds_deg": [-45.0, 45.0]
+            },
+            "topology": {
+                "q1": "periodic",
+                "q2": "bounded"
+            }
+        },
+        "vertical": {
+            "nz": 4,
+            "type": "default",
+            "dz": 1000.0,
+            "dz1": 1000.0
+        }
+    }
+}

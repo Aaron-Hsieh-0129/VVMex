@@ -348,21 +348,17 @@ GridSpecification GridSpecification::from_config(const Utils::ConfigurationManag
     GridSpecification result;
 
     if (config.has_key("grid.horizontal")) {
-        result.horizontal =
-            parse_structured_horizontal(config);
-    } 
+        result.horizontal = parse_structured_horizontal(config);
+    }
     else {
-        result.horizontal =
-            parse_legacy_horizontal(config);
+        result.horizontal = parse_legacy_horizontal(config);
     }
 
     if (config.has_key("grid.vertical")) {
-        result.vertical =
-            parse_structured_vertical(config);
-    } 
+        result.vertical = parse_structured_vertical(config);
+    }
     else {
-        result.vertical =
-            parse_legacy_vertical(config);
+        result.vertical = parse_legacy_vertical(config);
     }
 
     return result;

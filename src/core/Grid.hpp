@@ -12,8 +12,8 @@
 
 #include "utils/ConfigurationManager.hpp"
 #include "vvm_types.hpp"
+#include "core/GridSpecification.hpp"
 #include "core/geometry/HorizontalGeometry.hpp"
-#include "core/geometry/HorizontalGridSpec.hpp"
 
 namespace VVM {
 namespace Core {
@@ -64,6 +64,7 @@ public:
     VVM::Real get_dz() const { return dims_host_mirror_(0).d_coord; }
     VVM::Real get_dy() const { return dims_host_mirror_(1).d_coord; }
     VVM::Real get_dx() const { return dims_host_mirror_(2).d_coord; }
+    VVM::Real get_dz1() const { return grid_specification_.vertical.dz1; }
 
     int get_local_physical_start_z() const { return dims_host_mirror_(0).local_physical_start_idx; }
     int get_local_physical_end_z() const { return dims_host_mirror_(0).local_physical_end_idx; }
@@ -83,6 +84,18 @@ public:
 
     MPI_Comm get_comm() const { return comm_; }
 
+    const GridSpecification& specification() const noexcept {
+        return grid_specification_;
+    }
+
+    const HorizontalDomainSpec& horizontal_specification() const noexcept {
+        return grid_specification_.horizontal;
+    }
+
+    const VerticalGridSpec& vertical_specification() const noexcept {
+        return grid_specification_.vertical;
+    }
+
     const Geometry::HorizontalGeometry& geometry() const noexcept {
         return *geometry_;
     }
@@ -93,6 +106,8 @@ private:
     Kokkos::View<GridDimension*, Kokkos::DefaultExecutionSpace> dims_device_view_; // Stores dimensions for each axis (Z, Y, X)
     Kokkos::View<GridDimension*, Kokkos::HostSpace> dims_host_mirror_;
 
+    GridSpecification grid_specification_;
+
     int mpi_rank_;                      // Rank of the current MPI process
     int mpi_size_;                      // Total number of processes in MPI communicator
     int cart_rank_ = MPI_PROC_NULL;     // Rank in cart_comm_ (may differ when MPI reorders)
@@ -100,13 +115,10 @@ private:
     MPI_Comm comm_;
     bool radiation_enabled_ = false;    // Radiation needs an even column split; see the check in the .cpp
 
-    // Private helper function: Calculate local grid distribution based on global grid size and MPI process count
-    void calculate_local_grid_distribution();
-
-    Geometry::HorizontalGridSpec horizontal_grid_spec_;
     std::unique_ptr<Geometry::HorizontalGeometry> geometry_;
 
     // Private helper function: Calculate local grid distribution based on global grid size and MPI process count
+    void calculate_local_grid_distribution();
     void initialize_horizontal_geometry();
 };
 
