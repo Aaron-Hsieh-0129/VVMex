@@ -19,6 +19,7 @@ using VVM::Core::Geometry::GeometryKind;
 using VVM::Core::Geometry::HorizontalGeometryFactory;
 using VVM::Core::Geometry::HorizontalGridSpec;
 using VVM::Core::Geometry::HorizontalLocation;
+using VVM::Core::HorizontalEdgeTopology;
 
 int failures = 0;
 int mpi_rank = 0;
@@ -67,6 +68,85 @@ void test_host_metadata(const Grid& grid) {
     check(layout.panel_id == -1, "Cartesian geometry must use panel_id == -1");
     check(layout.local_total_nx() == grid.get_local_total_points_x(), "Geometry local_total_nx must match Grid");
     check(layout.local_total_ny() == grid.get_local_total_points_y(), "Geometry local_total_ny must match Grid");
+}
+
+void test_horizontal_topology(const Grid& grid) {
+    int process_dimensions[2] = {0, 0};
+    int periods[2] = {0, 0};
+    int coordinates[2] = {0, 0};
+
+    const int get_status = MPI_Cart_get(
+        grid.get_cart_comm(),
+        2,
+        process_dimensions,
+        periods,
+        coordinates);
+
+    check(get_status == MPI_SUCCESS, "MPI_Cart_get must succeed");
+    if (get_status != MPI_SUCCESS) {
+        return;
+    }
+
+    const auto& horizontal = grid.horizontal_specification();
+    const auto& topology = horizontal.topology;
+
+    const int expected_q1_period =
+        horizontal.nx > 1 &&
+        topology.q1 == HorizontalEdgeTopology::Periodic ? 1 : 0;
+
+    const int expected_q2_period =
+        horizontal.ny > 1 &&
+        topology.q2 == HorizontalEdgeTopology::Periodic ? 1 : 0;
+
+    check(periods[1] == expected_q1_period,
+          "MPI X period must match resolved q1 topology");
+    check(periods[0] == expected_q2_period,
+          "MPI Y period must match resolved q2 topology");
+
+    int left = MPI_PROC_NULL;
+    int right = MPI_PROC_NULL;
+    int bottom = MPI_PROC_NULL;
+    int top = MPI_PROC_NULL;
+
+    const int q1_status = MPI_Cart_shift(
+        grid.get_cart_comm(), 1, 1, &left, &right);
+    const int q2_status = MPI_Cart_shift(
+        grid.get_cart_comm(), 0, 1, &bottom, &top);
+
+    check(q1_status == MPI_SUCCESS, "MPI q1 neighbor lookup must succeed");
+    check(q2_status == MPI_SUCCESS, "MPI q2 neighbor lookup must succeed");
+
+    if (expected_q1_period != 0) {
+        check(left != MPI_PROC_NULL,
+              "Periodic q1 topology must have a left neighbor");
+        check(right != MPI_PROC_NULL,
+              "Periodic q1 topology must have a right neighbor");
+    } else {
+        if (coordinates[1] == 0) {
+            check(left == MPI_PROC_NULL,
+                  "Bounded q1 west edge must have no left neighbor");
+        }
+        if (coordinates[1] == process_dimensions[1] - 1) {
+            check(right == MPI_PROC_NULL,
+                  "Bounded q1 east edge must have no right neighbor");
+        }
+    }
+
+    if (expected_q2_period != 0) {
+        check(bottom != MPI_PROC_NULL,
+              "Periodic q2 topology must have a bottom neighbor");
+        check(top != MPI_PROC_NULL,
+              "Periodic q2 topology must have a top neighbor");
+    } else {
+        if (coordinates[0] == 0) {
+            check(bottom == MPI_PROC_NULL,
+                  "Bounded q2 south edge must have no bottom neighbor");
+        }
+        if (coordinates[0] == process_dimensions[0] - 1) {
+            check(top == MPI_PROC_NULL,
+                  "Bounded q2 north edge must have no top neighbor");
+        }
+    }
 }
 
 void test_cartesian_device_values(const Grid& grid) {
@@ -264,6 +344,7 @@ int main(int argc, char* argv[]) {
             const Grid grid(config, MPI_COMM_WORLD);
 
             test_host_metadata(grid);
+            test_horizontal_topology(grid);
             test_cartesian_device_values(grid);
             test_regular_lat_lon_factory(grid);
             test_factory_rejections(grid);
