@@ -93,13 +93,14 @@ void test_constant_q2_halos_2d(const Grid& grid) {
     }
 }
 
+template<typename Layout>
 void test_constant_q2_halos_3d(const Grid& grid) {
     const int halo = grid.get_halo_cells();
     const int nz = grid.get_local_total_points_z();
     const int ny = grid.get_local_total_points_y();
     const int nx = grid.get_local_total_points_x();
 
-    Field<3> field("boundary_test_3d", {nz, ny, nx});
+    Field<3, Layout> field("boundary_test_3d", {nz, ny, nx});
     auto data = field.get_mutable_device_data();
 
     Kokkos::parallel_for(
@@ -195,7 +196,8 @@ int main(int argc, char* argv[]) {
             const Grid grid(config, MPI_COMM_WORLD);
 
             test_constant_q2_halos_2d(grid);
-            test_constant_q2_halos_3d(grid);
+            test_constant_q2_halos_3d<void>(grid);
+            test_constant_q2_halos_3d<Kokkos::LayoutRight>(grid);
         } catch (const std::exception& error) {
             ++failures;
             std::fprintf(
