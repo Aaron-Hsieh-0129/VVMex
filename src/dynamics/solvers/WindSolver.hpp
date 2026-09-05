@@ -1,18 +1,21 @@
 #ifndef VVM_DYNAMICS_WIND_SOLVER_HPP
 #define VVM_DYNAMICS_WIND_SOLVER_HPP
 
+#include <memory>
+#include <map>
+#include <vector>
+#if defined(KOKKOS_ENABLE_CUDA)
+#include <cuda_runtime.h>
+#endif
+
 #include "core/State.hpp"
 #include "core/Grid.hpp"
 #include "core/Parameters.hpp"
 #include "core/vvm_types.hpp"
+#include "core/boundary/HorizontalBoundaryStencils.hpp"
+#include "core/haloexchange/HaloExchanger.hpp"
 #include "dynamics/spatial_schemes/SpatialScheme.hpp"
 #include "utils/ConfigurationManager.hpp"
-#include "core/haloexchange/HaloExchanger.hpp"
-#include <memory>
-#include <map>
-#if defined(KOKKOS_ENABLE_CUDA)
-#include <cuda_runtime.h>
-#endif
 
 namespace VVM {
 namespace Dynamics {
@@ -40,6 +43,9 @@ public:
     void relax_2d_batched();
 
 private:
+    void fill_bounded_q2_potential_halos(Core::Field<2>& first, Core::Field<2>& second) const;
+    void exchange_2d_solver_halos(Core::Field<2>& first, Core::Field<2>& second, int depth);
+
     const Core::Grid& grid_;
     const Utils::ConfigurationManager& config_;
     const Core::Parameters& params_;
@@ -69,6 +75,10 @@ private:
     Kokkos::View<VVM::Real**> tri_tmp_;
 
     Core::HaloExchanger& halo_exchanger_;
+
+    // This object exists only for a physical bounded q2 direction. Periodic
+    // Cartesian runs therefore keep their existing solver path unchanged.
+    std::unique_ptr<Core::Boundary::HorizontalBoundaryStencils> bounded_q2_stencils_;
 
     Core::FieldRef<0> utopmn_ref_;
     Core::FieldRef<0> vtopmn_ref_;

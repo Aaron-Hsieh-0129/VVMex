@@ -38,6 +38,12 @@ WindSolver::WindSolver(const Core::Grid& grid, const Utils::ConfigurationManager
       psi_tmp_field_("psi_tmp", {grid.get_local_total_points_y(), grid.get_local_total_points_x()}),
       chi_tmp_field_("chi_tmp", {grid.get_local_total_points_y(), grid.get_local_total_points_x()}) {
 
+    const auto& horizontal = grid_.horizontal_specification();
+
+    if (horizontal.ny > 1 && horizontal.topology.q2 == Core::HorizontalEdgeTopology::Bounded) {
+        bounded_q2_stencils_ = std::make_unique<Core::Boundary::HorizontalBoundaryStencils>(grid_);
+    }
+
     std::string solver_method_str = config.get_value<std::string>("dynamics.solver.w_solver_method");
     if (solver_method_str == "tridiagonal") {
         w_solver_method_ = WSolverMethod::TRIDIAGONAL;
@@ -330,6 +336,9 @@ void WindSolver::solve_uv() {
     halo_exchanger_.exchange_halos(psinm1_field);
     halo_exchanger_.exchange_halos(chinm1_field);
 
+    fill_bounded_q2_potential_halos(psi_field, chi_field);
+    fill_bounded_q2_potential_halos(psinm1_field, chinm1_field);
+
     // Calculate utop, vtop
     auto& utop_field = utop_ref_.get(state_, "utop");
     auto& vtop_field = vtop_ref_.get(state_, "vtop");
@@ -438,6 +447,10 @@ void WindSolver::relax_2d_batched() {
     Core::Field<2>* chi_cur = &chi_out_field_;
     Core::Field<2>* chi_prv = &chi_tmp_field_;
 
+    if (bounded_q2_stencils_) {
+        exchange_2d_solver_halos(*psi_cur, *chi_cur, 1);
+    }
+
     for (int iter = 0; iter < iter_num; iter++) {
         {
             const int jlo = h, jhi = ny - h;
@@ -460,7 +473,7 @@ void WindSolver::relax_2d_batched() {
             );
         }
         // psi and chi ride in one NCCL group: same operator, independent right-hand sides.
-        halo_exchanger_.exchange_multiple_halos({psi_cur, chi_cur}, 1);
+        exchange_2d_solver_halos(*psi_cur, *chi_cur, 1);
     }
 
     // Land the result in psi_out_field_/chi_out_field_ regardless of swap parity.
@@ -482,6 +495,24 @@ void WindSolver::relax_2d_batched() {
     }
 #endif
     return;
+}
+
+void WindSolver::fill_bounded_q2_potential_halos(Core::Field<2>& first, Core::Field<2>& second) const {
+    if (!bounded_q2_stencils_) {
+        return;
+    }
+
+    bounded_q2_stencils_->fill_constant_q2_halos(first);
+    bounded_q2_stencils_->fill_constant_q2_halos(second);
+}
+
+void WindSolver::exchange_2d_solver_halos(Core::Field<2>& first, Core::Field<2>& second, const int depth) {
+
+    halo_exchanger_.exchange_multiple_halos({&first, &second}, depth);
+
+    // MPI_PROC_NULL leaves physical wall halos unchanged, so the wall
+    // stencil must be applied after communication on every solver sweep.
+    fill_bounded_q2_potential_halos(first, second);
 }
 
 } // namespace Dynamics
