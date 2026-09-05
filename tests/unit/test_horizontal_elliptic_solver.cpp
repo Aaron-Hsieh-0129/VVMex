@@ -15,6 +15,8 @@
 #include <cstdio>
 #include <exception>
 #include <stdexcept>
+#include <cstring>
+#include <string>
 
 #if defined(ENABLE_NCCL)
 #include <cuda_runtime.h>
@@ -386,12 +388,187 @@ void test_batched_matches_independent_solves(
         "The batched Z solve must match the independent Z solve");
 }
 
+#if defined(ENABLE_NCCL)
+
+void require_cuda_success(const cudaError_t status, const char* operation) {
+    if (status != cudaSuccess) {
+        throw std::runtime_error(std::string(operation) + ": " + cudaGetErrorString(status));
+    }
+}
+
+// Declared after the fields and solvers so the graph is destroyed before any
+// allocation whose address it captures.
+struct EllipticTestGraph {
+    cudaStream_t stream = nullptr;
+    cudaGraph_t graph = nullptr;
+    cudaGraphExec_t executable = nullptr;
+    bool capturing = false;
+
+    explicit EllipticTestGraph(cudaStream_t stream_in) : stream(stream_in) {}
+
+    EllipticTestGraph(const EllipticTestGraph&) = delete;
+    EllipticTestGraph& operator=(const EllipticTestGraph&) = delete;
+
+    ~EllipticTestGraph() {
+        // Best-effort cleanup if a checked operation throws during capture.
+        if (capturing) {
+            cudaGraph_t abandoned_graph = nullptr;
+            cudaStreamEndCapture(stream, &abandoned_graph);
+            if (abandoned_graph) {
+                cudaGraphDestroy(abandoned_graph);
+            }
+        }
+
+        cudaStreamSynchronize(stream);
+
+        if (executable) {
+            cudaGraphExecDestroy(executable);
+        }
+        if (graph) {
+            cudaGraphDestroy(graph);
+        }
+    }
+};
+
+void initialize_graph_test_inputs(const Grid& grid, const int replay,
+    Field<2>& rhs_at_z, Field<2>& rhs_at_t, Field<2>& solution_at_z, Field<2>& solution_at_t) {
+
+    const int ny = grid.get_local_total_points_y();
+    const int nx = grid.get_local_total_points_x();
+    const int halo = grid.get_halo_cells();
+    const int start_i = grid.get_local_physical_start_x();
+    const int start_j = grid.get_local_physical_start_y();
+    const VVM::Real factor = static_cast<VVM::Real>(replay + 1);
+
+    auto rz = rhs_at_z.get_mutable_device_data();
+    auto rt = rhs_at_t.get_mutable_device_data();
+    auto z = solution_at_z.get_mutable_device_data();
+    auto t = solution_at_t.get_mutable_device_data();
+
+    Kokkos::parallel_for("InitializeEllipticGraphInputs",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
+        KOKKOS_LAMBDA(const int j, const int i) {
+            const VVM::Real x = static_cast<VVM::Real>(start_i + i - halo);
+            const VVM::Real y = static_cast<VVM::Real>(start_j + j - halo);
+
+            rz(j, i) = VVM::real(1.0e-12) * factor * (VVM::real(0.3) + Kokkos::sin(VVM::real(0.17) * x));
+            rt(j, i) = VVM::real(1.0e-12) * factor * (VVM::real(-0.4) + Kokkos::cos(VVM::real(0.13) * y));
+
+            z(j, i) = factor * (VVM::real(-1.0) + VVM::real(0.03) * x - VVM::real(0.02) * y);
+            t(j, i) = factor * (VVM::real(2.0) - VVM::real(0.01) * x + VVM::real(0.04) * y);
+        });
+}
+
+void compare_graph_test_fields(const Field<2>& expected, const Field<2>& actual,
+    const int iterations, const int replay, const char* location) {
+
+    const auto expected_host = expected.get_host_data();
+    const auto actual_host = actual.get_host_data();
+
+    std::size_t different_bits = 0;
+    std::size_t nonfinite_values = 0;
+    VVM::Real maximum_error = VVM::real(0.0);
+
+    // Include halos: the captured solve must replay communication and wall
+    // filling as well as the interior relaxation.
+    for (std::size_t j = 0; j < expected_host.extent(0); ++j) {
+        for (std::size_t i = 0; i < expected_host.extent(1); ++i) {
+            const VVM::Real a = expected_host(j, i);
+            const VVM::Real b = actual_host(j, i);
+
+            if (!std::isfinite(a) || !std::isfinite(b)) {
+                ++nonfinite_values;
+                continue;
+            }
+
+            if (std::memcmp(&a, &b, sizeof(VVM::Real)) != 0) {
+                ++different_bits;
+            }
+
+            maximum_error = std::max(maximum_error, std::abs(a - b));
+        }
+    }
+
+    std::printf("Rank %d graph %s: iterations=%d replay=%d different_bits=%zu nonfinite=%zu max_error=%.17e\n",
+        mpi_rank, location, iterations, replay, different_bits, nonfinite_values, static_cast<double>(maximum_error));
+
+    check(nonfinite_values == 0, "Direct and captured solves must produce finite values");
+    check(different_bits == 0, "Graph replay must match direct execution bit for bit");
+}
+
+void test_cuda_graph_replay(const Grid& grid, HaloExchanger& halo_exchanger) {
+    const int ny = grid.get_local_total_points_y();
+    const int nx = grid.get_local_total_points_x();
+
+    for (const int iterations : {1, 2, 3, 4}) {
+        Field<2> rhs_at_z("graph_rhs_at_z", {ny, nx});
+        Field<2> rhs_at_t("graph_rhs_at_t", {ny, nx});
+        Field<2> direct_at_z("graph_direct_at_z", {ny, nx});
+        Field<2> direct_at_t("graph_direct_at_t", {ny, nx});
+        Field<2> captured_at_z("graph_captured_at_z", {ny, nx});
+        Field<2> captured_at_t("graph_captured_at_t", {ny, nx});
+
+        HorizontalEllipticSolver direct_solver(grid, halo_exchanger);
+        HorizontalEllipticSolver captured_solver(grid, halo_exchanger);
+
+        HorizontalEllipticSolver::Options options;
+        options.iterations = iterations;
+        options.diagonal_shift = VVM::real(2.5e-7);
+        options.refresh_initial_halos = true;
+
+        EllipticTestGraph graph(Kokkos::Cuda().cuda_stream());
+
+        // All owning fields and solver scratch arrays exist before capture.
+        // The captured solver has not previously executed an ordinary solve.
+        Kokkos::fence();
+        require_cuda_success(cudaStreamBeginCapture(graph.stream, cudaStreamCaptureModeGlobal), "Begin elliptic capture");
+        graph.capturing = true;
+
+        captured_solver.solve_at_z_and_t(rhs_at_z, captured_at_z, rhs_at_t, captured_at_t, options);
+
+        const cudaError_t end_status = cudaStreamEndCapture(graph.stream, &graph.graph);
+        graph.capturing = false;
+        require_cuda_success(end_status, "End elliptic capture");
+
+        if (!graph.graph) {
+            throw std::runtime_error("Elliptic capture returned an empty graph handle.");
+        }
+
+        require_cuda_success(
+            cudaGraphInstantiate(&graph.executable, graph.graph, nullptr, nullptr, 0),
+            "Instantiate elliptic graph");
+
+        for (int replay = 0; replay < 3; ++replay) {
+            // Change values while retaining every captured allocation address.
+            // Distinct T/Z data also detect accidental interchange of the fields.
+            initialize_graph_test_inputs(grid, replay, rhs_at_z, rhs_at_t, direct_at_z, direct_at_t);
+
+            Kokkos::deep_copy(captured_at_z.get_mutable_device_data(), direct_at_z.get_device_data());
+            Kokkos::deep_copy(captured_at_t.get_mutable_device_data(), direct_at_t.get_device_data());
+
+            direct_solver.solve_at_z_and_t(rhs_at_z, direct_at_z, rhs_at_t, direct_at_t, options);
+            Kokkos::fence();
+
+            require_cuda_success(cudaGraphLaunch(graph.executable, graph.stream), "Launch elliptic graph");
+            require_cuda_success(cudaStreamSynchronize(graph.stream), "Complete elliptic graph");
+
+            compare_graph_test_fields(direct_at_z, captured_at_z, iterations, replay, "Z");
+            compare_graph_test_fields(direct_at_t, captured_at_t, iterations, replay, "T");
+        }
+    }
+}
+
+#endif
+
 void run_tests(Grid& grid, HaloExchanger& halo_exchanger) {
     HorizontalEllipticSolver solver(grid, halo_exchanger);
     test_extrapolated_guess(grid, solver);
     test_staggered_operator_diagonals(grid);
     test_one_iteration(grid, halo_exchanger, solver);
     test_batched_matches_independent_solves(grid, solver);
+#if defined(ENABLE_NCCL)
+    test_cuda_graph_replay(grid, halo_exchanger);
+#endif
 }
 
 } // namespace
