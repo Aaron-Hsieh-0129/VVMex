@@ -17,7 +17,7 @@ namespace Operators {
 //     west        center  east
 //     southwest   south   southeast
 //
-// The gradient returned by at_positive_faces() is located at:
+// The positive-face gradient components are located at:
 //
 //     q1_at_u : U(j, i), the positive-q1 face
 //     q2_at_v : V(j, i), the positive-q2 face

@@ -12,7 +12,8 @@ HorizontalEllipticSolver::HorizontalEllipticSolver(const Core::Grid& grid, Core:
     : grid_(grid),
       halo_exchanger_(halo_exchanger),
       laplace_beltrami_(Operators::make_horizontal_laplace_beltrami_device_view(grid.geometry())),
-      scratch_("horizontal_elliptic_scratch", {grid.get_local_total_points_y(), grid.get_local_total_points_x()}) {
+      scratch_at_z_("horizontal_elliptic_scratch_at_z", {grid.get_local_total_points_y(), grid.get_local_total_points_x()}),
+      scratch_at_t_("horizontal_elliptic_scratch_at_t", {grid.get_local_total_points_y(), grid.get_local_total_points_x()}) {
 
     const auto& horizontal = grid_.horizontal_specification();
 
@@ -84,9 +85,7 @@ void HorizontalEllipticSolver::make_extrapolated_guess(
     Kokkos::parallel_for("MakeHorizontalEllipticExtrapolatedGuess",
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
         KOKKOS_LAMBDA(const int j, const int i) {
-            guess_data(j, i) =
-                VVM::real(2.0) * current_data(j, i) -
-                previous_data(j, i);
+            guess_data(j, i) = VVM::real(2.0) * current_data(j, i) - previous_data(j, i);
         }
     );
 }
@@ -96,6 +95,15 @@ void HorizontalEllipticSolver::refresh_solution_halos(Core::Field<2>& field) {
 
     if (bounded_q2_stencils_) {
         bounded_q2_stencils_->fill_constant_q2_halos(field);
+    }
+}
+
+void HorizontalEllipticSolver::refresh_solution_halos(Core::Field<2>& first, Core::Field<2>& second) {
+    halo_exchanger_.exchange_multiple_halos({&first, &second}, 1);
+
+    if (bounded_q2_stencils_) {
+        bounded_q2_stencils_->fill_constant_q2_halos(first);
+        bounded_q2_stencils_->fill_constant_q2_halos(second);
     }
 }
 
@@ -113,7 +121,7 @@ void HorizontalEllipticSolver::solve_at_t(
     const VVM::Real diagonal_shift = options.diagonal_shift;
 
     Core::Field<2>* current = &solution;
-    Core::Field<2>* previous = &scratch_;
+    Core::Field<2>* previous = &scratch_at_t_;
 
     refresh_solution_halos(solution);
 
@@ -158,7 +166,7 @@ void HorizontalEllipticSolver::solve_at_z(
     const VVM::Real diagonal_shift = options.diagonal_shift;
 
     Core::Field<2>* current = &solution;
-    Core::Field<2>* previous = &scratch_;
+    Core::Field<2>* previous = &scratch_at_z_;
 
     refresh_solution_halos(solution);
 
@@ -168,8 +176,7 @@ void HorizontalEllipticSolver::solve_at_z(
         const auto previous_data = previous->get_device_data();
         auto current_data = current->get_mutable_device_data();
 
-        Kokkos::parallel_for(
-            "RelaxHorizontalEllipticAtZ",
+        Kokkos::parallel_for("RelaxHorizontalEllipticAtZ",
             Kokkos::MDRangePolicy<Kokkos::Rank<2>>({halo, halo}, {ny - halo, nx - halo}),
             KOKKOS_LAMBDA(const int j, const int i) {
                 const VVM::Real operator_value = laplace_beltrami.calculate_jacobian_weighted_at_z(previous_data, j, i);
@@ -184,6 +191,84 @@ void HorizontalEllipticSolver::solve_at_z(
 
     if (current != &solution) {
         Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), solution.get_mutable_device_data(), current->get_device_data());
+    }
+}
+
+void HorizontalEllipticSolver::solve_at_z_and_t(
+    const Core::Field<2>& right_hand_side_at_z, Core::Field<2>& solution_at_z,
+    const Core::Field<2>& right_hand_side_at_t, Core::Field<2>& solution_at_t,
+    const Options& options) {
+
+    validate_solve_arguments(right_hand_side_at_z, solution_at_z, options);
+    validate_solve_arguments(right_hand_side_at_t, solution_at_t, options);
+
+    if (&solution_at_z == &solution_at_t ||
+        &right_hand_side_at_z == &solution_at_t ||
+        &right_hand_side_at_t == &solution_at_z) {
+
+        throw std::invalid_argument(
+            "HorizontalEllipticSolver requires distinct Z and T "
+            "solution fields, and neither right-hand side may alias "
+            "a solution field.");
+    }
+
+    const int halo = grid_.get_halo_cells();
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
+
+    const auto right_hand_side_at_z_data = right_hand_side_at_z.get_device_data();
+    const auto right_hand_side_at_t_data = right_hand_side_at_t.get_device_data();
+
+    const auto laplace_beltrami = laplace_beltrami_;
+
+    const VVM::Real diagonal_shift = options.diagonal_shift;
+
+    Core::Field<2>* current_at_z = &solution_at_z;
+    Core::Field<2>* previous_at_z = &scratch_at_z_;
+
+    Core::Field<2>* current_at_t = &solution_at_t;
+    Core::Field<2>* previous_at_t = &scratch_at_t_;
+
+    refresh_solution_halos(solution_at_z, solution_at_t);
+
+    for (int iteration = 0; iteration < options.iterations; ++iteration) {
+        std::swap(current_at_z, previous_at_z);
+        std::swap(current_at_t, previous_at_t);
+
+        const auto previous_at_z_data = previous_at_z->get_device_data();
+        const auto previous_at_t_data = previous_at_t->get_device_data();
+
+        auto current_at_z_data = current_at_z->get_mutable_device_data();
+        auto current_at_t_data = current_at_t->get_mutable_device_data();
+
+        Kokkos::parallel_for("RelaxHorizontalEllipticAtZAndT",
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({halo, halo}, {ny - halo, nx - halo}),
+            KOKKOS_LAMBDA(const int j, const int i) {
+                const VVM::Real operator_at_z = laplace_beltrami.calculate_jacobian_weighted_at_z(previous_at_z_data, j, i);
+                const VVM::Real diagonal_at_z = laplace_beltrami.jacobian_weighted_diagonal_at_z(j, i);
+
+                const VVM::Real weighted_right_hand_side_at_z = laplace_beltrami.divergence.z.sqrt_g(j, i) * right_hand_side_at_z_data(j, i);
+
+                current_at_z_data(j, i) = previous_at_z_data(j, i) + (operator_at_z - weighted_right_hand_side_at_z) / (diagonal_shift - diagonal_at_z);
+
+                const VVM::Real operator_at_t = laplace_beltrami.calculate_jacobian_weighted_at_t(previous_at_t_data, j, i);
+
+                const VVM::Real diagonal_at_t = laplace_beltrami.jacobian_weighted_diagonal_at_t(j, i);
+                const VVM::Real weighted_right_hand_side_at_t = laplace_beltrami.divergence.t.sqrt_g(j, i) * right_hand_side_at_t_data(j, i);
+
+                current_at_t_data(j, i) = previous_at_t_data(j, i) + (operator_at_t - weighted_right_hand_side_at_t) / (diagonal_shift - diagonal_at_t);
+            }
+        );
+
+        refresh_solution_halos(*current_at_z, *current_at_t);
+    }
+
+    if (current_at_z != &solution_at_z) {
+        Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), solution_at_z.get_mutable_device_data(), current_at_z->get_device_data());
+    }
+
+    if (current_at_t != &solution_at_t) {
+        Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), solution_at_t.get_mutable_device_data(), current_at_t->get_device_data());
     }
 }
 
