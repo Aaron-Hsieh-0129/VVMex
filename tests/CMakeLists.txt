@@ -588,6 +588,43 @@ add_test(NAME test_grid_rll_guard
 set_tests_properties(test_grid_rll_guard PROPERTIES LABELS unit TIMEOUT 300)
 _vvm_set_test_resources(test_grid_rll_guard 1)
 
+# Boundary filling
+add_executable(
+    test_horizontal_boundary_stencils
+    ${TEST_DIR}/unit/test_horizontal_boundary_stencils.cpp)
+
+target_include_directories(
+    test_horizontal_boundary_stencils
+    PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+target_link_libraries(
+    test_horizontal_boundary_stencils
+    PRIVATE
+    vvm_core
+    vvm_utils
+    Kokkos::kokkos
+    MPI::MPI_CXX)
+
+add_test(
+    NAME test_horizontal_boundary_stencils
+    COMMAND
+    ${MPIEXEC_EXECUTABLE}
+    ${MPIEXEC_NUMPROC_FLAG}
+    1
+    ${VVM_MPI_BIND_ARGS}
+    ${GPU_WRAP}
+    $<TARGET_FILE:test_horizontal_boundary_stencils>
+    ${TEST_DIR}/configs/grid_structured_bounded_cartesian.json
+    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
+
+set_tests_properties(
+    test_horizontal_boundary_stencils
+    PROPERTIES LABELS unit TIMEOUT 300)
+
+_vvm_set_test_resources(
+    test_horizontal_boundary_stencils
+    1)
+
 # --- output precision on the legacy writer ---------------------------------
 # output.precision decides the on-disk field type for HDF5 and SST as it does
 # for BP5. The HDF5 case writes a real file and reads its dataset types back;
