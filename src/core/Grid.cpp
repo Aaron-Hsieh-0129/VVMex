@@ -32,17 +32,6 @@ Grid::Grid(const VVM::Utils::ConfigurationManager& config, MPI_Comm comm)
                 "migration before removing this guard.");
         }
 
-        if (config.has_key("grid.horizontal")) {
-            const auto& topology = grid_specification_.horizontal.topology;
-
-            if ((grid_specification_.horizontal.nx > 1 && topology.q1 != HorizontalEdgeTopology::Periodic) ||
-                (grid_specification_.horizontal.ny > 1 && topology.q2 != HorizontalEdgeTopology::Periodic)) {
-                throw std::runtime_error(
-                    "Structured bounded horizontal topology is parsed, but Grid topology "
-                    "integration is not yet enabled.");
-            }
-        }
-
         dims_host_mirror_(0).global_size = vertical.nz;
         dims_host_mirror_(1).global_size = horizontal.ny;
         dims_host_mirror_(2).global_size = horizontal.nx;
@@ -94,11 +83,19 @@ void Grid::calculate_local_grid_distribution() {
     // Decomposing the grid into a 2D topology (Y, X) using MPI Cartesian topology
     // Determine process topology: Px * Py = mpi_size_
     // Try to find a process grid that is close to square
-    int process_dimensions[2] = {1, 1}; // p_dims[0] for Y processes, p_dims[1] for X processes. p_dims represents the number of processes in each dimension
-    int periods[2] = {1, 1}; // Periodic in Y and X 
-                             // If boundary conditions are not periodic, this can be set to {0, 0}
-    int reorder = 1;         // Allow MPI to reorder processes to optimize topology
+    int process_dimensions[2] = {1, 1};
 
+    const auto& horizontal = grid_specification_.horizontal;
+    const auto& topology = horizontal.topology;
+
+    // MPI Cartesian dimensions are ordered (q2, q1), corresponding to (Y, X).
+    // Singleton physical dimensions are never connected to themselves.
+    int periods[2] = {
+        horizontal.ny > 1 && topology.q2 == HorizontalEdgeTopology::Periodic ? 1 : 0,
+        horizontal.nx > 1 && topology.q1 == HorizontalEdgeTopology::Periodic ? 1 : 0
+    };
+
+    int reorder = 1;         // Allow MPI to reorder processes to optimize topology
     int ndims_cart = 2; // Default to 2D decomposition, even if we only decompose in X and Y
 
     // Set p_dims based on global grid size

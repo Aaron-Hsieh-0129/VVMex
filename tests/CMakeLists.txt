@@ -564,6 +564,15 @@ add_test(NAME test_grid_geometry_structured_r1
 set_tests_properties(test_grid_geometry_structured_r1 PROPERTIES LABELS unit TIMEOUT 300)
 _vvm_set_test_resources(test_grid_geometry_structured_r1 1)
 
+add_test(NAME test_grid_geometry_structured_bounded_r1
+         COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
+                 ${GPU_WRAP} $<TARGET_FILE:test_grid_geometry>
+                 ${TEST_DIR}/configs/grid_structured_bounded_cartesian.json
+         WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
+set_tests_properties(test_grid_geometry_structured_bounded_r1
+                     PROPERTIES LABELS unit TIMEOUT 300)
+_vvm_set_test_resources(test_grid_geometry_structured_bounded_r1 1)
+
 # RLL configuration is parsed, but it must not reach the legacy Cartesian
 # topology or dynamical core until those paths have been migrated.
 add_executable(test_grid_rll_guard
