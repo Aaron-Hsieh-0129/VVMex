@@ -1,11 +1,22 @@
 #include "core/BoundaryConditionManager.hpp"
 #include <Kokkos_Core.hpp>
+#include <stdexcept>
 
 namespace VVM {
 namespace Core {
 
 BoundaryConditionManager::BoundaryConditionManager(const Grid& grid)
-    : grid_(grid) {}
+    : grid_(grid) {
+    const auto& horizontal = grid_.horizontal_specification();
+
+    const bool q1_is_bounded = horizontal.nx > 1 && horizontal.topology.q1 == HorizontalEdgeTopology::Bounded;
+    const bool q2_is_bounded = horizontal.ny > 1 && horizontal.topology.q2 == HorizontalEdgeTopology::Bounded;
+    if (q1_is_bounded || q2_is_bounded) {
+        throw std::runtime_error(
+            "Bounded horizontal topology is available for Grid and MPI decomposition tests, but physical lateral boundary conditions "
+            "and elliptic-solver boundary rows are not implemented yet. Only periodic horizontal model runs are currently supported.");
+    }
+}
 
 template<size_t Dim>
 void BoundaryConditionManager::apply_dirichlet_zero(Field<Dim>& field) const {

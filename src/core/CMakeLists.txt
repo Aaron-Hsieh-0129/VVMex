@@ -9,6 +9,8 @@ set(VVM_CORE_SOURCES
     geometry/CartesianGeometry.cpp
     geometry/RegularLatLonGeometry.cpp
     geometry/HorizontalGeometryFactory.cpp
+
+    boundary/HorizontalBoundaryStencils.cpp
 )
 
 set(VVM_CORE_HEADERS
@@ -34,6 +36,8 @@ set(VVM_CORE_HEADERS
     geometry/CartesianGeometry.hpp
     geometry/RegularLatLonGeometry.hpp
     geometry/HorizontalGeometryFactory.hpp
+
+    boundary/HorizontalBoundaryStencils.hpp
 )
 
 add_library(vvm_core STATIC
