@@ -258,11 +258,155 @@ void test_one_iteration(const Grid& grid, HaloExchanger& halo_exchanger, Horizon
     }
 }
 
+void test_batched_matches_independent_solves(
+    const Grid& grid,
+    HorizontalEllipticSolver& solver) {
+
+    const int halo =
+        grid.get_halo_cells();
+    const int ny =
+        grid.get_local_total_points_y();
+    const int nx =
+        grid.get_local_total_points_x();
+
+    Field<2> right_hand_side(
+        "horizontal_elliptic_batched_rhs",
+        {ny, nx});
+
+    Field<2> independent_at_t(
+        "horizontal_elliptic_independent_t",
+        {ny, nx});
+
+    Field<2> independent_at_z(
+        "horizontal_elliptic_independent_z",
+        {ny, nx});
+
+    Field<2> batched_at_t(
+        "horizontal_elliptic_batched_t",
+        {ny, nx});
+
+    Field<2> batched_at_z(
+        "horizontal_elliptic_batched_z",
+        {ny, nx});
+
+    initialize_fields(
+        grid,
+        right_hand_side,
+        independent_at_t,
+        independent_at_z);
+
+    Kokkos::deep_copy(
+        batched_at_t.get_mutable_device_data(),
+        independent_at_t.get_device_data());
+
+    Kokkos::deep_copy(
+        batched_at_z.get_mutable_device_data(),
+        independent_at_z.get_device_data());
+
+    const HorizontalEllipticSolver::Options options{
+        3,
+        VVM::real(2.5e-7)
+    };
+
+    solver.solve_at_t(
+        right_hand_side,
+        independent_at_t,
+        options);
+
+    solver.solve_at_z(
+        right_hand_side,
+        independent_at_z,
+        options);
+
+    solver.solve_at_z_and_t(
+        right_hand_side,
+        batched_at_z,
+        right_hand_side,
+        batched_at_t,
+        options);
+
+    const auto independent_at_t_host =
+        independent_at_t.get_host_data();
+
+    const auto independent_at_z_host =
+        independent_at_z.get_host_data();
+
+    const auto batched_at_t_host =
+        batched_at_t.get_host_data();
+
+    const auto batched_at_z_host =
+        batched_at_z.get_host_data();
+
+    VVM::Real maximum_t_difference =
+        VVM::real(0.0);
+
+    VVM::Real maximum_z_difference =
+        VVM::real(0.0);
+
+    VVM::Real maximum_t_scale =
+        VVM::real(0.0);
+
+    VVM::Real maximum_z_scale =
+        VVM::real(0.0);
+
+    for (int j = halo; j < ny - halo; ++j) {
+        for (int i = halo; i < nx - halo; ++i) {
+            maximum_t_difference =
+                std::max(
+                    maximum_t_difference,
+                    std::abs(
+                        independent_at_t_host(j, i) -
+                        batched_at_t_host(j, i)));
+
+            maximum_z_difference =
+                std::max(
+                    maximum_z_difference,
+                    std::abs(
+                        independent_at_z_host(j, i) -
+                        batched_at_z_host(j, i)));
+
+            maximum_t_scale =
+                std::max(
+                    maximum_t_scale,
+                    std::abs(
+                        independent_at_t_host(j, i)));
+
+            maximum_z_scale =
+                std::max(
+                    maximum_z_scale,
+                    std::abs(
+                        independent_at_z_host(j, i)));
+        }
+    }
+
+    const VVM::Real relative_tolerance =
+        sizeof(VVM::Real) == sizeof(double)
+            ? VVM::real(2.0e-13)
+            : VVM::real(2.0e-5);
+
+    check(
+        maximum_t_difference <=
+            relative_tolerance *
+            std::max(
+                VVM::real(1.0),
+                maximum_t_scale),
+        "The batched T solve must match the independent T solve");
+
+    check(
+        maximum_z_difference <=
+            relative_tolerance *
+            std::max(
+                VVM::real(1.0),
+                maximum_z_scale),
+        "The batched Z solve must match the independent Z solve");
+}
+
 void run_tests(Grid& grid, HaloExchanger& halo_exchanger) {
     HorizontalEllipticSolver solver(grid, halo_exchanger);
     test_extrapolated_guess(grid, solver);
     test_staggered_operator_diagonals(grid);
     test_one_iteration(grid, halo_exchanger, solver);
+    test_batched_matches_independent_solves(grid, solver);
 }
 
 } // namespace
