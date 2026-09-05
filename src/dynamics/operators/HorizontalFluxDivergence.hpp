@@ -22,6 +22,18 @@ struct HorizontalFluxDivergenceDeviceView {
     Core::Geometry::HorizontalGeometryDeviceView t;
     Core::Geometry::HorizontalGeometryDeviceView u;
     Core::Geometry::HorizontalGeometryDeviceView v;
+    Core::Geometry::HorizontalGeometryDeviceView z;
+
+    KOKKOS_INLINE_FUNCTION
+    VVM::Real jacobian_weighted_at_t(const int j, const int i,
+        const VVM::Real flux_q1_plus, const VVM::Real flux_q1_minus,
+        const VVM::Real flux_q2_plus, const VVM::Real flux_q2_minus) const noexcept {
+
+        const VVM::Real q1_difference = (u.sqrt_g(j, i) * flux_q1_plus - u.sqrt_g(j, i - 1) * flux_q1_minus) / t.dq1;
+        const VVM::Real q2_difference = (v.sqrt_g(j, i) * flux_q2_plus - v.sqrt_g(j - 1, i) * flux_q2_minus) / t.dq2;
+
+        return q1_difference + q2_difference;
+    }
 
     KOKKOS_INLINE_FUNCTION
     VVM::Real at_t(const int j, const int i,
@@ -33,6 +45,25 @@ struct HorizontalFluxDivergenceDeviceView {
 
         return t.inv_sqrt_g(j, i) * (q1_difference + q2_difference);
     }
+
+    KOKKOS_INLINE_FUNCTION
+    VVM::Real jacobian_weighted_at_z(const int j, const int i,
+        const VVM::Real flux_q1_plus, const VVM::Real flux_q1_minus,
+        const VVM::Real flux_q2_plus, const VVM::Real flux_q2_minus) const noexcept {
+
+        const VVM::Real q1_difference = (v.sqrt_g(j, i + 1) * flux_q1_plus - v.sqrt_g(j, i) * flux_q1_minus) / z.dq1;
+        const VVM::Real q2_difference = (u.sqrt_g(j + 1, i) * flux_q2_plus - u.sqrt_g(j, i) * flux_q2_minus) / z.dq2;
+
+        return q1_difference + q2_difference;
+    }
+
+    KOKKOS_INLINE_FUNCTION
+    VVM::Real at_z(const int j, const int i,
+        const VVM::Real flux_q1_plus, const VVM::Real flux_q1_minus,
+        const VVM::Real flux_q2_plus, const VVM::Real flux_q2_minus) const noexcept {
+
+        return z.inv_sqrt_g(j, i) * jacobian_weighted_at_z(j, i, flux_q1_plus, flux_q1_minus, flux_q2_plus, flux_q2_minus);
+    }
 };
 
 inline HorizontalFluxDivergenceDeviceView make_horizontal_flux_divergence_device_view(
@@ -43,6 +74,7 @@ inline HorizontalFluxDivergenceDeviceView make_horizontal_flux_divergence_device
     result.t = geometry.device_view(Core::Geometry::HorizontalLocation::T);
     result.u = geometry.device_view(Core::Geometry::HorizontalLocation::U);
     result.v = geometry.device_view(Core::Geometry::HorizontalLocation::V);
+    result.z = geometry.device_view(Core::Geometry::HorizontalLocation::Z);
 
     return result;
 }
