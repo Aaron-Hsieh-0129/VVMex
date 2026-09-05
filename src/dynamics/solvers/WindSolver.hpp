@@ -8,12 +8,13 @@
 #include <cuda_runtime.h>
 #endif
 
-#include "core/State.hpp"
 #include "core/Grid.hpp"
 #include "core/Parameters.hpp"
-#include "core/vvm_types.hpp"
+#include "core/State.hpp"
 #include "core/boundary/HorizontalBoundaryStencils.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
+#include "core/vvm_types.hpp"
+#include "dynamics/solvers/HorizontalEllipticSolver.hpp"
 #include "dynamics/spatial_schemes/SpatialScheme.hpp"
 #include "utils/ConfigurationManager.hpp"
 
@@ -36,10 +37,6 @@ public:
     void solve_w();
     void solve_uv();
 
-    // psi and chi are relaxed together: same operator, same iteration count,
-    // independent right-hand sides, so one batched exchange per sweep covers both
-    // instead of two. Public because CUDA extended lambdas may not appear in a
-    // private member.
     void relax_2d_batched();
 
 private:
@@ -52,12 +49,8 @@ private:
     Core::State& state_;
     WSolverMethod w_solver_method_;
 
-    // LayoutRight (x contiguous), not the Kokkos default. The per-sweep kernel puts
-    // consecutive threads on consecutive i; under the default LayoutLeft that is a
-    // stride of nz*ny -- ~300 KB apart at 2048^2/8 ranks -- so a warp scattered its
-    // accesses across 32 cache lines per array, five of them for the stencil. With x
-    // contiguous a warp reads 32 consecutive doubles instead. These three arrays are
-    // solver-private, so nothing outside WindSolver sees the layout.
+    // LayoutRight makes x contiguous. These arrays are private to the vertical
+    // wind solver, so their layout does not affect State field layouts.
     using DeepField = Core::Field<3, Kokkos::LayoutRight>;
     void exchange_w_solver_halos(DeepField& field, int depth);
 
@@ -70,7 +63,7 @@ private:
     mutable Core::Field<2> rhs_chi_field_;   // was RIP2
     mutable Core::Field<2> psi_out_field_;   // was ROP1
     mutable Core::Field<2> chi_out_field_;   // was ROP2
-    mutable Core::Field<2> psi_tmp_field_;   // was ATEMP, now one per field
+    mutable Core::Field<2> psi_tmp_field_;
     mutable Core::Field<2> chi_tmp_field_;
 
     // Default layout coalesces across columns on CUDA and along levels on host.
@@ -78,9 +71,14 @@ private:
 
     Core::HaloExchanger& halo_exchanger_;
 
+    HorizontalEllipticSolver horizontal_elliptic_solver_;
+    HorizontalEllipticSolver::Options horizontal_elliptic_options_;
+
     // This object exists only for a physical bounded q2 direction. Periodic
     // Cartesian runs therefore keep their existing solver path unchanged.
     std::unique_ptr<Core::Boundary::HorizontalBoundaryStencils> bounded_q2_stencils_;
+
+    VVM::Real h_inv_C0_;
 
     Core::FieldRef<0> utopmn_ref_;
     Core::FieldRef<0> vtopmn_ref_;
@@ -101,15 +99,13 @@ private:
     Core::FieldRef<3> xi_topo_ref_;
     Core::FieldRef<3> eta_topo_ref_;
     Core::FieldRef<3> W3DNM1_ref_;
-    mutable std::vector<Core::Field<3>*> uv_fields_;
 
-    VVM::Real h_inv_C0_;
+    mutable std::vector<Core::Field<3>*> uv_fields_;
 
 #if defined(ENABLE_NCCL)
     bool solve_w_graph_created_ = false;
     cudaGraphExec_t solve_w_graph_exec_ = nullptr;
 
-    // One graph now, not one per field name: psi and chi share a single batched loop.
     bool relax_2d_graph_created_ = false;
     cudaGraphExec_t relax_2d_graph_exec_ = nullptr;
 #endif
