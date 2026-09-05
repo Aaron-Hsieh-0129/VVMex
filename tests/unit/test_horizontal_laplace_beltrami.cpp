@@ -1,10 +1,12 @@
 #include "core/geometry/CartesianGeometry.hpp"
+#include "core/geometry/RegularLatLonGeometry.hpp"
 #include "dynamics/operators/HorizontalLaplaceBeltrami.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <exception>
+#include <limits>
 
 #include <Kokkos_Core.hpp>
 
@@ -15,6 +17,7 @@ using VVM::Core::Geometry::GeometryField2D;
 using VVM::Core::Geometry::HorizontalDomainLayout;
 using VVM::Core::Geometry::HorizontalGeometryDeviceView;
 using VVM::Core::Geometry::HorizontalLocation;
+using VVM::Core::Geometry::RegularLatLonGeometry;
 using VVM::Dynamics::Operators::HorizontalLaplaceBeltramiDeviceView;
 using VVM::Dynamics::Operators::ScalarStencilAtT;
 using VVM::Dynamics::Operators::make_horizontal_laplace_beltrami_device_view;
@@ -318,6 +321,58 @@ void test_second_order_convergence() {
     check(error_ratio > VVM::real(3.5), "Laplace-Beltrami must show second-order convergence");
 }
 
+void test_regular_latlon_diagonal_matches_center_impulse() {
+    const int physical_nx = 24;
+    const int physical_ny = 12;
+    const HorizontalDomainLayout layout = make_layout(physical_nx, physical_ny);
+
+    const VVM::Real pi = VVM::real(std::acos(-1.0));
+    const VVM::Real dlongitude = VVM::real(2.0) * pi / static_cast<VVM::Real>(physical_nx);
+    const VVM::Real dlatitude = (pi / VVM::real(2.0)) / static_cast<VVM::Real>(physical_ny);
+
+    const RegularLatLonGeometry geometry(
+        layout,
+        dlongitude,
+        dlatitude,
+        -pi,
+        -pi / VVM::real(4.0),
+        VVM::real(6371220.0));
+
+    const auto laplacian = make_horizontal_laplace_beltrami_device_view(geometry);
+
+    const int ny = layout.local_total_ny();
+    const int h = layout.halo;
+    const int i = h;
+
+    Kokkos::View<VVM::Real*> applied("regular_latlon_impulse_applied", ny);
+    Kokkos::View<VVM::Real*> diagonal("regular_latlon_impulse_diagonal", ny);
+
+    Kokkos::parallel_for(
+        "CompareRegularLatLonLaplacianDiagonal",
+        Kokkos::RangePolicy<>(h, ny - h),
+        KOKKOS_LAMBDA(const int j) {
+            ScalarStencilAtT impulse;
+            impulse.center = VVM::real(1.0);
+
+            applied(j) = laplacian.calculate_at_t(j, i, impulse);
+            diagonal(j) = laplacian.diagonal_at_t(j, i);
+        });
+
+    const auto applied_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), applied);
+    const auto diagonal_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), diagonal);
+
+    const VVM::Real relative_tolerance = VVM::real(64.0) * std::numeric_limits<VVM::Real>::epsilon();
+
+    for (int j = h; j < ny - h; ++j) {
+        const VVM::Real difference = std::abs(applied_host(j) - diagonal_host(j));
+        const VVM::Real scale = std::max(std::abs(applied_host(j)), std::abs(diagonal_host(j)));
+
+        check(
+            scale == VVM::real(0.0) ? difference == VVM::real(0.0) : difference <= relative_tolerance * scale,
+            "RLL diagonal must equal the Laplace-Beltrami response to a center impulse");
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -330,6 +385,7 @@ int main(int argc, char** argv) {
             test_cartesian_five_point_equivalence();
             test_quadratic_scalar();
             test_second_order_convergence();
+            test_regular_latlon_diagonal_matches_center_impulse();
         } catch (const std::exception& error) {
             ++failures;
             std::fprintf(stderr, "Unexpected exception: %s\n", error.what());
