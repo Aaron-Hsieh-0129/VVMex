@@ -262,38 +262,53 @@ void test_batched_matches_independent_solves(
     const Grid& grid,
     HorizontalEllipticSolver& solver) {
 
-    const int halo =
-        grid.get_halo_cells();
-    const int ny =
-        grid.get_local_total_points_y();
-    const int nx =
-        grid.get_local_total_points_x();
+    const int halo = grid.get_halo_cells();
+    const int ny = grid.get_local_total_points_y();
+    const int nx = grid.get_local_total_points_x();
+    const int global_start_j = grid.get_local_physical_start_y();
+    const int global_start_i = grid.get_local_physical_start_x();
 
-    Field<2> right_hand_side(
-        "horizontal_elliptic_batched_rhs",
-        {ny, nx});
+    Field<2> right_hand_side_at_t("horizontal_elliptic_batched_rhs_t", {ny, nx});
+    Field<2> right_hand_side_at_z("horizontal_elliptic_batched_rhs_z", {ny, nx});
+    Field<2> independent_at_t("horizontal_elliptic_independent_t", {ny, nx});
+    Field<2> independent_at_z("horizontal_elliptic_independent_z", {ny, nx});
+    Field<2> batched_at_t("horizontal_elliptic_batched_t", {ny, nx});
+    Field<2> batched_at_z("horizontal_elliptic_batched_z", {ny, nx});
 
-    Field<2> independent_at_t(
-        "horizontal_elliptic_independent_t",
-        {ny, nx});
+    auto rhs_at_t = right_hand_side_at_t.get_mutable_device_data();
+    auto rhs_at_z = right_hand_side_at_z.get_mutable_device_data();
+    auto initial_at_t = independent_at_t.get_mutable_device_data();
+    auto initial_at_z = independent_at_z.get_mutable_device_data();
 
-    Field<2> independent_at_z(
-        "horizontal_elliptic_independent_z",
-        {ny, nx});
+    Kokkos::parallel_for(
+        "InitializeHorizontalEllipticBatchedTest",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
+        KOKKOS_LAMBDA(const int j, const int i) {
+            const VVM::Real global_j = static_cast<VVM::Real>(global_start_j + j - halo);
+            const VVM::Real global_i = static_cast<VVM::Real>(global_start_i + i - halo);
 
-    Field<2> batched_at_t(
-        "horizontal_elliptic_batched_t",
-        {ny, nx});
+            rhs_at_t(j, i) = VVM::real(1.0e-12) * (
+                VVM::real(0.75) +
+                Kokkos::sin(VVM::real(0.17) * global_i) *
+                Kokkos::cos(VVM::real(0.11) * global_j));
 
-    Field<2> batched_at_z(
-        "horizontal_elliptic_batched_z",
-        {ny, nx});
+            rhs_at_z(j, i) = VVM::real(1.0e-12) * (
+                VVM::real(-0.35) +
+                Kokkos::cos(VVM::real(0.09) * global_i) *
+                Kokkos::sin(VVM::real(0.14) * global_j));
 
-    initialize_fields(
-        grid,
-        right_hand_side,
-        independent_at_t,
-        independent_at_z);
+            initial_at_t(j, i) =
+                VVM::real(2.0) +
+                VVM::real(0.03) * global_i -
+                VVM::real(0.02) * global_j +
+                VVM::real(0.001) * global_i * global_j;
+
+            initial_at_z(j, i) =
+                VVM::real(-1.0) -
+                VVM::real(0.015) * global_i +
+                VVM::real(0.025) * global_j -
+                VVM::real(0.0007) * global_i * global_j;
+        });
 
     Kokkos::deep_copy(
         batched_at_t.get_mutable_device_data(),
@@ -309,73 +324,49 @@ void test_batched_matches_independent_solves(
     };
 
     solver.solve_at_t(
-        right_hand_side,
+        right_hand_side_at_t,
         independent_at_t,
         options);
 
     solver.solve_at_z(
-        right_hand_side,
+        right_hand_side_at_z,
         independent_at_z,
         options);
 
     solver.solve_at_z_and_t(
-        right_hand_side,
+        right_hand_side_at_z,
         batched_at_z,
-        right_hand_side,
+        right_hand_side_at_t,
         batched_at_t,
         options);
 
-    const auto independent_at_t_host =
-        independent_at_t.get_host_data();
+    const auto independent_at_t_host = independent_at_t.get_host_data();
+    const auto independent_at_z_host = independent_at_z.get_host_data();
+    const auto batched_at_t_host = batched_at_t.get_host_data();
+    const auto batched_at_z_host = batched_at_z.get_host_data();
 
-    const auto independent_at_z_host =
-        independent_at_z.get_host_data();
-
-    const auto batched_at_t_host =
-        batched_at_t.get_host_data();
-
-    const auto batched_at_z_host =
-        batched_at_z.get_host_data();
-
-    VVM::Real maximum_t_difference =
-        VVM::real(0.0);
-
-    VVM::Real maximum_z_difference =
-        VVM::real(0.0);
-
-    VVM::Real maximum_t_scale =
-        VVM::real(0.0);
-
-    VVM::Real maximum_z_scale =
-        VVM::real(0.0);
+    VVM::Real maximum_t_difference = VVM::real(0.0);
+    VVM::Real maximum_z_difference = VVM::real(0.0);
+    VVM::Real maximum_t_scale = VVM::real(0.0);
+    VVM::Real maximum_z_scale = VVM::real(0.0);
 
     for (int j = halo; j < ny - halo; ++j) {
         for (int i = halo; i < nx - halo; ++i) {
-            maximum_t_difference =
-                std::max(
-                    maximum_t_difference,
-                    std::abs(
-                        independent_at_t_host(j, i) -
-                        batched_at_t_host(j, i)));
+            maximum_t_difference = std::max(
+                maximum_t_difference,
+                std::abs(independent_at_t_host(j, i) - batched_at_t_host(j, i)));
 
-            maximum_z_difference =
-                std::max(
-                    maximum_z_difference,
-                    std::abs(
-                        independent_at_z_host(j, i) -
-                        batched_at_z_host(j, i)));
+            maximum_z_difference = std::max(
+                maximum_z_difference,
+                std::abs(independent_at_z_host(j, i) - batched_at_z_host(j, i)));
 
-            maximum_t_scale =
-                std::max(
-                    maximum_t_scale,
-                    std::abs(
-                        independent_at_t_host(j, i)));
+            maximum_t_scale = std::max(
+                maximum_t_scale,
+                std::abs(independent_at_t_host(j, i)));
 
-            maximum_z_scale =
-                std::max(
-                    maximum_z_scale,
-                    std::abs(
-                        independent_at_z_host(j, i)));
+            maximum_z_scale = std::max(
+                maximum_z_scale,
+                std::abs(independent_at_z_host(j, i)));
         }
     }
 
@@ -386,18 +377,12 @@ void test_batched_matches_independent_solves(
 
     check(
         maximum_t_difference <=
-            relative_tolerance *
-            std::max(
-                VVM::real(1.0),
-                maximum_t_scale),
+            relative_tolerance * std::max(VVM::real(1.0), maximum_t_scale),
         "The batched T solve must match the independent T solve");
 
     check(
         maximum_z_difference <=
-            relative_tolerance *
-            std::max(
-                VVM::real(1.0),
-                maximum_z_scale),
+            relative_tolerance * std::max(VVM::real(1.0), maximum_z_scale),
         "The batched Z solve must match the independent Z solve");
 }
 

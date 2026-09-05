@@ -13,7 +13,7 @@
 namespace VVM {
 namespace Dynamics {
 
-// Fixed-iteration weighted-Jacobi solver for
+// Fixed-iteration shited-Jacobi solver for
 //
 //     LaplaceBeltrami(solution) = right_hand_side.
 //
