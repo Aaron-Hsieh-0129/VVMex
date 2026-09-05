@@ -9,6 +9,7 @@
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "core/vvm_types.hpp"
 #include "dynamics/operators/HorizontalLaplaceBeltrami.hpp"
+#include "dynamics/solvers/RegularLatLonEllipticMetrics.hpp"
 
 namespace VVM {
 namespace Dynamics {
@@ -64,6 +65,7 @@ private:
     Operators::HorizontalLaplaceBeltramiDeviceView laplace_beltrami_;
     Core::Field<2> scratch_at_z_;
     Core::Field<2> scratch_at_t_;
+    RegularLatLonEllipticMetrics regular_lat_lon_metrics_;
 
     std::unique_ptr<Core::Boundary::HorizontalBoundaryStencils> bounded_q2_stencils_;
 };
