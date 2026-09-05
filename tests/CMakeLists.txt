@@ -625,6 +625,43 @@ _vvm_set_test_resources(
     test_horizontal_boundary_stencils
     1)
 
+# q2 poisson test
+add_executable(
+    test_bounded_q2_poisson_relaxation
+    ${TEST_DIR}/unit/test_bounded_q2_poisson_relaxation.cpp)
+
+target_include_directories(
+    test_bounded_q2_poisson_relaxation
+    PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+target_link_libraries(
+    test_bounded_q2_poisson_relaxation
+    PRIVATE
+    vvm_core
+    vvm_utils
+    Kokkos::kokkos
+    MPI::MPI_CXX)
+
+add_test(
+    NAME test_bounded_q2_poisson_relaxation
+    COMMAND
+    ${MPIEXEC_EXECUTABLE}
+    ${MPIEXEC_NUMPROC_FLAG}
+    1
+    ${VVM_MPI_BIND_ARGS}
+    ${GPU_WRAP}
+    $<TARGET_FILE:test_bounded_q2_poisson_relaxation>
+    ${TEST_DIR}/configs/grid_structured_bounded_cartesian.json
+    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
+
+set_tests_properties(
+    test_bounded_q2_poisson_relaxation
+    PROPERTIES LABELS unit TIMEOUT 300)
+
+_vvm_set_test_resources(
+    test_bounded_q2_poisson_relaxation
+    1)
+
 # --- output precision on the legacy writer ---------------------------------
 # output.precision decides the on-disk field type for HDF5 and SST as it does
 # for BP5. The HDF5 case writes a real file and reads its dataset types back;
