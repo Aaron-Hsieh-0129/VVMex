@@ -103,7 +103,8 @@ void WindSolver::solve_w() {
     const auto& xi = xi_topo_ref_.get(state_, "xi_topo").get_device_data();
     const auto& eta = eta_topo_ref_.get(state_, "eta_topo").get_device_data();
 
-    auto& w = w_ref_.get(state_, "w").get_mutable_device_data();
+    auto& w_field = w_ref_.get(state_, "w");
+    auto& w = w_field.get_mutable_device_data();
 
     auto YTEM = YTEM_field_.get_mutable_device_data();
 
@@ -159,6 +160,10 @@ void WindSolver::solve_w() {
     // captured graph valid for replay.
     DeepField* cur = &w_deep_field_;
     DeepField* prv = &W3DN_field_;
+    if (bounded_q2_stencils_) {
+        const int initial_halo_depth = w_solver_method_ == WSolverMethod::TRIDIAGONAL ? 1 : -1;
+        exchange_w_solver_halos(*cur, initial_halo_depth);
+    }
 
     if (w_solver_method_ == WSolverMethod::TRIDIAGONAL) {
         for (int iter = 0; iter < iter_num; iter++) {
@@ -208,7 +213,7 @@ void WindSolver::solve_w() {
                     }
                 );
             }
-            halo_exchanger_.exchange_halos(*cur, 1);
+            exchange_w_solver_halos(*cur, 1);
         }
     }
     else {
@@ -241,7 +246,7 @@ void WindSolver::solve_w() {
             }
             // Full-depth here, matching the original Jacobi path (the tridiagonal
             // path exchanged depth 1).
-            halo_exchanger_.exchange_halos(*cur);
+            exchange_w_solver_halos(*cur, -1);
         }
     }
 
@@ -252,7 +257,11 @@ void WindSolver::solve_w() {
             KOKKOS_LAMBDA(int k, int j, int i) { w(k,j,i) = RES(k,j,i); }
         );
     }
-    halo_exchanger_.exchange_halos(w_ref_.get(state_, "w"), 1);
+    halo_exchanger_.exchange_halos(w_field, 1);
+
+    if (bounded_q2_stencils_) {
+        bounded_q2_stencils_->fill_constant_q2_halos(w_field);
+    }
 
 #if defined(ENABLE_NCCL)
     cudaGraph_t graph = nullptr;
@@ -513,6 +522,16 @@ void WindSolver::exchange_2d_solver_halos(Core::Field<2>& first, Core::Field<2>&
     // MPI_PROC_NULL leaves physical wall halos unchanged, so the wall
     // stencil must be applied after communication on every solver sweep.
     fill_bounded_q2_potential_halos(first, second);
+}
+
+void WindSolver::exchange_w_solver_halos(WindSolver::DeepField& field, const int depth) {
+    halo_exchanger_.exchange_halos(field, depth);
+
+    // The q2 wall is external to MPI communication. Apply the physical
+    // zero-normal-gradient condition after every iterative halo exchange.
+    if (bounded_q2_stencils_) {
+        bounded_q2_stencils_->fill_constant_q2_halos(field);
+    }
 }
 
 } // namespace Dynamics
