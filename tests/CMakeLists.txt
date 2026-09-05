@@ -710,6 +710,31 @@ _vvm_set_test_resources(
     1
 )
 
+add_test(
+    NAME test_horizontal_elliptic_solver_rll
+    COMMAND
+    ${MPIEXEC_EXECUTABLE}
+    ${MPIEXEC_NUMPROC_FLAG}
+    1
+    ${VVM_MPI_BIND_ARGS}
+    ${GPU_WRAP}
+    $<TARGET_FILE:test_horizontal_elliptic_solver>
+    ${TEST_DIR}/configs/horizontal_elliptic_regular_latlon.json
+    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+)
+
+set_tests_properties(
+    test_horizontal_elliptic_solver_rll
+    PROPERTIES
+    LABELS unit
+    TIMEOUT 300
+)
+
+_vvm_set_test_resources(
+    test_horizontal_elliptic_solver_rll
+    1
+)
+
 # --- output precision on the legacy writer ---------------------------------
 # output.precision decides the on-disk field type for HDF5 and SST as it does
 # for BP5. The HDF5 case writes a real file and reads its dataset types back;
