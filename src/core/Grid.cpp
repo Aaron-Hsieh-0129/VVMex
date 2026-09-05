@@ -25,12 +25,6 @@ Grid::Grid(const VVM::Utils::ConfigurationManager& config, MPI_Comm comm)
         grid_specification_ = GridSpecification::from_config(config);
         const auto& horizontal = grid_specification_.horizontal;
         const auto& vertical = grid_specification_.vertical;
-        if (grid_specification_.horizontal.geometry.kind != Geometry::GeometryKind::Cartesian) {
-            throw std::runtime_error(
-                "Regular latitude-longitude configuration is parsed, but RLL Grid runtime "
-                "construction is not yet enabled. Complete topology and dynamical-core "
-                "migration before removing this guard.");
-        }
 
         dims_host_mirror_(0).global_size = vertical.nz;
         dims_host_mirror_(1).global_size = horizontal.ny;

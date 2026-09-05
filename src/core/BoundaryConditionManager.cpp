@@ -1,6 +1,8 @@
-#include "core/BoundaryConditionManager.hpp"
 #include <Kokkos_Core.hpp>
 #include <stdexcept>
+
+#include "core/BoundaryConditionManager.hpp"
+#include "core/geometry/GeometryKind.hpp"
 
 namespace VVM {
 namespace Core {
@@ -8,6 +10,13 @@ namespace Core {
 BoundaryConditionManager::BoundaryConditionManager(const Grid& grid)
     : grid_(grid) {
     const auto& horizontal = grid_.horizontal_specification();
+
+    if (horizontal.geometry.kind != Geometry::GeometryKind::Cartesian) {
+        throw std::runtime_error(
+            "Regular latitude-longitude Grid construction is enabled for component tests, "
+            "but full model execution is not enabled yet. Complete the dynamical-core and "
+            "physical lateral-boundary migration before removing this guard.");
+    }
 
     const bool q1_is_bounded = horizontal.nx > 1 && horizontal.topology.q1 == HorizontalEdgeTopology::Bounded;
     const bool q2_is_bounded = horizontal.ny > 1 && horizontal.topology.q2 == HorizontalEdgeTopology::Bounded;
