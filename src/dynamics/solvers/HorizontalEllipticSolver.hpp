@@ -13,7 +13,7 @@
 namespace VVM {
 namespace Dynamics {
 
-// Fixed-iteration shited-Jacobi solver for
+// Fixed-iteration shifted-Jacobi solver for
 //
 //     LaplaceBeltrami(solution) = right_hand_side.
 //
@@ -26,6 +26,11 @@ public:
     struct Options {
         int iterations = 0;
         VVM::Real diagonal_shift = VVM::real(0.0);
+
+        // Standalone solves normally require an initial halo refresh. WindSolver
+        // sets this to false for periodic domains because solve_uv() constructs
+        // the initial guess over the complete local array, including valid halos.
+        bool refresh_initial_halos = true;
     };
 
     HorizontalEllipticSolver(const Core::Grid& grid, Core::HaloExchanger& halo_exchanger);

@@ -123,7 +123,9 @@ void HorizontalEllipticSolver::solve_at_t(
     Core::Field<2>* current = &solution;
     Core::Field<2>* previous = &scratch_at_t_;
 
-    refresh_solution_halos(solution);
+    if (options.refresh_initial_halos) {
+        refresh_solution_halos(solution);
+    }
 
     for (int iteration = 0; iteration < options.iterations; ++iteration) {
         std::swap(current, previous);
@@ -168,7 +170,9 @@ void HorizontalEllipticSolver::solve_at_z(
     Core::Field<2>* current = &solution;
     Core::Field<2>* previous = &scratch_at_z_;
 
-    refresh_solution_halos(solution);
+    if (options.refresh_initial_halos) {
+        refresh_solution_halos(solution);
+    }
 
     for (int iteration = 0; iteration < options.iterations; ++iteration) {
         std::swap(current, previous);
@@ -216,12 +220,32 @@ void HorizontalEllipticSolver::solve_at_z_and_t(
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
 
+    const auto geometry_kind = grid_.geometry().kind();
     const auto right_hand_side_at_z_data = right_hand_side_at_z.get_device_data();
     const auto right_hand_side_at_t_data = right_hand_side_at_t.get_device_data();
 
     const auto laplace_beltrami = laplace_beltrami_;
 
     const VVM::Real diagonal_shift = options.diagonal_shift;
+    const VVM::Real dq1 = laplace_beltrami.divergence.t.dq1;
+    const VVM::Real dq2 = laplace_beltrami.divergence.t.dq2;
+    const VVM::Real inverse_dq1_squared = VVM::real(1.0) / (dq1 * dq1);
+    const VVM::Real inverse_dq2_squared = VVM::real(1.0) / (dq2 * dq2);
+
+    const VVM::Real cartesian_inverse_diagonal = VVM::real(1.0) / (diagonal_shift + VVM::real(2.0) * inverse_dq1_squared + VVM::real(2.0) * inverse_dq2_squared);
+
+    const auto sqrt_g_at_t = laplace_beltrami.divergence.t.sqrt_g;
+    const auto sqrt_g_at_z = laplace_beltrami.divergence.z.sqrt_g;
+    const auto sqrt_g_at_u = laplace_beltrami.divergence.u.sqrt_g;
+    const auto sqrt_g_at_v = laplace_beltrami.divergence.v.sqrt_g;
+
+    const auto inv_sqrt_g_at_u = laplace_beltrami.gradient.u.inv_sqrt_g;
+    const auto inv_sqrt_g_at_v = laplace_beltrami.gradient.v.inv_sqrt_g;
+
+    const auto sqrt_g_g_contra_11_at_u = laplace_beltrami.gradient.u.sqrt_g_g_contra.a11;
+    const auto sqrt_g_g_contra_22_at_u = laplace_beltrami.gradient.u.sqrt_g_g_contra.a22;
+    const auto sqrt_g_g_contra_11_at_v = laplace_beltrami.gradient.v.sqrt_g_g_contra.a11;
+    const auto sqrt_g_g_contra_22_at_v = laplace_beltrami.gradient.v.sqrt_g_g_contra.a22;
 
     Core::Field<2>* current_at_z = &solution_at_z;
     Core::Field<2>* previous_at_z = &scratch_at_z_;
@@ -229,7 +253,9 @@ void HorizontalEllipticSolver::solve_at_z_and_t(
     Core::Field<2>* current_at_t = &solution_at_t;
     Core::Field<2>* previous_at_t = &scratch_at_t_;
 
-    refresh_solution_halos(solution_at_z, solution_at_t);
+    if (options.refresh_initial_halos) {
+        refresh_solution_halos(solution_at_z, solution_at_t);
+    }
 
     for (int iteration = 0; iteration < options.iterations; ++iteration) {
         std::swap(current_at_z, previous_at_z);
@@ -241,24 +267,156 @@ void HorizontalEllipticSolver::solve_at_z_and_t(
         auto current_at_z_data = current_at_z->get_mutable_device_data();
         auto current_at_t_data = current_at_t->get_mutable_device_data();
 
-        Kokkos::parallel_for("RelaxHorizontalEllipticAtZAndT",
-            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({halo, halo}, {ny - halo, nx - halo}),
-            KOKKOS_LAMBDA(const int j, const int i) {
-                const VVM::Real operator_at_z = laplace_beltrami.calculate_jacobian_weighted_at_z(previous_at_z_data, j, i);
-                const VVM::Real diagonal_at_z = laplace_beltrami.jacobian_weighted_diagonal_at_z(j, i);
+        const auto base_policy = Kokkos::MDRangePolicy<Kokkos::Rank<2>>({halo, halo}, {ny - halo, nx - halo});
 
-                const VVM::Real weighted_right_hand_side_at_z = laplace_beltrami.divergence.z.sqrt_g(j, i) * right_hand_side_at_z_data(j, i);
+        if (geometry_kind == Core::Geometry::GeometryKind::Cartesian) {
+            const auto compact_policy = Kokkos::Experimental::require(base_policy, Kokkos::Experimental::WorkItemProperty::HintLightWeight);
 
-                current_at_z_data(j, i) = previous_at_z_data(j, i) + (operator_at_z - weighted_right_hand_side_at_z) / (diagonal_shift - diagonal_at_z);
+            // Preserve the original VVMex Cartesian update. Keeping this kernel
+            // compact also allows the existing CUDA graph to capture it without
+            // allocating global functor storage.
+            Kokkos::parallel_for("RelaxHorizontalEllipticCartesianAtZAndT", compact_policy,
+                KOKKOS_LAMBDA(const int j, const int i) {
+                    current_at_z_data(j, i) =
+                        (diagonal_shift * previous_at_z_data(j, i) +
+                         inverse_dq1_squared *
+                             (previous_at_z_data(j, i - 1) +
+                              previous_at_z_data(j, i + 1)) +
+                         inverse_dq2_squared *
+                             (previous_at_z_data(j - 1, i) +
+                              previous_at_z_data(j + 1, i)) -
+                         right_hand_side_at_z_data(j, i)) *
+                        cartesian_inverse_diagonal;
 
-                const VVM::Real operator_at_t = laplace_beltrami.calculate_jacobian_weighted_at_t(previous_at_t_data, j, i);
+                    current_at_t_data(j, i) =
+                        (diagonal_shift * previous_at_t_data(j, i) +
+                         inverse_dq1_squared *
+                             (previous_at_t_data(j, i - 1) +
+                              previous_at_t_data(j, i + 1)) +
+                         inverse_dq2_squared *
+                             (previous_at_t_data(j - 1, i) +
+                              previous_at_t_data(j + 1, i)) -
+                         right_hand_side_at_t_data(j, i)) *
+                        cartesian_inverse_diagonal;
+                });
+        }
+        else if (geometry_kind == Core::Geometry::GeometryKind::RegularLatLon) {
+            const auto compact_policy = Kokkos::Experimental::require(base_policy, Kokkos::Experimental::WorkItemProperty::HintLightWeight);
 
-                const VVM::Real diagonal_at_t = laplace_beltrami.jacobian_weighted_diagonal_at_t(j, i);
-                const VVM::Real weighted_right_hand_side_at_t = laplace_beltrami.divergence.t.sqrt_g(j, i) * right_hand_side_at_t_data(j, i);
+            // Regular latitude-longitude coordinates are orthogonal, so g^12 is
+            // zero. The Laplace-Beltrami operator therefore remains a compact
+            // variable-coefficient five-point stencil.
+            Kokkos::parallel_for("RelaxHorizontalEllipticRegularLatLonAtZAndT", compact_policy,
+                KOKKOS_LAMBDA(const int j, const int i) {
+                    const VVM::Real gradient_z_q1_plus =
+                        inv_sqrt_g_at_v(j, i + 1) *
+                        sqrt_g_g_contra_11_at_v(j, i + 1) *
+                        (previous_at_z_data(j, i + 1) -
+                         previous_at_z_data(j, i)) / dq1;
 
-                current_at_t_data(j, i) = previous_at_t_data(j, i) + (operator_at_t - weighted_right_hand_side_at_t) / (diagonal_shift - diagonal_at_t);
-            }
-        );
+                    const VVM::Real gradient_z_q1_minus =
+                        inv_sqrt_g_at_v(j, i) *
+                        sqrt_g_g_contra_11_at_v(j, i) *
+                        (previous_at_z_data(j, i) -
+                         previous_at_z_data(j, i - 1)) / dq1;
+
+                    const VVM::Real gradient_z_q2_plus =
+                        inv_sqrt_g_at_u(j + 1, i) *
+                        sqrt_g_g_contra_22_at_u(j + 1, i) *
+                        (previous_at_z_data(j + 1, i) -
+                         previous_at_z_data(j, i)) / dq2;
+
+                    const VVM::Real gradient_z_q2_minus =
+                        inv_sqrt_g_at_u(j, i) *
+                        sqrt_g_g_contra_22_at_u(j, i) *
+                        (previous_at_z_data(j, i) -
+                         previous_at_z_data(j - 1, i)) / dq2;
+
+                    const VVM::Real operator_at_z =
+                        (sqrt_g_at_v(j, i + 1) * gradient_z_q1_plus -
+                         sqrt_g_at_v(j, i) * gradient_z_q1_minus) / dq1 +
+                        (sqrt_g_at_u(j + 1, i) * gradient_z_q2_plus -
+                         sqrt_g_at_u(j, i) * gradient_z_q2_minus) / dq2;
+
+                    const VVM::Real diagonal_at_z =
+                        -((sqrt_g_g_contra_11_at_v(j, i + 1) +
+                           sqrt_g_g_contra_11_at_v(j, i)) *
+                              inverse_dq1_squared +
+                          (sqrt_g_g_contra_22_at_u(j + 1, i) +
+                           sqrt_g_g_contra_22_at_u(j, i)) *
+                              inverse_dq2_squared);
+
+                    current_at_z_data(j, i) =
+                        previous_at_z_data(j, i) +
+                        (operator_at_z -
+                         sqrt_g_at_z(j, i) *
+                             right_hand_side_at_z_data(j, i)) /
+                            (diagonal_shift - diagonal_at_z);
+
+                    const VVM::Real gradient_t_q1_plus =
+                        inv_sqrt_g_at_u(j, i) *
+                        sqrt_g_g_contra_11_at_u(j, i) *
+                        (previous_at_t_data(j, i + 1) -
+                         previous_at_t_data(j, i)) / dq1;
+
+                    const VVM::Real gradient_t_q1_minus =
+                        inv_sqrt_g_at_u(j, i - 1) *
+                        sqrt_g_g_contra_11_at_u(j, i - 1) *
+                        (previous_at_t_data(j, i) -
+                         previous_at_t_data(j, i - 1)) / dq1;
+
+                    const VVM::Real gradient_t_q2_plus =
+                        inv_sqrt_g_at_v(j, i) *
+                        sqrt_g_g_contra_22_at_v(j, i) *
+                        (previous_at_t_data(j + 1, i) -
+                         previous_at_t_data(j, i)) / dq2;
+
+                    const VVM::Real gradient_t_q2_minus =
+                        inv_sqrt_g_at_v(j - 1, i) *
+                        sqrt_g_g_contra_22_at_v(j - 1, i) *
+                        (previous_at_t_data(j, i) -
+                         previous_at_t_data(j - 1, i)) / dq2;
+
+                    const VVM::Real operator_at_t =
+                        (sqrt_g_at_u(j, i) * gradient_t_q1_plus -
+                         sqrt_g_at_u(j, i - 1) * gradient_t_q1_minus) / dq1 +
+                        (sqrt_g_at_v(j, i) * gradient_t_q2_plus -
+                         sqrt_g_at_v(j - 1, i) * gradient_t_q2_minus) / dq2;
+
+                    const VVM::Real diagonal_at_t =
+                        -((sqrt_g_g_contra_11_at_u(j, i) +
+                           sqrt_g_g_contra_11_at_u(j, i - 1)) *
+                              inverse_dq1_squared +
+                          (sqrt_g_g_contra_22_at_v(j, i) +
+                           sqrt_g_g_contra_22_at_v(j - 1, i)) *
+                              inverse_dq2_squared);
+
+                    current_at_t_data(j, i) =
+                        previous_at_t_data(j, i) +
+                        (operator_at_t -
+                         sqrt_g_at_t(j, i) *
+                             right_hand_side_at_t_data(j, i)) /
+                            (diagonal_shift - diagonal_at_t);
+                });
+        }
+        else {
+            // The nonorthogonal cubed-sphere path retains the complete nine-point
+            // Laplace-Beltrami operator. WindSolver must not place this large
+            // functor inside manual CUDA stream capture yet.
+            Kokkos::parallel_for("RelaxHorizontalEllipticGeneralAtZAndT", base_policy,
+                KOKKOS_LAMBDA(const int j, const int i) {
+                    const VVM::Real operator_at_z = laplace_beltrami.calculate_jacobian_weighted_at_z(previous_at_z_data, j, i);
+                    const VVM::Real diagonal_at_z = laplace_beltrami.jacobian_weighted_diagonal_at_z(j, i);
+
+                    current_at_z_data(j, i) = previous_at_z_data(j, i) + (operator_at_z - laplace_beltrami.divergence.z.sqrt_g(j, i) * right_hand_side_at_z_data(j, i)) / (diagonal_shift - diagonal_at_z);
+
+                    const VVM::Real operator_at_t = laplace_beltrami.calculate_jacobian_weighted_at_t(previous_at_t_data, j, i);
+                    const VVM::Real diagonal_at_t = laplace_beltrami.jacobian_weighted_diagonal_at_t(j, i);
+
+                    current_at_t_data(j, i) = previous_at_t_data(j, i) + (operator_at_t - laplace_beltrami.divergence.t.sqrt_g(j, i) * right_hand_side_at_t_data(j, i)) / (diagonal_shift - diagonal_at_t);
+                }
+            );
+        }
 
         refresh_solution_halos(*current_at_z, *current_at_t);
     }

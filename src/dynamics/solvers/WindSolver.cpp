@@ -1,5 +1,6 @@
 #include "WindSolver.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
+#include "core/geometry/HorizontalLocation.hpp"
 #if defined(KOKKOS_ENABLE_CUDA)
 #include <nvtx3/nvToolsExt.h>
 #endif
@@ -27,7 +28,7 @@ WindSolver::~WindSolver() {
 }
 
 WindSolver::WindSolver(const Core::Grid& grid, const Utils::ConfigurationManager& config, const Core::Parameters& params, VVM::Core::HaloExchanger& halo_exchanger, VVM::Core::State& state)
-    : grid_(grid), config_(config), halo_exchanger_(halo_exchanger), params_(params), state_(state),
+    : grid_(grid), config_(config), params_(params), state_(state),
       YTEM_field_("YTEM", {grid.get_local_total_points_z(), grid.get_local_total_points_y(), grid.get_local_total_points_x()}),
       w_deep_field_("w_deep", {grid.get_local_total_points_z(), grid.get_local_total_points_y(), grid.get_local_total_points_x()}),
       W3DN_field_("W3DN", {grid.get_local_total_points_z(), grid.get_local_total_points_y(), grid.get_local_total_points_x()}),
@@ -36,7 +37,9 @@ WindSolver::WindSolver(const Core::Grid& grid, const Utils::ConfigurationManager
       psi_out_field_("psi_out", {grid.get_local_total_points_y(), grid.get_local_total_points_x()}),
       chi_out_field_("chi_out", {grid.get_local_total_points_y(), grid.get_local_total_points_x()}),
       psi_tmp_field_("psi_tmp", {grid.get_local_total_points_y(), grid.get_local_total_points_x()}),
-      chi_tmp_field_("chi_tmp", {grid.get_local_total_points_y(), grid.get_local_total_points_x()}) {
+      chi_tmp_field_("chi_tmp", {grid.get_local_total_points_y(), grid.get_local_total_points_x()}), 
+      halo_exchanger_(halo_exchanger),
+      horizontal_elliptic_solver_(grid_, halo_exchanger_) {
 
     const auto& horizontal = grid_.horizontal_specification();
 
@@ -51,6 +54,10 @@ WindSolver::WindSolver(const Core::Grid& grid, const Utils::ConfigurationManager
     else {
         w_solver_method_ = WSolverMethod::JACOBI;
     }
+
+    horizontal_elliptic_options_.iterations = params_.solver_iteration;
+    horizontal_elliptic_options_.diagonal_shift = params_.get_value_host(params_.WRXMU);
+    horizontal_elliptic_options_.refresh_initial_halos = bounded_q2_stencils_ != nullptr;
 
     VVM::Real h_WRXMU, h_rdx2, h_rdy2;
     Kokkos::deep_copy(h_WRXMU, params_.WRXMU);
@@ -423,72 +430,122 @@ void WindSolver::solve_uv() {
     return;
 }
 
-// Relax psi and chi together on the deep 2-D grid. Callers must have filled the
-// physical region of rhs_psi/rhs_chi and the initial guesses in psi_out/chi_out.
-// On return the converged iterates are in psi_out_field_/chi_out_field_.
+// Solve the Z-point streamfunction and T-point velocity potential together.
+// The surrounding CUDA graph remains owned by WindSolver because it is tied to
+// these persistent WindSolver fields and is replayed by solve_uv().
 void WindSolver::relax_2d_batched() {
+    const auto geometry_kind = grid_.geometry().kind();
 
 #if defined(ENABLE_NCCL)
+    // The future nonorthogonal cubed-sphere kernel still carries a large
+    // generalized functor and is not safe for manual stream capture yet.
+    if (geometry_kind == Core::Geometry::GeometryKind::CubedSphere) {
+        horizontal_elliptic_solver_.solve_at_z_and_t(
+            rhs_psi_field_,
+            psi_out_field_,
+            rhs_chi_field_,
+            chi_out_field_,
+            horizontal_elliptic_options_);
+        return;
+    }
+
     cudaStream_t stream = Kokkos::Cuda().cuda_stream();
+
     if (relax_2d_graph_created_) {
         cudaGraphLaunch(relax_2d_graph_exec_, stream);
         return;
     }
+
     cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
 #endif
 
-    const auto& WRXMU = params_.WRXMU;
-    const int h = grid_.get_halo_cells();
-    const int ny = grid_.get_local_total_points_y();
-    const int nx = grid_.get_local_total_points_x();
+    if (geometry_kind == Core::Geometry::GeometryKind::Cartesian) {
+        // Keep the original VVMex Cartesian solver exactly. Besides avoiding
+        // unnecessary metric work, this preserves its floating-point ordering
+        // and therefore its established regression results.
+        const auto& WRXMU = params_.WRXMU;
+        const auto& rdx2 = params_.rdx2;
+        const auto& rdy2 = params_.rdy2;
+        const int iter_num = params_.solver_iteration;
 
-    const auto& iter_num = params_.solver_iteration;
-    const auto& rdx2 = params_.rdx2;
-    const auto& rdy2 = params_.rdy2;
-    const VVM::Real inv_C0 = h_inv_C0_;
+        const auto cartesian_geometry = grid_.geometry().device_view(Core::Geometry::HorizontalLocation::T);
+        const VVM::Real cartesian_jacobian = cartesian_geometry.sqrt_g.constant;
 
-    auto rhs_psi = rhs_psi_field_.get_mutable_device_data();
-    auto rhs_chi = rhs_chi_field_.get_mutable_device_data();
+        const int h = grid_.get_halo_cells();
+        const int ny = grid_.get_local_total_points_y();
+        const int nx = grid_.get_local_total_points_x();
 
+        const VVM::Real inv_C0 = h_inv_C0_;
 
-    Core::Field<2>* psi_cur = &psi_out_field_;
-    Core::Field<2>* psi_prv = &psi_tmp_field_;
-    Core::Field<2>* chi_cur = &chi_out_field_;
-    Core::Field<2>* chi_prv = &chi_tmp_field_;
+        auto rhs_psi = rhs_psi_field_.get_mutable_device_data();
+        auto rhs_chi = rhs_chi_field_.get_mutable_device_data();
 
-    if (bounded_q2_stencils_) {
-        exchange_2d_solver_halos(*psi_cur, *chi_cur, 1);
-    }
+        Core::Field<2>* psi_cur = &psi_out_field_;
+        Core::Field<2>* psi_prv = &psi_tmp_field_;
+        Core::Field<2>* chi_cur = &chi_out_field_;
+        Core::Field<2>* chi_prv = &chi_tmp_field_;
 
-    for (int iter = 0; iter < iter_num; iter++) {
-        {
-            const int jlo = h, jhi = ny - h;
-            const int ilo = h, ihi = nx - h;
+        if (bounded_q2_stencils_) {
+            exchange_2d_solver_halos(*psi_cur, *chi_cur, 1);
+        }
 
+        for (int iter = 0; iter < iter_num; ++iter) {
             std::swap(psi_cur, psi_prv);
             std::swap(chi_cur, chi_prv);
+
             auto Pp = psi_prv->get_mutable_device_data();
             auto Cp = psi_cur->get_mutable_device_data();
             auto Pc = chi_prv->get_mutable_device_data();
             auto Cc = chi_cur->get_mutable_device_data();
 
-            Kokkos::parallel_for("AOUT", Kokkos::MDRangePolicy<Kokkos::Rank<2>>({jlo,ilo}, {jhi,ihi}),
-                KOKKOS_LAMBDA(int j, int i) {
-                    Cp(j,i) = (WRXMU()*Pp(j,i) + rdx2()*(Pp(j,i-1)+Pp(j,i+1))
-                            + rdy2()*(Pp(j-1,i)+Pp(j+1,i)) - rhs_psi(j,i)) * inv_C0;
-                    Cc(j,i) = (WRXMU()*Pc(j,i) + rdx2()*(Pc(j,i-1)+Pc(j,i+1))
-                            + rdy2()*(Pc(j-1,i)+Pc(j+1,i)) - rhs_chi(j,i)) * inv_C0;
-                }
-            );
-        }
-        // psi and chi ride in one NCCL group: same operator, independent right-hand sides.
-        exchange_2d_solver_halos(*psi_cur, *chi_cur, 1);
-    }
+            Kokkos::parallel_for("AOUT", 
+                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
+                KOKKOS_LAMBDA(const int j, const int i) {
+                    // Cp(j, i) =
+                    //     (WRXMU() * Pp(j, i) +
+                    //      rdx2() * (Pp(j, i - 1) + Pp(j, i + 1)) +
+                    //      rdy2() * (Pp(j - 1, i) + Pp(j + 1, i)) -
+                    //      rhs_psi(j, i)) *
+                    //     inv_C0;
+                    //
+                    // Cc(j, i) =
+                    //     (WRXMU() * Pc(j, i) +
+                    //      rdx2() * (Pc(j, i - 1) + Pc(j, i + 1)) +
+                    //      rdy2() * (Pc(j - 1, i) + Pc(j + 1, i)) -
+                    //      rhs_chi(j, i)) *
+                    //     inv_C0;
 
-    // Land the result in psi_out_field_/chi_out_field_ regardless of swap parity.
-    if (psi_cur != &psi_out_field_) {
-        Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), psi_out_field_.get_mutable_device_data(), psi_cur->get_mutable_device_data());
-        Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), chi_out_field_.get_mutable_device_data(), chi_cur->get_mutable_device_data());
+                    Cp(j,i) = (WRXMU()*Pp(j,i) + rdx2()*(Pp(j,i-1)+Pp(j,i+1))
+                            + rdy2()*(Pp(j-1,i)+Pp(j+1,i)) - cartesian_jacobian*rhs_psi(j,i)) * inv_C0;
+
+                    Cc(j,i) = (WRXMU()*Pc(j,i) + rdx2()*(Pc(j,i-1)+Pc(j,i+1))
+                            + rdy2()*(Pc(j-1,i)+Pc(j+1,i)) - cartesian_jacobian*rhs_chi(j,i)) * inv_C0;
+                });
+
+            exchange_2d_solver_halos(*psi_cur, *chi_cur, 1);
+        }
+
+        if (psi_cur != &psi_out_field_) {
+            Kokkos::deep_copy(
+                Kokkos::DefaultExecutionSpace(),
+                psi_out_field_.get_mutable_device_data(),
+                psi_cur->get_device_data());
+
+            Kokkos::deep_copy(
+                Kokkos::DefaultExecutionSpace(),
+                chi_out_field_.get_mutable_device_data(),
+                chi_cur->get_device_data());
+        }
+    }
+    else {
+        // Regular latitude–longitude uses the compact metric-aware orthogonal
+        // solver. Psi is at Z and chi is at T.
+        horizontal_elliptic_solver_.solve_at_z_and_t(
+            rhs_psi_field_,
+            psi_out_field_,
+            rhs_chi_field_,
+            chi_out_field_,
+            horizontal_elliptic_options_);
     }
 
 #if defined(ENABLE_NCCL)
@@ -496,14 +553,18 @@ void WindSolver::relax_2d_batched() {
     cudaStreamEndCapture(stream, &graph);
 
     if (graph != nullptr) {
-        cudaGraphInstantiate(&relax_2d_graph_exec_, graph, nullptr, nullptr, 0);
+        cudaGraphInstantiate(
+            &relax_2d_graph_exec_,
+            graph,
+            nullptr,
+            nullptr,
+            0);
+
         cudaGraphDestroy(graph);
         relax_2d_graph_created_ = true;
-
         cudaGraphLaunch(relax_2d_graph_exec_, stream);
     }
 #endif
-    return;
 }
 
 void WindSolver::fill_bounded_q2_potential_halos(Core::Field<2>& first, Core::Field<2>& second) const {
@@ -515,12 +576,12 @@ void WindSolver::fill_bounded_q2_potential_halos(Core::Field<2>& first, Core::Fi
     bounded_q2_stencils_->fill_constant_q2_halos(second);
 }
 
-void WindSolver::exchange_2d_solver_halos(Core::Field<2>& first, Core::Field<2>& second, const int depth) {
+void WindSolver::exchange_2d_solver_halos(
+    Core::Field<2>& first,
+    Core::Field<2>& second,
+    const int depth) {
 
     halo_exchanger_.exchange_multiple_halos({&first, &second}, depth);
-
-    // MPI_PROC_NULL leaves physical wall halos unchanged, so the wall
-    // stencil must be applied after communication on every solver sweep.
     fill_bounded_q2_potential_halos(first, second);
 }
 
