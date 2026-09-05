@@ -59,6 +59,8 @@ private:
     // contiguous a warp reads 32 consecutive doubles instead. These three arrays are
     // solver-private, so nothing outside WindSolver sees the layout.
     using DeepField = Core::Field<3, Kokkos::LayoutRight>;
+    void exchange_w_solver_halos(DeepField& field, int depth);
+
     mutable DeepField YTEM_field_;
     mutable DeepField w_deep_field_;
     mutable DeepField W3DN_field_;
