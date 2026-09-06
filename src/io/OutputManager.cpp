@@ -74,7 +74,7 @@ OutputManager::OutputManager(const Utils::ConfigurationManager& config, const VV
     }
     output_interval_s_ = config.get_value<VVM::Real>("simulation.output_interval_s");
     total_time_ = config.get_value<VVM::Real>("simulation.total_time_s");
-    use_taiwanvvm_coordinates_ = (config.get_value<std::string>("grid.vertical_coordinate_type", "default") == "taiwanvvm");
+    use_taiwanvvm_coordinates_ = (grid_.vertical_specification().type == Core::VerticalCoordinateType::TaiwanVVM);
     const int config_start_hour = config.get_value<int>("physics.rrtmgp.time.hour", 16);
     grads_start_hour_ = (config_start_hour + 8) % 24;
 

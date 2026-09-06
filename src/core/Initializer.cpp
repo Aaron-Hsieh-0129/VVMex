@@ -215,9 +215,11 @@ void Initializer::broadcast_restart_metadata(Utils::RestartFileMetadata& metadat
 }
 
 void Initializer::initialize_grid() const {
+    const auto& vertical = grid_.vertical_specification();
+
     VVM::Real DOMAIN = real(15000.);
-    VVM::Real dz = config_.get_value<VVM::Real>("grid.dz");
-    VVM::Real dz1 = config_.get_value<VVM::Real>("grid.dz1");
+    VVM::Real dz = vertical.dz;
+    VVM::Real dz1 = vertical.dz1;
     VVM::Real CZ2 = (dz-dz1) / (dz * (DOMAIN-dz));
     VVM::Real CZ1 = real(1.) - CZ2 * DOMAIN;
 
@@ -237,7 +239,7 @@ void Initializer::initialize_grid() const {
     VVM::Real ZB = real(0.);
     z_up_mutable_h(h-1) = ZB;
 
-    std::string v_coord_type = config_.get_value<std::string>("grid.vertical_coordinate_type", "default");
+    const std::string v_coord_type = vertical_coordinate_type_to_string(vertical.type);
 
     if (v_coord_type == "taiwanvvm") {
         // TaiwanVVM Vertical Coordinate Logic
@@ -310,7 +312,7 @@ void Initializer::initialize_grid() const {
         Kokkos::deep_copy(flex_height_coef_mid_mutable, flex_height_coef_mid_h);
     } 
     else if (v_coord_type == "rcemip") {
-        std::string source_file = config_.get_value<std::string>("grid.rcemip_grid_data_path", "./rundata/initial_conditions/profiles/snd_rcemip_anal300_v3.txt");
+        const std::string& source_file = vertical.rcemip_grid_data_path;
         std::ifstream infile(source_file);
         
         if (!infile.is_open()) {

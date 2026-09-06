@@ -213,7 +213,7 @@ void TxtReader::initialize_thermodynamics(VVM::Core::State& state) {
     VVM::Real Rd = config_.get_value<VVM::Real>("constants.Rd");
     VVM::Real Cp = config_.get_value<VVM::Real>("constants.Cp");
     VVM::Real g = config_.get_value<VVM::Real>("constants.gravity");
-    VVM::Real dz = config_.get_value<VVM::Real>("grid.dz");
+    VVM::Real dz = grid_.vertical_specification().dz;
     VVM::Real RbCp = Rd / Cp;
     VVM::Real GDZBCP = real(2.) * g * dz / Cp;
 
@@ -241,7 +241,7 @@ void TxtReader::initialize_thermodynamics(VVM::Core::State& state) {
     Tbar(h-1) = T_sfc_val;
     qvbar(h-1) = Qv_sfc_val;
 
-    std::string v_coord_type = config_.get_value<std::string>("grid.vertical_coordinate_type", "default");
+    const std::string v_coord_type = VVM::Core::vertical_coordinate_type_to_string(grid_.vertical_specification().type);
 
     // v1.0.0 built the rcemip reference state with a hardcoded Exner exponent
     // and a density that omitted the virtual-temperature correction. Both are
@@ -406,7 +406,8 @@ void TxtReader::initialize_forcing(VVM::Core::State& state) {
     VVM::Real secday = real(86400.0);
     VVM::Real gamfac = Lv / Cp;
 
-    std::string v_coord_type = config_.get_value<std::string>("grid.vertical_coordinate_type", "default");
+    const std::string v_coord_type = VVM::Core::vertical_coordinate_type_to_string(grid_.vertical_specification().type);
+
     size_t n_in = P_in.size();
 
     for (int k = h-1; k < nz; ++k) {

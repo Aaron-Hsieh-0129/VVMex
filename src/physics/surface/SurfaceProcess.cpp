@@ -13,7 +13,7 @@ SurfaceProcess::SurfaceProcess(const Utils::ConfigurationManager& config,
                                      Core::State& state)
     : config_(config), grid_(grid), params_(params), halo_exchanger_(halo_exchanger) {
 
-    v_coord_type_ = config_.get_value<std::string>("grid.vertical_coordinate_type", "default");
+    v_coord_type_ = Core::vertical_coordinate_type_to_string(grid_.vertical_specification().type);
 
     if (v_coord_type_ == "rcemip") speed1_filter_ = 1;
     else speed1_filter_ = 1e-3;

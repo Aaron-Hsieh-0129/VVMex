@@ -378,9 +378,7 @@ std::string Bp5HistoryWriter::describe_field(
 
 void Bp5HistoryWriter::write_grads_ctl_file(
     const Utils::ConfigurationManager& config) {
-    const bool use_taiwanvvm_coordinates =
-        config.get_value<std::string>("grid.vertical_coordinate_type", "default") ==
-        "taiwanvvm";
+        const bool use_taiwanvvm_coordinates = (grid_.vertical_specification().type == Core::VerticalCoordinateType::TaiwanVVM);
     // Collective on every rank; only rank 0 writes the descriptor.
     const auto axes =
         grads_horizontal_axes(grid_, state_, use_taiwanvvm_coordinates, comm_);
