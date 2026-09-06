@@ -18,6 +18,12 @@ class HorizontalWindColumnRecovery {
 public:
     explicit HorizontalWindColumnRecovery(const Core::Geometry::HorizontalGeometry& geometry);
 
+    // Prepare this compilation unit's CUDA backend before manual graph capture.
+    // Call after Kokkos initialization, outside all active capture regions.
+    // Uses one empty kernel and fences its execution space; touches no model fields.
+    // Repeated calls are allowed. This method is a no-op on CPU.
+    static void prepare_execution();
+
     // psi:       streamfunction at horizontal Z points
     // chi:       velocity potential at horizontal T points
     // w:         physical vertical velocity, horizontally at T
@@ -33,6 +39,7 @@ public:
     // Required input halos must already be valid. Used spacing values must
     // be positive and finite. Inputs and outputs must not overlap.
     //
+    // Before manual CUDA capture, call prepare_execution() outside capture.
     // No halo exchange, mean correction, or vertical ghost policy is applied.
     // The caller owns synchronization; this method does not fence.
     void recover(const Core::Field<2>& psi, const Core::Field<2>& chi,
