@@ -1480,6 +1480,39 @@ set_tests_properties(test_horizontal_vorticity PROPERTIES
 
 _vvm_set_test_resources(test_horizontal_vorticity 1)
 
+# wind vertical integration
+add_executable(test_wind_vertical_integration
+    ${TEST_DIR}/unit/test_wind_vertical_integration.cpp
+)
+
+target_include_directories(test_wind_vertical_integration PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_wind_vertical_integration PRIVATE
+    vvm_dynamics
+    vvm_core
+    vvm_utils
+    Kokkos::kokkos
+    MPI::MPI_CXX
+)
+
+add_test(
+    NAME test_wind_vertical_integration
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${VVM_MPI_BIND_ARGS} ${MPIEXEC_PREFLAGS}
+            ${GPU_WRAP} $<TARGET_FILE:test_wind_vertical_integration>
+            ${MPIEXEC_POSTFLAGS} "${TEST_DIR}/configs/2dbubble.json"
+)
+
+set_tests_properties(test_wind_vertical_integration PROPERTIES
+    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+    LABELS "unit"
+    TIMEOUT 120
+)
+
+_vvm_set_test_resources(test_wind_vertical_integration 1)
+
 # --- physics tier: GPU only, ~80 s. P3, RRTMGP and the Noah land model -----
 # Forced OFF on a CPU build by the backend guard above: tests/references_cpu/
 # has no digests for these cases, so they would fail for the wrong reason.
