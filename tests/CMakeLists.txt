@@ -1579,6 +1579,178 @@ set_tests_properties(test_horizontal_wind_column_replay PROPERTIES
 
 _vvm_set_test_resources(test_horizontal_wind_column_replay 1)
 
+# Fixed-iteration horizontal solver followed by full-column wind recovery
+add_executable(test_horizontal_wind_solver_column
+    ${TEST_DIR}/unit/test_horizontal_wind_solver_column.cpp
+)
+
+target_include_directories(test_horizontal_wind_solver_column PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_horizontal_wind_solver_column PRIVATE
+    vvm_dynamics
+    vvm_core
+    vvm_utils
+    Kokkos::kokkos
+    MPI::MPI_CXX
+)
+
+add_test(
+    NAME test_horizontal_wind_solver_column_cartesian
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${VVM_MPI_BIND_ARGS} ${MPIEXEC_PREFLAGS}
+            ${GPU_WRAP} $<TARGET_FILE:test_horizontal_wind_solver_column>
+            ${TEST_DIR}/configs/grid_structured_cartesian.json
+            ${MPIEXEC_POSTFLAGS}
+)
+
+add_test(
+    NAME test_horizontal_wind_solver_column_rll
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${VVM_MPI_BIND_ARGS} ${MPIEXEC_PREFLAGS}
+            ${GPU_WRAP} $<TARGET_FILE:test_horizontal_wind_solver_column>
+            ${TEST_DIR}/configs/horizontal_elliptic_regular_latlon.json
+            ${MPIEXEC_POSTFLAGS}
+)
+
+set_tests_properties(
+    test_horizontal_wind_solver_column_cartesian
+    test_horizontal_wind_solver_column_rll
+    PROPERTIES
+        WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+        LABELS "unit"
+        TIMEOUT 120
+)
+
+_vvm_set_test_resources(test_horizontal_wind_solver_column_cartesian 1)
+_vvm_set_test_resources(test_horizontal_wind_solver_column_rll 1)
+
+# Capture/replay of extrapolation, paired solve and wind-column recovery
+add_executable(test_horizontal_wind_solver_column_replay
+    ${TEST_DIR}/unit/test_horizontal_wind_solver_column_replay.cpp
+)
+
+target_include_directories(test_horizontal_wind_solver_column_replay PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_horizontal_wind_solver_column_replay PRIVATE
+    vvm_dynamics
+    vvm_core
+    vvm_utils
+    Kokkos::kokkos
+    MPI::MPI_CXX
+)
+
+add_test(
+    NAME test_horizontal_wind_solver_column_replay_cartesian
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${VVM_MPI_BIND_ARGS} ${MPIEXEC_PREFLAGS}
+            ${GPU_WRAP} $<TARGET_FILE:test_horizontal_wind_solver_column_replay>
+            ${TEST_DIR}/configs/grid_structured_cartesian.json
+            ${MPIEXEC_POSTFLAGS}
+)
+
+add_test(
+    NAME test_horizontal_wind_solver_column_replay_rll
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${VVM_MPI_BIND_ARGS} ${MPIEXEC_PREFLAGS}
+            ${GPU_WRAP} $<TARGET_FILE:test_horizontal_wind_solver_column_replay>
+            ${TEST_DIR}/configs/horizontal_elliptic_regular_latlon.json
+            ${MPIEXEC_POSTFLAGS}
+)
+
+set_tests_properties(
+    test_horizontal_wind_solver_column_replay_cartesian
+    test_horizontal_wind_solver_column_replay_rll
+    PROPERTIES
+        WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+        LABELS "unit"
+        TIMEOUT 120
+)
+
+_vvm_set_test_resources(test_horizontal_wind_solver_column_replay_cartesian 1)
+_vvm_set_test_resources(test_horizontal_wind_solver_column_replay_rll 1)
+
+if(VVM_TEST_MULTIRANK)
+    foreach(ranks IN ITEMS 2 4)
+        foreach(geometry IN ITEMS cartesian rll)
+            if(geometry STREQUAL "cartesian")
+                set(replay_config "${TEST_DIR}/configs/grid_structured_cartesian.json")
+            else()
+                set(replay_config "${TEST_DIR}/configs/horizontal_elliptic_regular_latlon.json")
+            endif()
+
+            set(replay_test "test_horizontal_wind_solver_column_replay_${geometry}_r${ranks}")
+
+            add_test(
+                NAME ${replay_test}
+                COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks}
+                        ${VVM_MPI_BIND_ARGS} ${MPIEXEC_PREFLAGS}
+                        ${GPU_WRAP} $<TARGET_FILE:test_horizontal_wind_solver_column_replay>
+                        "${replay_config}" ${MPIEXEC_POSTFLAGS}
+            )
+
+            set_tests_properties(${replay_test} PROPERTIES
+                WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+                LABELS "unit;multirank"
+                TIMEOUT 300
+            )
+
+            _vvm_set_test_resources(${replay_test} ${ranks})
+        endforeach()
+    endforeach()
+endif()
+
+# Decomposition consistency of the fixed solver and wind-column recovery
+add_executable(test_horizontal_wind_solver_column_mpi
+    ${TEST_DIR}/unit/test_horizontal_wind_solver_column_mpi.cpp
+)
+
+target_include_directories(test_horizontal_wind_solver_column_mpi PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_horizontal_wind_solver_column_mpi PRIVATE
+    vvm_dynamics
+    vvm_core
+    vvm_utils
+    Kokkos::kokkos
+    MPI::MPI_CXX
+)
+
+if(VVM_TEST_MULTIRANK)
+    foreach(_column_ranks IN ITEMS 2 4)
+        foreach(_column_geometry IN ITEMS cartesian rll)
+            if(_column_geometry STREQUAL "cartesian")
+                set(_column_config "${TEST_DIR}/configs/grid_structured_cartesian.json")
+            else()
+                set(_column_config "${TEST_DIR}/configs/horizontal_elliptic_regular_latlon.json")
+            endif()
+
+            set(_column_test "test_horizontal_wind_solver_column_mpi_${_column_geometry}_r${_column_ranks}")
+
+            add_test(
+                NAME ${_column_test}
+                COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${_column_ranks}
+                        ${VVM_MPI_BIND_ARGS} ${MPIEXEC_PREFLAGS}
+                        ${GPU_WRAP} $<TARGET_FILE:test_horizontal_wind_solver_column_mpi>
+                        ${_column_config}
+                        ${MPIEXEC_POSTFLAGS}
+            )
+
+            set_tests_properties(${_column_test} PROPERTIES
+                WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+                LABELS "unit;multirank"
+                TIMEOUT 300
+            )
+
+            _vvm_set_test_resources(${_column_test} ${_column_ranks})
+        endforeach()
+    endforeach()
+endif()
+
 # --- physics tier: GPU only, ~80 s. P3, RRTMGP and the Noah land model -----
 # Forced OFF on a CPU build by the backend guard above: tests/references_cpu/
 # has no digests for these cases, so they would fail for the wrong reason.
