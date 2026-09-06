@@ -22,11 +22,11 @@
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "core/Parameters.hpp"
 #include "core/State.hpp"
+#include "core/ModelConfigurationValidation.hpp"
 #include "io/bp5/Bp5HistoryWriter.hpp"
 #include "io/history/HistoryWriter.hpp"
 #include "io/history/LegacyHistoryWriter.hpp"
 #include "utils/ConfigurationManager.hpp"
-#include "utils/NumericalConfigurationValidation.hpp"
 #include "utils/SstPath.hpp"
 #include "utils/Timer.hpp"
 #include "utils/TimingManager.hpp"
@@ -232,7 +232,7 @@ int run_vvm(int argc, char *argv[], int world_rank, int world_size) {
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
 
-    VVM::Utils::validate_numerical_configuration(config, num_sim_tasks);
+    VVM::Core::validate_model_numerical_configuration(config, num_sim_tasks);
 
     int color = (world_rank < num_sim_tasks) ? 0 : 1;
     MPI_Comm split_comm;

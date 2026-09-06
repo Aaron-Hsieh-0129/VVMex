@@ -834,6 +834,75 @@ add_test(NAME test_parameters_resolved_grid_rll_guard
 set_tests_properties(test_parameters_resolved_grid_rll_guard PROPERTIES LABELS unit TIMEOUT 60)
 _vvm_set_test_resources(test_parameters_resolved_grid_rll_guard 1)
 
+add_executable(test_vertical_grid_configuration
+    ${TEST_DIR}/unit/test_vertical_grid_configuration.cpp)
+
+target_include_directories(test_vertical_grid_configuration PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+target_link_libraries(test_vertical_grid_configuration PRIVATE
+    vvm_core
+    vvm_io
+    vvm_utils
+    Kokkos::kokkos
+    MPI::MPI_CXX)
+
+add_test(NAME test_vertical_grid_configuration
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
+            ${GPU_WRAP} $<TARGET_FILE:test_vertical_grid_configuration>
+    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
+
+set_tests_properties(test_vertical_grid_configuration PROPERTIES LABELS unit TIMEOUT 300)
+_vvm_set_test_resources(test_vertical_grid_configuration 1)
+
+add_executable(test_model_configuration_validation
+    ${TEST_DIR}/unit/test_model_configuration_validation.cpp)
+
+target_include_directories(test_model_configuration_validation PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+target_link_libraries(test_model_configuration_validation PRIVATE
+    vvm_core
+    vvm_utils
+    Kokkos::kokkos
+    MPI::MPI_CXX)
+
+add_test(NAME test_model_configuration_validation
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
+            $<TARGET_FILE:test_model_configuration_validation>
+    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
+
+set_tests_properties(test_model_configuration_validation PROPERTIES LABELS unit TIMEOUT 60)
+
+add_executable(test_surface_vertical_configuration
+    ${TEST_DIR}/unit/test_surface_vertical_configuration.cpp
+)
+
+target_include_directories(test_surface_vertical_configuration PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_surface_vertical_configuration PRIVATE
+    vvm_surface
+    vvm_core
+    vvm_utils
+    Kokkos::kokkos
+    MPI::MPI_CXX
+)
+
+add_test(
+    NAME test_surface_vertical_configuration
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${VVM_MPI_BIND_ARGS} ${MPIEXEC_PREFLAGS}
+            ${GPU_WRAP} $<TARGET_FILE:test_surface_vertical_configuration>
+            ${MPIEXEC_POSTFLAGS}
+)
+
+set_tests_properties(test_surface_vertical_configuration PROPERTIES
+    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+    LABELS "unit"
+    RESOURCE_LOCK gpu
+    TIMEOUT 120
+)
+
 # --- output precision on the legacy writer ---------------------------------
 # output.precision decides the on-disk field type for HDF5 and SST as it does
 # for BP5. The HDF5 case writes a real file and reads its dataset types back;
