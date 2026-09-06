@@ -1,7 +1,8 @@
+#include "core/Field.hpp"
 #include "core/geometry/CartesianGeometry.hpp"
 #include "core/geometry/RegularLatLonGeometry.hpp"
-#include "dynamics/operators/HorizontalVorticity.hpp"
 #include "dynamics/operators/HorizontalWindReconstruction.hpp"
+#include "dynamics/solvers/HorizontalWindColumnRecovery.hpp"
 
 #include <Kokkos_Core.hpp>
 #include <mpi.h>
@@ -16,11 +17,12 @@ namespace {
 
 using VVM::Real;
 using VVM::real;
+using VVM::Core::Field;
 using VVM::Core::Geometry::CartesianGeometry;
 using VVM::Core::Geometry::HorizontalDomainLayout;
 using VVM::Core::Geometry::HorizontalGeometry;
 using VVM::Core::Geometry::RegularLatLonGeometry;
-using VVM::Dynamics::Operators::make_horizontal_vorticity_device_view;
+using VVM::Dynamics::HorizontalWindColumnRecovery;
 using VVM::Dynamics::Operators::make_horizontal_wind_reconstruction_device_view;
 
 int failures = 0;
@@ -35,6 +37,22 @@ HorizontalDomainLayout make_layout() {
     return layout;
 }
 
+template<typename Function>
+void expect_invalid_argument(Function function, const char* message) {
+    bool rejected = false;
+
+    try {
+        function();
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+
+    if (!rejected) {
+        ++failures;
+        std::fprintf(stderr, "FAIL: %s\n", message);
+    }
+}
+
 void test_column(const HorizontalGeometry& geometry, bool spherical, Real radius, Real south_edge) {
     const auto layout = geometry.layout();
     const int nx = layout.local_total_nx();
@@ -47,21 +65,31 @@ void test_column(const HorizontalGeometry& geometry, bool spherical, Real radius
     const Real dq2 = geometry.dq2();
     const Real amplitude = spherical ? radius * radius * real(1e-6) : real(1.0);
     const Real tolerance = sizeof(Real) == sizeof(double) ? real(1e-10) : real(5e-4);
+    const Real sentinel = real(-123.0);
 
+    const HorizontalWindColumnRecovery recovery(geometry);
     const auto reconstruction = make_horizontal_wind_reconstruction_device_view(geometry);
-    const auto vorticity = make_horizontal_vorticity_device_view(geometry);
 
-    Kokkos::View<Real**> psi("column_psi", ny, nx);
-    Kokkos::View<Real**> chi("column_chi", ny, nx);
+    Field<2> psi_field("column_psi", {ny, nx});
+    Field<2> chi_field("column_chi", {ny, nx});
+    Field<3> w_field("column_w", {nz, ny, nx});
+    Field<3> omega1_field("column_omega1", {nz, ny, nx});
+    Field<3> omega2_field("column_omega2", {nz, ny, nx});
+    Field<3> covariant1_field("column_covariant1", {nz, ny, nx});
+    Field<3> covariant2_field("column_covariant2", {nz, ny, nx});
+    Field<1> spacing_field("column_spacing", {nz - 1});
+
+    const auto psi = psi_field.get_mutable_device_data();
+    const auto chi = chi_field.get_mutable_device_data();
+    const auto w = w_field.get_mutable_device_data();
+    const auto omega1 = omega1_field.get_mutable_device_data();
+    const auto omega2 = omega2_field.get_mutable_device_data();
+    const auto covariant1 = covariant1_field.get_mutable_device_data();
+    const auto covariant2 = covariant2_field.get_mutable_device_data();
+    const auto spacing = spacing_field.get_mutable_device_data();
+
     Kokkos::View<Real**> top_contravariant1("column_top_contravariant1", ny, nx);
     Kokkos::View<Real**> top_contravariant2("column_top_contravariant2", ny, nx);
-
-    Kokkos::View<Real***> w("column_w", nz, ny, nx);
-    Kokkos::View<Real***> omega1("column_omega1", nz, ny, nx);
-    Kokkos::View<Real***> omega2("column_omega2", nz, ny, nx);
-    Kokkos::View<Real***> covariant1("column_covariant1", nz, ny, nx);
-    Kokkos::View<Real***> covariant2("column_covariant2", nz, ny, nx);
-    Kokkos::View<Real*> spacing("column_spacing", nz - 1);
 
     auto psi_host = Kokkos::create_mirror_view(psi);
     auto chi_host = Kokkos::create_mirror_view(chi);
@@ -69,6 +97,26 @@ void test_column(const HorizontalGeometry& geometry, bool spherical, Real radius
     auto omega1_host = Kokkos::create_mirror_view(omega1);
     auto omega2_host = Kokkos::create_mirror_view(omega2);
     auto spacing_host = Kokkos::create_mirror_view(spacing);
+
+    expect_invalid_argument([&]() {
+        recovery.recover(psi_field, chi_field, w_field, omega1_field, omega2_field,
+            spacing_field, covariant1_field, covariant2_field, 0, nz);
+    }, "Reject an out-of-range top level.");
+
+    expect_invalid_argument([&]() {
+        recovery.recover(psi_field, chi_field, w_field, omega1_field, omega2_field,
+            spacing_field, covariant1_field, covariant2_field, 3, 2);
+    }, "Reject an inverted vertical range.");
+
+    expect_invalid_argument([&]() {
+        recovery.recover(psi_field, chi_field, w_field, omega1_field, omega2_field,
+            spacing_field, covariant1_field, covariant1_field, 0, top);
+    }, "Reject shared output storage.");
+
+    expect_invalid_argument([&]() {
+        recovery.recover(psi_field, chi_field, w_field, omega1_field, omega2_field,
+            spacing_field, w_field, covariant2_field, 0, top);
+    }, "Reject overwriting an input field.");
 
     const auto policy = Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h});
     const auto compact_policy = Kokkos::Experimental::require(
@@ -112,9 +160,6 @@ void test_column(const HorizontalGeometry& geometry, bool spherical, Real radius
 
                     for (int k = 0; k < nz; ++k) {
                         w_host(k, j, i) = a * q1 + b * phi_u;
-
-                        // Independently manufactured contravariant vorticity.
-                        // Physical wind shear is shear_e/shear_n.
                         omega1_host(k, j, i) = (b - h2 * shear_n) / (h1_v * h2);
                         omega2_host(k, j, i) = (h1_u * shear_e - a) / (h1_u * h2);
                     }
@@ -127,91 +172,93 @@ void test_column(const HorizontalGeometry& geometry, bool spherical, Real radius
             Kokkos::deep_copy(omega1, omega1_host);
             Kokkos::deep_copy(omega2, omega2_host);
 
-            Kokkos::parallel_for("ReconstructCovariantTopWind", compact_policy,
+            Kokkos::parallel_for("ReferenceContravariantTopWind", compact_policy,
                 KOKKOS_LAMBDA(const int j, const int i) {
-                    covariant1(top, j, i) = reconstruction.calculate_covariant_q1_at_u(psi, chi, j, i);
-                    covariant2(top, j, i) = reconstruction.calculate_covariant_q2_at_v(psi, chi, j, i);
-
                     top_contravariant1(j, i) = reconstruction.calculate_contravariant_q1_at_u(psi, chi, j, i);
                     top_contravariant2(j, i) = reconstruction.calculate_contravariant_q2_at_v(psi, chi, j, i);
                 }
             );
 
-            Kokkos::parallel_for("RecoverCovariantWindColumn", compact_policy,
-                KOKKOS_LAMBDA(const int j, const int i) {
-                    for (int k = top - 1; k >= 0; --k) {
-                        const Real du1_dz = vorticity.calculate_covariant_q1_vertical_shear_at_u(w, omega2, k, j, i);
-                        const Real du2_dz = vorticity.calculate_covariant_q2_vertical_shear_at_v(w, omega1, k, j, i);
-
-                        covariant1(k, j, i) = covariant1(k + 1, j, i) - du1_dz * spacing(k);
-                        covariant2(k, j, i) = covariant2(k + 1, j, i) - du2_dz * spacing(k);
-                    }
-                }
-            );
-
-            Kokkos::fence();
-
-            const auto u1_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), covariant1);
-            const auto u2_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), covariant2);
-            const auto contra1_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), top_contravariant1);
-            const auto contra2_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), top_contravariant2);
-
-            // Analytic derivatives of the manufactured linear potentials.
             const Real dpsi_dq1 = real(0.25) * psi_factor / dq1;
             const Real dpsi_dq2 = real(-0.375) * psi_factor / dq2;
             const Real dchi_dq1 = real(-0.125) * chi_factor / dq1;
             const Real dchi_dq2 = real(0.25) * chi_factor / dq2;
 
-            Real column_error = real(0.0);
-            Real representation_error = real(0.0);
-            bool finite = true;
+            // Exercise full-column, partial-column, and top-only recovery.
+            for (int bottom : {0, 2, top}) {
+                Kokkos::deep_copy(covariant1, sentinel);
+                Kokkos::deep_copy(covariant2, sentinel);
 
-            const auto compare = [&](Real actual, Real expected, Real& maximum_error) {
-                if (!std::isfinite(actual) || !std::isfinite(expected)) {
-                    finite = false;
-                    return;
-                }
+                recovery.recover(psi_field, chi_field, w_field, omega1_field, omega2_field,
+                    spacing_field, covariant1_field, covariant2_field, bottom, top);
 
-                maximum_error = std::max(maximum_error,
-                    std::abs(actual - expected) / std::max(real(1.0), std::abs(expected)));
-            };
+                Kokkos::fence();
 
-            for (int j = h; j < ny - h; ++j) {
-                const Real y = static_cast<Real>(layout.global_start_j + j - h);
-                const Real phi_u = south_edge + (y + real(0.5)) * dq2;
-                const Real phi_v = south_edge + (y + real(1.0)) * dq2;
-                const Real h1_u = spherical ? radius * std::cos(phi_u) : real(1.0);
-                const Real h1_v = spherical ? radius * std::cos(phi_v) : real(1.0);
-                const Real h2 = spherical ? radius : real(1.0);
+                const auto u1_host = covariant1_field.get_host_data();
+                const auto u2_host = covariant2_field.get_host_data();
+                const auto contra1_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), top_contravariant1);
+                const auto contra2_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), top_contravariant2);
 
-                const Real expected_top_e = -dpsi_dq2 / h2 + dchi_dq1 / h1_u;
-                const Real expected_top_n = dpsi_dq1 / h1_v + dchi_dq2 / h2;
+                Real column_error = real(0.0);
+                Real representation_error = real(0.0);
+                bool finite = true;
+                bool untouched = true;
 
-                for (int i = h; i < nx - h; ++i) {
-                    // Compare representations in physical units:
-                    //   u_E = u_1/h1 = h1*u^1
-                    //   u_N = u_2/h2 = h2*u^2.
-                    compare(u1_host(top, j, i) / h1_u, h1_u * contra1_host(j, i), representation_error);
-                    compare(u2_host(top, j, i) / h2, h2 * contra2_host(j, i), representation_error);
+                const auto compare = [&](Real actual, Real expected, Real& maximum_error) {
+                    if (!std::isfinite(actual) || !std::isfinite(expected)) {
+                        finite = false;
+                        return;
+                    }
 
-                    for (int k = 0; k < nz; ++k) {
-                        const Real expected_e = expected_top_e + shear_e * (z[k] - z[top]);
-                        const Real expected_n = expected_top_n + shear_n * (z[k] - z[top]);
+                    maximum_error = std::max(maximum_error,
+                        std::abs(actual - expected) / std::max(real(1.0), std::abs(expected)));
+                };
 
-                        compare(u1_host(k, j, i) / h1_u, expected_e, column_error);
-                        compare(u2_host(k, j, i) / h2, expected_n, column_error);
+                for (int j = 0; j < ny; ++j) {
+                    const Real y = static_cast<Real>(layout.global_start_j + j - h);
+                    const Real phi_u = south_edge + (y + real(0.5)) * dq2;
+                    const Real phi_v = south_edge + (y + real(1.0)) * dq2;
+                    const Real h1_u = spherical ? radius * std::cos(phi_u) : real(1.0);
+                    const Real h1_v = spherical ? radius * std::cos(phi_v) : real(1.0);
+                    const Real h2 = spherical ? radius : real(1.0);
+
+                    const Real expected_top_e = -dpsi_dq2 / h2 + dchi_dq1 / h1_u;
+                    const Real expected_top_n = dpsi_dq1 / h1_v + dchi_dq2 / h2;
+
+                    for (int i = 0; i < nx; ++i) {
+                        const bool physical_column = j >= h && j < ny - h && i >= h && i < nx - h;
+
+                        if (physical_column) {
+                            compare(u1_host(top, j, i) / h1_u, h1_u * contra1_host(j, i), representation_error);
+                            compare(u2_host(top, j, i) / h2, h2 * contra2_host(j, i), representation_error);
+                        }
+
+                        for (int k = 0; k < nz; ++k) {
+                            if (physical_column && k >= bottom && k <= top) {
+                                const Real expected_e = expected_top_e + shear_e * (z[k] - z[top]);
+                                const Real expected_n = expected_top_n + shear_n * (z[k] - z[top]);
+
+                                compare(u1_host(k, j, i) / h1_u, expected_e, column_error);
+                                compare(u2_host(k, j, i) / h2, expected_n, column_error);
+                            } else {
+                                untouched = untouched
+                                    && u1_host(k, j, i) == sentinel
+                                    && u2_host(k, j, i) == sentinel;
+                            }
+                        }
                     }
                 }
+
+                const bool passed = finite && untouched
+                    && column_error <= tolerance && representation_error <= tolerance;
+
+                std::printf("%s stretched=%d mode=%d bottom=%d column_error=%.3e representation_error=%.3e untouched=%d %s\n",
+                    geometry.name(), static_cast<int>(stretched), mode, bottom,
+                    static_cast<double>(column_error), static_cast<double>(representation_error),
+                    static_cast<int>(untouched), passed ? "PASS" : "FAIL");
+
+                if (!passed) ++failures;
             }
-
-            const bool passed = finite && column_error <= tolerance && representation_error <= tolerance;
-
-            std::printf("%s stretched=%d mode=%d column_error=%.3e representation_error=%.3e %s\n",
-                geometry.name(), static_cast<int>(stretched), mode,
-                static_cast<double>(column_error), static_cast<double>(representation_error),
-                passed ? "PASS" : "FAIL");
-
-            if (!passed) ++failures;
         }
     }
 }
