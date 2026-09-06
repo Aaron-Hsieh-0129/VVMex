@@ -803,6 +803,37 @@ set_tests_properties(
 _vvm_set_test_resources(test_horizontal_wind_recovery_cartesian 1)
 _vvm_set_test_resources(test_horizontal_wind_recovery_rll 1)
 
+add_executable(test_parameters_resolved_grid
+    ${TEST_DIR}/unit/test_parameters_resolved_grid.cpp)
+
+target_include_directories(test_parameters_resolved_grid PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+target_link_libraries(test_parameters_resolved_grid PRIVATE
+    vvm_core
+    vvm_utils
+    Kokkos::kokkos
+    MPI::MPI_CXX)
+
+foreach(case_name IN ITEMS legacy structured mixed)
+    add_test(NAME test_parameters_resolved_grid_${case_name}
+        COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
+                ${GPU_WRAP} $<TARGET_FILE:test_parameters_resolved_grid>
+                ${TEST_DIR}/configs/parameters_resolved_${case_name}.json
+        WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
+
+    set_tests_properties(test_parameters_resolved_grid_${case_name} PROPERTIES LABELS unit TIMEOUT 60)
+    _vvm_set_test_resources(test_parameters_resolved_grid_${case_name} 1)
+endforeach()
+
+add_test(NAME test_parameters_resolved_grid_rll_guard
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
+            ${GPU_WRAP} $<TARGET_FILE:test_parameters_resolved_grid>
+            ${TEST_DIR}/configs/horizontal_elliptic_regular_latlon.json
+    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
+
+set_tests_properties(test_parameters_resolved_grid_rll_guard PROPERTIES LABELS unit TIMEOUT 60)
+_vvm_set_test_resources(test_parameters_resolved_grid_rll_guard 1)
+
 # --- output precision on the legacy writer ---------------------------------
 # output.precision decides the on-disk field type for HDF5 and SST as it does
 # for BP5. The HDF5 case writes a real file and reads its dataset types back;
