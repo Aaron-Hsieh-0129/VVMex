@@ -133,9 +133,6 @@ void Initializer::apply_tracer_boundary_conditions() const {
     if (state_.get_tracer_names().empty()) return;
 
     BoundaryConditionManager bc_manager(grid_);
-    bc_manager.initialize_bc_types(
-        config_.get_value<std::string>("grid.boundary_condition.x", "periodic"),
-        config_.get_value<std::string>("grid.boundary_condition.y", "periodic"));
 
     for (const auto& tracer_name : state_.get_tracer_names()) {
         auto& tracer = state_.get_field<3>(tracer_name);
@@ -696,12 +693,7 @@ void Initializer::assign_vars() const {
         );
     }
 
-    auto& lon = state_.get_field<2>("lon").get_mutable_device_data();
-    auto& lat = state_.get_field<2>("lat").get_mutable_device_data();
-    if (config_.get_value<bool>("grid.fix_lonlat", false)) {
-        Kokkos::deep_copy(lon, real(120.95));
-        Kokkos::deep_copy(lat, real(23.458));
-    }
+    initialize_geographic_coordinates();
 
     // A configured reference value selects constant f by default. An optional
     // beta adds a linear north-south gradient while preserving the same
@@ -940,6 +932,18 @@ void Initializer::initialize_perturbation() const {
     halo_exchanger_.exchange_multiple_halos({"th", "xi", "eta", "zeta"}, state_);
     if (test_mode == "none") halo_exchanger_.exchange_multiple_halos({"u", "v", "w"}, state_);
     return;
+}
+
+void Initializer::initialize_geographic_coordinates() const {
+    // Without the fixed-location override, preserve coordinates supplied by
+    // the existing spatial initial-condition reader.
+    if (!grid_.horizontal_specification().fix_lonlat) return;
+
+    auto& lon = state_.get_field<2>("lon").get_mutable_device_data();
+    auto& lat = state_.get_field<2>("lat").get_mutable_device_data();
+
+    Kokkos::deep_copy(lon, real(120.95));
+    Kokkos::deep_copy(lat, real(23.458));
 }
 
 } // namespace Core

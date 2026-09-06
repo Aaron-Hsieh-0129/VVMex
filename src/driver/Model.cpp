@@ -16,9 +16,6 @@ Model::Model(const Utils::ConfigurationManager& config,
       state_(state),
       halo_exchanger_(halo_exchanger), bc_manager_(grid)
 {
-    std::string x_bc = config.get_value<std::string>("grid.boundary_condition.x", "periodic");
-    std::string y_bc = config.get_value<std::string>("grid.boundary_condition.y", "periodic");
-    bc_manager_.initialize_bc_types(x_bc, y_bc);
     VVM::Real dt_s = params_.get_value_host(params_.dt);
 
     std::string mode = config_.get_value<std::string>("simulation.idealized_test", "none");
