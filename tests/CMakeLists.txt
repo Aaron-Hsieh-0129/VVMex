@@ -735,6 +735,74 @@ _vvm_set_test_resources(
     1
 )
 
+# wind reconstruction test
+add_executable(test_horizontal_wind_reconstruction
+               ${TEST_DIR}/unit/test_horizontal_wind_reconstruction.cpp)
+
+target_include_directories(test_horizontal_wind_reconstruction PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_horizontal_wind_reconstruction PRIVATE
+                      vvm_core Kokkos::kokkos MPI::MPI_CXX)
+
+add_test(NAME test_horizontal_wind_reconstruction
+         COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
+                 ${GPU_WRAP} $<TARGET_FILE:test_horizontal_wind_reconstruction>
+         WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
+
+set_tests_properties(test_horizontal_wind_reconstruction PROPERTIES LABELS unit TIMEOUT 60)
+_vvm_set_test_resources(test_horizontal_wind_reconstruction 1)
+
+# wind consistency test
+add_executable(test_horizontal_wind_consistency
+    ${TEST_DIR}/unit/test_horizontal_wind_consistency.cpp)
+
+target_include_directories(test_horizontal_wind_consistency PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+target_link_libraries(test_horizontal_wind_consistency PRIVATE
+    vvm_core
+    Kokkos::kokkos
+    MPI::MPI_CXX)
+
+add_test(NAME test_horizontal_wind_consistency
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
+            ${GPU_WRAP} $<TARGET_FILE:test_horizontal_wind_consistency>
+    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
+
+set_tests_properties(test_horizontal_wind_consistency PROPERTIES LABELS unit TIMEOUT 60)
+_vvm_set_test_resources(test_horizontal_wind_consistency 1)
+
+# wind recovery
+add_executable(test_horizontal_wind_recovery
+    ${TEST_DIR}/unit/test_horizontal_wind_recovery.cpp)
+
+target_include_directories(test_horizontal_wind_recovery PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+target_link_libraries(test_horizontal_wind_recovery PRIVATE
+    vvm_dynamics
+    vvm_core
+    vvm_utils
+    Kokkos::kokkos
+    MPI::MPI_CXX)
+
+add_test(NAME test_horizontal_wind_recovery_cartesian
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
+            ${GPU_WRAP} $<TARGET_FILE:test_horizontal_wind_recovery>
+            ${TEST_DIR}/configs/grid_structured_cartesian.json
+    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
+
+add_test(NAME test_horizontal_wind_recovery_rll
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
+            ${GPU_WRAP} $<TARGET_FILE:test_horizontal_wind_recovery>
+            ${TEST_DIR}/configs/horizontal_elliptic_regular_latlon.json
+    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
+
+set_tests_properties(
+    test_horizontal_wind_recovery_cartesian
+    test_horizontal_wind_recovery_rll
+    PROPERTIES LABELS unit TIMEOUT 120)
+
+_vvm_set_test_resources(test_horizontal_wind_recovery_cartesian 1)
+_vvm_set_test_resources(test_horizontal_wind_recovery_rll 1)
+
 # --- output precision on the legacy writer ---------------------------------
 # output.precision decides the on-disk field type for HDF5 and SST as it does
 # for BP5. The HDF5 case writes a real file and reads its dataset types back;
