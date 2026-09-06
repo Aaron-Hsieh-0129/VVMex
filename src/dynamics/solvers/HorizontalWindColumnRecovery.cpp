@@ -3,8 +3,24 @@
 #include <stdexcept>
 #include <string>
 
+#if defined(KOKKOS_ENABLE_CUDA)
+#include <cuda_runtime.h>
+#endif
+
 namespace VVM {
 namespace Dynamics {
+
+#if defined(KOKKOS_ENABLE_CUDA)
+namespace {
+
+void require_cuda_success(cudaError_t status, const char* operation) {
+    if (status != cudaSuccess) {
+        throw std::runtime_error(std::string("HorizontalWindColumnRecovery: ") + operation + ": " + cudaGetErrorString(status));
+    }
+}
+
+} // namespace
+#endif
 
 HorizontalWindColumnRecovery::HorizontalWindColumnRecovery(const Core::Geometry::HorizontalGeometry& geometry)
     : layout_(geometry.layout()),
@@ -14,6 +30,40 @@ HorizontalWindColumnRecovery::HorizontalWindColumnRecovery(const Core::Geometry:
     if (layout_.halo < 1 || layout_.local_physical_nx < 1 || layout_.local_physical_ny < 1) {
         throw std::invalid_argument("HorizontalWindColumnRecovery requires physical horizontal cells and at least one halo cell.");
     }
+}
+
+void HorizontalWindColumnRecovery::prepare_execution() {
+#if defined(KOKKOS_ENABLE_CUDA)
+    if (!Kokkos::is_initialized()) {
+        throw std::logic_error("HorizontalWindColumnRecovery::prepare_execution requires initialized Kokkos.");
+    }
+
+    const Kokkos::Cuda execution;
+    cudaStreamCaptureStatus capture_status = cudaStreamCaptureStatusNone;
+
+    require_cuda_success(cudaStreamIsCapturing(execution.cuda_stream(), &capture_status), "query capture status");
+
+    if (capture_status != cudaStreamCaptureStatusNone) {
+        throw std::logic_error("HorizontalWindColumnRecovery::prepare_execution must run before CUDA graph capture.");
+    }
+
+    require_cuda_success(cudaGetLastError(), "CUDA error before backend preparation");
+
+    // Keep this launch in the same compilation unit as recover().
+    // Some Kokkos/desul builds lazily copy lock-array pointers to device symbols
+    // on the first launch from a compilation unit. Those synchronous copies
+    // must finish before manual stream capture begins.
+    //
+    // A nonempty range is required to enter the backend launch path.
+    // The kernel itself does not access any model or scratch fields.
+    Kokkos::parallel_for("PrepareHorizontalWindColumnRecovery",
+        Kokkos::RangePolicy<Kokkos::Cuda>(execution, 0, 1),
+        KOKKOS_LAMBDA(const int) {}
+    );
+
+    require_cuda_success(cudaGetLastError(), "launch backend preparation");
+    execution.fence("Complete HorizontalWindColumnRecovery backend preparation");
+#endif
 }
 
 void HorizontalWindColumnRecovery::validate_horizontal_field(const Core::Field<2>& field, const char* role) const {

@@ -1546,6 +1546,39 @@ set_tests_properties(test_horizontal_wind_column_recovery PROPERTIES
 
 _vvm_set_test_resources(test_horizontal_wind_column_recovery 1)
 
+# Wind-column execution and CUDA graph replay
+add_executable(test_horizontal_wind_column_replay
+    ${TEST_DIR}/unit/test_horizontal_wind_column_replay.cpp
+)
+
+target_include_directories(test_horizontal_wind_column_replay PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_horizontal_wind_column_replay PRIVATE
+    vvm_dynamics
+    vvm_core
+    vvm_utils
+    Kokkos::kokkos
+    MPI::MPI_CXX
+)
+
+add_test(
+    NAME test_horizontal_wind_column_replay
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${VVM_MPI_BIND_ARGS} ${MPIEXEC_PREFLAGS}
+            ${GPU_WRAP} $<TARGET_FILE:test_horizontal_wind_column_replay>
+            ${MPIEXEC_POSTFLAGS}
+)
+
+set_tests_properties(test_horizontal_wind_column_replay PROPERTIES
+    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+    LABELS "unit"
+    TIMEOUT 120
+)
+
+_vvm_set_test_resources(test_horizontal_wind_column_replay 1)
+
 # --- physics tier: GPU only, ~80 s. P3, RRTMGP and the Noah land model -----
 # Forced OFF on a CPU build by the backend guard above: tests/references_cpu/
 # has no digests for these cases, so they would fail for the wrong reason.
