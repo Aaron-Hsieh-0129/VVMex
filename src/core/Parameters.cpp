@@ -1,8 +1,9 @@
-#include "Parameters.hpp"
-
 #include <cmath>
 #include <stdexcept>
 #include <iostream>
+
+#include "Parameters.hpp"
+#include "core/geometry/GeometryKind.hpp"
 
 namespace VVM {
 namespace Core {
@@ -41,14 +42,29 @@ Parameters::Parameters(const Utils::ConfigurationManager& config, const Grid& gr
     bn_new("bn_new", {grid.get_local_total_points_z()}),
     cn_new("cn_new", {grid.get_local_total_points_z()})
 {
+    const auto& horizontal = grid.horizontal_specification();
+    const auto& vertical = grid.vertical_specification();
+
+    // Existing consumers interpret Parameters::dx/dy as Cartesian distances.
+    // RLL angular increments must not silently enter those legacy kernels.
+    // Geometry and standalone elliptic/operator tests do not need Parameters.
+    if (horizontal.geometry.kind != Geometry::GeometryKind::Cartesian) {
+        throw std::runtime_error(
+            "Parameters still exposes Cartesian dx/dy in metres. Non-Cartesian Parameters construction "
+            "is not enabled until its spacing-dependent consumers have been migrated. "
+            "Use Grid geometry directly in the existing RLL component tests.");
+    }
+
+
     Kokkos::deep_copy(gravity, config.get_value<VVM::Real>("constants.gravity"));
     Kokkos::deep_copy(Rd, config.get_value<VVM::Real>("constants.Rd"));
     Kokkos::deep_copy(P0, config.get_value<VVM::Real>("constants.P0"));
     Kokkos::deep_copy(Cp, config.get_value<VVM::Real>("constants.Cp"));
 
-    VVM::Real dx_val = config.get_value<VVM::Real>("grid.dx");
-    VVM::Real dy_val = config.get_value<VVM::Real>("grid.dy");
-    VVM::Real dz_val = config.get_value<VVM::Real>("grid.dz");
+    const VVM::Real dx_val = horizontal.geometry.dq1;
+    const VVM::Real dy_val = horizontal.geometry.dq2;
+    const VVM::Real dz_val = vertical.dz;
+
     VVM::Real dt_val = config.get_value<VVM::Real>("simulation.dt_s");
 
     const auto require_finite_positive = [](VVM::Real value, const char* key) {

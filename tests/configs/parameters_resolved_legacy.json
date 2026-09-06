@@ -1,0 +1,28 @@
+{
+    "grid": {
+        "nx": 8,
+        "ny": 6,
+        "nz": 4,
+        "n_halo_cells": 2,
+        "dx": 500.0,
+        "dy": 750.0,
+        "dz": 1000.0,
+        "dz1": 1000.0,
+        "vertical_coordinate_type": "default"
+    },
+    "constants": {
+        "gravity": 9.81,
+        "Rd": 287.0,
+        "P0": 100000.0,
+        "Cp": 1004.0
+    },
+    "simulation": {
+        "dt_s": 2.0
+    },
+    "dynamics": {
+        "solver": {
+            "WRXMU": 0.25,
+            "iteration": 4
+        }
+    }
+}
