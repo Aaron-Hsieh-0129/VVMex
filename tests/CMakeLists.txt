@@ -1513,6 +1513,38 @@ set_tests_properties(test_wind_vertical_integration PROPERTIES
 
 _vvm_set_test_resources(test_wind_vertical_integration 1)
 
+# wind column recovery 
+add_executable(test_horizontal_wind_column_recovery
+    ${TEST_DIR}/unit/test_horizontal_wind_column_recovery.cpp
+)
+
+target_include_directories(test_horizontal_wind_column_recovery PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_horizontal_wind_column_recovery PRIVATE
+    vvm_core
+    vvm_utils
+    Kokkos::kokkos
+    MPI::MPI_CXX
+)
+
+add_test(
+    NAME test_horizontal_wind_column_recovery
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${VVM_MPI_BIND_ARGS} ${MPIEXEC_PREFLAGS}
+            ${GPU_WRAP} $<TARGET_FILE:test_horizontal_wind_column_recovery>
+            ${MPIEXEC_POSTFLAGS}
+)
+
+set_tests_properties(test_horizontal_wind_column_recovery PROPERTIES
+    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+    LABELS "unit"
+    TIMEOUT 60
+)
+
+_vvm_set_test_resources(test_horizontal_wind_column_recovery 1)
+
 # --- physics tier: GPU only, ~80 s. P3, RRTMGP and the Noah land model -----
 # Forced OFF on a CPU build by the backend guard above: tests/references_cpu/
 # has no digests for these cases, so they would fail for the wrong reason.
