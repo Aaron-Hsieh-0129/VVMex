@@ -1523,6 +1523,7 @@ target_include_directories(test_horizontal_wind_column_recovery PRIVATE
 )
 
 target_link_libraries(test_horizontal_wind_column_recovery PRIVATE
+    vvm_dynamics
     vvm_core
     vvm_utils
     Kokkos::kokkos
