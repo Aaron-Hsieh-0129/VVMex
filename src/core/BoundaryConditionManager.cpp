@@ -25,6 +25,14 @@ BoundaryConditionManager::BoundaryConditionManager(const Grid& grid)
             "Bounded horizontal topology is available for Grid and MPI decomposition tests, but physical lateral boundary conditions "
             "and elliptic-solver boundary rows are not implemented yet. Only periodic horizontal model runs are currently supported.");
     }
+
+    // The guard above rejects bounded directions with more than one physical cell.
+    // ZeroGradient here therefore only preserves halo filling in a bounded,
+    // singleton direction. It is not a physical wall condition for RLL.
+    x_bc_type_ = horizontal.topology.q1 == HorizontalEdgeTopology::Periodic
+        ? HorizontalBCType::Periodic : HorizontalBCType::ZeroGradient;
+    y_bc_type_ = horizontal.topology.q2 == HorizontalEdgeTopology::Periodic
+        ? HorizontalBCType::Periodic : HorizontalBCType::ZeroGradient;
 }
 
 template<size_t Dim>
@@ -276,11 +284,23 @@ void BoundaryConditionManager::apply_zero_gradient_bottom_zero_top(Field<Dim>& f
 }
 
 void BoundaryConditionManager::initialize_bc_types(const std::string& x_bc, const std::string& y_bc) {
-    if (x_bc == "zero_gradient") x_bc_type_ = HorizontalBCType::ZeroGradient;
-    else x_bc_type_ = HorizontalBCType::Periodic;
+    const auto parse = [](const std::string& value) {
+        if (value == "periodic") return HorizontalBCType::Periodic;
+        if (value == "zero_gradient") return HorizontalBCType::ZeroGradient;
 
-    if (y_bc == "zero_gradient") y_bc_type_ = HorizontalBCType::ZeroGradient;
-    else y_bc_type_ = HorizontalBCType::Periodic;
+        throw std::invalid_argument("Unknown horizontal boundary condition '" + value + "'. Expected 'periodic' or 'zero_gradient'.");
+    };
+
+    const HorizontalBCType requested_x = parse(x_bc);
+    const HorizontalBCType requested_y = parse(y_bc);
+
+    // Compatibility entry point: Grid has already selected the configuration.
+    // A later caller must not override that decision with legacy configuration.
+    if (requested_x != x_bc_type_ || requested_y != y_bc_type_) {
+        throw std::invalid_argument(
+            "Horizontal boundary conditions must match the resolved Grid topology. "
+            "Configure them through GridSpecification instead of overriding BoundaryConditionManager.");
+    }
 }
 
 template<size_t Dim>

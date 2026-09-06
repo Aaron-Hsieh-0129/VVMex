@@ -903,6 +903,37 @@ set_tests_properties(test_surface_vertical_configuration PROPERTIES
     TIMEOUT 120
 )
 
+add_executable(test_horizontal_configuration_consumers
+    ${TEST_DIR}/unit/test_horizontal_configuration_consumers.cpp
+)
+
+target_include_directories(test_horizontal_configuration_consumers PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_horizontal_configuration_consumers PRIVATE
+    vvm_core
+    vvm_io
+    vvm_utils
+    Kokkos::kokkos
+    MPI::MPI_CXX
+)
+
+add_test(
+    NAME test_horizontal_configuration_consumers
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${VVM_MPI_BIND_ARGS} ${MPIEXEC_PREFLAGS}
+            ${GPU_WRAP} $<TARGET_FILE:test_horizontal_configuration_consumers>
+            ${MPIEXEC_POSTFLAGS}
+)
+
+set_tests_properties(test_horizontal_configuration_consumers PROPERTIES
+    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+    LABELS "unit"
+    RESOURCE_LOCK gpu
+    TIMEOUT 120
+)
+
 # --- output precision on the legacy writer ---------------------------------
 # output.precision decides the on-disk field type for HDF5 and SST as it does
 # for BP5. The HDF5 case writes a real file and reads its dataset types back;
@@ -1349,6 +1380,105 @@ add_vvm_test(twisting "u v w xi eta zeta")
 add_vvm_test(2dbubble "u v w xi eta zeta th")
 # Terrain + the only physics-off default_case beyond the 32^2 set. 7 s.
 add_case_test(mountain 1 "")
+
+set(VVM_GRID_EQUIVALENCE_STEPS 12 CACHE STRING
+    "Number of one-second steps for Cartesian configuration equivalence"
+)
+
+set(VVM_GRID_EQUIVALENCE_WORK
+    "${CMAKE_BINARY_DIR}/testing_grid_configuration_equivalence"
+)
+
+set(VVM_GRID_EQUIVALENCE_SCRIPT
+    "${TEST_DIR}/scripts/test_grid_configuration_equivalence.py"
+)
+
+add_test(
+    NAME Prep_grid_configuration_equivalence
+    COMMAND ${Python3_EXECUTABLE} "${VVM_GRID_EQUIVALENCE_SCRIPT}" prepare
+            --case "${TEST_DIR}/configs/2dbubble.json"
+            --work "${VVM_GRID_EQUIVALENCE_WORK}"
+            --steps "${VVM_GRID_EQUIVALENCE_STEPS}"
+)
+
+set_tests_properties(Prep_grid_configuration_equivalence PROPERTIES
+    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+    FIXTURES_SETUP grid_configuration_prepared
+    LABELS "integration"
+    TIMEOUT 60
+)
+
+set(VVM_GRID_EQUIVALENCE_OUTPUT_FIXTURES "")
+
+foreach(VARIANT IN ITEMS legacy horizontal vertical structured mixed)
+    set(RUN_TEST "Run_grid_configuration_equivalence_${VARIANT}")
+    set(OUTPUT_FIXTURE "grid_configuration_output_${VARIANT}")
+
+    add_test(
+        NAME ${RUN_TEST}
+        COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+                ${VVM_MPI_BIND_ARGS} ${MPIEXEC_PREFLAGS}
+                ${GPU_WRAP} $<TARGET_FILE:vvm> ${MPIEXEC_POSTFLAGS}
+                "${VVM_GRID_EQUIVALENCE_WORK}/${VARIANT}.json"
+                --io-tasks 0
+    )
+
+    set_tests_properties(${RUN_TEST} PROPERTIES
+        WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+        FIXTURES_REQUIRED grid_configuration_prepared
+        FIXTURES_SETUP "${OUTPUT_FIXTURE}"
+        LABELS "integration"
+        TIMEOUT 600
+    )
+
+    _vvm_set_test_resources(${RUN_TEST} 1)
+
+    list(APPEND VVM_GRID_EQUIVALENCE_OUTPUT_FIXTURES "${OUTPUT_FIXTURE}")
+endforeach()
+
+add_test(
+    NAME Verify_grid_configuration_equivalence
+    COMMAND ${Python3_EXECUTABLE} "${VVM_GRID_EQUIVALENCE_SCRIPT}" verify
+            --work "${VVM_GRID_EQUIVALENCE_WORK}"
+)
+
+set_tests_properties(Verify_grid_configuration_equivalence PROPERTIES
+    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+    FIXTURES_REQUIRED "${VVM_GRID_EQUIVALENCE_OUTPUT_FIXTURES}"
+    LABELS "integration"
+    TIMEOUT 120
+)
+
+add_executable(test_horizontal_vorticity
+    ${TEST_DIR}/unit/test_horizontal_vorticity.cpp
+)
+
+target_include_directories(test_horizontal_vorticity PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_horizontal_vorticity PRIVATE
+    vvm_core
+    vvm_utils
+    Kokkos::kokkos
+    MPI::MPI_CXX
+)
+
+add_test(
+    NAME test_horizontal_vorticity
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${VVM_MPI_BIND_ARGS} ${MPIEXEC_PREFLAGS}
+            ${GPU_WRAP} $<TARGET_FILE:test_horizontal_vorticity>
+            ${MPIEXEC_POSTFLAGS}
+)
+
+set_tests_properties(test_horizontal_vorticity PROPERTIES
+    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+    LABELS "unit"
+    TIMEOUT 60
+)
+
+_vvm_set_test_resources(test_horizontal_vorticity 1)
 
 # --- physics tier: GPU only, ~80 s. P3, RRTMGP and the Noah land model -----
 # Forced OFF on a CPU build by the backend guard above: tests/references_cpu/
