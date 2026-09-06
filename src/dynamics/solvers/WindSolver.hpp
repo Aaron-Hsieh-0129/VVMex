@@ -39,6 +39,12 @@ public:
 
     void relax_2d_batched();
 
+    // Integrate existing State u/v from their prescribed top physical level.
+    // Uses xi_topo and legacy-sign eta_topo. Does not solve potentials,
+    // modify top means, or exchange horizontal halos.
+    // Currently implemented only for Cartesian geometry.
+    void integrate_uv_from_top();
+
 private:
     void fill_bounded_q2_potential_halos(Core::Field<2>& first, Core::Field<2>& second) const;
     void exchange_2d_solver_halos(Core::Field<2>& first, Core::Field<2>& second, int depth);

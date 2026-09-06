@@ -1,12 +1,14 @@
-#include "WindSolver.hpp"
-#include "core/haloexchange/HaloExchanger.hpp"
-#include "core/geometry/HorizontalLocation.hpp"
 #if defined(KOKKOS_ENABLE_CUDA)
 #include <nvtx3/nvToolsExt.h>
 #endif
 #include <algorithm>
 #include <utility>
 #include <limits>
+#include <stdexcept>
+
+#include "WindSolver.hpp"
+#include "core/haloexchange/HaloExchanger.hpp"
+#include "core/geometry/HorizontalLocation.hpp"
 
 namespace VVM {
 namespace Dynamics {
@@ -292,7 +294,6 @@ void WindSolver::solve_uv() {
     const int nx = grid_.get_local_total_points_x();
     const int h = grid_.get_halo_cells();
     const auto& flex_height_coef_mid = params_.flex_height_coef_mid.get_device_data();
-    const auto& flex_height_coef_up = params_.flex_height_coef_up.get_device_data();
     const auto& rhobar = rhobar_ref_.get(state_, "rhobar").get_device_data();
     const auto& rhobar_up = rhobar_up_ref_.get(state_, "rhobar_up").get_device_data();
     const auto& rdz = params_.rdz;
@@ -401,33 +402,56 @@ void WindSolver::solve_uv() {
         }
     );
 
-    const auto& xi = xi_topo_ref_.get(state_, "xi_topo").get_mutable_device_data();
-    const auto& eta = eta_topo_ref_.get(state_, "eta_topo").get_mutable_device_data();
-    const auto& dz = params_.dz;
-    Kokkos::parallel_for("u_downward_integration",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny-h, nx-h}),
-        KOKKOS_LAMBDA(const int j, const int i) {
-            // The for-loop inside is to prevent racing condition because lower layers depend on upper layers.
-            for (int k = nz-h-2; k >= h-1; --k) {
-                // WARNING: The eta is with negative because of the eta definition in original VVM
-                // NOTE: Need to fix it if the definition is reversed.
-                u(k,j,i) = u(k+1,j,i) 
-                         - ((w(k,j,i+1) - w(k,j,i))*rdx() - eta(k,j,i)) * dz() / flex_height_coef_up(k); 
-                v(k,j,i) = v(k+1,j,i) 
-                         - ((w(k,j+1,i) - w(k,j,i))*rdy() - xi(k,j,i)) * dz() / flex_height_coef_up(k); 
-            }
-            // WARNING: NK3 has a upward integration in original VVM code.
-            u(nz-h,j,i) = u(nz-h-1,j,i)
-                      + ((w(nz-h-1,j,i+1) - w(nz-h-1,j,i))*rdx() - eta(nz-h-1,j,i)) * dz() / flex_height_coef_up(nz-h-1); 
-            v(nz-h,j,i) = v(nz-h-1,j,i)
-                      + ((w(nz-h-1,j+1,i) - w(nz-h-1,j,i))*rdy() -  xi(nz-h-1,j,i)) * dz() / flex_height_coef_up(nz-h-1); 
-        }
-    );
+    integrate_uv_from_top();
+
     if (uv_fields_.empty()) {
         uv_fields_ = {&u_ref_.get(state_, "u"), &v_ref_.get(state_, "v")};
     }
     halo_exchanger_.exchange_multiple_halos(uv_fields_);
     return;
+}
+
+void WindSolver::integrate_uv_from_top() {
+    if (grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
+        throw std::logic_error("WindSolver::integrate_uv_from_top currently implements Cartesian State wind integration only.");
+    }
+
+    const int nz = grid_.get_local_total_points_z();
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
+    const int h = grid_.get_halo_cells();
+
+    auto& u = u_ref_.get(state_, "u").get_mutable_device_data();
+    auto& v = v_ref_.get(state_, "v").get_mutable_device_data();
+    const auto& w = w_ref_.get(state_, "w").get_device_data();
+    const auto& xi = xi_topo_ref_.get(state_, "xi_topo").get_device_data();
+    const auto& eta = eta_topo_ref_.get(state_, "eta_topo").get_device_data();
+
+    const auto& rdx = params_.rdx;
+    const auto& rdy = params_.rdy;
+    const auto& dz = params_.dz;
+    const auto& flex_height_coef_up = params_.flex_height_coef_up.get_device_data();
+
+    Kokkos::parallel_for("u_downward_integration",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny-h, nx-h}),
+        KOKKOS_LAMBDA(const int j, const int i) {
+            // Preserve the original arithmetic and serial column dependency.
+            // Cartesian conventions: xi = omega^1, eta = -omega^2.
+            for (int k = nz-h-2; k >= h-1; --k) {
+                u(k,j,i) = u(k+1,j,i)
+                         - ((w(k,j,i+1) - w(k,j,i))*rdx() - eta(k,j,i)) * dz() / flex_height_coef_up(k);
+                v(k,j,i) = v(k+1,j,i)
+                         - ((w(k,j+1,i) - w(k,j,i))*rdy() - xi(k,j,i)) * dz() / flex_height_coef_up(k);
+            }
+
+            // Preserve VVMex's upward integration into the first upper ghost.
+            // Do not replace this with CVVM's copied upper ghost in this path.
+            u(nz-h,j,i) = u(nz-h-1,j,i)
+                      + ((w(nz-h-1,j,i+1) - w(nz-h-1,j,i))*rdx() - eta(nz-h-1,j,i)) * dz() / flex_height_coef_up(nz-h-1);
+            v(nz-h,j,i) = v(nz-h-1,j,i)
+                      + ((w(nz-h-1,j+1,i) - w(nz-h-1,j,i))*rdy() - xi(nz-h-1,j,i)) * dz() / flex_height_coef_up(nz-h-1);
+        }
+    );
 }
 
 // Solve the Z-point streamfunction and T-point velocity potential together.
