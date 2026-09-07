@@ -1751,6 +1751,56 @@ if(VVM_TEST_MULTIRANK)
     endforeach()
 endif()
 
+# wind adapter 
+add_executable(test_horizontal_wind_state_adapter
+    ${TEST_DIR}/unit/test_horizontal_wind_state_adapter.cpp
+)
+
+target_include_directories(test_horizontal_wind_state_adapter PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_horizontal_wind_state_adapter PRIVATE
+    vvm_dynamics
+    vvm_core
+    vvm_utils
+    Kokkos::kokkos
+    MPI::MPI_CXX
+)
+
+set(wind_adapter_ranks 1)
+if(VVM_TEST_MULTIRANK)
+    list(APPEND wind_adapter_ranks 2 4)
+endif()
+
+foreach(ranks IN LISTS wind_adapter_ranks)
+    foreach(geometry IN ITEMS cartesian rll)
+        if(geometry STREQUAL "cartesian")
+            set(adapter_config "${TEST_DIR}/configs/grid_structured_cartesian.json")
+        else()
+            set(adapter_config "${TEST_DIR}/configs/horizontal_elliptic_regular_latlon.json")
+        endif()
+
+        set(adapter_test "test_horizontal_wind_state_adapter_${geometry}_r${ranks}")
+
+        add_test(
+            NAME ${adapter_test}
+            COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks}
+                    ${VVM_MPI_BIND_ARGS} ${MPIEXEC_PREFLAGS}
+                    ${GPU_WRAP} $<TARGET_FILE:test_horizontal_wind_state_adapter>
+                    "${adapter_config}" ${MPIEXEC_POSTFLAGS}
+        )
+
+        set_tests_properties(${adapter_test} PROPERTIES
+            WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+            LABELS "unit"
+            TIMEOUT 300
+        )
+
+        _vvm_set_test_resources(${adapter_test} ${ranks})
+    endforeach()
+endforeach()
+
 # --- physics tier: GPU only, ~80 s. P3, RRTMGP and the Noah land model -----
 # Forced OFF on a CPU build by the backend guard above: tests/references_cpu/
 # has no digests for these cases, so they would fail for the wrong reason.
