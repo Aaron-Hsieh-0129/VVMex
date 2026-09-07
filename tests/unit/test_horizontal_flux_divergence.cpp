@@ -2,6 +2,7 @@
 #include "core/geometry/RegularLatLonGeometry.hpp"
 #include "dynamics/operators/HorizontalFluxDivergence.hpp"
 #include "dynamics/operators/TakacsScalarTransport.hpp"
+#include "dynamics/operators/OrthogonalAnelasticMassFlux.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -21,6 +22,8 @@ using VVM::Dynamics::Operators::HorizontalFluxDivergenceDeviceView;
 using VVM::Dynamics::Operators::TakacsFaceFluxDeviceView;
 using VVM::Dynamics::Operators::make_horizontal_flux_divergence_device_view;
 using VVM::Dynamics::Operators::make_takacs_scalar_transport_device_view;
+using VVM::Dynamics::Operators::make_orthogonal_contravariant_mass_flux_q1_device_view;
+using VVM::Dynamics::Operators::make_orthogonal_contravariant_mass_flux_q2_device_view;
 
 int failures = 0;
 
@@ -1036,6 +1039,193 @@ void test_regular_latlon_discrete_mass_budget() {
         "RLL Takacs transport must conserve the Jacobian-weighted scalar mass budget");
 }
 
+void test_orthogonal_anelastic_mass_flux_adapter() {
+    const int physical_nx = 24;
+    const int physical_ny = 12;
+    const int halo = 2;
+
+    const HorizontalDomainLayout layout =
+        make_layout(
+            physical_nx,
+            physical_ny,
+            halo);
+
+    const VVM::Real pi =
+        std::acos(VVM::real(-1.0));
+    const VVM::Real dlongitude =
+        VVM::real(2.0) * pi /
+        static_cast<VVM::Real>(physical_nx);
+    const VVM::Real dlatitude =
+        (pi / VVM::real(3.0)) /
+        static_cast<VVM::Real>(physical_ny);
+    const VVM::Real radius =
+        VVM::real(6371220.0);
+
+    const RegularLatLonGeometry geometry(
+        layout,
+        dlongitude,
+        dlatitude,
+        -pi,
+        -pi / VVM::real(6.0),
+        radius);
+
+    const auto transport =
+        make_takacs_scalar_transport_device_view(
+            geometry);
+    const auto u_geometry =
+        geometry.device_view(HorizontalLocation::U);
+    const auto v_geometry =
+        geometry.device_view(HorizontalLocation::V);
+
+    const int nx = layout.local_total_nx();
+    const int ny = layout.local_total_ny();
+
+    Kokkos::View<VVM::Real***> scalar_q(
+        "adapter_scalar_q",
+        1,
+        ny,
+        nx);
+    Kokkos::View<VVM::Real***> physical_mass_flux_q1(
+        "adapter_physical_mass_flux_q1",
+        1,
+        ny,
+        nx);
+    Kokkos::View<VVM::Real***> physical_mass_flux_q2(
+        "adapter_physical_mass_flux_q2",
+        1,
+        ny,
+        nx);
+    Kokkos::View<VVM::Real***> explicit_mass_flux_q1(
+        "adapter_explicit_mass_flux_q1",
+        1,
+        ny,
+        nx);
+    Kokkos::View<VVM::Real***> explicit_mass_flux_q2(
+        "adapter_explicit_mass_flux_q2",
+        1,
+        ny,
+        nx);
+    Kokkos::View<VVM::Real***> adapted_tendency(
+        "adapter_adapted_tendency",
+        1,
+        ny,
+        nx);
+    Kokkos::View<VVM::Real***> explicit_tendency(
+        "adapter_explicit_tendency",
+        1,
+        ny,
+        nx);
+
+    Kokkos::parallel_for(
+        "InitializeOrthogonalMassFluxAdapter",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
+            {0, 0},
+            {ny, nx}),
+        KOKKOS_LAMBDA(
+            const int j,
+            const int i) {
+
+            const VVM::Real i_value =
+                static_cast<VVM::Real>(i - halo);
+            const VVM::Real j_value =
+                static_cast<VVM::Real>(j - halo);
+
+            scalar_q(0, j, i) =
+                VVM::real(2.0)
+                + VVM::real(0.03) * i_value
+                - VVM::real(0.02) * j_value
+                + VVM::real(0.001) *
+                    i_value * j_value;
+
+            physical_mass_flux_q1(0, j, i) =
+                VVM::real(1.4)
+                + VVM::real(0.06) * i_value
+                + VVM::real(0.025) * j_value;
+
+            physical_mass_flux_q2(0, j, i) =
+                VVM::real(-0.7)
+                + VVM::real(0.015) * i_value
+                - VVM::real(0.04) * j_value;
+
+            explicit_mass_flux_q1(0, j, i) =
+                u_geometry
+                    .physical_to_contravariant
+                    .a11(j, i) *
+                physical_mass_flux_q1(0, j, i);
+
+            explicit_mass_flux_q2(0, j, i) =
+                v_geometry
+                    .physical_to_contravariant
+                    .a22(j, i) *
+                physical_mass_flux_q2(0, j, i);
+        });
+
+    const auto adapted_mass_flux_q1 =
+        make_orthogonal_contravariant_mass_flux_q1_device_view(
+            geometry,
+            physical_mass_flux_q1);
+    const auto adapted_mass_flux_q2 =
+        make_orthogonal_contravariant_mass_flux_q2_device_view(
+            geometry,
+            physical_mass_flux_q2);
+
+    Kokkos::parallel_for(
+        "CompareOrthogonalMassFluxAdapter",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
+            {halo, halo},
+            {ny - halo, nx - halo}),
+        KOKKOS_LAMBDA(
+            const int j,
+            const int i) {
+
+            adapted_tendency(0, j, i) =
+                transport
+                    .calculate_horizontal_flux_convergence_at_t(
+                        scalar_q,
+                        adapted_mass_flux_q1,
+                        adapted_mass_flux_q2,
+                        0,
+                        j,
+                        i);
+
+            explicit_tendency(0, j, i) =
+                transport
+                    .calculate_horizontal_flux_convergence_at_t(
+                        scalar_q,
+                        explicit_mass_flux_q1,
+                        explicit_mass_flux_q2,
+                        0,
+                        j,
+                        i);
+        });
+
+    const auto adapted_host =
+        Kokkos::create_mirror_view_and_copy(
+            Kokkos::HostSpace(),
+            adapted_tendency);
+    const auto explicit_host =
+        Kokkos::create_mirror_view_and_copy(
+            Kokkos::HostSpace(),
+            explicit_tendency);
+
+    VVM::Real maximum_difference =
+        VVM::real(0.0);
+
+    for (int j = halo; j < ny - halo; ++j) {
+        for (int i = halo; i < nx - halo; ++i) {
+            maximum_difference = std::max(
+                maximum_difference,
+                std::abs(
+                    adapted_host(0, j, i)
+                    - explicit_host(0, j, i)));
+        }
+    }
+
+    check(
+        maximum_difference <= VVM::real(1.0e-7),
+        "Physical RLL mass-flux adapters must equal explicit contravariant conversion");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1053,6 +1243,7 @@ int main(int argc, char** argv) {
             test_cartesian_takacs_linear_scalar();
             test_regular_latlon_constant_tracer();
             test_regular_latlon_discrete_mass_budget();
+            test_orthogonal_anelastic_mass_flux_adapter();
         } catch (const std::exception& error) {
             ++failures;
             std::fprintf(
