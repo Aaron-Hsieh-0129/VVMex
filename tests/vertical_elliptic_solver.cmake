@@ -22,6 +22,18 @@ target_link_libraries(test_regular_latlon_wind_diagnostic PRIVATE
     MPI::MPI_CXX
 )
 
+add_executable(test_regular_latlon_channel_boundaries
+    ${TEST_DIR}/unit/test_regular_latlon_channel_boundaries.cpp
+)
+
+target_link_libraries(test_regular_latlon_channel_boundaries PRIVATE
+    vvm_dynamics
+    vvm_core
+    vvm_utils
+    Kokkos::kokkos
+    MPI::MPI_CXX
+)
+
 set(_vertical_ranks 1)
 if(VVM_TEST_MULTIRANK)
     list(APPEND _vertical_ranks 2 4)
@@ -74,6 +86,32 @@ foreach(_ranks IN LISTS _vertical_ranks)
         WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
         LABELS "unit"
         TIMEOUT 600
+    )
+
+    _vvm_set_test_resources(
+        ${_test}
+        ${_ranks})
+endforeach()
+
+foreach(_ranks IN LISTS _vertical_ranks)
+    set(_test
+        test_regular_latlon_channel_boundaries_r${_ranks})
+
+    add_test(NAME ${_test}
+        COMMAND ${MPIEXEC_EXECUTABLE}
+                ${MPIEXEC_NUMPROC_FLAG} ${_ranks}
+                ${VVM_MPI_BIND_ARGS}
+                ${MPIEXEC_PREFLAGS}
+                ${GPU_WRAP}
+                $<TARGET_FILE:test_regular_latlon_channel_boundaries>
+                ${TEST_DIR}/configs/vertical_elliptic_rll.json
+                ${MPIEXEC_POSTFLAGS}
+    )
+
+    set_tests_properties(${_test} PROPERTIES
+        WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+        LABELS "unit"
+        TIMEOUT 300
     )
 
     _vvm_set_test_resources(
