@@ -22,14 +22,19 @@ namespace VVM {
 namespace Dynamics {
 
 enum class WSolverMethod {
-    TRIDIAGONAL, // Original method
-    JACOBI       // 3D Jacobi iteration
+    TRIDIAGONAL,
+    JACOBI
 };
 
 class VerticalEllipticSolver;
 
 class WindSolver {
 public:
+    enum class HorizontalDiagnosticBoundaryPolicy {
+        CvvmMode2Reference,
+        RegularLatLonFreeSlipChannel
+    };
+
     WindSolver(const Core::Grid& grid, const Utils::ConfigurationManager& config, const Core::Parameters& params, VVM::Core::HaloExchanger& halo_exchanger, VVM::Core::State& state);
     ~WindSolver();
 
@@ -47,8 +52,6 @@ public:
     // Currently implemented only for Cartesian geometry.
     void integrate_uv_from_top();
 
-    // Borrowed fields for the explicit mapped horizontal diagnostic stage.
-    // No fields are allocated here. All backing allocations must be distinct.
     struct HorizontalDiagnosticFields {
         Core::Field<2>& psi;
         Core::Field<2>& psi_previous;
@@ -74,14 +77,14 @@ public:
         Core::Field<2>& solution_chi;
     };
 
-    // Call outside capture. Solver/transport preparation remains explicit in
-    // the caller, consistent with the existing composed replay tests.
     static void prepare_horizontal_diagnostic_execution();
 
     static void diagnose_horizontal_wind(const Core::Grid& grid, Core::HaloExchanger& halo,
         HorizontalEllipticSolver& solver, const HorizontalDiagnosticFields& fields,
         const HorizontalDiagnosticWorkspace& workspace, const HorizontalEllipticSolver::Options& options,
-        VVM::Real inverse_dz, int bottom, int top);
+        VVM::Real inverse_dz, int bottom, int top,
+        HorizontalDiagnosticBoundaryPolicy boundary_policy =
+            HorizontalDiagnosticBoundaryPolicy::CvvmMode2Reference);
 
     struct RegularLatLonDiagnosticFields {
         Core::Field<2>& psi;
@@ -91,8 +94,13 @@ public:
         Core::Field<3>& zeta;
         Core::Field<3>& w;
         Core::Field<3>& w_previous;
+
+        // Under RegularLatLonFreeSlipChannel, callers prepare xi with
+        // positive-face homogeneous Dirichlet walls and eta with centered
+        // homogeneous Neumann walls before entering this diagnostic.
         const Core::Field<3>& xi;
         const Core::Field<3>& eta;
+
         Core::Field<3>& u;
         Core::Field<3>& v;
         const Core::Field<1>& rhobar;
@@ -106,15 +114,14 @@ public:
         int vertical_iterations = 0;
         HorizontalEllipticSolver::Options horizontal;
         VVM::Real inverse_dz = VVM::real(0.0);
+        HorizontalDiagnosticBoundaryPolicy boundary_policy =
+            HorizontalDiagnosticBoundaryPolicy::RegularLatLonFreeSlipChannel;
     };
 
-    // Explicitly prepare every compilation unit used by the composed stage.
-    // Call after constructing all solvers and outside CUDA graph capture.
     static void prepare_regular_latlon_diagnostic_execution();
 
-    // Only regular latitude-longitude with periodic q1 and bounded q2 is
-    // accepted. Bounded q2 currently uses CVVM MODE=2 nearest-row copying.
-    // This is a diagnostic reference boundary, not a complete free-slip policy.
+    // This remains a guarded diagnostic component. It does not enable complete
+    // RLL time stepping or select/evolve the prescribed channel circulation.
     static void diagnose_regular_latlon_wind(const Core::Grid& grid, Core::HaloExchanger& halo,
         VerticalEllipticSolver& vertical_solver, HorizontalEllipticSolver& horizontal_solver,
         const RegularLatLonDiagnosticFields& fields, const HorizontalDiagnosticWorkspace& workspace,
@@ -130,8 +137,6 @@ private:
     Core::State& state_;
     WSolverMethod w_solver_method_;
 
-    // LayoutRight makes x contiguous. These arrays are private to the vertical
-    // wind solver, so their layout does not affect State field layouts.
     using DeepField = Core::Field<3, Kokkos::LayoutRight>;
     void exchange_w_solver_halos(DeepField& field, int depth);
 
@@ -139,15 +144,13 @@ private:
     mutable DeepField w_deep_field_;
     mutable DeepField W3DN_field_;
 
-    // Default layout: these are threaded (j,i) with j fastest, already coalesced.
-    mutable Core::Field<2> rhs_psi_field_;   // was RIP1
-    mutable Core::Field<2> rhs_chi_field_;   // was RIP2
-    mutable Core::Field<2> psi_out_field_;   // was ROP1
-    mutable Core::Field<2> chi_out_field_;   // was ROP2
+    mutable Core::Field<2> rhs_psi_field_;
+    mutable Core::Field<2> rhs_chi_field_;
+    mutable Core::Field<2> psi_out_field_;
+    mutable Core::Field<2> chi_out_field_;
     mutable Core::Field<2> psi_tmp_field_;
     mutable Core::Field<2> chi_tmp_field_;
 
-    // Default layout coalesces across columns on CUDA and along levels on host.
     Kokkos::View<VVM::Real**> tri_tmp_;
 
     Core::HaloExchanger& halo_exchanger_;
@@ -155,8 +158,6 @@ private:
     HorizontalEllipticSolver horizontal_elliptic_solver_;
     HorizontalEllipticSolver::Options horizontal_elliptic_options_;
 
-    // This object exists only for a physical bounded q2 direction. Periodic
-    // Cartesian runs therefore keep their existing solver path unchanged.
     std::unique_ptr<Core::Boundary::HorizontalBoundaryStencils> bounded_q2_stencils_;
 
     VVM::Real h_inv_C0_;
