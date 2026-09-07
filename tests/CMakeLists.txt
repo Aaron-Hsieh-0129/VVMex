@@ -1801,6 +1801,55 @@ foreach(ranks IN LISTS wind_adapter_ranks)
     endforeach()
 endforeach()
 
+add_executable(test_wind_solver_horizontal_diagnostic
+    ${TEST_DIR}/unit/test_wind_solver_horizontal_diagnostic.cpp
+)
+
+target_include_directories(test_wind_solver_horizontal_diagnostic PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_wind_solver_horizontal_diagnostic PRIVATE
+    vvm_dynamics
+    vvm_core
+    vvm_utils
+    Kokkos::kokkos
+    MPI::MPI_CXX
+)
+
+set(horizontal_diagnostic_ranks 1)
+if(VVM_TEST_MULTIRANK)
+    list(APPEND horizontal_diagnostic_ranks 2 4)
+endif()
+
+foreach(ranks IN LISTS horizontal_diagnostic_ranks)
+    foreach(geometry IN ITEMS cartesian rll)
+        if(geometry STREQUAL "cartesian")
+            set(diagnostic_config "${TEST_DIR}/configs/grid_structured_cartesian.json")
+        else()
+            set(diagnostic_config "${TEST_DIR}/configs/horizontal_elliptic_regular_latlon.json")
+        endif()
+
+        set(diagnostic_test "test_wind_solver_horizontal_diagnostic_${geometry}_r${ranks}")
+
+        add_test(
+            NAME ${diagnostic_test}
+            COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks}
+                    ${VVM_MPI_BIND_ARGS} ${MPIEXEC_PREFLAGS}
+                    ${GPU_WRAP} $<TARGET_FILE:test_wind_solver_horizontal_diagnostic>
+                    "${diagnostic_config}" ${MPIEXEC_POSTFLAGS}
+        )
+
+        set_tests_properties(${diagnostic_test} PROPERTIES
+            WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+            LABELS "unit"
+            TIMEOUT 300
+        )
+
+        _vvm_set_test_resources(${diagnostic_test} ${ranks})
+    endforeach()
+endforeach()
+
 # --- physics tier: GPU only, ~80 s. P3, RRTMGP and the Noah land model -----
 # Forced OFF on a CPU build by the backend guard above: tests/references_cpu/
 # has no digests for these cases, so they would fail for the wrong reason.
@@ -1935,3 +1984,5 @@ if(NOT VVM_ENABLE_GPU)
             ENVIRONMENT_MODIFICATION "${VVM_TEST_ENV_MODS}")
     endif()
 endif()
+
+include(${CMAKE_CURRENT_LIST_DIR}/vertical_wind_diagnostic.cmake)
