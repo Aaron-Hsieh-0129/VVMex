@@ -369,7 +369,9 @@ inline void HaloExchanger::exchange_multiple_halos(const std::vector<Field<3>*>&
         }
     }
 
-    cudaStreamSynchronize(stream_);
+    cudaStreamCaptureStatus capture_status;
+    cudaStreamIsCapturing(stream_, &capture_status);
+    if (capture_status == cudaStreamCaptureStatusNone) cudaStreamSynchronize(stream_);
 }
 
 // Batched exchange of 2-D fields that are not registered in State. Used for the

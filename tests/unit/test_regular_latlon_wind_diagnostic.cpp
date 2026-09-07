@@ -1,6 +1,8 @@
 #include "core/Field.hpp"
 #include "core/Grid.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
+#include "core/boundary/HorizontalBoundaryStencils.hpp"
+#include "core/geometry/HorizontalLocation.hpp"
 #include "dynamics/solvers/HorizontalEllipticSolver.hpp"
 #include "dynamics/solvers/HorizontalWindStateAdapter.hpp"
 #include "dynamics/solvers/VerticalEllipticSolver.hpp"
@@ -15,6 +17,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
+#include <limits>
 
 namespace {
 
@@ -102,6 +105,157 @@ int clamp(int value, int size) {
     return std::max(0, std::min(size - 1, value));
 }
 
+template<std::size_t Dim>
+bool centered_q2_neumann_halos(const Grid& grid, const Field<Dim>& field) {
+    static_assert(Dim == 2 || Dim == 3);
+
+    const int h = grid.get_halo_cells();
+    const bool south = grid.get_local_physical_start_y() == 0;
+    const bool north =
+        grid.get_local_physical_end_y() == grid.get_global_points_y() - 1;
+    const auto data = field.get_host_data();
+    const int ny = static_cast<int>(data.extent(Dim - 2));
+    const int nx = static_cast<int>(data.extent(Dim - 1));
+    int nz = 1;
+    if constexpr (Dim == 3) nz = static_cast<int>(data.extent(0));
+
+    const auto rows_equal = [&](int first_j, int second_j) {
+        for (int k = 0; k < nz; ++k) {
+            for (int i = h; i < nx - h; ++i) {
+                if constexpr (Dim == 2) {
+                    if (data(first_j, i) != data(second_j, i)) return false;
+                } else {
+                    if (data(k, first_j, i) != data(k, second_j, i)) return false;
+                }
+            }
+        }
+        return true;
+    };
+
+    if (south) {
+        for (int distance = 0; distance < h; ++distance) {
+            if (!rows_equal(h - 1 - distance, h + distance)) return false;
+        }
+    }
+
+    if (north) {
+        const int wall_j = ny - h - 1;
+        for (int distance = 0; distance < h; ++distance) {
+            if (!rows_equal(wall_j + 1 + distance, wall_j - distance)) return false;
+        }
+    }
+
+    return true;
+}
+
+template<std::size_t Dim>
+bool positive_face_q2_dirichlet_halos(const Grid& grid, const Field<Dim>& field) {
+    static_assert(Dim == 2 || Dim == 3);
+
+    const int h = grid.get_halo_cells();
+    const bool south = grid.get_local_physical_start_y() == 0;
+    const bool north =
+        grid.get_local_physical_end_y() == grid.get_global_points_y() - 1;
+    const auto data = field.get_host_data();
+    const int ny = static_cast<int>(data.extent(Dim - 2));
+    const int nx = static_cast<int>(data.extent(Dim - 1));
+    int nz = 1;
+    if constexpr (Dim == 3) nz = static_cast<int>(data.extent(0));
+
+    const auto value = [&](int k, int j, int i) {
+        if constexpr (Dim == 2) return data(j, i);
+        else return data(k, j, i);
+    };
+
+    const auto wall_is_zero = [&](int wall_j) {
+        for (int k = 0; k < nz; ++k) {
+            for (int i = h; i < nx - h; ++i) {
+                if (value(k, wall_j, i) != real(0.0)) return false;
+            }
+        }
+        return true;
+    };
+
+    const auto rows_are_odd = [&](int exterior_j, int interior_j) {
+        for (int k = 0; k < nz; ++k) {
+            for (int i = h; i < nx - h; ++i) {
+                if (value(k, exterior_j, i) != -value(k, interior_j, i)) return false;
+            }
+        }
+        return true;
+    };
+
+    if (south) {
+        const int wall_j = h - 1;
+        if (!wall_is_zero(wall_j)) return false;
+        for (int distance = 1; distance < h; ++distance) {
+            if (!rows_are_odd(wall_j - distance, wall_j + distance)) return false;
+        }
+    }
+
+    if (north) {
+        const int wall_j = ny - h - 1;
+        if (!wall_is_zero(wall_j)) return false;
+        for (int distance = 1; distance <= h; ++distance) {
+            if (!rows_are_odd(wall_j + distance, wall_j - distance)) return false;
+        }
+    }
+
+    return true;
+}
+
+bool free_slip_physical_wind_halos(
+    const Grid& grid, const Field<3>& u, const Field<3>& v) {
+    const int h = grid.get_halo_cells();
+    const bool south = grid.get_local_physical_start_y() == 0;
+    const bool north =
+        grid.get_local_physical_end_y() == grid.get_global_points_y() - 1;
+    const auto u_data = u.get_host_data();
+    const auto v_data = v.get_host_data();
+    const int nz = static_cast<int>(u_data.extent(0));
+    const int ny = static_cast<int>(u_data.extent(1));
+    const int nx = static_cast<int>(u_data.extent(2));
+    const auto h1 = Kokkos::create_mirror_view_and_copy(
+        Kokkos::HostSpace(),
+        grid.geometry().device_view(VVM::Core::Geometry::HorizontalLocation::U)
+            .contravariant_to_physical.a11.one_dimensional);
+
+    const auto physical_u_equal = [&](int k, int exterior_j, int interior_j, int i) {
+        const Real actual = h1(exterior_j) * u_data(k, exterior_j, i);
+        const Real expected = h1(interior_j) * u_data(k, interior_j, i);
+        const Real scale = std::max(real(1.0), std::max(Kokkos::abs(actual), Kokkos::abs(expected)));
+        return Kokkos::abs(actual - expected) <=
+            real(512.0) * std::numeric_limits<Real>::epsilon() * scale;
+    };
+
+    for (int k = 0; k < nz; ++k) {
+        for (int i = h; i < nx - h; ++i) {
+            if (south) {
+                const int wall_j = h - 1;
+                if (v_data(k, wall_j, i) != real(0.0)) return false;
+                for (int distance = 0; distance < h; ++distance) {
+                    const int exterior_j = wall_j - distance;
+                    if (!physical_u_equal(k, exterior_j, h + distance, i)) return false;
+                    if (distance > 0 &&
+                        v_data(k, exterior_j, i) != -v_data(k, wall_j + distance, i)) return false;
+                }
+            }
+            if (north) {
+                const int wall_j = ny - h - 1;
+                if (v_data(k, wall_j, i) != real(0.0)) return false;
+                for (int distance = 0; distance < h; ++distance) {
+                    if (!physical_u_equal(k, wall_j + 1 + distance, wall_j - distance, i)) return false;
+                }
+                for (int distance = 1; distance <= h; ++distance) {
+                    if (v_data(k, wall_j + distance, i) != -v_data(k, wall_j - distance, i)) return false;
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
 struct Sources {
     Field<3> xi;
     Field<3> eta;
@@ -159,12 +313,36 @@ struct Sources {
         global_i = wrap(global_i, nx);
         global_j = clamp(global_j, ny);
 
+        if (global_j == ny - 1) {
+            return real(0.0);
+        }
+
         const Real angle =
             real(2.0) * real(std::acos(-1.0)) * Real(global_i) / Real(nx);
 
         return factor(step) *
             (real(1.0e-5) * Kokkos::sin(angle) +
              real(2.0e-6) * Real(global_j - ny / 2));
+    }
+
+    void initialize_step(const Grid& grid, HaloExchanger& halo, int step) {
+        initialize_step(grid, step);
+
+        halo.exchange_multiple_halos(
+            std::vector<Field<3>*>{
+                &xi,
+                &eta
+            });
+
+        VVM::Core::Boundary::HorizontalBoundaryStencils boundary(grid);
+        boundary.fill_positive_face_q2_homogeneous_dirichlet_halos(xi);
+        boundary.fill_centered_q2_neumann_halos(eta);
+    }
+
+    bool free_slip_boundaries(const Grid& grid) const {
+        return
+            positive_face_q2_dirichlet_halos(grid, xi) &&
+            centered_q2_neumann_halos(grid, eta);
     }
 
     void initialize_step(const Grid& grid, int step) {
@@ -436,16 +614,16 @@ struct DiagnosticState {
         return result;
     }
 
-    bool reference_wall_copy(const Grid& grid) const {
+    bool free_slip_boundaries(const Grid& grid) const {
         return
-            constant_q2_halos(grid, psi) &&
-            constant_q2_halos(grid, psi_previous) &&
-            constant_q2_halos(grid, chi) &&
-            constant_q2_halos(grid, chi_previous) &&
-            constant_q2_halos(grid, zeta) &&
-            constant_q2_halos(grid, w) &&
-            constant_q2_halos(grid, u) &&
-            constant_q2_halos(grid, v);
+            positive_face_q2_dirichlet_halos(grid, psi) &&
+            positive_face_q2_dirichlet_halos(grid, psi_previous) &&
+            centered_q2_neumann_halos(grid, chi) &&
+            centered_q2_neumann_halos(grid, chi_previous) &&
+            positive_face_q2_dirichlet_halos(grid, zeta) &&
+            centered_q2_neumann_halos(grid, w) &&
+            centered_q2_neumann_halos(grid, w_previous) &&
+            free_slip_physical_wind_halos(grid, u, v);
     }
 
     bool physical_checks(const Grid& grid, const Sources& sources, int step) const {
@@ -551,6 +729,9 @@ int run_case(const Grid& grid, HaloExchanger& halo, bool stretched) {
     options.horizontal.diagonal_shift = shift;
     options.horizontal.refresh_initial_halos = true;
     options.inverse_dz = real(0.01);
+    options.boundary_policy =
+        WindSolver::HorizontalDiagnosticBoundaryPolicy::
+            RegularLatLonFreeSlipChannel;
 
     const auto execute = [&](VerticalEllipticSolver& vertical,
                              HorizontalEllipticSolver& horizontal,
@@ -565,7 +746,7 @@ int run_case(const Grid& grid, HaloExchanger& halo, bool stretched) {
             options);
     };
 
-    sources.initialize_step(grid, 0);
+    sources.initialize_step(grid, halo, 0);
     direct.reset_all();
     replayed.reset_all();
     direct.prepare_step(grid, sources, 0);
@@ -635,7 +816,7 @@ int run_case(const Grid& grid, HaloExchanger& halo, bool stretched) {
     int failures = 0;
 
     for (int step = 0; step < 3; ++step) {
-        sources.initialize_step(grid, step);
+        sources.initialize_step(grid, halo, step);
         direct.prepare_step(grid, sources, step);
         replayed.prepare_step(grid, sources, step);
         Kokkos::fence();
@@ -687,15 +868,16 @@ int run_case(const Grid& grid, HaloExchanger& halo, bool stretched) {
                 sources,
                 step);
 
-        const bool reference_walls =
-            direct.reference_wall_copy(grid) &&
-            replayed.reference_wall_copy(grid);
+        const bool free_slip_walls =
+            sources.free_slip_boundaries(grid) &&
+            direct.free_slip_boundaries(grid) &&
+            replayed.free_slip_boundaries(grid);
 
         int local_flags[4] = {
             int(exact),
             int(sources_preserved),
             int(physical),
-            int(reference_walls)
+            int(free_slip_walls)
         };
 
         int global_flags[4] = {};
@@ -716,7 +898,7 @@ int run_case(const Grid& grid, HaloExchanger& halo, bool stretched) {
 
         if (grid.get_mpi_rank() == 0) {
             std::printf(
-                "%s ranks=%d stretched=%d step=%d exact=%d sources=%d physical=%d reference_walls=%d %s\n",
+                "%s ranks=%d stretched=%d step=%d exact=%d sources=%d physical=%d free_slip_walls=%d %s\n",
                 execution,
                 grid.get_mpi_size(),
                 int(stretched),

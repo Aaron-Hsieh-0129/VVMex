@@ -3,9 +3,10 @@
 #include "core/boundary/HorizontalBoundaryStencils.hpp"
 #include "core/geometry/HorizontalLocation.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
-#include "core/vvm_types.hpp"
-#include "dynamics/operators/HorizontalLaplaceBeltrami.hpp"
 #include "dynamics/solvers/HorizontalEllipticSolver.hpp"
+#include "dynamics/solvers/HorizontalWindStateAdapter.hpp"
+#include "dynamics/solvers/VerticalEllipticSolver.hpp"
+#include "dynamics/solvers/WindSolver.hpp"
 #include "utils/ConfigurationManager.hpp"
 
 #include <Kokkos_Core.hpp>
@@ -33,391 +34,470 @@ using VVM::Core::HaloExchanger;
 using VVM::Core::Boundary::HorizontalBoundaryStencils;
 using VVM::Core::Geometry::HorizontalLocation;
 using VVM::Dynamics::HorizontalEllipticSolver;
-using VVM::Dynamics::Operators::make_horizontal_laplace_beltrami_device_view;
+using VVM::Dynamics::HorizontalWindStateAdapter;
+using VVM::Dynamics::VerticalEllipticSolver;
+using VVM::Dynamics::WindSolver;
 using VVM::Utils::ConfigurationManager;
 
-int mpi_rank = 0;
-int failures = 0;
+constexpr Real sentinel = real(-12345.0);
 
-void check(
-    const bool condition,
-    const char* message) {
-
-    if (condition) {
-        return;
-    }
-
-    ++failures;
-
-    std::fprintf(
-        stderr,
-        "Rank %d FAIL: %s\n",
-        mpi_rank,
-        message);
-}
-
-[[noreturn]] void fatal(
-    const char* message) {
-
-    std::fprintf(
-        stderr,
-        "Rank %d fatal: %s\n",
-        mpi_rank,
-        message);
-
-    MPI_Abort(
-        MPI_COMM_WORLD,
-        2);
-
+[[noreturn]] void fatal(const char* message) {
+    std::fprintf(stderr, "%s\n", message);
+    MPI_Abort(MPI_COMM_WORLD, 2);
     std::abort();
 }
 
 #if defined(ENABLE_NCCL)
-void nccl_check(
-    const ncclResult_t result) {
-
-    if (result != ncclSuccess) {
-        fatal(
-            ncclGetErrorString(
-                result));
+void cuda_check(cudaError_t error) {
+    if (error != cudaSuccess) {
+        fatal(cudaGetErrorString(error));
     }
 }
+
+void nccl_check(ncclResult_t error) {
+    if (error != ncclSuccess) {
+        fatal(ncclGetErrorString(error));
+    }
+}
+
+struct Graph {
+    cudaGraph_t graph = nullptr;
+    cudaGraphExec_t executable = nullptr;
+
+    ~Graph() {
+        if (executable) {
+            cudaGraphExecDestroy(executable);
+        }
+
+        if (graph) {
+            cudaGraphDestroy(graph);
+        }
+    }
+};
 #endif
 
-bool close_enough(
-    const Real actual,
-    const Real expected) {
+template<std::size_t Dim>
+std::vector<Real> snapshot(const Field<Dim>& field) {
+    const auto data = field.get_host_data();
+    std::vector<Real> values;
+    values.reserve(data.size());
 
-    const Real scale =
+    if constexpr (Dim == 0) {
+        values.push_back(data());
+    } else if constexpr (Dim == 1) {
+        for (int k = 0; k < static_cast<int>(data.extent(0)); ++k) {
+            values.push_back(data(k));
+        }
+    } else if constexpr (Dim == 2) {
+        for (int j = 0; j < static_cast<int>(data.extent(0)); ++j) {
+            for (int i = 0; i < static_cast<int>(data.extent(1)); ++i) {
+                values.push_back(data(j, i));
+            }
+        }
+    } else if constexpr (Dim == 3) {
+        for (int k = 0; k < static_cast<int>(data.extent(0)); ++k) {
+            for (int j = 0; j < static_cast<int>(data.extent(1)); ++j) {
+                for (int i = 0; i < static_cast<int>(data.extent(2)); ++i) {
+                    values.push_back(data(k, j, i));
+                }
+            }
+        }
+    }
+
+    return values;
+}
+
+void append(std::vector<Real>& destination, const std::vector<Real>& source) {
+    destination.insert(destination.end(), source.begin(), source.end());
+}
+
+int wrap(int value, int size) {
+    value %= size;
+
+    if (value < 0) {
+        value += size;
+    }
+
+    return value;
+}
+
+int clamp(int value, int size) {
+    return std::max(0, std::min(size - 1, value));
+}
+
+bool close_enough(Real actual, Real expected) {
+    const Real scale = std::max(
+        real(1.0),
         std::max(
-            real(1.0),
-            std::max(
-                Kokkos::abs(actual),
-                Kokkos::abs(expected)));
+            Kokkos::abs(actual),
+            Kokkos::abs(expected)));
 
-    return
-        Kokkos::abs(
-            actual -
-            expected) <=
+    return Kokkos::abs(actual - expected) <=
         real(512.0) *
-            std::numeric_limits<Real>::epsilon() *
-            scale;
+        std::numeric_limits<Real>::epsilon() *
+        scale;
 }
 
-void initialize_boundary_fields(
+template<std::size_t Dim>
+bool centered_q2_neumann_halos(
     const Grid& grid,
-    Field<2>& centered,
-    Field<2>& positive_face,
-    Field<3>& u,
-    Field<3>& v) {
+    const Field<Dim>& field) {
 
-    const int ny =
-        grid.get_local_total_points_y();
+    static_assert(Dim == 2 || Dim == 3);
 
-    const int nx =
-        grid.get_local_total_points_x();
-
-    const int nz =
-        static_cast<int>(
-            u.get_device_data().extent(0));
-
-    const int h =
-        grid.get_halo_cells();
-
-    const int start_y =
-        grid.get_local_physical_start_y();
-
-    const int start_x =
-        grid.get_local_physical_start_x();
-
-    auto centered_data =
-        centered.get_mutable_device_data();
-
-    auto face_data =
-        positive_face.get_mutable_device_data();
-
-    auto u_data =
-        u.get_mutable_device_data();
-
-    auto v_data =
-        v.get_mutable_device_data();
-
-    const auto h1_at_u =
-        grid.geometry()
-            .device_view(
-                HorizontalLocation::U)
-            .contravariant_to_physical.a11;
-
-    Kokkos::parallel_for(
-        "InitializeRLLChannelBoundaryFields",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
-            {0, 0},
-            {ny, nx}),
-        KOKKOS_LAMBDA(
-            const int j,
-            const int i) {
-
-            const Real global_j =
-                static_cast<Real>(
-                    start_y +
-                    j -
-                    h);
-
-            const Real global_i =
-                static_cast<Real>(
-                    start_x +
-                    i -
-                    h);
-
-            centered_data(j, i) =
-                real(10.0) +
-                real(0.5) *
-                    global_j +
-                real(0.01) *
-                    global_i;
-
-            face_data(j, i) =
-                real(20.0) -
-                real(0.25) *
-                    global_j +
-                real(0.02) *
-                    global_i;
-        });
-
-    Kokkos::parallel_for(
-        "InitializeRLLChannelWindFields",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>(
-            {0, 0, 0},
-            {nz, ny, nx}),
-        KOKKOS_LAMBDA(
-            const int k,
-            const int j,
-            const int i) {
-
-            const Real covariant_u =
-                real(3.0) +
-                real(0.2) *
-                    static_cast<Real>(k) +
-                real(0.01) *
-                    static_cast<Real>(
-                        start_x +
-                        i -
-                        h);
-
-            u_data(k, j, i) =
-                covariant_u /
-                h1_at_u(j, i);
-
-            v_data(k, j, i) =
-                real(1.0) +
-                real(0.1) *
-                    static_cast<Real>(k) +
-                real(0.03) *
-                    static_cast<Real>(
-                        start_y +
-                        j -
-                        h);
-        });
-}
-
-void test_field_specific_boundaries(
-    const Grid& grid,
-    HaloExchanger& halo) {
-
-    const int h =
-        grid.get_halo_cells();
-
-    const int ny =
-        grid.get_local_total_points_y();
-
-    const int nx =
-        grid.get_local_total_points_x();
-
-    const int nz = 3;
-
-    Field<2> centered(
-        "channel_centered",
-        {ny, nx});
-
-    Field<2> positive_face(
-        "channel_positive_face",
-        {ny, nx});
-
-    Field<3> u(
-        "channel_physical_u",
-        {nz, ny, nx});
-
-    Field<3> v(
-        "channel_physical_v",
-        {nz, ny, nx});
-
-    initialize_boundary_fields(
-        grid,
-        centered,
-        positive_face,
-        u,
-        v);
-
-    halo.exchange_multiple_halos(
-        std::vector<Field<2>*>{
-            &centered,
-            &positive_face
-        });
-
-    halo.exchange_multiple_halos(
-        std::vector<Field<3>*>{
-            &u,
-            &v
-        });
-
-    HorizontalBoundaryStencils boundary(
-        grid);
-
-    boundary
-        .fill_centered_q2_neumann_halos(
-            centered);
-
-    boundary
-        .fill_positive_face_q2_homogeneous_dirichlet_halos(
-            positive_face);
-
-    boundary
-        .fill_regular_lat_lon_free_slip_physical_wind_halos(
-            u,
-            v);
-
-    Kokkos::fence();
-
-    const auto centered_host =
-        centered.get_host_data();
-
-    const auto face_host =
-        positive_face.get_host_data();
-
-    const auto u_host =
-        u.get_host_data();
-
-    const auto v_host =
-        v.get_host_data();
-
-    const auto h1_device =
-        grid.geometry()
-            .device_view(
-                HorizontalLocation::U)
-            .contravariant_to_physical.a11
-            .one_dimensional;
-
-    const auto h1_host =
-        Kokkos::create_mirror_view_and_copy(
-            Kokkos::HostSpace(),
-            h1_device);
-
+    const int h = grid.get_halo_cells();
     const bool owns_south =
         grid.get_local_physical_start_y() == 0;
-
     const bool owns_north =
         grid.get_local_physical_end_y() ==
         grid.get_global_points_y() - 1;
 
-    if (owns_south) {
-        const int wall_j =
-            h - 1;
+    const auto data = field.get_host_data();
 
-        for (int i = h;
-             i < nx-h;
-             ++i) {
+    if constexpr (Dim == 2) {
+        const int ny =
+            static_cast<int>(data.extent(0));
+
+        const int nx =
+            static_cast<int>(data.extent(1));
+
+        if (owns_south) {
+            for (int distance = 0;
+                 distance < h;
+                 ++distance) {
+
+                const int exterior_j =
+                    h - 1 - distance;
+
+                const int interior_j =
+                    h + distance;
+
+                for (int i = h;
+                     i < nx - h;
+                     ++i) {
+
+                    if (data(exterior_j, i) !=
+                        data(interior_j, i)) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        if (owns_north) {
+            const int wall_j =
+                ny - h - 1;
 
             for (int distance = 0;
                  distance < h;
                  ++distance) {
 
-                check(
-                    centered_host(
-                        wall_j -
-                            distance,
-                        i) ==
-                    centered_host(
-                        h +
-                            distance,
-                        i),
-                    "South centered field must use even reflection.");
+                const int exterior_j =
+                    wall_j + 1 + distance;
 
-                if (distance == 0) {
-                    check(
-                        face_host(
-                            wall_j,
-                            i) ==
-                        real(0.0),
-                        "South positive-face wall value must be zero.");
-                } else {
-                    check(
-                        face_host(
-                            wall_j -
-                                distance,
-                            i) ==
-                        -face_host(
-                            wall_j +
-                                distance,
-                            i),
-                        "South positive-face exterior value must use odd reflection.");
+                const int interior_j =
+                    wall_j - distance;
+
+                for (int i = h;
+                     i < nx - h;
+                     ++i) {
+
+                    if (data(exterior_j, i) !=
+                        data(interior_j, i)) {
+                        return false;
+                    }
                 }
             }
         }
+    }
+
+    if constexpr (Dim == 3) {
+        const int nz =
+            static_cast<int>(data.extent(0));
+
+        const int ny =
+            static_cast<int>(data.extent(1));
+
+        const int nx =
+            static_cast<int>(data.extent(2));
+
+        if (owns_south) {
+            for (int distance = 0;
+                 distance < h;
+                 ++distance) {
+
+                const int exterior_j =
+                    h - 1 - distance;
+
+                const int interior_j =
+                    h + distance;
+
+                for (int k = 0;
+                     k < nz;
+                     ++k) {
+
+                    for (int i = h;
+                         i < nx - h;
+                         ++i) {
+
+                        if (data(k, exterior_j, i) !=
+                            data(k, interior_j, i)) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (owns_north) {
+            const int wall_j =
+                ny - h - 1;
+
+            for (int distance = 0;
+                 distance < h;
+                 ++distance) {
+
+                const int exterior_j =
+                    wall_j + 1 + distance;
+
+                const int interior_j =
+                    wall_j - distance;
+
+                for (int k = 0;
+                     k < nz;
+                     ++k) {
+
+                    for (int i = h;
+                         i < nx - h;
+                         ++i) {
+
+                        if (data(k, exterior_j, i) !=
+                            data(k, interior_j, i)) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
+template<std::size_t Dim>
+bool positive_face_q2_dirichlet_halos(
+    const Grid& grid,
+    const Field<Dim>& field) {
+
+    static_assert(Dim == 2 || Dim == 3);
+
+    const int h = grid.get_halo_cells();
+    const bool owns_south =
+        grid.get_local_physical_start_y() == 0;
+    const bool owns_north =
+        grid.get_local_physical_end_y() ==
+        grid.get_global_points_y() - 1;
+
+    const auto data = field.get_host_data();
+
+    if constexpr (Dim == 2) {
+        const int ny =
+            static_cast<int>(data.extent(0));
+
+        const int nx =
+            static_cast<int>(data.extent(1));
+
+        if (owns_south) {
+            const int wall_j = h - 1;
+
+            for (int i = h;
+                 i < nx - h;
+                 ++i) {
+
+                if (data(wall_j, i) != real(0.0)) {
+                    return false;
+                }
+
+                for (int distance = 1;
+                     distance < h;
+                     ++distance) {
+
+                    if (data(wall_j - distance, i) !=
+                        -data(wall_j + distance, i)) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        if (owns_north) {
+            const int wall_j =
+                ny - h - 1;
+
+            for (int i = h;
+                 i < nx - h;
+                 ++i) {
+
+                if (data(wall_j, i) != real(0.0)) {
+                    return false;
+                }
+
+                for (int distance = 1;
+                     distance <= h;
+                     ++distance) {
+
+                    if (data(wall_j + distance, i) !=
+                        -data(wall_j - distance, i)) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
+    if constexpr (Dim == 3) {
+        const int nz =
+            static_cast<int>(data.extent(0));
+
+        const int ny =
+            static_cast<int>(data.extent(1));
+
+        const int nx =
+            static_cast<int>(data.extent(2));
+
+        if (owns_south) {
+            const int wall_j = h - 1;
+
+            for (int k = 0;
+                 k < nz;
+                 ++k) {
+
+                for (int i = h;
+                     i < nx - h;
+                     ++i) {
+
+                    if (data(k, wall_j, i) != real(0.0)) {
+                        return false;
+                    }
+
+                    for (int distance = 1;
+                         distance < h;
+                         ++distance) {
+
+                        if (data(k, wall_j - distance, i) !=
+                            -data(k, wall_j + distance, i)) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (owns_north) {
+            const int wall_j =
+                ny - h - 1;
+
+            for (int k = 0;
+                 k < nz;
+                 ++k) {
+
+                for (int i = h;
+                     i < nx - h;
+                     ++i) {
+
+                    if (data(k, wall_j, i) != real(0.0)) {
+                        return false;
+                    }
+
+                    for (int distance = 1;
+                         distance <= h;
+                         ++distance) {
+
+                        if (data(k, wall_j + distance, i) !=
+                            -data(k, wall_j - distance, i)) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
+bool free_slip_physical_wind_halos(
+    const Grid& grid,
+    const Field<3>& u,
+    const Field<3>& v) {
+
+    const int h = grid.get_halo_cells();
+    const bool owns_south =
+        grid.get_local_physical_start_y() == 0;
+    const bool owns_north =
+        grid.get_local_physical_end_y() ==
+        grid.get_global_points_y() - 1;
+
+    const auto u_data = u.get_host_data();
+    const auto v_data = v.get_host_data();
+
+    const int nz =
+        static_cast<int>(u_data.extent(0));
+
+    const int ny =
+        static_cast<int>(u_data.extent(1));
+
+    const int nx =
+        static_cast<int>(u_data.extent(2));
+
+    const auto h1_device =
+        grid.geometry()
+            .device_view(HorizontalLocation::U)
+            .contravariant_to_physical.a11
+            .one_dimensional;
+
+    const auto h1 =
+        Kokkos::create_mirror_view_and_copy(
+            Kokkos::HostSpace(),
+            h1_device);
+
+    if (owns_south) {
+        const int wall_j = h - 1;
 
         for (int k = 0;
              k < nz;
              ++k) {
 
             for (int i = h;
-                 i < nx-h;
+                 i < nx - h;
                  ++i) {
 
-                check(
-                    v_host(
-                        k,
-                        wall_j,
-                        i) ==
-                    real(0.0),
-                    "South physical normal wind must vanish at the wall.");
+                if (v_data(k, wall_j, i) != real(0.0)) {
+                    return false;
+                }
 
                 for (int distance = 0;
                      distance < h;
                      ++distance) {
 
                     const int exterior_j =
-                        wall_j -
-                        distance;
+                        wall_j - distance;
 
                     const int interior_j =
-                        h +
-                        distance;
+                        h + distance;
 
-                    check(
-                        close_enough(
-                            h1_host(exterior_j) *
-                                u_host(
-                                    k,
-                                    exterior_j,
-                                    i),
-                            h1_host(interior_j) *
-                                u_host(
-                                    k,
-                                    interior_j,
-                                    i)),
-                        "South covariant tangential wind must use even reflection.");
+                    if (!close_enough(
+                            h1(exterior_j) *
+                                u_data(k, exterior_j, i),
+                            h1(interior_j) *
+                                u_data(k, interior_j, i))) {
+                        return false;
+                    }
 
-                    if (distance > 0) {
-                        check(
-                            v_host(
-                                k,
-                                exterior_j,
-                                i) ==
-                            -v_host(
-                                k,
-                                wall_j +
-                                    distance,
-                                i),
-                            "South normal wind must use odd reflection.");
+                    if (distance > 0 &&
+                        v_data(k, exterior_j, i) !=
+                        -v_data(k, wall_j + distance, i)) {
+                        return false;
                     }
                 }
             }
@@ -426,575 +506,1000 @@ void test_field_specific_boundaries(
 
     if (owns_north) {
         const int wall_j =
-            ny -
-            h -
-            1;
-
-        const int first_halo_j =
-            wall_j +
-            1;
-
-        for (int i = h;
-             i < nx-h;
-             ++i) {
-
-            for (int distance = 0;
-                 distance < h;
-                 ++distance) {
-
-                check(
-                    centered_host(
-                        first_halo_j +
-                            distance,
-                        i) ==
-                    centered_host(
-                        wall_j -
-                            distance,
-                        i),
-                    "North centered field must use even reflection.");
-            }
-
-            check(
-                face_host(
-                    wall_j,
-                    i) ==
-                real(0.0),
-                "North positive-face wall value must be zero.");
-
-            for (int distance = 1;
-                 distance <= h;
-                 ++distance) {
-
-                check(
-                    face_host(
-                        wall_j +
-                            distance,
-                        i) ==
-                    -face_host(
-                        wall_j -
-                            distance,
-                        i),
-                    "North positive-face exterior value must use odd reflection.");
-            }
-        }
+            ny - h - 1;
 
         for (int k = 0;
              k < nz;
              ++k) {
 
             for (int i = h;
-                 i < nx-h;
+                 i < nx - h;
                  ++i) {
 
-                check(
-                    v_host(
-                        k,
-                        wall_j,
-                        i) ==
-                    real(0.0),
-                    "North physical normal wind must vanish at the wall.");
+                if (v_data(k, wall_j, i) != real(0.0)) {
+                    return false;
+                }
 
                 for (int distance = 0;
                      distance < h;
                      ++distance) {
 
                     const int exterior_j =
-                        first_halo_j +
-                        distance;
+                        wall_j + 1 + distance;
 
                     const int interior_j =
-                        wall_j -
-                        distance;
+                        wall_j - distance;
 
-                    check(
-                        close_enough(
-                            h1_host(exterior_j) *
-                                u_host(
-                                    k,
-                                    exterior_j,
-                                    i),
-                            h1_host(interior_j) *
-                                u_host(
-                                    k,
-                                    interior_j,
-                                    i)),
-                        "North covariant tangential wind must use even reflection.");
+                    if (!close_enough(
+                            h1(exterior_j) *
+                                u_data(k, exterior_j, i),
+                            h1(interior_j) *
+                                u_data(k, interior_j, i))) {
+                        return false;
+                    }
                 }
 
                 for (int distance = 1;
                      distance <= h;
                      ++distance) {
 
-                    check(
-                        v_host(
-                            k,
-                            wall_j +
-                                distance,
-                            i) ==
-                        -v_host(
-                            k,
-                            wall_j -
-                                distance,
-                            i),
-                        "North normal wind must use odd reflection.");
+                    if (v_data(k, wall_j + distance, i) !=
+                        -v_data(k, wall_j - distance, i)) {
+                        return false;
+                    }
                 }
             }
         }
     }
+
+    return true;
 }
 
-void initialize_solver_fields(
-    const Grid& grid,
-    Field<2>& rhs_z,
-    Field<2>& rhs_t,
-    Field<2>& initial_z,
-    Field<2>& initial_t) {
+struct Sources {
+    Field<3> xi;
+    Field<3> eta;
+    Field<1> rhobar;
+    Field<1> rhobar_up;
+    Field<1> flex_mid;
+    Field<1> flex_up;
+    Field<1> spacing;
+    Field<0> zonal_covariant_increment;
 
-    const int ny =
-        grid.get_local_total_points_y();
+    explicit Sources(const Grid& grid)
+        : xi("combined_xi", {
+              grid.get_local_total_points_z(),
+              grid.get_local_total_points_y(),
+              grid.get_local_total_points_x()}),
+          eta("combined_eta", {
+              grid.get_local_total_points_z(),
+              grid.get_local_total_points_y(),
+              grid.get_local_total_points_x()}),
+          rhobar("combined_rhobar", {
+              grid.get_local_total_points_z()}),
+          rhobar_up("combined_rhobar_up", {
+              grid.get_local_total_points_z()}),
+          flex_mid("combined_flex_mid", {
+              grid.get_local_total_points_z()}),
+          flex_up("combined_flex_up", {
+              grid.get_local_total_points_z()}),
+          spacing("combined_spacing", {
+              grid.get_local_total_points_z()}),
+          zonal_covariant_increment(
+              "combined_zonal_covariant_increment",
+              {}) {}
 
-    const int nx =
-        grid.get_local_total_points_x();
+    void initialize_profiles(bool stretched) {
+        const int nz =
+            static_cast<int>(
+                rhobar.get_device_data().extent(0));
 
-    const int h =
-        grid.get_halo_cells();
+        auto rho =
+            Kokkos::create_mirror(
+                rhobar.get_device_data());
 
-    const int start_y =
-        grid.get_local_physical_start_y();
+        auto rho_up =
+            Kokkos::create_mirror(
+                rhobar_up.get_device_data());
 
-    const int start_x =
-        grid.get_local_physical_start_x();
+        auto mid =
+            Kokkos::create_mirror(
+                flex_mid.get_device_data());
 
-    auto rz =
-        rhs_z.get_mutable_device_data();
+        auto up =
+            Kokkos::create_mirror(
+                flex_up.get_device_data());
 
-    auto rt =
-        rhs_t.get_mutable_device_data();
+        for (int k = 0;
+             k < nz;
+             ++k) {
 
-    auto z =
-        initial_z.get_mutable_device_data();
+            rho(k) =
+                stretched
+                ? real(1.40) - real(0.02) * k
+                : real(1.0);
 
-    auto t =
-        initial_t.get_mutable_device_data();
+            rho_up(k) =
+                stretched
+                ? real(1.39) - real(0.02) * k
+                : real(1.0);
 
-    Kokkos::parallel_for(
-        "InitializeRLLChannelSolverFields",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
-            {0, 0},
-            {ny, nx}),
-        KOKKOS_LAMBDA(
-            const int j,
-            const int i) {
+            mid(k) =
+                stretched
+                ? real(1.10) + real(0.02) * k
+                : real(1.0);
 
-            const Real global_j =
-                static_cast<Real>(
-                    start_y +
+            up(k) =
+                stretched
+                ? real(0.90) + real(0.03) * k
+                : real(1.0);
+        }
+
+        Kokkos::deep_copy(
+            rhobar.get_mutable_device_data(),
+            rho);
+
+        Kokkos::deep_copy(
+            rhobar_up.get_mutable_device_data(),
+            rho_up);
+
+        Kokkos::deep_copy(
+            flex_mid.get_mutable_device_data(),
+            mid);
+
+        Kokkos::deep_copy(
+            flex_up.get_mutable_device_data(),
+            up);
+
+        HorizontalWindStateAdapter::initialize_spacing(
+            real(100.0),
+            flex_up,
+            spacing);
+    }
+
+    Real factor(int step) const {
+        return step == 2
+            ? real(0.0)
+            : Real(step + 1);
+    }
+
+    Real top_zeta_value(
+        const Grid& grid,
+        int step,
+        int global_j,
+        int global_i) const {
+
+        const int nx =
+            grid.get_global_points_x();
+
+        const int ny =
+            grid.get_global_points_y();
+
+        global_i =
+            wrap(global_i, nx);
+
+        global_j =
+            clamp(global_j, ny);
+
+        // Z/vorticity is positive-face staggered. The north physical row is
+        // the channel wall and must carry homogeneous Dirichlet data.
+        if (global_j == ny - 1) {
+            return real(0.0);
+        }
+
+        const Real angle =
+            real(2.0) *
+            real(std::acos(-1.0)) *
+            Real(global_i) /
+            Real(nx);
+
+        return factor(step) *
+            (real(1.0e-5) *
+                 Kokkos::sin(angle) +
+             real(2.0e-6) *
+                 Real(global_j - ny / 2));
+    }
+
+    void initialize_step(
+        const Grid& grid,
+        HaloExchanger& halo,
+        int step) {
+
+        const int nz =
+            grid.get_local_total_points_z();
+
+        const int ny =
+            grid.get_local_total_points_y();
+
+        const int nx =
+            grid.get_local_total_points_x();
+
+        const int h =
+            grid.get_halo_cells();
+
+        const int global_nx =
+            grid.get_global_points_x();
+
+        const int global_ny =
+            grid.get_global_points_y();
+
+        const Real scale =
+            factor(step);
+
+        const Real two_pi =
+            real(2.0) *
+            real(std::acos(-1.0));
+
+        auto x =
+            Kokkos::create_mirror(
+                xi.get_device_data());
+
+        auto e =
+            Kokkos::create_mirror(
+                eta.get_device_data());
+
+        for (int k = 0;
+             k < nz;
+             ++k) {
+
+            for (int j = 0;
+                 j < ny;
+                 ++j) {
+
+                const int global_j =
+                    clamp(
+                        grid.get_local_physical_start_y() +
+                            j -
+                            h,
+                        global_ny);
+
+                for (int i = 0;
+                     i < nx;
+                     ++i) {
+
+                    const int global_i =
+                        wrap(
+                            grid.get_local_physical_start_x() +
+                                i -
+                                h,
+                            global_nx);
+
+                    const Real longitude =
+                        two_pi *
+                        Real(global_i) /
+                        Real(global_nx);
+
+                    x(k, j, i) =
+                        scale *
+                        (real(2.0e-4) *
+                             Kokkos::sin(longitude) +
+                         real(4.0e-6) *
+                             Real(global_j) +
+                         real(1.0e-6) *
+                             Real(k));
+
+                    e(k, j, i) =
+                        scale *
+                        (real(1.5e-4) *
+                             Kokkos::cos(longitude) -
+                         real(3.0e-6) *
+                             Real(global_j) +
+                         real(2.0e-6) *
+                             Real(k));
+                }
+            }
+        }
+
+        Kokkos::deep_copy(
+            xi.get_mutable_device_data(),
+            x);
+
+        Kokkos::deep_copy(
+            eta.get_mutable_device_data(),
+            e);
+
+        Kokkos::deep_copy(
+            zonal_covariant_increment
+                .get_mutable_device_data(),
+            scale * real(1.0e6));
+
+        // The diagnostic borrows xi and eta as immutable inputs. Their owner
+        // therefore establishes the free-slip source boundary contract before
+        // entering the diagnostic or CUDA graph.
+        halo.exchange_multiple_halos(
+            std::vector<Field<3>*>{
+                &xi,
+                &eta
+            });
+
+        HorizontalBoundaryStencils boundary(grid);
+
+        boundary
+            .fill_positive_face_q2_homogeneous_dirichlet_halos(
+                xi);
+
+        boundary
+            .fill_centered_q2_neumann_halos(
+                eta);
+    }
+
+    bool free_slip_boundaries(
+        const Grid& grid) const {
+
+        return
+            positive_face_q2_dirichlet_halos(
+                grid,
+                xi) &&
+            centered_q2_neumann_halos(
+                grid,
+                eta);
+    }
+
+    std::vector<Real> values() const {
+        std::vector<Real> result;
+
+        append(result, snapshot(xi));
+        append(result, snapshot(eta));
+        append(result, snapshot(rhobar));
+        append(result, snapshot(rhobar_up));
+        append(result, snapshot(flex_mid));
+        append(result, snapshot(flex_up));
+        append(result, snapshot(spacing));
+        append(
+            result,
+            snapshot(
+                zonal_covariant_increment));
+
+        return result;
+    }
+};
+
+struct DiagnosticState {
+    Field<2> psi;
+    Field<2> psi_previous;
+    Field<2> chi;
+    Field<2> chi_previous;
+    Field<3> zeta;
+    Field<3> w;
+    Field<3> w_previous;
+    Field<3> u;
+    Field<3> v;
+    Field<2> rhs_psi;
+    Field<2> rhs_chi;
+    Field<2> solution_psi;
+    Field<2> solution_chi;
+
+    explicit DiagnosticState(const Grid& grid)
+        : psi("combined_psi", {
+              grid.get_local_total_points_y(),
+              grid.get_local_total_points_x()}),
+          psi_previous("combined_psi_previous", {
+              grid.get_local_total_points_y(),
+              grid.get_local_total_points_x()}),
+          chi("combined_chi", {
+              grid.get_local_total_points_y(),
+              grid.get_local_total_points_x()}),
+          chi_previous("combined_chi_previous", {
+              grid.get_local_total_points_y(),
+              grid.get_local_total_points_x()}),
+          zeta("combined_zeta", {
+              grid.get_local_total_points_z(),
+              grid.get_local_total_points_y(),
+              grid.get_local_total_points_x()}),
+          w("combined_w", {
+              grid.get_local_total_points_z(),
+              grid.get_local_total_points_y(),
+              grid.get_local_total_points_x()}),
+          w_previous("combined_w_previous", {
+              grid.get_local_total_points_z(),
+              grid.get_local_total_points_y(),
+              grid.get_local_total_points_x()}),
+          u("combined_u", {
+              grid.get_local_total_points_z(),
+              grid.get_local_total_points_y(),
+              grid.get_local_total_points_x()}),
+          v("combined_v", {
+              grid.get_local_total_points_z(),
+              grid.get_local_total_points_y(),
+              grid.get_local_total_points_x()}),
+          rhs_psi("combined_rhs_psi", {
+              grid.get_local_total_points_y(),
+              grid.get_local_total_points_x()}),
+          rhs_chi("combined_rhs_chi", {
+              grid.get_local_total_points_y(),
+              grid.get_local_total_points_x()}),
+          solution_psi("combined_solution_psi", {
+              grid.get_local_total_points_y(),
+              grid.get_local_total_points_x()}),
+          solution_chi("combined_solution_chi", {
+              grid.get_local_total_points_y(),
+              grid.get_local_total_points_x()}) {}
+
+    void reset_all() {
+        psi.set_to_zero();
+        psi_previous.set_to_zero();
+        chi.set_to_zero();
+        chi_previous.set_to_zero();
+        zeta.set_to_zero();
+        w.set_to_zero();
+        w_previous.set_to_zero();
+        u.set_to_zero();
+        v.set_to_zero();
+        rhs_psi.set_to_zero();
+        rhs_chi.set_to_zero();
+        solution_psi.set_to_zero();
+        solution_chi.set_to_zero();
+    }
+
+    void prepare_step(
+        const Grid& grid,
+        const Sources& sources,
+        int step) {
+
+        const int nz =
+            grid.get_local_total_points_z();
+
+        const int ny =
+            grid.get_local_total_points_y();
+
+        const int nx =
+            grid.get_local_total_points_x();
+
+        const int h =
+            grid.get_halo_cells();
+
+        const int top =
+            nz - h - 1;
+
+        auto zeta_host =
+            Kokkos::create_mirror(
+                zeta.get_device_data());
+
+        for (int k = 0;
+             k < nz;
+             ++k) {
+
+            for (int j = 0;
+                 j < ny;
+                 ++j) {
+
+                const int global_j =
+                    grid.get_local_physical_start_y() +
                     j -
-                    h);
+                    h;
 
-            const Real global_i =
-                static_cast<Real>(
-                    start_x +
+                for (int i = 0;
+                     i < nx;
+                     ++i) {
+
+                    const int global_i =
+                        grid.get_local_physical_start_x() +
+                        i -
+                        h;
+
+                    zeta_host(k, j, i) =
+                        k == top
+                        ? sources.top_zeta_value(
+                              grid,
+                              step,
+                              global_j,
+                              global_i)
+                        : sentinel;
+                }
+            }
+        }
+
+        Kokkos::deep_copy(
+            zeta.get_mutable_device_data(),
+            zeta_host);
+
+        Kokkos::deep_copy(
+            u.get_mutable_device_data(),
+            sentinel);
+
+        Kokkos::deep_copy(
+            v.get_mutable_device_data(),
+            sentinel);
+    }
+
+    WindSolver::RegularLatLonDiagnosticFields bind(
+        const Sources& sources) {
+
+        return {
+            psi,
+            psi_previous,
+            chi,
+            chi_previous,
+            zeta,
+            w,
+            w_previous,
+            sources.xi,
+            sources.eta,
+            u,
+            v,
+            sources.rhobar,
+            sources.rhobar_up,
+            sources.flex_mid,
+            sources.spacing,
+            sources.zonal_covariant_increment
+        };
+    }
+
+    WindSolver::HorizontalDiagnosticWorkspace workspace() {
+        return {
+            rhs_psi,
+            rhs_chi,
+            solution_psi,
+            solution_chi
+        };
+    }
+
+    std::vector<Real> values() const {
+        std::vector<Real> result;
+
+        append(result, snapshot(psi));
+        append(result, snapshot(psi_previous));
+        append(result, snapshot(chi));
+        append(result, snapshot(chi_previous));
+        append(result, snapshot(zeta));
+        append(result, snapshot(w));
+        append(result, snapshot(w_previous));
+        append(result, snapshot(u));
+        append(result, snapshot(v));
+        append(result, snapshot(rhs_psi));
+        append(result, snapshot(rhs_chi));
+        append(result, snapshot(solution_psi));
+        append(result, snapshot(solution_chi));
+
+        return result;
+    }
+
+    bool free_slip_boundaries(
+        const Grid& grid) const {
+
+        return
+            positive_face_q2_dirichlet_halos(
+                grid,
+                psi) &&
+            positive_face_q2_dirichlet_halos(
+                grid,
+                psi_previous) &&
+            centered_q2_neumann_halos(
+                grid,
+                chi) &&
+            centered_q2_neumann_halos(
+                grid,
+                chi_previous) &&
+            positive_face_q2_dirichlet_halos(
+                grid,
+                zeta) &&
+            centered_q2_neumann_halos(
+                grid,
+                w) &&
+            centered_q2_neumann_halos(
+                grid,
+                w_previous) &&
+            free_slip_physical_wind_halos(
+                grid,
+                u,
+                v);
+    }
+
+    bool physical_checks(
+        const Grid& grid,
+        const Sources& sources,
+        int step) const {
+
+        const int nz =
+            grid.get_local_total_points_z();
+
+        const int ny =
+            grid.get_local_total_points_y();
+
+        const int nx =
+            grid.get_local_total_points_x();
+
+        const int h =
+            grid.get_halo_cells();
+
+        const int bottom =
+            h - 1;
+
+        const int top =
+            nz - h - 1;
+
+        const auto zeta_data =
+            zeta.get_host_data();
+
+        const auto w_data =
+            w.get_host_data();
+
+        const auto u_data =
+            u.get_host_data();
+
+        const auto v_data =
+            v.get_host_data();
+
+        bool valid = true;
+
+        for (int j = h;
+             j < ny - h;
+             ++j) {
+
+            const int global_j =
+                grid.get_local_physical_start_y() +
+                j -
+                h;
+
+            for (int i = h;
+                 i < nx - h;
+                 ++i) {
+
+                const int global_i =
+                    grid.get_local_physical_start_x() +
                     i -
-                    h);
+                    h;
 
-            rz(j, i) =
-                real(1.0e-6) *
-                (
-                    real(0.5) +
-                    Kokkos::sin(
-                        real(0.23) *
-                        global_i)
-                );
+                valid =
+                    valid &&
+                    zeta_data(top, j, i) ==
+                        sources.top_zeta_value(
+                            grid,
+                            step,
+                            global_j,
+                            global_i);
 
-            rt(j, i) =
-                real(1.0e-6) *
-                (
-                    real(0.25) +
-                    Kokkos::cos(
-                        real(0.19) *
-                        global_j)
-                );
+                valid =
+                    valid &&
+                    w_data(bottom, j, i) ==
+                        real(0.0) &&
+                    w_data(top, j, i) ==
+                        real(0.0);
 
-            z(j, i) =
-                real(2.0) +
-                real(0.07) *
-                    global_i -
-                real(0.03) *
-                    global_j;
+                for (int k = h;
+                     k < top;
+                     ++k) {
 
-            t(j, i) =
-                real(-1.0) +
-                real(0.04) *
-                    global_i +
-                real(0.02) *
-                    global_j;
-        });
-}
+                    valid =
+                        valid &&
+                        std::isfinite(
+                            w_data(k, j, i));
+                }
 
-void test_fixed_iteration_channel_rows(
+                for (int k = bottom;
+                     k <= top;
+                     ++k) {
+
+                    valid =
+                        valid &&
+                        std::isfinite(
+                            zeta_data(k, j, i)) &&
+                        std::isfinite(
+                            u_data(k, j, i)) &&
+                        std::isfinite(
+                            v_data(k, j, i)) &&
+                        u_data(k, j, i) != sentinel &&
+                        v_data(k, j, i) != sentinel;
+                }
+
+                valid =
+                    valid &&
+                    std::isfinite(
+                        zeta_data(
+                            top + 1,
+                            j,
+                            i)) &&
+                    zeta_data(bottom, j, i) !=
+                        sentinel;
+            }
+        }
+
+        return valid;
+    }
+};
+
+int run_case(
     const Grid& grid,
-    HaloExchanger& halo) {
+    HaloExchanger& halo,
+    bool stretched) {
 
-    const int h =
-        grid.get_halo_cells();
+    Sources sources(grid);
+    sources.initialize_profiles(stretched);
 
-    const int ny =
-        grid.get_local_total_points_y();
-
-    const int nx =
-        grid.get_local_total_points_x();
-
-    Field<2> rhs_z(
-        "channel_rhs_z",
-        {ny, nx});
-
-    Field<2> rhs_t(
-        "channel_rhs_t",
-        {ny, nx});
-
-    Field<2> prior_z(
-        "channel_prior_z",
-        {ny, nx});
-
-    Field<2> prior_t(
-        "channel_prior_t",
-        {ny, nx});
-
-    Field<2> expected_z(
-        "channel_expected_z",
-        {ny, nx});
-
-    Field<2> expected_t(
-        "channel_expected_t",
-        {ny, nx});
-
-    Field<2> solved_z(
-        "channel_solved_z",
-        {ny, nx});
-
-    Field<2> solved_t(
-        "channel_solved_t",
-        {ny, nx});
-
-    initialize_solver_fields(
-        grid,
-        rhs_z,
-        rhs_t,
-        prior_z,
-        prior_t);
-
-    Kokkos::deep_copy(
-        solved_z.get_mutable_device_data(),
-        prior_z.get_device_data());
-
-    Kokkos::deep_copy(
-        solved_t.get_mutable_device_data(),
-        prior_t.get_device_data());
-
-    halo.exchange_multiple_halos(
-        {&prior_z, &prior_t},
-        1);
-
-    HorizontalBoundaryStencils boundary(
-        grid);
-
-    boundary
-        .fill_positive_face_q2_homogeneous_dirichlet_halos(
-            prior_z);
-
-    boundary
-        .fill_centered_q2_neumann_halos(
-            prior_t);
-
-    Kokkos::deep_copy(
-        expected_z.get_mutable_device_data(),
-        prior_z.get_device_data());
-
-    Kokkos::deep_copy(
-        expected_t.get_mutable_device_data(),
-        prior_t.get_device_data());
-
-    const auto laplace =
-        make_horizontal_laplace_beltrami_device_view(
-            grid.geometry());
-
-    const auto previous_z =
-        prior_z.get_device_data();
-
-    const auto previous_t =
-        prior_t.get_device_data();
-
-    const auto rz =
-        rhs_z.get_device_data();
-
-    const auto rt =
-        rhs_t.get_device_data();
-
-    auto ez =
-        expected_z.get_mutable_device_data();
-
-    auto et =
-        expected_t.get_mutable_device_data();
+    DiagnosticState direct(grid);
+    DiagnosticState replayed(grid);
 
     const Real shift =
-        real(0.25);
+        stretched
+        ? real(0.25)
+        : real(0.0);
 
-    const bool owns_north =
-        grid.get_local_physical_end_y() ==
-        grid.get_global_points_y() - 1;
+    VerticalEllipticSolver direct_vertical(
+        grid,
+        halo,
+        sources.rhobar,
+        sources.rhobar_up,
+        sources.flex_mid,
+        sources.flex_up,
+        real(0.01),
+        shift);
 
-    const int north_wall_j =
-        ny -
-        h -
-        1;
+    VerticalEllipticSolver replayed_vertical(
+        grid,
+        halo,
+        sources.rhobar,
+        sources.rhobar_up,
+        sources.flex_mid,
+        sources.flex_up,
+        real(0.01),
+        shift);
 
-    Kokkos::parallel_for(
-        "ReferenceRLLChannelPotentialIteration",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
-            {h, h},
-            {ny - h, nx - h}),
-        KOKKOS_LAMBDA(
-            const int j,
-            const int i) {
-
-            if (owns_north &&
-                j == north_wall_j) {
-
-                ez(j, i) =
-                    real(0.0);
-            } else {
-                const Real operator_z =
-                    laplace
-                        .calculate_jacobian_weighted_at_z(
-                            previous_z,
-                            j,
-                            i);
-
-                const Real diagonal_z =
-                    laplace
-                        .jacobian_weighted_diagonal_at_z(
-                            j,
-                            i);
-
-                ez(j, i) =
-                    previous_z(j, i) +
-                    (
-                        operator_z -
-                        laplace.divergence.z.sqrt_g(j, i) *
-                            rz(j, i)
-                    ) /
-                    (
-                        shift -
-                        diagonal_z
-                    );
-            }
-
-            const Real operator_t =
-                laplace
-                    .calculate_jacobian_weighted_at_t(
-                        previous_t,
-                        j,
-                        i);
-
-            const Real diagonal_t =
-                laplace
-                    .jacobian_weighted_diagonal_at_t(
-                        j,
-                        i);
-
-            et(j, i) =
-                previous_t(j, i) +
-                (
-                    operator_t -
-                    laplace.divergence.t.sqrt_g(j, i) *
-                        rt(j, i)
-                ) /
-                (
-                    shift -
-                    diagonal_t
-                );
-        });
-
-    halo.exchange_multiple_halos(
-        {&expected_z, &expected_t},
-        1);
-
-    boundary
-        .fill_positive_face_q2_homogeneous_dirichlet_halos(
-            expected_z);
-
-    boundary
-        .fill_centered_q2_neumann_halos(
-            expected_t);
-
-    HorizontalEllipticSolver solver(
+    HorizontalEllipticSolver direct_horizontal(
         grid,
         halo);
 
-    HorizontalEllipticSolver::Options options;
+    HorizontalEllipticSolver replayed_horizontal(
+        grid,
+        halo);
 
-    options.iterations = 1;
-    options.diagonal_shift = shift;
-    options.refresh_initial_halos = true;
+    WindSolver::RegularLatLonDiagnosticOptions options;
+    options.vertical_iterations = 4;
+    options.horizontal.iterations = 4;
+    options.horizontal.diagonal_shift = shift;
+    options.horizontal.refresh_initial_halos = true;
+    options.inverse_dz = real(0.01);
+    options.boundary_policy =
+        WindSolver::
+            HorizontalDiagnosticBoundaryPolicy::
+            RegularLatLonFreeSlipChannel;
 
-    solver
-        .solve_regular_lat_lon_channel_at_z_and_t(
-            rhs_z,
-            solved_z,
-            rhs_t,
-            solved_t,
-            options);
+    const auto execute =
+        [&](VerticalEllipticSolver& vertical,
+            HorizontalEllipticSolver& horizontal,
+            DiagnosticState& state) {
+
+            WindSolver::
+                diagnose_regular_latlon_wind(
+                    grid,
+                    halo,
+                    vertical,
+                    horizontal,
+                    state.bind(sources),
+                    state.workspace(),
+                    options);
+        };
+
+    sources.initialize_step(
+        grid,
+        halo,
+        0);
+
+    direct.reset_all();
+    replayed.reset_all();
+
+    direct.prepare_step(
+        grid,
+        sources,
+        0);
+
+    replayed.prepare_step(
+        grid,
+        sources,
+        0);
+
+    WindSolver::
+        prepare_regular_latlon_diagnostic_execution();
+
+    // Prepare every solver and communication operation before capture.
+    execute(
+        direct_vertical,
+        direct_horizontal,
+        direct);
 
     Kokkos::fence();
 
-    const auto expected_z_host =
-        expected_z.get_host_data();
+    execute(
+        replayed_vertical,
+        replayed_horizontal,
+        replayed);
 
-    const auto expected_t_host =
-        expected_t.get_host_data();
+    Kokkos::fence();
 
-    const auto solved_z_host =
-        solved_z.get_host_data();
+    direct.reset_all();
+    replayed.reset_all();
+    Kokkos::fence();
 
-    const auto solved_t_host =
-        solved_t.get_host_data();
+#if defined(ENABLE_NCCL)
+    Graph graph;
 
-    for (int j = h;
-         j < ny - h;
-         ++j) {
+    const auto stream =
+        Kokkos::Cuda().cuda_stream();
 
-        for (int i = h;
-             i < nx - h;
-             ++i) {
+    MPI_Barrier(
+        grid.get_comm());
 
-            check(
-                close_enough(
-                    solved_z_host(j, i),
-                    expected_z_host(j, i)),
-                "RLL channel Z row differs from the fixed-iteration reference.");
+    cuda_check(
+        cudaStreamBeginCapture(
+            stream,
+            cudaStreamCaptureModeGlobal));
 
-            check(
-                close_enough(
-                    solved_t_host(j, i),
-                    expected_t_host(j, i)),
-                "RLL channel T row differs from the fixed-iteration reference.");
-        }
+    execute(
+        replayed_vertical,
+        replayed_horizontal,
+        replayed);
+
+    cuda_check(
+        cudaStreamEndCapture(
+            stream,
+            &graph.graph));
+
+    if (!graph.graph) {
+        fatal(
+            "Regular latitude-longitude diagnostic capture returned no graph.");
     }
 
-    if (grid.get_local_physical_start_y() == 0) {
-        const int wall_j =
-            h - 1;
+    cuda_check(
+        cudaGraphInstantiate(
+            &graph.executable,
+            graph.graph,
+            nullptr,
+            nullptr,
+            0));
 
-        for (int i = h;
-             i < nx - h;
-             ++i) {
+    const char* execution =
+        "cuda_graph";
+#else
+    const char* execution =
+        "direct_repeat";
+#endif
 
-            check(
-                solved_z_host(
-                    wall_j,
-                    i) ==
-                real(0.0),
-                "Solved psi must be zero on the south wall.");
+    int failures = 0;
 
-            check(
-                solved_t_host(
-                    wall_j,
-                    i) ==
-                solved_t_host(
-                    h,
-                    i),
-                "Solved chi must have zero south normal difference.");
+    for (int step = 0;
+         step < 3;
+         ++step) {
+
+        sources.initialize_step(
+            grid,
+            halo,
+            step);
+
+        direct.prepare_step(
+            grid,
+            sources,
+            step);
+
+        replayed.prepare_step(
+            grid,
+            sources,
+            step);
+
+        Kokkos::fence();
+
+        const auto before_sources =
+            sources.values();
+
+        MPI_Barrier(
+            grid.get_comm());
+
+        execute(
+            direct_vertical,
+            direct_horizontal,
+            direct);
+
+        Kokkos::fence();
+
+        MPI_Barrier(
+            grid.get_comm());
+
+#if defined(ENABLE_NCCL)
+        cuda_check(
+            cudaGraphLaunch(
+                graph.executable,
+                stream));
+
+        cuda_check(
+            cudaStreamSynchronize(
+                stream));
+#else
+        execute(
+            replayed_vertical,
+            replayed_horizontal,
+            replayed);
+
+        Kokkos::fence();
+#endif
+
+        const bool exact =
+            direct.values() ==
+            replayed.values();
+
+        const bool sources_preserved =
+            sources.values() ==
+            before_sources;
+
+        const bool physical =
+            direct.physical_checks(
+                grid,
+                sources,
+                step) &&
+            replayed.physical_checks(
+                grid,
+                sources,
+                step);
+
+        const bool free_slip_walls =
+            sources.free_slip_boundaries(
+                grid) &&
+            direct.free_slip_boundaries(
+                grid) &&
+            replayed.free_slip_boundaries(
+                grid);
+
+        int local_flags[4] = {
+            int(exact),
+            int(sources_preserved),
+            int(physical),
+            int(free_slip_walls)
+        };
+
+        int global_flags[4] = {};
+
+        MPI_Allreduce(
+            local_flags,
+            global_flags,
+            4,
+            MPI_INT,
+            MPI_MIN,
+            grid.get_comm());
+
+        const bool pass =
+            global_flags[0] &&
+            global_flags[1] &&
+            global_flags[2] &&
+            global_flags[3];
+
+        if (grid.get_mpi_rank() == 0) {
+            std::printf(
+                "%s ranks=%d stretched=%d step=%d exact=%d sources=%d physical=%d free_slip_walls=%d %s\n",
+                execution,
+                grid.get_mpi_size(),
+                int(stretched),
+                step,
+                global_flags[0],
+                global_flags[1],
+                global_flags[2],
+                global_flags[3],
+                pass ? "PASS" : "FAIL");
         }
+
+        failures += !pass;
     }
 
-    if (grid.get_local_physical_end_y() ==
-        grid.get_global_points_y() - 1) {
+    Kokkos::fence();
 
-        const int wall_j =
-            ny -
-            h -
-            1;
+    MPI_Barrier(
+        grid.get_comm());
 
-        for (int i = h;
-             i < nx-h;
-             ++i) {
-
-            check(
-                solved_z_host(
-                    wall_j,
-                    i) ==
-                real(0.0),
-                "Solved psi must be zero on the north wall.");
-
-            check(
-                solved_t_host(
-                    wall_j + 1,
-                    i) ==
-                solved_t_host(
-                    wall_j,
-                    i),
-                "Solved chi must have zero north normal difference.");
-        }
-    }
+    return failures;
 }
 
 int run(
     const Grid& grid,
     HaloExchanger& halo) {
 
-    const auto& horizontal =
-        grid.horizontal_specification();
+    int failures = 0;
 
-    check(
-        grid.geometry().kind() ==
-            VVM::Core::Geometry::GeometryKind::RegularLatLon,
-        "Test requires regular latitude-longitude geometry.");
+    for (bool stretched :
+         {false, true}) {
 
-    check(
-        horizontal.topology.q1 ==
-            VVM::Core::HorizontalEdgeTopology::Periodic,
-        "Test requires periodic q1.");
-
-    check(
-        horizontal.topology.q2 ==
-            VVM::Core::HorizontalEdgeTopology::Bounded,
-        "Test requires bounded q2.");
-
-    if (failures == 0) {
-        test_field_specific_boundaries(
-            grid,
-            halo);
-
-        test_fixed_iteration_channel_rows(
-            grid,
-            halo);
+        failures +=
+            run_case(
+                grid,
+                halo,
+                stretched);
     }
 
-    int global_failures = 0;
-
-    MPI_Allreduce(
-        &failures,
-        &global_failures,
-        1,
-        MPI_INT,
-        MPI_SUM,
-        grid.get_comm());
-
-    if (mpi_rank == 0) {
-        if (global_failures == 0) {
-            std::printf(
-                "test_regular_latlon_channel_boundaries: PASS\n");
-        } else {
-            std::fprintf(
-                stderr,
-                "test_regular_latlon_channel_boundaries: %d failure(s)\n",
-                global_failures);
-        }
-    }
-
-    return
-        global_failures;
+    return failures;
 }
 
 } // namespace
@@ -1007,33 +1512,31 @@ int main(
         &argc,
         &argv);
 
-    int mpi_size = 0;
+    int rank = 0;
+    int ranks = 0;
+    int failures = 0;
 
     MPI_Comm_rank(
         MPI_COMM_WORLD,
-        &mpi_rank);
+        &rank);
 
     MPI_Comm_size(
         MPI_COMM_WORLD,
-        &mpi_size);
-
-    if (argc != 2 ||
-        (
-            mpi_size != 1 &&
-            mpi_size != 2 &&
-            mpi_size != 4
-        )) {
-
-        fatal(
-            "Provide one RLL configuration and use 1, 2, or 4 ranks.");
-    }
-
-    int result = 0;
+        &ranks);
 
     try {
         Kokkos::initialize(
             argc,
             argv);
+
+        if (argc != 2 ||
+            (ranks != 1 &&
+             ranks != 2 &&
+             ranks != 4)) {
+
+            fatal(
+                "Provide one RLL configuration and use 1, 2, or 4 ranks.");
+        }
 
         {
             ConfigurationManager config(
@@ -1045,7 +1548,7 @@ int main(
 #if defined(ENABLE_NCCL)
             ncclUniqueId id;
 
-            if (mpi_rank == 0) {
+            if (rank == 0) {
                 nccl_check(
                     ncclGetUniqueId(
                         &id));
@@ -1053,8 +1556,7 @@ int main(
 
             MPI_Bcast(
                 &id,
-                static_cast<int>(
-                    sizeof(id)),
+                int(sizeof(id)),
                 MPI_BYTE,
                 0,
                 grid.get_comm());
@@ -1064,9 +1566,9 @@ int main(
             nccl_check(
                 ncclCommInitRank(
                     &communicator,
-                    mpi_size,
+                    ranks,
                     id,
-                    mpi_rank));
+                    rank));
 
             {
                 HaloExchanger halo(
@@ -1076,7 +1578,7 @@ int main(
                     Kokkos::Cuda()
                         .cuda_stream());
 
-                result =
+                failures =
                     run(
                         grid,
                         halo);
@@ -1091,7 +1593,7 @@ int main(
             HaloExchanger halo(
                 grid);
 
-            result =
+            failures =
                 run(
                     grid,
                     halo);
@@ -1099,24 +1601,16 @@ int main(
         }
 
         Kokkos::finalize();
-    } catch (const std::exception& error) {
-        std::fprintf(
-            stderr,
-            "Rank %d unexpected exception: %s\n",
-            mpi_rank,
+    } catch (
+        const std::exception& error) {
+
+        fatal(
             error.what());
-
-        result = 1;
-
-        if (Kokkos::is_initialized()) {
-            Kokkos::finalize();
-        }
     }
 
     MPI_Finalize();
 
-    return
-        result == 0
-            ? 0
-            : 1;
+    return failures == 0
+        ? 0
+        : 1;
 }
