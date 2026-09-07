@@ -1986,3 +1986,5 @@ if(NOT VVM_ENABLE_GPU)
 endif()
 
 include(${CMAKE_CURRENT_LIST_DIR}/vertical_wind_diagnostic.cmake)
+
+include(${CMAKE_CURRENT_LIST_DIR}/vertical_elliptic_solver.cmake)
