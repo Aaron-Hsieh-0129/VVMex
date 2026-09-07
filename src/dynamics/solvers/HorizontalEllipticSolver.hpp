@@ -7,7 +7,6 @@
 #include "core/Grid.hpp"
 #include "core/boundary/HorizontalBoundaryStencils.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
-#include "core/vvm_types.hpp"
 #include "dynamics/operators/HorizontalLaplaceBeltrami.hpp"
 #include "dynamics/solvers/RegularLatLonEllipticMetrics.hpp"
 
@@ -53,6 +52,17 @@ public:
     // communication pattern.
     void solve_at_z_and_t(const Core::Field<2>& right_hand_side_at_z, Core::Field<2>& solution_at_z,
         const Core::Field<2>& right_hand_side_at_t, Core::Field<2>& solution_at_t, const Options& options);
+
+    // RLL tropical-channel specialization of the same paired fixed-iteration
+    // solver. Psi is homogeneous Dirichlet at the V/Z wall faces and chi is
+    // homogeneous Neumann at the centered T rows.
+    //
+    // This does not select or evolve the channel circulation. A compatible
+    // covariant zonal increment remains a separate wind-diagnostic input.
+    void solve_regular_lat_lon_channel_at_z_and_t(
+        const Core::Field<2>& right_hand_side_at_z, Core::Field<2>& solution_at_z,
+        const Core::Field<2>& right_hand_side_at_t, Core::Field<2>& solution_at_t,
+        const Options& options);
 
 private:
     void validate_field_extents(const Core::Field<2>& field, const char* role) const;
