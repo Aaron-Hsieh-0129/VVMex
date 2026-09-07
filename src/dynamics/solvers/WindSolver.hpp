@@ -45,6 +45,43 @@ public:
     // Currently implemented only for Cartesian geometry.
     void integrate_uv_from_top();
 
+    // Borrowed fields for the explicit mapped horizontal diagnostic stage.
+    // No fields are allocated here. All backing allocations must be distinct.
+    struct HorizontalDiagnosticFields {
+        Core::Field<2>& psi;
+        Core::Field<2>& psi_previous;
+        Core::Field<2>& chi;
+        Core::Field<2>& chi_previous;
+        const Core::Field<3>& zeta;
+        const Core::Field<3>& w;
+        const Core::Field<3>& xi;
+        const Core::Field<3>& eta;
+        Core::Field<3>& u;
+        Core::Field<3>& v;
+        const Core::Field<1>& rhobar;
+        const Core::Field<1>& rhobar_up;
+        const Core::Field<1>& flex_mid;
+        const Core::Field<1>& spacing;
+        const Core::Field<0>& zonal_covariant_increment;
+    };
+
+    struct HorizontalDiagnosticWorkspace {
+        Core::Field<2>& rhs_psi;
+        Core::Field<2>& rhs_chi;
+        Core::Field<2>& solution_psi;
+        Core::Field<2>& solution_chi;
+    };
+
+    // Call outside capture. Solver/transport preparation remains explicit in
+    // the caller, consistent with the existing composed replay tests.
+    static void prepare_horizontal_diagnostic_execution();
+
+    static void diagnose_horizontal_wind(const Core::Grid& grid, Core::HaloExchanger& halo,
+        HorizontalEllipticSolver& solver, const HorizontalDiagnosticFields& fields,
+        const HorizontalDiagnosticWorkspace& workspace, const HorizontalEllipticSolver::Options& options,
+        VVM::Real inverse_dz, int bottom, int top);
+
+
 private:
     void fill_bounded_q2_potential_halos(Core::Field<2>& first, Core::Field<2>& second) const;
     void exchange_2d_solver_halos(Core::Field<2>& first, Core::Field<2>& second, int depth);
