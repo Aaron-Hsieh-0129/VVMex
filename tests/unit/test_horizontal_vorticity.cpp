@@ -2,6 +2,7 @@
 #include "core/geometry/RegularLatLonGeometry.hpp"
 #include "dynamics/operators/HorizontalVorticity.hpp"
 #include "dynamics/operators/RegularLatLonHorizontalDeformation.hpp"
+#include "dynamics/operators/RegularLatLonHorizontalVorticityTransport.hpp"
 #include "dynamics/operators/RegularLatLonTopDeformation.hpp"
 
 #include <Kokkos_Core.hpp>
@@ -30,9 +31,10 @@ using VVM::Core::Geometry::HorizontalGeometry;
 using VVM::Core::Geometry::RegularLatLonGeometry;
 using VVM::Dynamics::Operators::make_horizontal_vorticity_device_view;
 using VVM::Dynamics::Operators::make_regular_lat_lon_horizontal_deformation_device_view;
+using VVM::Dynamics::Operators::make_regular_lat_lon_horizontal_vorticity_transport_device_view;
 using VVM::Dynamics::Operators::make_regular_lat_lon_top_deformation_device_view;
-using VVM::Dynamics::Operators::RegularLatLonHorizontalDeformationDeviceView;
 using VVM::Dynamics::Operators::RegularLatLonHorizontalDeformationFields;
+using VVM::Dynamics::Operators::RegularLatLonHorizontalVorticityTransportDeviceView;
 using VVM::Dynamics::Operators::RegularLatLonTopDeformationDeviceView;
 using VVM::Dynamics::Operators::RegularLatLonTopDeformationFields;
 
@@ -263,11 +265,12 @@ struct DeformationFunctor {
     using Profile = Kokkos::View<Real*>;
     using Plane = Kokkos::View<Real**, Layout>;
 
-    RegularLatLonHorizontalDeformationDeviceView operation;
+    RegularLatLonHorizontalVorticityTransportDeviceView transport;
     RegularLatLonHorizontalDeformationFields<Volume, Profile, Plane> fields;
     RegularLatLonTopDeformationDeviceView top_operation;
     RegularLatLonTopDeformationFields<Volume, Profile, Plane> top_fields;
     Kokkos::View<Real****, Layout> output;
+    int k_begin = 0;
     int k_top = 0;
     bool preparation_only = false;
 
@@ -283,8 +286,10 @@ struct DeformationFunctor {
             return;
         }
 
-        const auto xi = operation.calculate_xi_at_v(fields, k, j, i);
-        const auto eta = operation.calculate_eta_at_u(fields, k, j, i);
+        const auto xi = transport.components.calculate_xi_at_v(fields, k, j, i);
+        const auto eta = transport.components.calculate_eta_at_u(fields, k, j, i);
+        const auto xi_transport = transport.calculate_xi_at_v(fields, top_fields.w, k, j, i, k_begin, k_top);
+        const auto eta_transport = transport.calculate_eta_at_u(fields, top_fields.w, k, j, i, k_begin, k_top);
 
         output(0, k, j, i) = xi.stretching;
         output(1, k, j, i) = xi.twisting;
@@ -292,8 +297,35 @@ struct DeformationFunctor {
         output(3, k, j, i) = eta.stretching;
         output(4, k, j, i) = eta.twisting;
         output(5, k, j, i) = eta.planetary;
+        output(9, k, j, i) = xi_transport.q1;
+        output(10, k, j, i) = xi_transport.q2;
+        output(11, k, j, i) = xi_transport.vertical;
+        output(12, k, j, i) = eta_transport.q1;
+        output(13, k, j, i) = eta_transport.q2;
+        output(14, k, j, i) = eta_transport.vertical;
     }
 };
+
+Real wave(Real longitude) {
+    return std::sin(longitude) + real(0.4) * std::cos(real(2.0) * longitude);
+}
+
+// Independent constant-velocity reduction of the Takacs face formula.
+Real wave_face(Real left_longitude, Real spacing, Real velocity) {
+    const Real left = wave(left_longitude);
+    const Real right = wave(left_longitude + spacing);
+    const Real centered = real(0.5) * velocity * (left + right);
+
+    if (velocity >= real(0.0)) {
+        return centered - velocity
+            * (right - real(2.0) * left + wave(left_longitude - spacing))
+            / real(6.0);
+    }
+
+    return centered - velocity
+        * (left - real(2.0) * right + wave(left_longitude + real(2.0) * spacing))
+        / real(6.0);
+}
 
 template<typename Layout>
 void test_deformation(const HorizontalGeometry& geometry, Real radius, Real south_edge, const char* layout_name) {
@@ -314,8 +346,9 @@ void test_deformation(const HorizontalGeometry& geometry, Real radius, Real sout
     const Real dq2 = geometry.dq2();
 
     Functor functor;
-    functor.operation = make_regular_lat_lon_horizontal_deformation_device_view(geometry);
+    functor.transport = make_regular_lat_lon_horizontal_vorticity_transport_device_view(geometry);
     functor.top_operation = make_regular_lat_lon_top_deformation_device_view(geometry);
+    functor.k_begin = h;
     functor.k_top = k_top;
 
     auto& fields = functor.fields;
@@ -342,7 +375,7 @@ void test_deformation(const HorizontalGeometry& geometry, Real radius, Real sout
     top_fields.inverse_spacing_up = fields.inverse_spacing;
     top_fields.inverse_spacing_mid = Profile("deformation_inverse_spacing_mid", nz);
 
-    functor.output = Kokkos::View<Real****, Layout>("deformation_output", 9, nz, ny, nx);
+    functor.output = Kokkos::View<Real****, Layout>("deformation_output", 15, nz, ny, nx);
 
     auto u = Kokkos::create_mirror_view(fields.u);
     auto v = Kokkos::create_mirror_view(fields.v);
@@ -390,12 +423,12 @@ void test_deformation(const HorizontalGeometry& geometry, Real radius, Real sout
     const Kokkos::Cuda execution;
     CapturedDeformation capture;
 
-    // Prepare the exact test launch functor without evaluating any fields.
+    // Prepare the exact combined launch functor without evaluating fields.
     auto preparation = functor;
     preparation.preparation_only = true;
-    Kokkos::parallel_for("PrepareVorticityDeformation", policy, preparation);
+    Kokkos::parallel_for("PrepareVorticityComponents", policy, preparation);
     execution.fence();
-    require_cuda(cudaGetLastError(), "Prepare vorticity deformation");
+    require_cuda(cudaGetLastError(), "Prepare vorticity components");
 #endif
 
     for (bool stretched : {false, true}) {
@@ -412,8 +445,6 @@ void test_deformation(const HorizontalGeometry& geometry, Real radius, Real sout
             fn2(k) = real(1.1) - real(0.04) * k;
             inverse_spacing(k) = k + 1 < nz
                 ? real(1.0) / (height[k + 1] - height[k]) : real(0.0);
-
-            // Deliberately distinguish the mid and up profiles.
             inverse_mid(k) = stretched
                 ? real(1.0) / (real(30.0) + real(17.0) * k)
                 : real(1.0) / real(100.0);
@@ -426,12 +457,15 @@ void test_deformation(const HorizontalGeometry& geometry, Real radius, Real sout
         Kokkos::deep_copy(fields.inverse_spacing, inverse_spacing);
         Kokkos::deep_copy(top_fields.inverse_spacing_mid, inverse_mid);
 
-        // Rest, stretching, cross twisting, vertical twisting/planetary,
-        // mixed, and final zero reset. Reuse all captured allocations.
-        for (int mode = 0; mode < 6; ++mode) {
+        // Retain the six deformation cases, then exercise positive and
+        // negative transport of a nonconstant wave and a final zero reset.
+        for (int mode = 0; mode < 9; ++mode) {
             const bool along = mode == 1 || mode == 4;
             const bool cross = mode == 2 || mode == 4;
             const bool vertical = mode == 3 || mode == 4;
+            const bool wave_case = mode == 6 || mode == 7;
+            const Real wave_velocity = mode == 6 ? real(1e-6)
+                : mode == 7 ? real(-1e-6) : real(0.0);
             const Real a = along ? real(1e-6) : real(0.0);
             const Real b = cross ? real(-2e-6) : real(0.0);
             const Real c = vertical ? real(3e-9) : real(0.0);
@@ -453,17 +487,15 @@ void test_deformation(const HorizontalGeometry& geometry, Real radius, Real sout
                     const Real lambda_v = (i - h + real(0.5)) * dq1;
                     f(j, i) = real(1e-4) + real(2e-5) * phi_v;
                     for (int k = 0; k < nz; ++k) {
-                        // Affine contravariant winds, converted analytically
-                        // to physical fields at their native locations.
                         u(k, j, i) = radius * std::cos(phi_u)
-                            * (a * lambda_u + b * phi_u + c * height[k]);
+                            * (a * lambda_u + b * phi_u + c * height[k] + wave_velocity);
                         v(k, j, i) = radius
                             * (d * lambda_v + e * phi_v + g * height[k]);
-                        xi(k, j, i) = radius * std::cos(phi_v) * x;
-                        eta(k, j, i) = -radius * y;
+                        xi(k, j, i) = radius * std::cos(phi_v) * x
+                            * (wave_case ? wave(lambda_v) : real(1.0));
+                        eta(k, j, i) = -radius * y
+                            * (wave_case ? wave(lambda_u) : real(1.0));
                         zeta(k, j, i) = z;
-
-                        // Physical w at T, with an exact rigid lid.
                         w(k, j, i) = (height[k_top] - height[k])
                             * (offset + p * lambda_v + q * phi_u);
                     }
@@ -484,23 +516,23 @@ void test_deformation(const HorizontalGeometry& geometry, Real radius, Real sout
             if (!capture.executable) {
                 execution.fence();
                 require_cuda(cudaStreamBeginCapture(execution.cuda_stream(), cudaStreamCaptureModeGlobal),
-                    "Begin vorticity deformation capture");
-                Kokkos::parallel_for("VorticityDeformation", policy, functor);
+                    "Begin vorticity component capture");
+                Kokkos::parallel_for("VorticityComponents", policy, functor);
                 require_cuda(cudaStreamEndCapture(execution.cuda_stream(), &capture.graph),
-                    "End vorticity deformation capture");
+                    "End vorticity component capture");
                 require_cuda(cudaGraphInstantiate(&capture.executable, capture.graph, nullptr, nullptr, 0),
-                    "Instantiate vorticity deformation graph");
+                    "Instantiate vorticity component graph");
             }
             require_cuda(cudaGraphLaunch(capture.executable, execution.cuda_stream()),
-                "Replay vorticity deformation graph");
+                "Replay vorticity component graph");
 #else
-            Kokkos::parallel_for("VorticityDeformation", policy, functor);
+            Kokkos::parallel_for("VorticityComponents", policy, functor);
 #endif
             Kokkos::fence();
             const auto first = snapshot(functor.output);
 
             Kokkos::deep_copy(functor.output, sentinel);
-            Kokkos::parallel_for("VorticityDeformation", policy, functor);
+            Kokkos::parallel_for("VorticityComponents", policy, functor);
             Kokkos::fence();
 
             const bool repeat_equal = first == snapshot(functor.output);
@@ -510,21 +542,27 @@ void test_deformation(const HorizontalGeometry& geometry, Real radius, Real sout
             bool finite = true;
             Real error = real(0.0);
             Real top_error = real(0.0);
+            Real transport_error = real(0.0);
 
             for (int k = 0; k < nz; ++k) {
                 for (int j = 0; j < ny; ++j) {
                     const Real phi_u = south_edge + (j - h + real(0.5)) * dq2;
                     const Real phi_v = south_edge + (j - h + real(1.0)) * dq2;
                     for (int i = 0; i < nx; ++i) {
+                        const Real lambda_u = (i - h + real(1.0)) * dq1;
+                        const Real lambda_v = (i - h + real(0.5)) * dq1;
                         const bool horizontal = j >= h && j < ny - h
                             && i >= h && i < nx - h;
                         const bool active = horizontal && k >= h && k < k_top;
                         const bool top_active = horizontal && k == k_top;
 
-                        for (int n = 0; n < 9; ++n) {
-                            if ((n < 6 && !active) || (n >= 6 && !top_active)) {
+                        for (int n = 0; n < 15; ++n) {
+                            const bool used = n >= 6 && n <= 8 ? top_active : active;
+                            if (!used) {
                                 regions_preserved = regions_preserved
                                     && actual(n, k, j, i) == sentinel;
+                            } else {
+                                finite = finite && std::isfinite(actual(n, k, j, i));
                             }
                         }
 
@@ -536,6 +574,8 @@ void test_deformation(const HorizontalGeometry& geometry, Real radius, Real sout
                             const Real f_v = real(1e-4) + real(2e-5) * phi_v;
                             const Real f_u = real(1e-4) + real(2e-5) * phi_u;
 
+                            // Wave cases have constant canonical horizontal
+                            // wind and zero vertical wind, so deformation is zero.
                             const std::array<Real, 6> expected = {
                                 east_scale * weight * x * a,
                                 east_scale * (weight * y * b + rho_up(k) * z * c),
@@ -546,25 +586,77 @@ void test_deformation(const HorizontalGeometry& geometry, Real radius, Real sout
                             };
 
                             for (int n = 0; n < 6; ++n) {
-                                const Real value = actual(n, k, j, i);
-                                finite = finite && std::isfinite(value);
                                 error = std::max(error,
-                                    std::abs(value - expected[n])
+                                    std::abs(actual(n, k, j, i) - expected[n])
                                     / std::max(real(1e-8), std::abs(expected[n])));
+                            }
+
+                            std::array<Real, 6> expected_transport{};
+                            if (wave_case) {
+                                const Real velocity = weight * wave_velocity;
+                                expected_transport[0] = -east_scale * x
+                                    * (wave_face(lambda_v, dq1, velocity)
+                                       - wave_face(lambda_v - dq1, dq1, velocity)) / dq1;
+                                expected_transport[3] = radius * y
+                                    * (wave_face(lambda_u, dq1, velocity)
+                                       - wave_face(lambda_u - dq1, dq1, velocity)) / dq1;
+                            } else {
+                                const Real weighted_height = real(0.5)
+                                    * (fn1(k) * height[k + 1] + fn2(k) * height[k]);
+
+                                // The radius-squared factors cancel between
+                                // the face Jacobians and destination Jacobian.
+                                const auto meridional_flux = [&](Real longitude, Real latitude) {
+                                    return std::cos(latitude)
+                                        * (weight * (d * longitude + e * latitude)
+                                           + g * weighted_height);
+                                };
+
+                                const Real xi_q2 =
+                                    (meridional_flux(lambda_v, phi_u + dq2)
+                                     - meridional_flux(lambda_v, phi_u))
+                                    / (std::cos(phi_v) * dq2);
+                                const Real eta_q2 =
+                                    (meridional_flux(lambda_u, phi_v)
+                                     - meridional_flux(lambda_u, phi_v - dq2))
+                                    / (std::cos(phi_u) * dq2);
+
+                                const auto vertical_profile_flux = [&](int face) {
+                                    return real(0.5)
+                                        * (rho_up(face) * (height[k_top] - height[face])
+                                           + rho_up(face + 1) * (height[k_top] - height[face + 1]));
+                                };
+                                const Real vertical_difference =
+                                    (vertical_profile_flux(k) - vertical_profile_flux(k - 1))
+                                    * inverse_spacing(k);
+
+                                expected_transport = {
+                                    -east_scale * x * weight * a,
+                                    -east_scale * x * xi_q2,
+                                    -east_scale * x * vertical_difference
+                                        * (offset + p * lambda_v + q * phi_v),
+                                    radius * y * weight * a,
+                                    radius * y * eta_q2,
+                                    radius * y * vertical_difference
+                                        * (offset + p * lambda_u + q * phi_u)
+                                };
+                            }
+
+                            for (int n = 0; n < 6; ++n) {
+                                transport_error = std::max(transport_error,
+                                    std::abs(actual(n + 9, k, j, i) - expected_transport[n])
+                                    / std::max(real(1e-12), std::abs(expected_transport[n])));
                             }
                         }
 
                         if (top_active) {
-                            const Real lambda_z = (i - h + real(1.0)) * dq1;
                             const Real distance = height[k_top] - height[k_top - 1];
                             const Real w_at_z = distance
-                                * (offset + p * lambda_z + q * phi_v);
+                                * (offset + p * lambda_u + q * phi_v);
                             const Real f_at_z = real(1e-4) + real(2e-5) * phi_v;
                             const Real lower_factor = rho_up(k_top - 1)
                                 * inverse_mid(k_top) / inverse_spacing(k_top - 1);
 
-                            // Independent affine-field reduction of the
-                            // rigid-lid CVVM top deformation expressions.
                             const std::array<Real, 3> expected = {
                                 -rho(k_top) * inverse_mid(k_top) * z * w_at_z,
                                 real(0.5) * lower_factor * distance * (x * p + y * q),
@@ -572,10 +664,8 @@ void test_deformation(const HorizontalGeometry& geometry, Real radius, Real sout
                             };
 
                             for (int n = 0; n < 3; ++n) {
-                                const Real value = actual(n + 6, k, j, i);
-                                finite = finite && std::isfinite(value);
                                 top_error = std::max(top_error,
-                                    std::abs(value - expected[n])
+                                    std::abs(actual(n + 6, k, j, i) - expected[n])
                                     / std::max(real(1e-12), std::abs(expected[n])));
                             }
                         }
@@ -584,21 +674,23 @@ void test_deformation(const HorizontalGeometry& geometry, Real radius, Real sout
             }
 
             const bool passed = finite && repeat_equal && inputs_preserved
-                && regions_preserved && error <= tolerance && top_error <= tolerance;
+                && regions_preserved && error <= tolerance && top_error <= tolerance
+                && transport_error <= tolerance;
 
-            std::printf("RLL deformation %s stretched=%d mode=%d horizontal=%.3e top=%.3e repeat=%d inputs=%d regions=%d %s\n",
+            std::printf("RLL components %s stretched=%d mode=%d deformation=%.3e top=%.3e transport=%.3e repeat=%d inputs=%d regions=%d %s\n",
                 layout_name, static_cast<int>(stretched), mode,
                 static_cast<double>(error), static_cast<double>(top_error),
-                static_cast<int>(repeat_equal), static_cast<int>(inputs_preserved),
-                static_cast<int>(regions_preserved), passed ? "PASS" : "FAIL");
+                static_cast<double>(transport_error), static_cast<int>(repeat_equal),
+                static_cast<int>(inputs_preserved), static_cast<int>(regions_preserved),
+                passed ? "PASS" : "FAIL");
             if (!passed) ++failures;
         }
     }
 
 #if defined(KOKKOS_ENABLE_CUDA)
-    std::puts("RLL deformation execution: prepared CUDA capture/replay");
+    std::puts("RLL component execution: prepared CUDA capture/replay");
 #else
-    std::puts("RLL deformation execution: ordinary repeated execution");
+    std::puts("RLL component execution: ordinary repeated execution");
 #endif
 }
 
@@ -645,6 +737,32 @@ int main(int argc, char* argv[]) {
         if (!rejected_cartesian) {
             ++failures;
             std::fputs("RLL top deformation failed to reject Cartesian geometry\n", stderr);
+        }
+
+        rejected_cartesian = false;
+        try {
+            (void)make_regular_lat_lon_horizontal_vorticity_transport_device_view(cartesian);
+        } catch (const std::invalid_argument&) {
+            rejected_cartesian = true;
+        }
+        if (!rejected_cartesian) {
+            ++failures;
+            std::fputs("RLL vorticity transport failed to reject Cartesian geometry\n", stderr);
+        }
+
+        auto narrow_layout = layout;
+        narrow_layout.halo = 1;
+        const RegularLatLonGeometry narrow(narrow_layout, real(0.08), real(0.04),
+            real(0.0), south_edge, radius);
+        bool rejected_narrow_halo = false;
+        try {
+            (void)make_regular_lat_lon_horizontal_vorticity_transport_device_view(narrow);
+        } catch (const std::invalid_argument&) {
+            rejected_narrow_halo = true;
+        }
+        if (!rejected_narrow_halo) {
+            ++failures;
+            std::fputs("RLL vorticity transport failed to reject a one-cell halo\n", stderr);
         }
 
         test_deformation<Kokkos::LayoutLeft>(rll, radius, south_edge, "LayoutLeft");
