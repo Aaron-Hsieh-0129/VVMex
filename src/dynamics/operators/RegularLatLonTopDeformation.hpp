@@ -1,5 +1,5 @@
-#ifndef VVM_DYNAMICS_OPERATORS_REGULAR_LAT_LON_HORIZONTAL_DEFORMATION_HPP
-#define VVM_DYNAMICS_OPERATORS_REGULAR_LAT_LON_HORIZONTAL_DEFORMATION_HPP
+#ifndef VVM_DYNAMICS_OPERATORS_REGULAR_LAT_LON_TOP_DEFORMATION_HPP
+#define VVM_DYNAMICS_OPERATORS_REGULAR_LAT_LON_TOP_DEFORMATION_HPP
 
 #include <stdexcept>
 
@@ -9,70 +9,60 @@ namespace VVM {
 namespace Dynamics {
 namespace Operators {
 
-// Borrowed views only. All volumes use (k, j, i).
+// Borrowed views only. Volumes use (k, j, i).
 //
-// u, v:
-//     Physical winds at U and V.
+// w:
+//     Physical vertical velocity at horizontal T.
 //
 // xi, eta:
 //     Physical eastward and legacy-sign horizontal vorticity divided by
-//     rhobar_up, at V and U respectively.
+//     rho_up, at V and U respectively.
 //
 // zeta:
-//     Physical relative vertical vorticity divided by rhobar, at Z.
+//     Physical relative vertical vorticity divided by rho, at Z.
 //
 // f_at_z:
 //     Planetary vertical vorticity at Z, without density normalization.
 //
-// rho, rho_up:
-//     Reference density at wind and horizontal-vorticity levels.
+// inverse_spacing_mid:
+//     flex_height_coef_mid / dz.
 //
-// fn1, fn2:
-//     CVVM mass-weighted vertical factors:
-//       fn1(k) = fact1_xi_eta(k) * rhobar(k+1)
-//       fn2(k) = fact2_xi_eta(k) * rhobar(k)
-//     The caller prepares these outside capture.
+// inverse_spacing_up:
+//     flex_height_coef_up / dz.
 //
-// inverse_spacing:
-//     flex_height_coef_up(k) / dz, prepared outside capture.
-//
-// All views and geometry must remain valid for queued work and replay.
-// The caller supplies valid halos, extents and positive used densities
-// and spacing. No field is modified by this component.
+// The caller supplies a rigid lid with w(k_top) = 0 over the required
+// horizontal stencil. k_top >= 1, all used extents and halos are valid,
+// and used density and spacing values are positive and finite.
+// Geometry and field storage must outlive queued work and graph replay.
 template<typename VolumeView, typename ProfileView, typename PlaneView>
-struct RegularLatLonHorizontalDeformationFields {
-    VolumeView u;
-    VolumeView v;
+struct RegularLatLonTopDeformationFields {
+    VolumeView w;
     VolumeView xi;
     VolumeView eta;
     VolumeView zeta;
     PlaneView f_at_z;
     ProfileView rho;
     ProfileView rho_up;
-    ProfileView fn1;
-    ProfileView fn2;
-    ProfileView inverse_spacing;
+    ProfileView inverse_spacing_mid;
+    ProfileView inverse_spacing_up;
 };
 
-struct HorizontalDeformationTerms {
+struct TopDeformationTerms {
     VVM::Real stretching = VVM::real(0.0);
     VVM::Real twisting = VVM::real(0.0);
     VVM::Real planetary = VVM::real(0.0);
 };
 
-// CVVM RKSI_3D/RETA_3D deformation stencils for flat RLL geometry.
-// Output components have physical vorticity-tendency units.
+// Rigid-lid CVVM ZETA_3D deformation terms.
 //
-// The planetary result contains only the horizontal-vorticity vertical-
-// shear contribution. It is not a complete three-component Coriolis
-// operator. In particular, it does not implement planetary transport or
-// the top-zeta planetary contribution.
+// Returns physical relative-vorticity tendency contributions at top Z.
+// This component does not include transport, impose the rigid lid,
+// modify fields, launch kernels, communicate or synchronize.
 //
-// These terms must be combined with a consistent canonical-component
-// transport discretization. They do not enable an RLL model path.
-struct RegularLatLonHorizontalDeformationDeviceView {
-    Core::Geometry::GeometryField2D h1_at_u;
-    Core::Geometry::GeometryField2D h2_at_v;
+// Planetary stretching is separate from relative stretching. It must
+// eventually be combined with planetary transport exactly once; this
+// result alone is not a complete top-zeta Coriolis tendency.
+struct RegularLatLonTopDeformationDeviceView {
     Core::Geometry::GeometryField2D h1_at_v;
     Core::Geometry::GeometryField2D h2_at_u;
 
@@ -81,135 +71,57 @@ struct RegularLatLonHorizontalDeformationDeviceView {
 
     template<typename Fields>
     KOKKOS_INLINE_FUNCTION
-    VVM::Real u1(const Fields& fields, int k, int j, int i) const noexcept {
-        return fields.u(k, j, i) / h1_at_u(j, i);
-    }
+    TopDeformationTerms calculate_at_z(
+        const Fields& fields, int k_top, int j, int i) const noexcept {
 
-    template<typename Fields>
-    KOKKOS_INLINE_FUNCTION
-    VVM::Real u2(const Fields& fields, int k, int j, int i) const noexcept {
-        return fields.v(k, j, i) / h2_at_v(j, i);
-    }
+        const int lower = k_top - 1;
+        const VVM::Real left_w =
+            fields.w(lower, j, i) + fields.w(lower, j + 1, i);
+        const VVM::Real right_w =
+            fields.w(lower, j, i + 1) + fields.w(lower, j + 1, i + 1);
 
-    template<typename Fields>
-    KOKKOS_INLINE_FUNCTION
-    VVM::Real omega1_over_rho(const Fields& fields, int k, int j, int i) const noexcept {
-        return fields.xi(k, j, i) / h1_at_v(j, i);
-    }
+        const VVM::Real relative_stretching =
+            left_w * (fields.zeta(k_top, j, i - 1) + fields.zeta(k_top, j, i))
+            + right_w * (fields.zeta(k_top, j, i) + fields.zeta(k_top, j, i + 1));
 
-    template<typename Fields>
-    KOKKOS_INLINE_FUNCTION
-    VVM::Real omega2_over_rho(const Fields& fields, int k, int j, int i) const noexcept {
-        return -fields.eta(k, j, i) / h2_at_u(j, i);
-    }
+        // rho(k_top) cancels the density normalization of planetary
+        // vorticity at this single wind level.
+        const VVM::Real planetary_stretching =
+            left_w * (fields.f_at_z(j, i - 1) + fields.f_at_z(j, i))
+            + right_w * (fields.f_at_z(j, i) + fields.f_at_z(j, i + 1));
 
-    template<typename Fields>
-    KOKKOS_INLINE_FUNCTION
-    HorizontalDeformationTerms calculate_xi_at_v(
-        const Fields& fields, int k, int j, int i) const noexcept {
+        const VVM::Real omega1_sum =
+            fields.xi(lower, j, i) / h1_at_v(j, i)
+            + fields.xi(lower, j, i + 1) / h1_at_v(j, i + 1);
+        const VVM::Real omega2_sum =
+            -fields.eta(lower, j, i) / h2_at_u(j, i)
+            - fields.eta(lower, j + 1, i) / h2_at_u(j + 1, i);
 
-        VVM::Real stretching = VVM::real(0.0);
-        VVM::Real cross = VVM::real(0.0);
-        VVM::Real vertical = VVM::real(0.0);
-        VVM::Real planetary = VVM::real(0.0);
+        const VVM::Real difference_q1 =
+            fields.w(lower, j + 1, i + 1) - fields.w(lower, j + 1, i)
+            + fields.w(lower, j, i + 1) - fields.w(lower, j, i);
+        const VVM::Real difference_q2 =
+            fields.w(lower, j + 1, i + 1) - fields.w(lower, j, i + 1)
+            + fields.w(lower, j + 1, i) - fields.w(lower, j, i);
 
-        for (int jj = j; jj <= j + 1; ++jj) {
-            stretching +=
-                (omega1_over_rho(fields, k, jj, i)
-                 + omega1_over_rho(fields, k, jj - 1, i))
-                * (fields.fn1(k)
-                   * (u1(fields, k + 1, jj, i) - u1(fields, k + 1, jj, i - 1))
-                   + fields.fn2(k)
-                   * (u1(fields, k, jj, i) - u1(fields, k, jj, i - 1)));
-        }
+        const VVM::Real inverse_mid = fields.inverse_spacing_mid(k_top);
+        const VVM::Real lower_factor =
+            fields.rho_up(lower) * inverse_mid / fields.inverse_spacing_up(lower);
 
-        for (int ii = i - 1; ii <= i; ++ii) {
-            cross +=
-                (omega2_over_rho(fields, k, j + 1, ii)
-                 + omega2_over_rho(fields, k, j, ii))
-                * (fields.fn2(k)
-                   * (u1(fields, k, j + 1, ii) - u1(fields, k, j, ii))
-                   + fields.fn1(k)
-                   * (u1(fields, k + 1, j + 1, ii) - u1(fields, k + 1, j, ii)));
-
-            const VVM::Real wind_difference =
-                u1(fields, k + 1, j, ii) - u1(fields, k, j, ii)
-                + u1(fields, k + 1, j + 1, ii) - u1(fields, k, j + 1, ii);
-
-            vertical += wind_difference
-                * (fields.zeta(k, j, ii) + fields.zeta(k + 1, j, ii));
-
-            planetary += wind_difference
-                * (fields.f_at_z(j, ii) / fields.rho(k)
-                   + fields.f_at_z(j, ii) / fields.rho(k + 1));
-        }
-
-        const VVM::Real scale = h1_at_v(j, i) * VVM::real(0.125);
-        const VVM::Real vertical_factor =
-            fields.rho_up(k) * fields.inverse_spacing(k);
-
-        HorizontalDeformationTerms result;
-        result.stretching = scale * stretching / dq1;
-        result.twisting = scale * (cross / dq2 + vertical_factor * vertical);
-        result.planetary = scale * vertical_factor * planetary;
-        return result;
-    }
-
-    template<typename Fields>
-    KOKKOS_INLINE_FUNCTION
-    HorizontalDeformationTerms calculate_eta_at_u(
-        const Fields& fields, int k, int j, int i) const noexcept {
-
-        VVM::Real stretching = VVM::real(0.0);
-        VVM::Real cross = VVM::real(0.0);
-        VVM::Real vertical = VVM::real(0.0);
-        VVM::Real planetary = VVM::real(0.0);
-
-        for (int ii = i; ii <= i + 1; ++ii) {
-            stretching +=
-                (omega2_over_rho(fields, k, j, ii - 1)
-                 + omega2_over_rho(fields, k, j, ii))
-                * (fields.fn1(k)
-                   * (u2(fields, k + 1, j, ii) - u2(fields, k + 1, j - 1, ii))
-                   + fields.fn2(k)
-                   * (u2(fields, k, j, ii) - u2(fields, k, j - 1, ii)));
-        }
-
-        for (int jj = j - 1; jj <= j; ++jj) {
-            cross +=
-                (omega1_over_rho(fields, k, jj, i + 1)
-                 + omega1_over_rho(fields, k, jj, i))
-                * (fields.fn2(k)
-                   * (u2(fields, k, jj, i + 1) - u2(fields, k, jj, i))
-                   + fields.fn1(k)
-                   * (u2(fields, k + 1, jj, i + 1) - u2(fields, k + 1, jj, i)));
-
-            const VVM::Real wind_difference =
-                u2(fields, k + 1, jj, i) - u2(fields, k, jj, i)
-                + u2(fields, k + 1, jj, i + 1) - u2(fields, k, jj, i + 1);
-
-            vertical += wind_difference
-                * (fields.zeta(k, jj, i) + fields.zeta(k + 1, jj, i));
-
-            planetary += wind_difference
-                * (fields.f_at_z(jj, i) / fields.rho(k)
-                   + fields.f_at_z(jj, i) / fields.rho(k + 1));
-        }
-
-        // Convert canonical omega2 tendency to legacy-sign physical eta.
-        const VVM::Real scale = -h2_at_u(j, i) * VVM::real(0.125);
-        const VVM::Real vertical_factor = fields.rho_up(k) * fields.inverse_spacing(k);
-
-        HorizontalDeformationTerms result;
-        result.stretching = scale * stretching / dq2;
-        result.twisting = scale * (cross / dq1 + vertical_factor * vertical);
-        result.planetary = scale * vertical_factor * planetary;
+        TopDeformationTerms result;
+        result.stretching =
+            -VVM::real(0.125) * fields.rho(k_top) * inverse_mid * relative_stretching;
+        result.twisting =
+            VVM::real(0.125) * lower_factor
+            * (omega1_sum * difference_q1 / dq1 + omega2_sum * difference_q2 / dq2);
+        result.planetary =
+            -VVM::real(0.125) * inverse_mid * planetary_stretching;
         return result;
     }
 };
 
-inline RegularLatLonHorizontalDeformationDeviceView
-make_regular_lat_lon_horizontal_deformation_device_view(
+inline RegularLatLonTopDeformationDeviceView
+make_regular_lat_lon_top_deformation_device_view(
     const Core::Geometry::HorizontalGeometry& geometry) {
 
     using Core::Geometry::GeometryKind;
@@ -217,15 +129,13 @@ make_regular_lat_lon_horizontal_deformation_device_view(
 
     if (geometry.kind() != GeometryKind::RegularLatLon) {
         throw std::invalid_argument(
-            "RegularLatLonHorizontalDeformation requires regular latitude-longitude geometry.");
+            "RegularLatLonTopDeformation requires regular latitude-longitude geometry.");
     }
 
     const auto u = geometry.device_view(HorizontalLocation::U);
     const auto v = geometry.device_view(HorizontalLocation::V);
 
-    RegularLatLonHorizontalDeformationDeviceView result;
-    result.h1_at_u = u.contravariant_to_physical.a11;
-    result.h2_at_v = v.contravariant_to_physical.a22;
+    RegularLatLonTopDeformationDeviceView result;
     result.h1_at_v = v.contravariant_to_physical.a11;
     result.h2_at_u = u.contravariant_to_physical.a22;
     result.dq1 = geometry.dq1();
@@ -237,4 +147,4 @@ make_regular_lat_lon_horizontal_deformation_device_view(
 } // namespace Dynamics
 } // namespace VVM
 
-#endif // VVM_DYNAMICS_OPERATORS_REGULAR_LAT_LON_HORIZONTAL_DEFORMATION_HPP
+#endif // VVM_DYNAMICS_OPERATORS_REGULAR_LAT_LON_TOP_DEFORMATION_HPP
