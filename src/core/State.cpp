@@ -56,11 +56,12 @@ State::State(const Utils::ConfigurationManager& config, const Parameters& params
     add_field<3>("th", {nz_total, ny_total, nx_total}, FieldMetadata{GridStaggering::Centered, "K", "air potential temperature", "air_potential_temperature", ""});
     add_field<3>("qv", {nz_total, ny_total, nx_total}, FieldMetadata{GridStaggering::Centered, "kg kg-1", "water vapor mixing ratio"});
     add_field<3>("T", {nz_total, ny_total, nx_total}, FieldMetadata{GridStaggering::Centered, "K", "air temperature"});
-    add_field<3>("xi", {nz_total, ny_total, nx_total}, FieldMetadata{GridStaggering::StaggeredYZ, "s-1", "x component of relative vorticity"});
-    add_field<3>("eta", {nz_total, ny_total, nx_total}, FieldMetadata{GridStaggering::StaggeredXZ, "s-1", "y component of relative vorticity"});
-    add_field<3>("zeta", {nz_total, ny_total, nx_total}, FieldMetadata{GridStaggering::StaggeredXY, "s-1", "z component of relative vorticity"});
-    add_field<3>("u", {nz_total, ny_total, nx_total}, FieldMetadata{GridStaggering::StaggeredX, "m s-1", "x wind"});
-    add_field<3>("v", {nz_total, ny_total, nx_total}, FieldMetadata{GridStaggering::StaggeredY, "m s-1", "y wind"});
+    const bool rll = grid.geometry().kind() == Geometry::GeometryKind::RegularLatLon;
+    add_field<3>("xi", {nz_total, ny_total, nx_total}, FieldMetadata{GridStaggering::StaggeredYZ, "s-1", rll ? "physical eastward relative vorticity at V" : "x component of relative vorticity"});
+    add_field<3>("eta", {nz_total, ny_total, nx_total}, FieldMetadata{GridStaggering::StaggeredXZ, "s-1", rll ? "negative physical northward relative vorticity at U" : "y component of relative vorticity"});
+    add_field<3>("zeta", {nz_total, ny_total, nx_total}, FieldMetadata{GridStaggering::StaggeredXY, "s-1", rll ? "relative vertical vorticity at Z" : "z component of relative vorticity"});
+    add_field<3>("u", {nz_total, ny_total, nx_total}, FieldMetadata{GridStaggering::StaggeredX, "m s-1", rll ? "physical eastward wind at U" : "x wind"});
+    add_field<3>("v", {nz_total, ny_total, nx_total}, FieldMetadata{GridStaggering::StaggeredY, "m s-1", rll ? "physical northward wind at V" : "y wind"});
     add_field<3>("w", {nz_total, ny_total, nx_total}, FieldMetadata{GridStaggering::StaggeredZ, "m s-1", "vertical wind"});
     add_field<3>("u_mean", {nz_total, ny_total, nx_total}, FieldMetadata{GridStaggering::StaggeredX, "kg m-2 s-1", "mean x wind for Takacs advection"});
     add_field<3>("v_mean", {nz_total, ny_total, nx_total}, FieldMetadata{GridStaggering::StaggeredY, "kg m-2 s-1", "mean y wind for Takacs advection"});

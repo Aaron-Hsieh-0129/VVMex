@@ -342,6 +342,21 @@ public:
         fill_positive_face_q2_homogeneous_dirichlet_halos(v);
     }
 
+    // Constant wall values for the total streamfunction. The wall difference
+    // retains the prescribed channel transport; homogeneous callers are unchanged.
+    void fill_positive_face_q2_dirichlet_halos(Field<2>& field, Real south, Real north) const {
+        fill_positive_face_q2_homogeneous_dirichlet_halos(field);
+        const int h = grid_.get_halo_cells();
+        const int ny = grid_.get_local_total_points_y();
+        const int nx = grid_.get_local_total_points_x();
+        const auto data = field.get_mutable_device_data();
+        if (south != real(0.0) && grid_.get_local_physical_start_y() == 0)
+            Kokkos::parallel_for("RLLSouthStreamfunctionValue", Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},{h,nx}),
+                KOKKOS_LAMBDA(int distance,int i) { data(h-1-distance,i) += (distance==0 ? real(1.) : real(2.))*south; });
+        if (north != real(0.0) && grid_.get_local_physical_end_y() == grid_.get_global_points_y()-1)
+            Kokkos::parallel_for("RLLNorthStreamfunctionValue", Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},{h+1,nx}),
+                KOKKOS_LAMBDA(int distance,int i) { data(ny-h-1+distance,i) += (distance==0 ? real(1.) : real(2.))*north; });
+    }
 private:
     const Grid& grid_;
 };

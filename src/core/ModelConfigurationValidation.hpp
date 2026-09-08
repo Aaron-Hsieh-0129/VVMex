@@ -4,6 +4,7 @@
 #include <stdexcept>
 
 #include "core/GridSpecification.hpp"
+#include "core/RegularLatLonModelConfiguration.hpp"
 #include "utils/ConfigurationManager.hpp"
 #include "utils/NumericalConfigurationValidation.hpp"
 
@@ -26,10 +27,14 @@ inline void validate_model_numerical_configuration(const Utils::ConfigurationMan
     // Cartesian metre-valued spacing for full-model validation.
     // RLL Grid, geometry, and standalone operator/solver tests remain usable.
     if (horizontal.geometry.kind != Geometry::GeometryKind::Cartesian) {
-        throw std::runtime_error(
-            "Non-Cartesian full-model execution is not enabled yet. "
-            "RLL Grid and component tests remain available, but the model's "
-            "spacing-dependent dynamics and physical lateral boundaries still require migration.");
+        if (is_jung2019_rll(config)) {
+            validate_jung2019_rll(config, specification);
+        } else {
+            throw std::runtime_error(
+                "Non-Cartesian full-model execution is not enabled yet. "
+                "RLL Grid and component tests remain available, but the model's "
+                "spacing-dependent dynamics and physical lateral boundaries still require migration.");
+        }
     }
 
     const Utils::NumericalConfigurationValues values{

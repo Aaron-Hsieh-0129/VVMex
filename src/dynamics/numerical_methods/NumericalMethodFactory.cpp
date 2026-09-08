@@ -75,12 +75,15 @@ NumericalMethodFactory::create_spatial_scheme(
                 term_name == "buoyancy"
                 && !is_tracer
                 && (variable_name == "xi" || variable_name == "eta");
+            const bool vorticity_term = !is_tracer
+                && (variable_name == "xi" || variable_name == "eta" || variable_name == "zeta")
+                && (term_name == "advection" || term_name == "stretching" || term_name == "twisting");
 
-            if (!scalar_advection && !horizontal_buoyancy) {
+            if (!scalar_advection && !horizontal_buoyancy && !vorticity_term) {
                 throw std::runtime_error(
                     "Regular latitude-longitude Takacs currently supports "
                     "only potential-temperature or passive-tracer advection "
-                    "and dry xi/eta buoyancy; field '"
+                    "and dry vorticity transport, deformation and xi/eta buoyancy; field '"
                     + variable_name
                     + "', tendency term '"
                     + term_name

@@ -43,6 +43,7 @@ public:
 
     void solve_w();
     void solve_uv();
+    void solve_regular_latlon();
 
     void relax_2d_batched();
 
@@ -159,6 +160,11 @@ private:
     HorizontalEllipticSolver::Options horizontal_elliptic_options_;
 
     std::unique_ptr<Core::Boundary::HorizontalBoundaryStencils> bounded_q2_stencils_;
+    std::unique_ptr<VerticalEllipticSolver> rll_vertical_solver_;
+    std::unique_ptr<Core::Field<1>> rll_spacing_;
+    std::unique_ptr<Core::Field<0>> rll_increment_;
+    VVM::Real rll_south_circulation_ = VVM::real(0.0);
+    bool rll_initialized_ = false;
 
     VVM::Real h_inv_C0_;
 
@@ -185,6 +191,7 @@ private:
     mutable std::vector<Core::Field<3>*> uv_fields_;
 
 #if defined(ENABLE_NCCL)
+    std::map<const VVM::Real*, cudaGraphExec_t> rll_graphs_;
     bool solve_w_graph_created_ = false;
     cudaGraphExec_t solve_w_graph_exec_ = nullptr;
 

@@ -40,6 +40,12 @@ std::pair<GradsAxis, GradsAxis> grads_horizontal_axes(
     const Core::State& state,
     bool use_taiwanvvm_coordinates,
     MPI_Comm comm) {
+    if (grid.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+        const auto& g = grid.horizontal_specification().geometry;
+        const Real degrees = real(180.0) / pi;
+        return {{(g.regular_lat_lon.longitude_west_edge + real(0.5) * g.dq1) * degrees, g.dq1 * degrees},
+                {(g.regular_lat_lon.latitude_south_edge + real(0.5) * g.dq2) * degrees, g.dq2 * degrees}};
+    }
     GradsAxis x_axis = centered_lonlat_axis(grid.get_global_points_x(), grid.get_dx());
     GradsAxis y_axis = centered_lonlat_axis(grid.get_global_points_y(), grid.get_dy());
 

@@ -256,8 +256,13 @@ void OutputManager::define_variables() {
     io_.DefineAttribute<std::string>("units", "1", "model_step");
     io_.DefineAttribute<std::string>("long_name", "integration step count", "model_step");
     io_.DefineAttribute<std::string>("units", "meter", "coordinates/z_mid");
-    io_.DefineAttribute<std::string>("units", "meter", "coordinates/y");
-    io_.DefineAttribute<std::string>("units", "meter", "coordinates/x");
+    const bool rll = grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon;
+    io_.DefineAttribute<std::string>("units", rll ? "degrees_north" : "meter", "coordinates/y");
+    io_.DefineAttribute<std::string>("units", rll ? "degrees_east" : "meter", "coordinates/x");
+    if (rll) {
+        io_.DefineAttribute<std::string>("horizontal_geometry", "regular_latlon");
+        io_.DefineAttribute<VVM::Real>("earth_radius_m", grid_.horizontal_specification().geometry.regular_lat_lon.radius);
+    }
 
     // A reader needs both to tell whether the file is a lossless copy of the
     // model state: the model's working precision, and what the field variables
@@ -536,6 +541,11 @@ void OutputManager::write_static_data() {
     if (rank_ == 0) {
         x_coords.resize(gnx);
         for(size_t i = 0; i < gnx; ++i) x_coords[i] = i * grid_.get_dx();
+        if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+            const auto& geometry = grid_.horizontal_specification().geometry;
+            for (size_t i = 0; i < gnx; ++i) x_coords[i] =
+                (geometry.regular_lat_lon.longitude_west_edge + (real(i) + real(0.5)) * geometry.dq1) * real(180.0) / std::acos(real(-1.0));
+        }
     } 
     writer_.Put<VVM::Real>(var_x, x_coords.data(), adios2::Mode::Sync);
 
@@ -544,6 +554,11 @@ void OutputManager::write_static_data() {
     if (rank_ == 0) {
         y_coords.resize(gny);
         for(size_t i = 0; i < gny; ++i) y_coords[i] = i * grid_.get_dy();
+        if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+            const auto& geometry = grid_.horizontal_specification().geometry;
+            for (size_t j = 0; j < gny; ++j) y_coords[j] =
+                (geometry.regular_lat_lon.latitude_south_edge + (real(j) + real(0.5)) * geometry.dq2) * real(180.0) / std::acos(real(-1.0));
+        }
     }
     writer_.Put<VVM::Real>(var_y, y_coords.data(), adios2::Mode::Sync);
 
@@ -647,7 +662,10 @@ void OutputManager::attach_hdf5_field_metadata(
     for (const auto& entry : labelled_datasets) {
         hid_t dataset = H5Dopen2(file, (std::string("/Step0/") + entry[0]).c_str(), H5P_DEFAULT);
         if (dataset < 0) continue;
-        write_attribute(dataset, "units", entry[1]);
+        const bool rll = grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon;
+        const std::string name = entry[0];
+        write_attribute(dataset, "units", rll && name == "coordinates/x" ? "degrees_east"
+            : rll && name == "coordinates/y" ? "degrees_north" : entry[1]);
         write_attribute(dataset, "long_name", entry[2]);
         H5Dclose(dataset);
     }

@@ -196,8 +196,8 @@ void WindSolver::diagnose_horizontal_wind(const Core::Grid& grid, Core::HaloExch
         Core::Boundary::HorizontalBoundaryStencils boundary(grid);
 
         if (free_slip_boundary) {
-            boundary.fill_positive_face_q2_homogeneous_dirichlet_halos(fields.psi);
-            boundary.fill_positive_face_q2_homogeneous_dirichlet_halos(fields.psi_previous);
+            boundary.fill_positive_face_q2_dirichlet_halos(fields.psi, options.channel_psi_south, options.channel_psi_north);
+            boundary.fill_positive_face_q2_dirichlet_halos(fields.psi_previous, options.channel_psi_south, options.channel_psi_north);
             boundary.fill_centered_q2_neumann_halos(fields.chi);
             boundary.fill_centered_q2_neumann_halos(fields.chi_previous);
         } else {

@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include "WindSolver.hpp"
+#include "dynamics/solvers/VerticalEllipticSolver.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "core/geometry/HorizontalLocation.hpp"
 
@@ -18,6 +19,7 @@ WindSolver::~WindSolver() {
     int device = -1;
     if (cudaGetDevice(&device) == cudaSuccess) {
         cudaDeviceSynchronize(); 
+        for (const auto& graph : rll_graphs_) cudaGraphExecDestroy(graph.second);
 
         if (solve_w_graph_exec_) {
             cudaGraphExecDestroy(solve_w_graph_exec_);

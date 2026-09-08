@@ -13,6 +13,7 @@ RegularLatLonTakacs::RegularLatLonTakacs(
     const bool enable_dry_buoyancy)
     : scalar_transport_(geometry),
       dry_buoyancy_(geometry),
+      vorticity_(geometry),
       enable_dry_buoyancy_(enable_dry_buoyancy) {
 
     // Numerical schemes are constructed during model initialization, before
@@ -45,6 +46,12 @@ void RegularLatLonTakacs::calculate_advection_tendency(
 
         throw std::logic_error(
             "RegularLatLonTakacs received a non-RLL Grid.");
+    }
+
+    if (var_name == "xi" || var_name == "eta" || var_name == "zeta") {
+        vorticity_.add(state, grid, params, out_tendency, var_name,
+            Operators::RegularLatLonVorticityTendency::Term::Transport);
+        return;
     }
 
     if (var_name != "th"
@@ -109,6 +116,31 @@ void RegularLatLonTakacs::validate_dry_buoyancy(
         throw std::runtime_error(
             "RegularLatLonTakacs dry buoyancy requires initialized flat terrain.");
     }
+}
+
+void RegularLatLonTakacs::calculate_stretching_tendency_x(const Core::State& state, const Core::Grid& grid,
+    const Core::Parameters& params, Core::Field<3>& output, const std::string& variable) const {
+    vorticity_.add(state, grid, params, output, variable, Operators::RegularLatLonVorticityTendency::Term::Stretching);
+}
+void RegularLatLonTakacs::calculate_stretching_tendency_y(const Core::State& state, const Core::Grid& grid,
+    const Core::Parameters& params, Core::Field<3>& output, const std::string& variable) const {
+    calculate_stretching_tendency_x(state, grid, params, output, variable);
+}
+void RegularLatLonTakacs::calculate_stretching_tendency_z(const Core::State& state, const Core::Grid& grid,
+    const Core::Parameters& params, Core::Field<3>& output, const std::string& variable) const {
+    calculate_stretching_tendency_x(state, grid, params, output, variable);
+}
+void RegularLatLonTakacs::calculate_twisting_tendency_x(const Core::State& state, const Core::Grid& grid,
+    const Core::Parameters& params, Core::Field<3>& output, const std::string& variable) const {
+    vorticity_.add(state, grid, params, output, variable, Operators::RegularLatLonVorticityTendency::Term::Twisting);
+}
+void RegularLatLonTakacs::calculate_twisting_tendency_y(const Core::State& state, const Core::Grid& grid,
+    const Core::Parameters& params, Core::Field<3>& output, const std::string& variable) const {
+    calculate_twisting_tendency_x(state, grid, params, output, variable);
+}
+void RegularLatLonTakacs::calculate_twisting_tendency_z(const Core::State& state, const Core::Grid& grid,
+    const Core::Parameters& params, Core::Field<3>& output, const std::string& variable) const {
+    calculate_twisting_tendency_x(state, grid, params, output, variable);
 }
 
 void RegularLatLonTakacs::calculate_buoyancy_tendency_x(

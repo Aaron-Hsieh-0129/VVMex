@@ -3,13 +3,21 @@
 
 #include "core/BoundaryConditionManager.hpp"
 #include "core/geometry/GeometryKind.hpp"
+#include "core/boundary/HorizontalBoundaryStencils.hpp"
 
 namespace VVM {
 namespace Core {
 
-BoundaryConditionManager::BoundaryConditionManager(const Grid& grid)
-    : grid_(grid) {
+BoundaryConditionManager::BoundaryConditionManager(const Grid& grid, bool enable_rll_channel)
+    : grid_(grid), rll_channel_(enable_rll_channel) {
     const auto& horizontal = grid_.horizontal_specification();
+    if (rll_channel_) {
+        if (horizontal.geometry.kind != Geometry::GeometryKind::RegularLatLon
+            || horizontal.topology.q1 != HorizontalEdgeTopology::Periodic
+            || horizontal.topology.q2 != HorizontalEdgeTopology::Bounded)
+            throw std::runtime_error("RLL channel boundaries require periodic longitude and bounded latitude.");
+        return;
+    }
 
     if (horizontal.geometry.kind != Geometry::GeometryKind::Cartesian) {
         throw std::runtime_error(
@@ -375,6 +383,16 @@ void BoundaryConditionManager::apply_zero_gradient_y(Field<Dim>& field) const {
 
 template<size_t Dim>
 void BoundaryConditionManager::apply_horizontal_bcs(Field<Dim>& field) const {
+    if (rll_channel_) {
+        if constexpr (Dim == 3) {
+            Boundary::HorizontalBoundaryStencils boundary(grid_);
+            const auto name = field.get_name();
+            if (name == "xi" || name == "zeta" || name == "v")
+                boundary.fill_positive_face_q2_homogeneous_dirichlet_halos(field);
+            else boundary.fill_centered_q2_neumann_halos(field);
+        }
+        return;
+    }
     if (x_bc_type_ == HorizontalBCType::ZeroGradient) {
         apply_zero_gradient_x(field);
     }

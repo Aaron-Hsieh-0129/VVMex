@@ -3,6 +3,7 @@ set(VVM_CORE_SOURCES
     Grid.cpp
     GridSpecification.cpp
     Initializer.cpp
+    InitializerJung2019.cpp
     BoundaryConditionManager.cpp
     Parameters.cpp
 

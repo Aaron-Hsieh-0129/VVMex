@@ -1,6 +1,7 @@
 #include "Model.hpp"
 #include "utils/ProcessScheduling.hpp"
 #include "utils/Timer.hpp"
+#include "core/RegularLatLonModelConfiguration.hpp"
 
 namespace VVM {
 namespace Driver {
@@ -14,7 +15,7 @@ Model::Model(const Utils::ConfigurationManager& config,
       params_(params),
       grid_(grid),
       state_(state),
-      halo_exchanger_(halo_exchanger), bc_manager_(grid)
+      halo_exchanger_(halo_exchanger), bc_manager_(grid, Core::is_jung2019_rll(config))
 {
     VVM::Real dt_s = params_.get_value_host(params_.dt);
 
@@ -121,7 +122,7 @@ void Model::init() {
     }
 
     if (config_.get_value<bool>(
-            "initial_conditions.diagnose_wind_from_vorticity", false)) {
+            "initial_conditions.diagnose_wind_from_vorticity", false) || Core::is_jung2019_rll(config_)) {
         dycore_->compute_wind_fields();
     }
     dycore_->compute_diagnostic_fields();
