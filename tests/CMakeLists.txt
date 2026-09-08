@@ -1850,6 +1850,19 @@ foreach(ranks IN LISTS horizontal_diagnostic_ranks)
     endforeach()
 endforeach()
 
+# Field-level regular latitude-longitude Takacs scalar transport.
+add_executable(test_regular_latlon_scalar_transport
+               ${TEST_DIR}/unit/test_regular_latlon_scalar_transport.cpp)
+target_include_directories(test_regular_latlon_scalar_transport
+                           PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_regular_latlon_scalar_transport
+                      PRIVATE vvm_dynamics)
+add_test(NAME test_regular_latlon_scalar_transport
+         COMMAND test_regular_latlon_scalar_transport)
+set_tests_properties(test_regular_latlon_scalar_transport
+                     PROPERTIES LABELS unit TIMEOUT 60)
+_vvm_set_test_resources(test_regular_latlon_scalar_transport 1)
+
 # --- physics tier: GPU only, ~80 s. P3, RRTMGP and the Noah land model -----
 # Forced OFF on a CPU build by the backend guard above: tests/references_cpu/
 # has no digests for these cases, so they would fail for the wrong reason.
