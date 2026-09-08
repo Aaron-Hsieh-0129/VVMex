@@ -80,7 +80,7 @@ NumericalMethodFactory::create_spatial_scheme(
                 throw std::runtime_error(
                     "Regular latitude-longitude Takacs currently supports "
                     "only potential-temperature or passive-tracer advection "
-                    "and explicitly selected dry xi/eta buoyancy; field '"
+                    "and dry xi/eta buoyancy; field '"
                     + variable_name
                     + "', tendency term '"
                     + term_name
@@ -88,13 +88,6 @@ NumericalMethodFactory::create_spatial_scheme(
             }
 
             if (horizontal_buoyancy) {
-                if (!term_config.value("dry", false)) {
-                    throw std::runtime_error(
-                        "Regular latitude-longitude buoyancy requires "
-                        "an explicit 'dry': true declaration for field '"
-                        + variable_name + "'.");
-                }
-
                 if (config_.get_value<bool>("physics.p3.enable_p3", false)) {
                     throw std::runtime_error(
                         "Regular latitude-longitude dry buoyancy does not support P3.");
