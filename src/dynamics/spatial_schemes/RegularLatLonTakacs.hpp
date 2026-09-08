@@ -1,22 +1,29 @@
 #ifndef VVM_DYNAMICS_REGULAR_LAT_LON_TAKACS_HPP
 #define VVM_DYNAMICS_REGULAR_LAT_LON_TAKACS_HPP
 
+#include "dynamics/operators/RegularLatLonDryBuoyancy.hpp"
 #include "dynamics/operators/RegularLatLonScalarTransport.hpp"
 #include "dynamics/spatial_schemes/SpatialScheme.hpp"
 
 namespace VVM {
 namespace Dynamics {
 
-// Guarded Takacs implementation for ordinary density-normalized scalars on
-// regular latitude-longitude geometry.
+// Guarded Takacs implementation for ordinary density-normalized scalars
+// and explicitly selected dry horizontal-vorticity buoyancy on regular
+// latitude-longitude geometry.
 //
-// This class does not implement the RLL vorticity advection, stretching,
-// twisting, buoyancy, or Coriolis terms. NumericalMethodFactory rejects those
-// combinations before constructing this scheme.
+// xi is physical eastward vorticity at V. eta is negative physical
+// northward vorticity at U, preserving the existing State convention.
+//
+// RLL vorticity advection, stretching, twisting, Coriolis, moisture and
+// terrain remain unsupported. Full-model execution remains guarded.
 class RegularLatLonTakacs final : public SpatialScheme {
 public:
+    // Enabling dry buoyancy declares that the caller supplies a dry State.
+    // Construction and backend preparation must occur before graph capture.
     explicit RegularLatLonTakacs(
-        const Core::Geometry::HorizontalGeometry& geometry);
+        const Core::Geometry::HorizontalGeometry& geometry,
+        bool enable_dry_buoyancy = false);
 
     bool handles_multidimensional_advection()
         const override {
@@ -42,9 +49,25 @@ public:
         const std::string& var_name,
         VVM::Real stage_dt) const override;
 
+    void calculate_buoyancy_tendency_x(
+        const Core::State& state, const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_tendency) const override;
+
+    void calculate_buoyancy_tendency_y(
+        const Core::State& state, const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_tendency) const override;
+
 private:
+    void validate_dry_buoyancy(
+        const Core::State& state, const Core::Grid& grid,
+        const Core::Parameters& params) const;
+
     Operators::RegularLatLonScalarTransport
         scalar_transport_;
+    Operators::RegularLatLonDryBuoyancy dry_buoyancy_;
+    bool enable_dry_buoyancy_;
 };
 
 } // namespace Dynamics

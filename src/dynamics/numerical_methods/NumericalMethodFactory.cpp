@@ -68,23 +68,72 @@ NumericalMethodFactory::create_spatial_scheme(
         if (geometry_kind
             == Core::Geometry::GeometryKind::RegularLatLon) {
 
-            if (term_name != "advection"
-                || (variable_name != "th"
-                    && !is_tracer)) {
+            const bool scalar_advection =
+                term_name == "advection"
+                && (variable_name == "th" || is_tracer);
+            const bool horizontal_buoyancy =
+                term_name == "buoyancy"
+                && !is_tracer
+                && (variable_name == "xi" || variable_name == "eta");
 
+            if (!scalar_advection && !horizontal_buoyancy) {
                 throw std::runtime_error(
-                    "Regular latitude-longitude Takacs currently "
-                    "supports only advection of potential temperature "
-                    "or a configured passive tracer; field '"
+                    "Regular latitude-longitude Takacs currently supports "
+                    "only potential-temperature or passive-tracer advection "
+                    "and explicitly selected dry xi/eta buoyancy; field '"
                     + variable_name
                     + "', tendency term '"
                     + term_name
                     + "' is not enabled yet.");
             }
 
-            return std::make_unique<
-                RegularLatLonTakacs>(
-                    grid_.geometry());
+            if (horizontal_buoyancy) {
+                if (!term_config.value("dry", false)) {
+                    throw std::runtime_error(
+                        "Regular latitude-longitude buoyancy requires "
+                        "an explicit 'dry': true declaration for field '"
+                        + variable_name + "'.");
+                }
+
+                if (config_.get_value<bool>("physics.p3.enable_p3", false)) {
+                    throw std::runtime_error(
+                        "Regular latitude-longitude dry buoyancy does not support P3.");
+                }
+
+                // P3 being disabled does not establish a dry configuration:
+                // water-vapor tendencies can still be configured separately.
+                for (const char* moisture_name :
+                     {"qv", "qc", "qr", "qi", "qm", "nc", "nr", "ni", "bm", "qp"}) {
+
+                    const std::string key =
+                        std::string("dynamics.prognostic_variables.")
+                        + moisture_name + ".tendency_terms";
+
+                    if (!config_.has_key(key)) {
+                        continue;
+                    }
+
+                    const auto moisture_terms =
+                        config_.get_value<nlohmann::json>(key);
+
+                    if (!moisture_terms.is_object()) {
+                        throw std::runtime_error(
+                            "Configuration error: '" + key + "' must be an object.");
+                    }
+
+                    for (const auto& item : moisture_terms.items()) {
+                        if (item.value().value("enable", true)) {
+                            throw std::runtime_error(
+                                "Regular latitude-longitude dry buoyancy does not "
+                                "support enabled moisture tendencies for field '"
+                                + std::string(moisture_name) + "'.");
+                        }
+                    }
+                }
+            }
+
+            return std::make_unique<RegularLatLonTakacs>(
+                grid_.geometry(), horizontal_buoyancy);
         }
 
         throw std::runtime_error(
