@@ -1,6 +1,8 @@
 #include "NumericalMethodFactory.hpp"
 
+#include "core/geometry/GeometryKind.hpp"
 #include "dynamics/spatial_schemes/MUSCL.hpp"
+#include "dynamics/spatial_schemes/RegularLatLonTakacs.hpp"
 #include "dynamics/spatial_schemes/Takacs.hpp"
 #include "dynamics/spatial_schemes/WENO5.hpp"
 #include "dynamics/temporal_schemes/SSPRK2.hpp"
@@ -49,8 +51,47 @@ NumericalMethodFactory::create_spatial_scheme(
     const std::string& scheme_name,
     bool is_tracer) const {
     if (scheme_name == "Takacs") {
-        return std::make_unique<Takacs>(
-            config_, grid_, halo_exchanger_, bc_manager_);
+        const auto geometry_kind =
+            grid_.geometry().kind();
+
+        if (geometry_kind
+            == Core::Geometry::GeometryKind::Cartesian) {
+
+            // Preserve the original Cartesian construction and arithmetic.
+            return std::make_unique<Takacs>(
+                config_,
+                grid_,
+                halo_exchanger_,
+                bc_manager_);
+        }
+
+        if (geometry_kind
+            == Core::Geometry::GeometryKind::RegularLatLon) {
+
+            if (term_name != "advection"
+                || (variable_name != "th"
+                    && !is_tracer)) {
+
+                throw std::runtime_error(
+                    "Regular latitude-longitude Takacs currently "
+                    "supports only advection of potential temperature "
+                    "or a configured passive tracer; field '"
+                    + variable_name
+                    + "', tendency term '"
+                    + term_name
+                    + "' is not enabled yet.");
+            }
+
+            return std::make_unique<
+                RegularLatLonTakacs>(
+                    grid_.geometry());
+        }
+
+        throw std::runtime_error(
+            "Spatial scheme 'Takacs' is not implemented for "
+            "horizontal geometry '"
+            + std::string(grid_.geometry().name())
+            + "'.");
     }
     if (scheme_name == "MUSCL") {
         return std::make_unique<MUSCL>(
