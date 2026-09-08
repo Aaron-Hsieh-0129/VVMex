@@ -5,6 +5,7 @@
 #include "io/Hdf5RestartReader.hpp"
 #include "io/bp5/Bp5RestartReader.hpp"
 #include "vvm_types.hpp"
+#include "core/RegularLatLonModelConfiguration.hpp"
 #include <Kokkos_Core.hpp>
 #include <algorithm>
 #include <iostream>
@@ -106,6 +107,10 @@ Initializer::Initializer(const Utils::ConfigurationManager& config, const Grid& 
 }
 
 void Initializer::initialize_state() const {
+    if (is_jung2019_rll(config_)) {
+        initialize_jung2019();
+        return;
+    }
     if (reader_) {
         reader_->read_and_initialize(state_);
     }

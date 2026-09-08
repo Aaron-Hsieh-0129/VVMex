@@ -108,8 +108,8 @@ void HorizontalEllipticSolver::solve_regular_lat_lon_channel_at_z_and_t(
                 1);
 
             boundary
-                .fill_positive_face_q2_homogeneous_dirichlet_halos(
-                    z);
+                .fill_positive_face_q2_dirichlet_halos(
+                    z, options.channel_psi_south, options.channel_psi_north);
 
             boundary
                 .fill_centered_q2_neumann_halos(

@@ -15,7 +15,7 @@ enum class HorizontalBCType {
 
 class BoundaryConditionManager {
 public:
-    explicit BoundaryConditionManager(const Grid& grid);
+    explicit BoundaryConditionManager(const Grid& grid, bool enable_rll_channel = false);
 
     template<size_t Dim>
     void apply_dirichlet_zero(Field<Dim>& field) const;
@@ -49,6 +49,7 @@ public:
 
 private:
     const Grid& grid_;
+    bool rll_channel_ = false;
 
     HorizontalBCType x_bc_type_ = HorizontalBCType::Periodic;
     HorizontalBCType y_bc_type_ = HorizontalBCType::Periodic;

@@ -2,6 +2,7 @@
 #include "numerical_methods/NumericalMethodFactory.hpp"
 #include "spatial_schemes/Takacs.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
+#include "dynamics/solvers/VerticalWindDiagnostic.hpp"
 #include <stdexcept>
 #include <iostream>
 #include <unordered_set>
@@ -133,6 +134,9 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
 DynamicalCore::~DynamicalCore() = default;
 
 void DynamicalCore::compute_diagnostic_fields() const {
+    // RLL deformation reads physical wind/vorticity directly and does not use
+    // the Cartesian shear-strain scratch fields.
+    if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) return;
     auto& R_xi_field = R_xi_ref_.get(state_, "R_xi");
     auto& R_eta_field = R_eta_ref_.get(state_, "R_eta");
     auto& R_zeta_field = R_zeta_ref_.get(state_, "R_zeta");
@@ -190,6 +194,8 @@ void DynamicalCore::initialize_restart_history() {
 }
 
 void DynamicalCore::compute_zeta_vertical_structure(Core::State& state) const {
+    // The composed RLL wind diagnostic integrates zeta with metric factors.
+    if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) return;
     auto& zeta_field = zeta_ref_.get(state, "zeta");
     auto zeta_data = zeta_field.get_mutable_device_data();
     const auto& xi = xi_ref_.get(state, "xi").get_device_data();
@@ -234,6 +240,11 @@ void DynamicalCore::compute_zeta_vertical_structure(Core::State& state) const {
 }
 
 void DynamicalCore::compute_wind_fields() {
+    if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+        wind_solver_->solve_regular_latlon();
+        mean_wind_state_->invalidate();
+        return;
+    }
     // Assign wind for topography 
     const auto& ITYPEU = ITYPEU_ref_.get(state_, "ITYPEU").get_device_data();
     const auto& ITYPEV = ITYPEV_ref_.get(state_, "ITYPEV").get_device_data();
@@ -308,6 +319,7 @@ void DynamicalCore::compute_wind_fields() {
 }
 
 void DynamicalCore::compute_uvtopmn() {
+    if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) return;
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();

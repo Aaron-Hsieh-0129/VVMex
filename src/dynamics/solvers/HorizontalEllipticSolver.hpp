@@ -31,6 +31,8 @@ public:
         // sets this to false for periodic domains because solve_uv() constructs
         // the initial guess over the complete local array, including valid halos.
         bool refresh_initial_halos = true;
+        VVM::Real channel_psi_south = VVM::real(0.0);
+        VVM::Real channel_psi_north = VVM::real(0.0);
     };
 
     HorizontalEllipticSolver(const Core::Grid& grid, Core::HaloExchanger& halo_exchanger);
