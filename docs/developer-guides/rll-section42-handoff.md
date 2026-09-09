@@ -1,47 +1,46 @@
 # RLL Section 4.2 handoff
 
-Updated 2026-09-08, Asia/Taipei. Reproduction is **not established**.
+Updated 2026-09-09, Asia/Taipei. Section4.2 is complete as a stable, self-convergent paper-wall RLL realization under the user-approved own-reference criterion. Both cases complete all five resolutions. Final CPU92/92 and GPU/MPI174/174 CTest pass. Read [results](rll-section42-results.md) for quantitative evidence, commands and limitations, and [validation protocol](rll-section42-validation.md) for the pre-set assessment rule. Exact archive identity and a pure spatial order are not claimed.
 
-## Checkout and authorization
+## Checkout and authority
 
-- Repository: `/home/mog/CVVMex`.
-- Branch: `feat/generalized-coordinate`.
-- Inspected HEAD: `16e0355a8db89c817c1d4594e351514ddc7aceb4`, adding the horizontal-vorticity transport component after `5228fb3dd7fc1e24b53d043a04258929d40aa4ff`.
-- Pre-existing tracked change: `.gitignore` adds `refs`. Preserve this change and all existing results.
-- User authorizes direct edits, builds, tests and logical local commits; no push or merge. Maximum 224 CPU cores/ranks, GPUs 0–7, experiment outputs inside the project and below 10 GB.
+- Repository `/home/mog/CVVMex`, branch `feat/generalized-coordinate`. Initial inspected HEAD `16e0355a8db89c817c1d4594e351514ddc7aceb4`; implementation `beef1cf4f94245a6b89e04e962bd59f0803b62ad`; numerically equivalent RLL performance change `0e51d91056b6921d77dfcad1b16dcdc178a19062`.
+- Preserve the user's pre-existing `.gitignore` addition of `refs`. All reference data, failed runs and existing results retained. Direct edits/builds/local commits authorized; no push or merge. All governing documents read; old propose-only workflow superseded by user. No applicable AGENTS.md; no subagents used.
+- Limits:224 cores/ranks, GPUs0–7, experiment output below10GB. Current experiments approximately7.2GB. Do not launch a duplicate hierarchy without checking its projected storage.
 
-## Governing-document blocker
+## Completed implementation and science
 
-The architecture and production integration documents in `refs/` were read. Their historical propose-only workflow is superseded by the current user instructions. `refs/VVMEX_COLLABORATION_WORKFLOW.md` is missing; searching `/home/mog` and this repository's Git history found no copy. No applicable `AGENTS.md` was found in the repository or ancestor directories. Asked the user for the missing workflow location or confirmation to proceed without it, because the user explicitly requires reading it before implementation decisions. Implementation is pending that answer; inspection may continue.
+Shared RLL transport/deformation, numerical factory and tendency wiring, narrowly guarded production model path, both analytic initializations, channel/circulation wind recovery through existing fixed-iteration solvers, prepared/captured/replayed CUDA diagnostics, geographic output and exact compact top-Z snapshots. Cartesian arithmetic, field meanings, density normalization, buoyancy range and unsupported-configuration rejection retained. See implementation commit for source diff.
 
-## Initial source evidence
+Both cases ran400×100,800×200,1600×400,3200×800,6400×1600 through168h/120h respectively, dt300/150/75/37.5/18.75s. Horizontal200, initial1000, vertical10 fixed iterations. All saved native vorticity finite; relative L2 decreases at every saved24-hour time against each case's own6400 reference.
 
-- `src/core/ModelConfigurationValidation.hpp`, `src/core/Parameters.cpp`, and `src/core/BoundaryConditionManager.cpp` still reject full-model RLL. Keep these guards until supported paths are implemented and validated.
-- `src/dynamics/spatial_schemes/RegularLatLonTakacs.*` supports scalar transport and optional dry buoyancy. The numerical factory lives in `src/dynamics/numerical_methods/NumericalMethodFactory.cpp`.
-- RLL horizontal transport, horizontal deformation, and top deformation components exist under `src/dynamics/operators/`; their presence does not establish production wiring.
-- `src/dynamics/solvers/WindSolverRegularLatLonDiagnostic.cpp` contains a composed diagnostic with explicit preparation and channel boundary support. Production ownership, dispatch, circulation evolution, and boundary qualification still require a complete audit.
-- `DynamicalCore.cpp` divides xi/eta by `rhobar_up` and zeta by `rhobar` during tendency preparation, then multiplies density back. Integration must account for this temporary representation and avoid double normalization.
-- Initializer, temporal integration, output, all tendency callers, and complete operator/solver implementations have not yet been fully audited. No source implementation decision has been made.
+| Final relative L2 | 400 | 800 | 1600 | 3200 |
+| --- | ---: | ---: | ---: | ---: |
+| CASE 1,168h | .19351646 | .11810059 | .06651746 | .02941360 |
+| CASE 2,120h | .29255996 | .17116543 | .09106368 | .03790632 |
 
-## Build environment evidence
+Results/plots: `experiments/jung2019/convergence_case{1,2}`. CASE1's1600 member is `case1_1600x400_dt75`; other hierarchy members use `l2_case{case}_n{nx}`. Every launcher run has config, log and provenance. Full-field long-run invariants and short CPU/GPU1-/4-rank parity pass. Compact reference histories do not record winds/energy independently.
 
-- Existing `build/CMakeCache.txt`: Release, FP64, tests enabled, NVHPC 24.9, CUDA 12.6, HPC-X 2.20 MPI wrappers, NCCL enabled, GCC toolchain `/home/mog/gcc11`.
-- Kokkos: `/home/mog/libs_GPUVVM/lib/cmake/Kokkos`.
-- Eight NVIDIA H200 GPUs, each reporting 143771 MiB.
-- Presets: `blaze`, `blaze-float`, `blaze-cpu`. CPU preset points to `/raid/mog/libs_VVM_cpu`; its `lib/cmake/Kokkos/KokkosConfig.cmake` exists, but the complete CPU build environment has not been tested. `/home/mog/libs_CPU` is a separate dependency prefix.
-- Only one configured build was found under this repository's `build/`; binaries have not been verified against current HEAD.
-- Sandbox startup fails with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`; repository inspection succeeded using reviewed escalated commands.
+At1600, CASE1 dt150 fails even with800 fixed iterations; halved dt75 succeeds. Further dt37.5 sensitivity L2=.01305697 at168h. At400/dt600, horizontal200 versus1000 difference=.04453316. Do not claim negligible timestep/solver error or a pure spatial order.
 
-## Scientific reference evidence and open questions
+User accepted own-reference L2 in place of identical nonlinear archive trajectories. Keep paper impermeable/free-slip walls: original CVVM archive uniform-copy halos differ materially. Archive CASE1 L2=.01487154 at96h,.56188749 at168h; no separate CASE2 archive identified. This disagreement remains explicit, not dismissed solely as nonlinearity.
 
-- Jung PDF exists under `refs/`; it has not yet been read. Paper-based experiment constants and acceptance tolerances are not established.
-- `refs/RUN_BAR/RUN/a.setup` documents Y_TST4 RLL: 400×100, DT=600 s, ITTADD=1152, NITERW=10, NITERXY=200, NOMAP=T. It also documents C_TST1 RLL: 8000×2000, DT=20 s, ITTADD=30240, NITERW=10, NITERXY=50. These resolutions must not be confused with the two physical cases.
-- The active setup selects A_TST5 cubed sphere with NOMAP=F. Do not execute its destructive setup scripts or treat its active selection as the RLL configuration.
-- `CODE_BAR/ini_3d_module.F` includes an 80 m/s jet with active TEST1 latitude limits and commented alternative tests, plus Gaussian vertical-vorticity perturbation. Align these alternatives against paper Section 4.2 before selecting either physical case.
-- No `.nc`, `.ctl`, `.dat`, or tar archive files were found under `refs`; DATA_BAR is absent there. The quantitative output archive location remains unresolved. `refs` currently occupies about 65 MB.
+## Tests and current activity
 
-## Validation and next step
+- Final full CPU92/92 passed,731.46s: `build/rll-cpu-qualified-ctest-console.log`.
+- Final full GPU174/174 passed,1193.09s; GPU0–3, serialized: `build/rll-qualified-ctest-console.log`. Earlier full GPU173/173 andCPU91/91 passed before final additions. No tests remain active.
+- Production rest/jet/coupled, ten configuration rejections, compact exactness, independent top transport and1-/4-rank backend tests pass. CUDA graphs are enabled, not bypassed.
+- Four independent analysis tests pass, including rejection of nonconvergent data: `build/rll-analysis-tests.log`. Run `python -m unittest discover -s tools/jung2019 -p test_convergence.py -v`.
+- No scientific model runs remain active. Original user bubble output was preserved at `build/pre-rll-testing_output_2dbubble`.
 
-No builds, tests, scientific runs, comparison plots, or numerical acceptance decisions have been performed in this inspection. No existing output was changed. Next: resolve the required missing workflow, read the paper and locate reference outputs, finish the production interface audit, then implement one coherent shared-architecture RLL experiment path and validate progressively. Preserve fixed iteration counts, Cartesian arithmetic, graph capture/replay, field staggering/signs, buoyancy declaration and vertical range, and channel circulation.
+## Environment and operational pitfalls
 
-Section 4.3 remains out of scope. Its subsequent milestone requires separate verification of the baroclinic initialization and thermodynamic balance, complete divergent three-dimensional dynamics and planetary terms, vertical-grid and solver qualification, and its own reference settings and quantitative validation. This is a preliminary scope note, not a completed Section 4.3 requirements audit.
+GPU preset `blaze`: NVHPC24.9/CUDA12.6/HPC-X2.20, FP64, Kokkos4.7.2, NCCL, eightH200. CPU preset `blaze-cpu`: OpenMP, `/raid/mog/libs_VVM_cpu` plus`tpl`; actual compiler wrapper remainsHPC-X. Exact configure/run/test commands are in the results document and per-run provenance. CPU CTest explicitly uses64threads, overriding shell OMP_NUM_THREADS.
+
+Root CMake disables header dependency scanning: header changes require clean rebuilds. Sandbox startup fails with bwrap loopback error; reviewed escalated execution works. Local edits use `command apply_patch` there. One-/four-rank6400 windowed benchmarks favor one GPU per full run; a previous warmup timing option was invalid because existing TimingManager::set_step is never called. Preserve benchmarks but do not use their empty timing counters.
+
+## Handoff and subsequent work
+
+No required Section4.2 implementation or planned validation remains. Analysis scripts/tests/documentation are delivered in a separate logical local commit; use `git log -3 --oneline` for implementation, performance and analysis commits. Preserve `.gitignore` and untracked experimental data; large outputs are not staged. No push or merge. Further temporal/solver sensitivity, energy diagnostics or archive-wall matching would be distinct follow-up validation, not silently claimed here.
+
+Section4.3 remains separate and unimplemented: balanced sheared jet/thermodynamics,0.5K perturbation/taper, shifted planetary terms exactly once, full3D divergent integration, vertical/solver qualification and its own reference/refinement study. See the results document for the detailed checklist; moisture/terrain remain unsupported.
