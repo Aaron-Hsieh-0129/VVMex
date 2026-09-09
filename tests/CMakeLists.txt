@@ -1867,13 +1867,7 @@ add_executable(test_regular_latlon_top_transport ${TEST_DIR}/unit/test_regular_l
 target_include_directories(test_regular_latlon_top_transport PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_regular_latlon_top_transport PRIVATE vvm_core Kokkos::kokkos)
 add_test(NAME test_regular_latlon_top_transport COMMAND ${GPU_WRAP} $<TARGET_FILE:test_regular_latlon_top_transport>)
-add_test(NAME test_jung2019_shared_model
-    COMMAND ${Python3_EXECUTABLE} ${TEST_DIR}/scripts/check_jung2019_model.py
-        $<TARGET_FILE:vvm> ${CMAKE_BINARY_DIR}/testing_output_jung2019
-        --wrapper "${GPU_WRAP}" --launcher ${MPIEXEC_EXECUTABLE})
-set_tests_properties(test_jung2019_shared_model PROPERTIES
-    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}" LABELS "integration" RESOURCE_LOCK gpu TIMEOUT 300)
-_vvm_set_test_resources(test_jung2019_shared_model 1)
+include("${CMAKE_SOURCE_DIR}/experiments/jung2019/tests/register.cmake")
 set_tests_properties(test_regular_latlon_top_transport PROPERTIES LABELS unit TIMEOUT 60)
 _vvm_set_test_resources(test_regular_latlon_top_transport 1)
 
