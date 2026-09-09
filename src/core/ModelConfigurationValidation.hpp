@@ -27,7 +27,7 @@ inline void validate_model_numerical_configuration(const Utils::ConfigurationMan
     // Cartesian metre-valued spacing for full-model validation.
     // RLL Grid, geometry, and standalone operator/solver tests remain usable.
     if (horizontal.geometry.kind != Geometry::GeometryKind::Cartesian) {
-        if (is_jung2019_rll(config)) {
+        if (is_rll_idealized(config)) {
             validate_jung2019_rll(config, specification);
         } else {
             throw std::runtime_error(

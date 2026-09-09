@@ -1868,6 +1868,14 @@ target_include_directories(test_regular_latlon_top_transport PRIVATE ${CMAKE_SOU
 target_link_libraries(test_regular_latlon_top_transport PRIVATE vvm_core Kokkos::kokkos)
 add_test(NAME test_regular_latlon_top_transport COMMAND ${GPU_WRAP} $<TARGET_FILE:test_regular_latlon_top_transport>)
 include("${CMAKE_SOURCE_DIR}/experiments/jung2019/tests/register.cmake")
+
+add_test(NAME test_rll_mountain_shared_model
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/scripts/check_rll_mountain.py
+        $<TARGET_FILE:vvm> ${CMAKE_BINARY_DIR}/rll_mountain_tests
+        --wrapper "${GPU_WRAP}" --launcher ${MPIEXEC_EXECUTABLE})
+set_tests_properties(test_rll_mountain_shared_model PROPERTIES
+    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}" LABELS "integration" RESOURCE_LOCK gpu TIMEOUT 600)
+_vvm_set_test_resources(test_rll_mountain_shared_model 1)
 set_tests_properties(test_regular_latlon_top_transport PROPERTIES LABELS unit TIMEOUT 60)
 _vvm_set_test_resources(test_regular_latlon_top_transport 1)
 

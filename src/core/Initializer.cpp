@@ -107,7 +107,7 @@ Initializer::Initializer(const Utils::ConfigurationManager& config, const Grid& 
 }
 
 void Initializer::initialize_state() const {
-    if (is_jung2019_rll(config_)) {
+    if (is_rll_idealized(config_)) {
         initialize_jung2019();
         return;
     }

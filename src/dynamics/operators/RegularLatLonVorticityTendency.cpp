@@ -85,8 +85,10 @@ void RegularLatLonVorticityTendency::add(const Core::State& state, const Core::G
         throw std::invalid_argument("RLL vorticity tendencies require xi, eta or zeta on RLL geometry.");
     const int h = grid.get_halo_cells();
     const int top = grid.get_local_total_points_z() - h - 1;
-    if (h < 2 || top - h < 2 || params.max_topo_idx != h)
-        throw std::invalid_argument("RLL vorticity tendencies require flat terrain, two halos and at least three wind levels.");
+    const bool terrain = state.has_field("rll_terrain_height");
+    if (h < 2 || top - h < 2 || (params.max_topo_idx != h && !terrain)
+        || (terrain && (params.max_topo_idx < h || params.max_topo_idx >= top)))
+        throw std::invalid_argument("RLL vorticity tendencies require flat or initialized RLL mountain terrain below the lid, two halos and at least three wind levels.");
     Fields f{};
     f.u = state.get_field<3>("u").get_device_data();
     f.v = state.get_field<3>("v").get_device_data();
