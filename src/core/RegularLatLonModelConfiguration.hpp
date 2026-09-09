@@ -11,15 +11,34 @@ inline bool is_jung2019_rll(const Utils::ConfigurationManager& config) {
     return config.get_value<std::string>("simulation.idealized_test", "none") == "jung2019_barotropic";
 }
 
+inline bool is_rll_mountain(const Utils::ConfigurationManager& config) {
+    return config.get_value<std::string>("simulation.idealized_test", "none") == "rll_mountain";
+}
+
+inline bool is_rll_idealized(const Utils::ConfigurationManager& config) {
+    return is_jung2019_rll(config) || is_rll_mountain(config);
+}
+
 // Deliberately limited scientific configuration. This does not enable general
-// dry RLL, moist physics, restart, terrain or Cartesian metre-based forcing.
+// dry RLL, moist physics, restart or Cartesian metre-based forcing. Terrain is
+// admitted only by the separate rll_mountain experiment and its masked-curl path.
 inline void validate_jung2019_rll(const Utils::ConfigurationManager& config, const GridSpecification& specification) {
     const auto& h = specification.horizontal;
     const auto& v = specification.vertical;
-    if (!is_jung2019_rll(config) || h.geometry.kind != Geometry::GeometryKind::RegularLatLon
+    if (!is_rll_idealized(config) || h.geometry.kind != Geometry::GeometryKind::RegularLatLon
         || h.topology.q1 != HorizontalEdgeTopology::Periodic || h.topology.q2 != HorizontalEdgeTopology::Bounded
         || h.n_halo_cells < 2 || h.nx < 8 || h.ny < 4 || v.nz < 3 || !v.uses_uniform_analytic_coordinate())
         throw std::runtime_error("Full-model RLL requires the supported Jung 2019 flat uniform-level periodic-longitude channel configuration.");
+    if (is_rll_mountain(config)) {
+        const double height = config.get_value<double>("initial_conditions.rll_mountain.height_m");
+        const double width = config.get_value<double>("initial_conditions.rll_mountain.half_width_m");
+        const double half_band = h.geometry.regular_lat_lon.radius * h.geometry.dq2 * h.ny / 2.;
+        if (v.nz < 8 || !std::isfinite(height) || height < 0. || height > (v.nz-h.n_halo_cells-3)*v.dz
+            || !std::isfinite(width) || width <= 0. || 3.*width >= half_band)
+            throw std::runtime_error("RLL mountain requires nz >= 8, finite nonnegative height below the lid, and positive width with 3 widths inside the latitude walls.");
+    } else if (config.has_key("initial_conditions.rll_mountain")) {
+        throw std::runtime_error("Mountain terrain requires simulation.idealized_test = rll_mountain; Jung reproduction remains flat.");
+    }
     for (const char* key : {"physics.p3.enable_p3", "physics.turbulence.enable_turbulence", "physics.rrtmgp.enable_rrtmgp",
          "physics.surface_process.enable", "dynamics.forcings.sponge_layer.enable", "dynamics.forcings.areamn.enable",
          "dynamics.forcings.random_perturbation.enable", "dynamics.forcings.lateral_boundary_nudging.enable", "restart.enable"})

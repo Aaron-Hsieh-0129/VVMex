@@ -50,7 +50,7 @@ Parameters::Parameters(const Utils::ConfigurationManager& config, const Grid& gr
     // RLL angular increments must not silently enter those legacy kernels.
     // Geometry and standalone elliptic/operator tests do not need Parameters.
     if (horizontal.geometry.kind != Geometry::GeometryKind::Cartesian) {
-        if (is_jung2019_rll(config)) {
+        if (is_rll_idealized(config)) {
             validate_jung2019_rll(config, GridSpecification::from_config(config));
         } else {
             throw std::runtime_error(

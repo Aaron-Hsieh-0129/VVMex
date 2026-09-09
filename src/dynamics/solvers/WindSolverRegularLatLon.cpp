@@ -2,9 +2,55 @@
 #include "dynamics/solvers/VerticalEllipticSolver.hpp"
 #include "dynamics/solvers/HorizontalWindStateAdapter.hpp"
 #include "core/RegularLatLonModelConfiguration.hpp"
+#include "dynamics/operators/RegularLatLonTerrain.hpp"
 
 namespace VVM::Dynamics {
 namespace {
+// Outside solver capture, like the existing Cartesian terrain adaptation.
+// The elliptic matrices, sweep counts and graph replay are unchanged.
+void adapt_terrain(Core::State& state, const Core::Grid& grid, const Core::Parameters& params,
+                   Core::HaloExchanger& halo, Core::Boundary::HorizontalBoundaryStencils& boundary) {
+    const int nz = grid.get_local_total_points_z(), ny = grid.get_local_total_points_y();
+    const int nx = grid.get_local_total_points_x(), h = grid.get_halo_cells();
+    const auto u = state.get_field<3>("u").get_device_data();
+    const auto v = state.get_field<3>("v").get_device_data();
+    const auto w = state.get_field<3>("w").get_device_data();
+    const auto mu = state.get_field<3>("ITYPEU").get_device_data();
+    const auto mv = state.get_field<3>("ITYPEV").get_device_data();
+    const auto mw = state.get_field<3>("ITYPEW").get_device_data();
+    auto& uf = state.get_field<3>("u_topo");
+    auto& vf = state.get_field<3>("v_topo");
+    auto& wf = state.get_field<3>("w_topo");
+    const auto ut = uf.get_mutable_device_data(), vt = vf.get_mutable_device_data(), wt = wf.get_mutable_device_data();
+    Kokkos::parallel_for("RLLTerrainMaskedWinds",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0,0,0}, {nz,ny,nx}),
+        KOKKOS_LAMBDA(int k, int j, int i) {
+            ut(k,j,i) = mu(k,j,i) == real(1.) ? u(k,j,i) : real(0.);
+            vt(k,j,i) = mv(k,j,i) == real(1.) ? v(k,j,i) : real(0.);
+            wt(k,j,i) = mw(k,j,i) == real(1.) ? w(k,j,i) : real(0.);
+        });
+    halo.exchange_multiple_halos(std::vector<Core::Field<3>*>{&uf, &vf, &wf});
+    boundary.fill_regular_lat_lon_free_slip_physical_wind_halos(uf, vf);
+    boundary.fill_centered_q2_neumann_halos(wf);
+    auto& xf = state.get_field<3>("xi_topo");
+    auto& ef = state.get_field<3>("eta_topo");
+    Kokkos::deep_copy(xf.get_mutable_device_data(), state.get_field<3>("xi").get_device_data());
+    Kokkos::deep_copy(ef.get_mutable_device_data(), state.get_field<3>("eta").get_device_data());
+    const auto xt = xf.get_mutable_device_data(), et = ef.get_mutable_device_data();
+    const auto flex = params.flex_height_coef_up.get_device_data();
+    const Real rdz = params.get_value_host(params.rdz);
+    const auto operation = Operators::make_regular_lat_lon_terrain_device_view(grid.geometry());
+    Kokkos::parallel_for("RLLTerrainAdaptedVorticity",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h-1,h,h}, {nz-h-1,ny-h,nx-h}),
+        KOKKOS_LAMBDA(int k, int j, int i) {
+            if (mv(k,j,i) != real(1.)) xt(k,j,i) = operation.xi(vt, wt, rdz*flex(k), k,j,i);
+            if (mu(k,j,i) != real(1.)) et(k,j,i) = operation.eta(ut, wt, rdz*flex(k), k,j,i);
+        });
+    halo.exchange_multiple_halos(std::vector<Core::Field<3>*>{&xf, &ef});
+    boundary.fill_positive_face_q2_homogeneous_dirichlet_halos(xf);
+    boundary.fill_centered_q2_neumann_halos(ef);
+}
+
 #if defined(ENABLE_NCCL)
 void require_cuda(cudaError_t result, const char* operation) {
     if (result != cudaSuccess) throw std::runtime_error(std::string(operation) + ": " + cudaGetErrorString(result));
@@ -14,6 +60,7 @@ void require_cuda(cudaError_t result, const char* operation) {
 
 void WindSolver::solve_regular_latlon() {
     const bool initial = !rll_initialized_;
+    const bool terrain = Core::is_rll_mountain(config_);
     const int h = grid_.get_halo_cells();
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
@@ -37,11 +84,12 @@ void WindSolver::solve_regular_latlon() {
     Kokkos::deep_copy(options.horizontal.channel_psi_north, state_.get_field<0>("rll_psi_north").get_device_data());
     options.horizontal.iterations = initial ? config_.get_value<int>("dynamics.solver.initial_iterations") : params_.solver_iteration;
     options.inverse_dz = params_.get_value_host(params_.rdz);
+    if (terrain) adapt_terrain(state_, grid_, params_, halo_exchanger_, *bounded_q2_stencils_);
     RegularLatLonDiagnosticFields fields{
         state_.get_field<2>("psi"), state_.get_field<2>("psinm1"),
         state_.get_field<2>("chi"), state_.get_field<2>("chinm1"),
         state_.get_field<3>("zeta"), state_.get_field<3>("w"), state_.get_field<3>("W3DNM1"),
-        state_.get_field<3>("xi"), state_.get_field<3>("eta"), state_.get_field<3>("u"), state_.get_field<3>("v"),
+        state_.get_field<3>(terrain ? "xi_topo" : "xi"), state_.get_field<3>(terrain ? "eta_topo" : "eta"), state_.get_field<3>("u"), state_.get_field<3>("v"),
         state_.get_field<1>("rhobar"), state_.get_field<1>("rhobar_up"), params_.flex_height_coef_mid,
         *rll_spacing_, *rll_increment_};
     HorizontalDiagnosticWorkspace workspace{rhs_psi_field_, rhs_chi_field_, psi_out_field_, chi_out_field_};
@@ -109,6 +157,9 @@ void WindSolver::solve_regular_latlon() {
         });
     halo_exchanger_.exchange_multiple_halos(std::vector<Core::Field<3>*>{&fields.u, &fields.v});
     bounded_q2_stencils_->fill_regular_lat_lon_free_slip_physical_wind_halos(fields.u, fields.v);
+    // Refresh the ordinary terrain scratch diagnostics for output and the next
+    // adaptation. Prognostic xi/eta are never overwritten with solid-cell curl.
+    if (terrain) adapt_terrain(state_, grid_, params_, halo_exchanger_, *bounded_q2_stencils_);
     rll_initialized_ = true;
 }
 } // namespace VVM::Dynamics

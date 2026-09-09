@@ -96,5 +96,59 @@ void Initializer::initialize_jung2019() const {
     halo_exchanger_.exchange_halos(state_.get_field<3>("zeta"));
     boundary.fill_positive_face_q2_homogeneous_dirichlet_halos(state_.get_field<3>("zeta"));
     boundary.fill_regular_lat_lon_free_slip_physical_wind_halos(state_.get_field<3>("u"), state_.get_field<3>("v"));
+
+    if (is_rll_mountain(config_)) {
+        // A distinct terrain experiment reuses the jet, not the Section 4.2
+        // reproduction claim. Centre is the midpoint of the geographic domain.
+        const Real peak = config_.get_value<Real>("initial_conditions.rll_mountain.height_m");
+        const Real width = config_.get_value<Real>("initial_conditions.rll_mountain.half_width_m");
+        const Real center_lambda = west + real(.5)*grid_.get_global_points_x()*dlambda;
+        const Real center_phi = south + real(.5)*grid_.get_global_points_y()*dphi;
+        state_.add_field<2>("rll_terrain_height", {ny, nx}, {GridStaggering::Centered, "m", "discretized centered spherical mountain height"});
+        auto elevation = state_.get_field<2>("rll_terrain_height").get_host_data();
+        auto terrain = state_.get_field<2>("topo").get_host_data();
+        const auto z = parameters_.z_up.get_host_data();
+        for (int j = h; j < ny-h; ++j) {
+            const Real phi = south + (grid_.get_local_physical_start_y()+j-h+real(.5))*dphi;
+            for (int i = h; i < nx-h; ++i) {
+                const Real lambda = west + (grid_.get_local_physical_start_x()+i-h+real(.5))*dlambda;
+                const Real cosine = std::sin(phi)*std::sin(center_phi)
+                    + std::cos(phi)*std::cos(center_phi)*std::cos(lambda-center_lambda);
+                const Real distance = radius*std::acos(std::max(real(-1.), std::min(real(1.), cosine)));
+                const Real height = distance < real(3.)*width ? peak*std::exp(-distance*distance/(width*width)) : real(0.);
+                int level = h-1;
+                for (int k = h; k < nz-2*h-2; ++k)
+                    if (std::abs(z(k)-height) < std::abs(z(level)-height)) level = k;
+                terrain(j,i) = level == h-1 ? real(0.) : static_cast<Real>(level);
+                elevation(j,i) = z(level);
+            }
+        }
+        Kokkos::deep_copy(state_.get_field<2>("topo").get_mutable_device_data(), terrain);
+        Kokkos::deep_copy(state_.get_field<2>("rll_terrain_height").get_mutable_device_data(), elevation);
+        halo_exchanger_.exchange_halos(state_.get_field<2>("topo"));
+        boundary.fill_centered_q2_neumann_halos(state_.get_field<2>("topo"));
+        initialize_topo();
+        // Gather neighboring W masks at each owned positive face. The legacy
+        // scatter into i-1/j-1 can target a halo on a decomposition boundary;
+        // exchanging that halo does not transfer the write to its owner.
+        auto& mask_w_field = state_.get_field<3>("ITYPEW");
+        halo_exchanger_.exchange_halos(mask_w_field);
+        boundary.fill_centered_q2_neumann_halos(mask_w_field);
+        const auto mask_w = mask_w_field.get_device_data();
+        const auto mask_u = state_.get_field<3>("ITYPEU").get_mutable_device_data();
+        const auto mask_v = state_.get_field<3>("ITYPEV").get_mutable_device_data();
+        Kokkos::parallel_for("RLLTerrainOwnedFaceMasks",
+            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0,h,h}, {nz,ny-h,nx-h}),
+            KOKKOS_LAMBDA(int k, int j, int i) {
+                mask_u(k,j,i) = mask_w(k,j,i)*mask_w(k,j,i+1);
+                mask_v(k,j,i) = mask_w(k,j,i)*mask_w(k,j+1,i);
+            });
+        halo_exchanger_.exchange_halos(state_.get_field<2>("topo"));
+        boundary.fill_centered_q2_neumann_halos(state_.get_field<2>("topo"));
+        for (const char* name : {"ITYPEU", "ITYPEV", "ITYPEW"}) {
+            halo_exchanger_.exchange_halos(state_.get_field<3>(name));
+            boundary.fill_centered_q2_neumann_halos(state_.get_field<3>(name));
+        }
+    }
 }
 } // namespace VVM::Core
