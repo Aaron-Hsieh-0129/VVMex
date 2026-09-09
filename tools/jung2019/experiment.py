@@ -90,6 +90,9 @@ def configure(args):
                                          iteration=args.iterations, initial_iterations=args.initial_iterations)
     if args.compact:
         config["output"]["fields_to_output"] = ["rll_zeta_top"]
+    if args.timing_interval:
+        config["performance"] = {"timing": {"print_interval_steps": args.timing_interval,
+                                              "reset_after_interval_print": True}}
     directory = (ROOT / "experiments/jung2019" / args.name).resolve()
     if not directory.is_relative_to(ROOT / "experiments/jung2019"):
         raise ValueError("Run name must stay under experiments/jung2019")
@@ -178,6 +181,7 @@ p.add_argument("--interval", type=float, default=24)
 p.add_argument("--iterations", type=int, default=200)
 p.add_argument("--initial-iterations", type=int, default=1000)
 p.add_argument("--compact", action="store_true", help="Save only the native top Z plane for high-resolution L2 studies")
+p.add_argument("--timing-interval", type=int, default=0)
 p.set_defaults(func=configure)
 p = sub.add_parser("launch")
 p.add_argument("directory")
