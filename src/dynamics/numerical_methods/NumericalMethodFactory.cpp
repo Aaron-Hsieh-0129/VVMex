@@ -77,7 +77,7 @@ NumericalMethodFactory::create_spatial_scheme(
                 && (variable_name == "xi" || variable_name == "eta");
             const bool vorticity_term = !is_tracer
                 && (variable_name == "xi" || variable_name == "eta" || variable_name == "zeta")
-                && (term_name == "advection" || term_name == "stretching" || term_name == "twisting");
+                && (term_name == "advection" || term_name == "stretching" || term_name == "twisting" || term_name == "coriolis");
 
             if (!scalar_advection && !horizontal_buoyancy && !vorticity_term) {
                 throw std::runtime_error(

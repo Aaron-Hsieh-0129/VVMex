@@ -99,11 +99,20 @@ void Initializer::initialize_jung2019() const {
 
     if (is_rll_mountain(config_)) {
         // A distinct terrain experiment reuses the jet, not the Section 4.2
-        // reproduction claim. Centre is the midpoint of the geographic domain.
+        // reproduction claim. Longitude defaults to the domain midpoint.
+        // Planetary vorticity is physical f at native Z latitude, not T latitude.
+        const Real omega = config_.get_value<Real>("constants.OMEGA", real(0.));
+        auto f = state_.get_field<2>("f_2d").get_host_data();
+        for (int j = 0; j < ny; ++j) {
+            const Real phi_z = south + (grid_.get_local_physical_start_y()+j-h+real(1.))*dphi;
+            for (int i = 0; i < nx; ++i) f(j,i) = real(2.)*omega*std::sin(phi_z);
+        }
+        Kokkos::deep_copy(state_.get_field<2>("f_2d").get_mutable_device_data(), f);
         const Real peak = config_.get_value<Real>("initial_conditions.rll_mountain.height_m");
         const Real width = config_.get_value<Real>("initial_conditions.rll_mountain.half_width_m");
         const Real center_lambda = west + real(.5)*grid_.get_global_points_x()*dlambda;
-        const Real center_phi = south + real(.5)*grid_.get_global_points_y()*dphi;
+        const Real center_phi = config_.get_value<Real>("initial_conditions.rll_mountain.center_latitude_deg",
+            (south + real(.5)*grid_.get_global_points_y()*dphi)*real(180.)/pi)*pi/real(180.);
         state_.add_field<2>("rll_terrain_height", {ny, nx}, {GridStaggering::Centered, "m", "discretized centered spherical mountain height"});
         auto elevation = state_.get_field<2>("rll_terrain_height").get_host_data();
         auto terrain = state_.get_field<2>("topo").get_host_data();

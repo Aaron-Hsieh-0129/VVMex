@@ -1,5 +1,7 @@
 # Williamson test request: scope audit and handoff
 
+Update: the user clarified that the desired quick experiment is rotating zonal flow over a north-shifted mountain, not exact Williamson reproduction. The minimal configuration/wiring and its validation status are documented in `../topography/rotation-smoke.md`. The audit below records the earlier scope assessment; its statement that rotation is not wired is superseded by that update.
+
 Requested after RLL terrain implementation commit `363e262985cc47565afc7570e3d4b75a93b1711e`.
 
 The user requested replacing the user-facing topography test with a Rossby-wave test like Williamson's. An asynchronous clarification asks whether they mean test6 (Rossby–Haurwitz wave, no mountain) or test5 (zonal flow over an isolated mountain). Do not silently substitute one for the other.
