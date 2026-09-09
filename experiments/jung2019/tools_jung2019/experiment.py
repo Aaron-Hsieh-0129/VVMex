@@ -11,7 +11,8 @@ import time
 import h5py
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[2]
+EXPERIMENT = Path(__file__).resolve().parents[1]
+ROOT = EXPERIMENT.parents[1]
 
 
 def launch(args):
@@ -56,7 +57,7 @@ def launch(args):
                 "configuration_sha256": hashlib.sha256((directory / "config.json").read_bytes()).hexdigest(),
                 "environment": {key: env.get(key, "") for key in ("VVM_ROOT", "OMP_NUM_THREADS", "VVM_TEST_GPUS", "LD_LIBRARY_PATH")},
                 "storage_before_bytes": used, "conservative_output_estimate_bytes": estimate}
-    untracked = git("ls-files", "--others", "--exclude-standard", "--", "src", "tests", "tools", "rundata/input_configs/jung2019").decode().splitlines()
+    untracked = git("ls-files", "--others", "--exclude-standard", "--", "src", "tests", "experiments/jung2019/tools_jung2019", "experiments/jung2019/tests", "experiments/jung2019/configs").decode().splitlines()
     manifest["untracked_source_sha256"] = {
         name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
         for name in untracked if (ROOT / name).suffix in (".cpp", ".hpp", ".h", ".py", ".json", ".cmake", ".sh")}
@@ -76,7 +77,7 @@ def launch(args):
 
 
 def configure(args):
-    config = json.loads((ROOT / "rundata/input_configs/jung2019/case1.json").read_text())
+    config = json.loads((EXPERIMENT / "configs/case1.json").read_text())
     h = config["grid"]["horizontal"]
     h.update(nx=args.nx, ny=args.nx // 4)
     config["initial_conditions"]["jung2019"].update(

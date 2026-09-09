@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Independent synthetic checks of the production L2 analysis command.
 
-Run: python -m unittest discover -s tools/jung2019 -p test_convergence.py -v
+Run: python -m unittest discover -s experiments/jung2019/tests -p test_convergence.py -v
 Temporary fixtures are compressed and removed by TemporaryDirectory.
 """
 import json
@@ -42,7 +42,7 @@ class ConvergenceAnalysisTest(unittest.TestCase):
             self.runs.append(directory)
 
     def invoke(self):
-        return subprocess.run([sys.executable, str(Path(__file__).with_name("convergence.py")),
+        return subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "tools_jung2019/convergence.py"),
             "--reference", str(self.runs[-1]), "--runs", *map(str, self.runs[:-1]),
             "--output", str(self.root / "analysis")], capture_output=True, text=True)
 

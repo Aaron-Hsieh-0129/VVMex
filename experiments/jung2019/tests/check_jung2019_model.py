@@ -12,8 +12,9 @@ import tempfile
 import numpy as np
 import h5py
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "tools/jung2019"))
+EXPERIMENT = Path(__file__).resolve().parents[1]
+ROOT = EXPERIMENT.parents[1]
+sys.path.insert(0, str(EXPERIMENT / "tools_jung2019"))
 from experiment import read_output
 
 
@@ -26,7 +27,7 @@ args = parser.parse_args()
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 args.work.mkdir(parents=True, exist_ok=True)
 work = Path(tempfile.mkdtemp(prefix="run-", dir=args.work))
-base = json.loads((ROOT / "rundata/input_configs/jung2019/case1.json").read_text())
+base = json.loads((EXPERIMENT / "configs/case1.json").read_text())
 base["grid"]["horizontal"].update(nx=80, ny=20)
 base["simulation"].update(total_time_s=3600, output_interval_s=3600)
 base["dynamics"]["solver"]["WRXMU"] = 2 / (2*np.pi/80)**2

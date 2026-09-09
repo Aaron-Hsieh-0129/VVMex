@@ -90,7 +90,7 @@ ctest --test-dir build --output-on-failure -j1
 # In a CPU environment prepend the CPU libraries instead:
 LD_LIBRARY_PATH=/raid/mog/libs_VVM_cpu/lib:/raid/mog/libs_VVM_cpu/tpl/lib:$LD_LIBRARY_PATH \
   ctest --test-dir build_cpu --output-on-failure -j1
-python -m unittest discover -s tools/jung2019 -p test_convergence.py -v
+python -m unittest discover -s experiments/jung2019/tests -p test_convergence.py -v
 ```
 
 Header dependency scanning is disabled in the existing root CMake, so header changes require a clean rebuild. CPU CTest declares64 OpenMP threads; shell `OMP_NUM_THREADS` does not override that test property. Tests were serialized, within224 cores. One GPU/rank per full experiment was faster than four-rank decomposition in measured windowed timing; largest run used approximately32GB GPU memory.
@@ -98,18 +98,18 @@ Header dependency scanning is disabled in the existing root CMake, so header cha
 To regenerate the numerical hierarchy, choose fresh names and enough remaining storage; **do not run a duplicate full hierarchy alongside the retained7.2GB output under the10GB limit**. This example configures/launches one selected member:
 
 ```sh
-python tools/jung2019/experiment.py configure NEW_CASE1_6400 \
+python experiments/jung2019/tools_jung2019/experiment.py configure NEW_CASE1_6400 \
   --case 1 --nx 6400 --dt 18.75 --iterations 200 --initial-iterations 1000 --compact
-python tools/jung2019/experiment.py launch experiments/jung2019/NEW_CASE1_6400 \
+python experiments/jung2019/tools_jung2019/experiment.py launch experiments/jung2019/NEW_CASE1_6400 \
   --ranks 1 --threads 4 --gpus 4
-python tools/jung2019/experiment.py analyze experiments/jung2019/NEW_CASE1_6400
+python experiments/jung2019/tools_jung2019/experiment.py analyze experiments/jung2019/NEW_CASE1_6400
 
-python tools/jung2019/convergence.py \
+python experiments/jung2019/tools_jung2019/convergence.py \
   --reference experiments/jung2019/l2_case1_n6400 \
   --runs experiments/jung2019/l2_case1_n400 experiments/jung2019/l2_case1_n800 \
     experiments/jung2019/case1_1600x400_dt75 experiments/jung2019/l2_case1_n3200 \
   --output experiments/jung2019/convergence_case1
-python tools/jung2019/convergence.py \
+python experiments/jung2019/tools_jung2019/convergence.py \
   --reference experiments/jung2019/l2_case2_n6400 \
   --runs experiments/jung2019/l2_case2_n400 experiments/jung2019/l2_case2_n800 \
     experiments/jung2019/l2_case2_n1600 experiments/jung2019/l2_case2_n3200 \

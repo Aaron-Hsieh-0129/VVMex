@@ -1,5 +1,13 @@
 # RLL Section 4.2 handoff
 
+## Asset relocation (2026-09-09)
+
+All experiment configuration, documentation, tools and experiment-specific tests now live under `experiments/jung2019`; see [README](README.md). The user's initial moves were retained and old import/configuration/documentation paths repaired. `tests/CMakeLists.txt` includes the experiment's `tests/register.cmake`, preserving `test_jung2019_shared_model` and its backend/resource settings. New integration evidence goes to `testing_output/build` or `testing_output/build_cpu` here. Historical run provenance and old build output remain unchanged. Shared numerical runtime code and generic RLL operator tests were not moved or modified.
+
+Relocation validation: both CMake presets regenerated; GPU integration1/1 passed (81.07s), CPU integration1/1 passed (110.65s), analysis4/4 passed (30.999s), launcher CASE2 generation/root/template/output checks passed. Logs: `build/jung-relocation-ctest.log`, `build_cpu/jung-relocation-ctest.log`, `build/jung-relocation-analysis-tests.log`. Full model CTest suites were not rerun for this path-only change; their earlier results below remain historical. Small relocated assets are explicitly tracked despite the user's experiment ignore rule; generated data stay ignored. No numerical configuration values changed and no scientific run was repeated.
+
+## Scientific handoff
+
 Updated 2026-09-09, Asia/Taipei. Section4.2 is complete as a stable, self-convergent paper-wall RLL realization under the user-approved own-reference criterion. Both cases complete all five resolutions. Final CPU92/92 and GPU/MPI174/174 CTest pass. Read [results](rll-section42-results.md) for quantitative evidence, commands and limitations, and [validation protocol](rll-section42-validation.md) for the pre-set assessment rule. Exact archive identity and a pure spatial order are not claimed.
 
 ## Checkout and authority
@@ -30,7 +38,7 @@ User accepted own-reference L2 in place of identical nonlinear archive trajector
 - Final full CPU92/92 passed,731.46s: `build/rll-cpu-qualified-ctest-console.log`.
 - Final full GPU174/174 passed,1193.09s; GPU0–3, serialized: `build/rll-qualified-ctest-console.log`. Earlier full GPU173/173 andCPU91/91 passed before final additions. No tests remain active.
 - Production rest/jet/coupled, ten configuration rejections, compact exactness, independent top transport and1-/4-rank backend tests pass. CUDA graphs are enabled, not bypassed.
-- Four independent analysis tests pass, including rejection of nonconvergent data: `build/rll-analysis-tests.log`. Run `python -m unittest discover -s tools/jung2019 -p test_convergence.py -v`.
+- Four independent analysis tests pass, including rejection of nonconvergent data: `build/rll-analysis-tests.log`. Run `python -m unittest discover -s experiments/jung2019/tests -p test_convergence.py -v`.
 - No scientific model runs remain active. Original user bubble output was preserved at `build/pre-rll-testing_output_2dbubble`.
 
 ## Environment and operational pitfalls
