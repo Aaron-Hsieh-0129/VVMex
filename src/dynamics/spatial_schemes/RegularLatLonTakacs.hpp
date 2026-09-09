@@ -67,6 +67,19 @@ public:
     void calculate_twisting_tendency_y(const Core::State&, const Core::Grid&, const Core::Parameters&, Core::Field<3>&, const std::string&) const override;
     void calculate_twisting_tendency_z(const Core::State&, const Core::Grid&, const Core::Parameters&, Core::Field<3>&, const std::string&) const override;
 
+    void calculate_coriolis_tendency_x(const Core::State& state, const Core::Grid& grid,
+        const Core::Parameters& params, Core::Field<3>& output) const override {
+        vorticity_.add(state, grid, params, output, "xi", Operators::RegularLatLonVorticityTendency::Term::Planetary);
+    }
+    void calculate_coriolis_tendency_y(const Core::State& state, const Core::Grid& grid,
+        const Core::Parameters& params, Core::Field<3>& output) const override {
+        vorticity_.add(state, grid, params, output, "eta", Operators::RegularLatLonVorticityTendency::Term::Planetary);
+    }
+    void calculate_coriolis_tendency_z(const Core::State& state, const Core::Grid& grid,
+        const Core::Parameters& params, Core::Field<3>& output) const override {
+        vorticity_.add(state, grid, params, output, "zeta", Operators::RegularLatLonVorticityTendency::Term::Planetary);
+    }
+
 private:
     void validate_dry_buoyancy(
         const Core::State& state, const Core::Grid& grid,

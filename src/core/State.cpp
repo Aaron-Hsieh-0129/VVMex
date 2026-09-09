@@ -41,7 +41,9 @@ State::State(const Utils::ConfigurationManager& config, const Parameters& params
     add_field<2>("lon", {ny_total, nx_total}, FieldMetadata{GridStaggering::Centered, "degrees_east", "longitude"});
     add_field<2>("lat", {ny_total, nx_total}, FieldMetadata{GridStaggering::Centered, "degrees_north", "latitude"});
     add_field<1>("f", {ny_total}, FieldMetadata{GridStaggering::Centered, "s-1", "Coriolis parameter"});
-    add_field<2>("f_2d", {ny_total, nx_total}, FieldMetadata{GridStaggering::Centered, "s-1", "Coriolis parameter on the horizontal grid"});
+    add_field<2>("f_2d", {ny_total, nx_total}, FieldMetadata{
+        grid.geometry().kind() == Geometry::GeometryKind::RegularLatLon ? GridStaggering::StaggeredXY : GridStaggering::Centered,
+        "s-1", "Coriolis parameter on the horizontal grid"});
 
     // 2D field
     add_field<2>("psi", {ny_total, nx_total}, FieldMetadata{GridStaggering::StaggeredXY, "m2 s-1", "top-boundary horizontal streamfunction"});

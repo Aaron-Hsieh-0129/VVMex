@@ -32,9 +32,13 @@ inline void validate_jung2019_rll(const Utils::ConfigurationManager& config, con
     if (is_rll_mountain(config)) {
         const double height = config.get_value<double>("initial_conditions.rll_mountain.height_m");
         const double width = config.get_value<double>("initial_conditions.rll_mountain.half_width_m");
-        const double half_band = h.geometry.regular_lat_lon.radius * h.geometry.dq2 * h.ny / 2.;
+        const double south = h.geometry.regular_lat_lon.latitude_south_edge;
+        const double north = south + h.geometry.dq2*h.ny;
+        const double center = config.get_value<double>("initial_conditions.rll_mountain.center_latitude_deg",
+            (south+north)*90./std::acos(-1.))*std::acos(-1.)/180.;
+        const double half_band = h.geometry.regular_lat_lon.radius * std::min(center-south, north-center);
         if (v.nz < 8 || !std::isfinite(height) || height < 0. || height > (v.nz-h.n_halo_cells-3)*v.dz
-            || !std::isfinite(width) || width <= 0. || 3.*width >= half_band)
+            || !std::isfinite(center) || !std::isfinite(width) || width <= 0. || 3.*width >= half_band)
             throw std::runtime_error("RLL mountain requires nz >= 8, finite nonnegative height below the lid, and positive width with 3 widths inside the latitude walls.");
     } else if (config.has_key("initial_conditions.rll_mountain")) {
         throw std::runtime_error("Mountain terrain requires simulation.idealized_test = rll_mountain; Jung reproduction remains flat.");
@@ -60,6 +64,16 @@ inline void validate_jung2019_rll(const Utils::ConfigurationManager& config, con
         || config.get_value<int>("dynamics.solver.vertical_iterations") <= 0)
         throw std::runtime_error("RLL requires positive fixed solver iteration counts and the original vertical line solver.");
     const auto variables = config.get_value<nlohmann::json>("dynamics.prognostic_variables");
+    if (is_rll_mountain(config)) {
+        const double omega = config.get_value<double>("constants.OMEGA", 0.);
+        if (!std::isfinite(omega)) throw std::runtime_error("RLL mountain OMEGA must be finite.");
+        for (const char* name : {"xi", "eta", "zeta"}) {
+            const std::string key = std::string("dynamics.prognostic_variables.")+name+".tendency_terms.coriolis";
+            const bool enabled = config.has_key(key) && config.get_value<bool>(key+".enable", true);
+            if (omega != 0. && !enabled)
+                throw std::runtime_error("Rotating RLL mountain requires Coriolis for all three vorticity components.");
+        }
+    }
     for (const char* name : {"xi", "eta", "zeta"}) {
         if (!variables.contains(name) || !variables.at(name).contains("tendency_terms"))
             throw std::runtime_error("Jung RLL requires all three vorticity variables and their shared tendencies.");
@@ -73,7 +87,8 @@ inline void validate_jung2019_rll(const Utils::ConfigurationManager& config, con
             throw std::runtime_error("Section 4.2 enables only xi, eta and zeta tendencies.");
         for (const auto& term : variable.value().at("tendency_terms").items()) {
             if (!term.value().value("enable", true)) continue;
-            if (term.key() != "advection" && term.key() != "stretching" && term.key() != "twisting")
+            if (term.key() != "advection" && term.key() != "stretching" && term.key() != "twisting"
+                && !(is_rll_mountain(config) && term.key() == "coriolis"))
                 throw std::runtime_error("Section 4.2 has no Coriolis, buoyancy, or diffusion tendency.");
             if (term.value().value("spatial_scheme", std::string("")) != "Takacs"
                 || term.value().value("temporal_scheme", std::string("")) != "AdamsBashforth2")
