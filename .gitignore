@@ -64,3 +64,6 @@ rundata/initial_conditions/profiles/*.txt
 !rundata/initial_conditions/profiles/snd_rcemip_anal300_v3.txt
 __pycache__
 *.ipynb
+
+refs
+experiments
