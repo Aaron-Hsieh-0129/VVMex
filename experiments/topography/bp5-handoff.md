@@ -1,5 +1,17 @@
 # RLL BP5 and shifted-jet continuation
 
+## September 10 continuation: storage and runtime validation
+
+The user authorized moving generated results to `/raid/mog`. Relocated the entire untracked `output` directory (8.8 GiB) and 33 generated Jung result directories (6.8 GiB) to `/raid/mog/CVVMex_results/{output,experiments/jung2019}`. All moves completed successfully; original paths are symlinks. Repository sources, tracked experiment assets, reference DATA and builds were not moved. No results were discarded. This supersedes the storage blocker below.
+
+At source revision `3b0eff1fb0c4e2d8a50ddc9de355130406c3fca8`, CUDA `test_rll_bp5_history` PASSED (8.92 s). All eleven fields match HDF5 bit-for-bit at 0, 60 and 120 s, with the independent coordinate, terrain, shifted-jet and planetary-vorticity checks passing. Graph-enabled evolution remained finite. The requested asynchronous packed BP5 settings were used. Configurations, model logs and both histories are retained in `/raid/mog/CVVMex_results/validation/rll_bp5_tests/run-9w92tpdj` (8 MiB total validation storage). `build/rll_bp5_tests` links to the RAID validation directory; the command below remains reproducible.
+
+This qualifies short-run CUDA RLL BP5 output, not long-term wave accuracy or convergence. The full-duration working preset has not been launched by this continuation. Its original relative output path now resolves onto RAID. The user's duration/output-interval edits and unrelated Initializer.cpp/style changes remain uncommitted and preserved.
+
+Existing configuration/BP5 regressions also PASSED 14/14 (71.91 s), including serial and 2/4-rank writer tests, packed/synchronous and direct/asynchronous output, and float32/float64 checks. Reproduce with the environment below and `ctest --test-dir build -R '^test_(bp5_|model_configuration_validation)' --output-on-failure`. These writer MPI checks are not an RLL full-model MPI validation. No tests failed in this continuation; CPU and the complete original CTest suite have not been rerun for the latest changes. Next concrete step: full original CUDA regression run, then a bounded longer rotating BP5 run and wave diagnostics before any scientific accuracy claim.
+
+The following preparation notes are historical; the runtime-pending and storage-blocked statements are superseded by this update.
+
 The user requested a tunable jet aligned with the mountain, BP5 as the experiment default with asynchronous packed output, and possibly higher latitude. The preset `rundata/input_configs/topography.json` now places both centers at20°N (mountain longitude180°E), within the existing±45° channel. Both latitude keys remain independent. The user's duration360000s and output interval6000s are preserved; peak wind80m/s and mountain height2000m/width500km remain unchanged. This is not an exact Williamson experiment.
 
 The new jet-center option shifts only the wind profile. Background relative vorticity and channel streamfunction are recomputed consistently at physical spherical metric locations. An omitted option now bypasses degree/radian conversion entirely, preserving the original jet arithmetic for both Jung cases. A jet crossing the channel walls is rejected.
