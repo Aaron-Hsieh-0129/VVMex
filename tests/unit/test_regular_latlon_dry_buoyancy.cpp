@@ -322,6 +322,67 @@ test_analytic_and_replay(const RegularLatLonGeometry& geometry, const Real radiu
     check(finite, "RLL dry buoyancy must produce finite values");
 }
 
+void test_moist(const RegularLatLonGeometry& geometry, Real radius) {
+    const auto layout = make_layout();
+    const int h = layout.halo, nz = 10;
+    const int ny = layout.local_total_ny(), nx = layout.local_total_nx();
+    Field<3> th("moist_th", {nz,ny,nx}), qv("moist_qv", {nz,ny,nx});
+    Field<3> qp("moist_qp", {nz,ny,nx}), mask("moist_mask", {nz,ny,nx});
+    Field<3> out("moist_out", {nz,ny,nx});
+    Field<3> replay("moist_replay", {nz,ny,nx});
+    Field<1> bar("moist_bar", {nz});
+    Kokkos::View<Real> gravity("moist_g");
+    Kokkos::deep_copy(gravity, real(9.806));
+    Kokkos::deep_copy(th.get_mutable_device_data(), real(300.));
+    Kokkos::deep_copy(bar.get_mutable_device_data(), real(300.));
+    auto vapor = qv.get_host_data(), condensate = qp.get_host_data();
+    auto masks = mask.get_host_data();
+    for (int k=0; k<nz; ++k) for (int j=0; j<ny; ++j) for (int i=0; i<nx; ++i) {
+        vapor(k,j,i) = real(.01)+real(.0001)*(i+2*j);
+        condensate(k,j,i) = real(.001)+real(.00001)*(2*i+j);
+        masks(k,j,i) = k==h && i==h && j==h ? real(0.) : real(1.);
+    }
+    Kokkos::deep_copy(qv.get_mutable_device_data(), vapor);
+    Kokkos::deep_copy(qp.get_mutable_device_data(), condensate);
+    Kokkos::deep_copy(mask.get_mutable_device_data(), masks);
+    RegularLatLonDryBuoyancy op(geometry);
+    op.prepare_execution();
+    const Real pi = std::acos(real(-1.));
+    for (bool xi : {true,false}) {
+        Kokkos::deep_copy(out.get_mutable_device_data(), real(7.));
+        Kokkos::deep_copy(replay.get_mutable_device_data(), real(7.));
+#if defined(KOKKOS_ENABLE_CUDA)
+        TestGraph graph(Kokkos::Cuda().cuda_stream());
+        graph.begin();
+        op.add_moist_tendency(th,bar,gravity,qv,qp,mask,replay,h,nz-h-1,h,xi);
+        graph.finish();
+        graph.launch();
+#else
+        op.add_moist_tendency(th,bar,gravity,qv,qp,mask,replay,h,nz-h-1,h,xi);
+#endif
+        op.add_moist_tendency(th,bar,gravity,qv,qp,mask,out,h,nz-h-1,h,xi);
+        Kokkos::fence();
+        const auto result = out.get_host_data();
+        const auto replay_result = replay.get_host_data();
+        bool match = true;
+        for (int k=0; k<nz; ++k) for (int j=0; j<ny; ++j) for (int i=0; i<nx; ++i) {
+            Real expected = real(7.);
+            if (k>=h && k<nz-h-1 && j>=h && j<ny-h && i>=h && i<nx-h) {
+                const Real phi = -pi/real(6.)+(j-h+real(.5))*(pi/real(3.)/layout.global_ny);
+                const Real distance = xi ? radius*(pi/real(3.)/layout.global_ny)
+                    : radius*std::cos(phi)*(real(2.)*pi/layout.global_nx);
+                const Real slope = xi ? real(.608)*real(.0002)-real(.00001)
+                                      : real(.608)*real(.0001)-real(.00002);
+                expected += real(9.806)*slope/distance;
+                if (k==h && j==h && i==h) expected = real(0.);
+            }
+            match = match && close(result(k,j,i),expected,real(2.e-15));
+            match = match && result(k,j,i) == replay_result(k,j,i);
+        }
+        check(match,"Moist RLL buoyancy: physical gradients, signs, mask and untouched range");
+    }
+}
+
 } // namespace
 
 int
@@ -345,6 +406,7 @@ main(int argc, char** argv) {
 
             test_validation(layout);
             test_analytic_and_replay(geometry, radius);
+            test_moist(geometry, radius);
         }
         catch (const std::exception& error) {
             ++failures;
