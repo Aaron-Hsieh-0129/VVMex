@@ -24,7 +24,11 @@ namespace IO {
 
 class OutputManager {
 public:
-    OutputManager(const Utils::ConfigurationManager& config, const VVM::Core::Grid& grid, const VVM::Core::Parameters& params, VVM::Core::State& state, MPI_Comm comm);
+    OutputManager(const Utils::ConfigurationManager& config,
+        const VVM::Core::Grid& grid,
+        const VVM::Core::Parameters& params,
+        VVM::Core::State& state,
+        MPI_Comm comm);
     ~OutputManager();
 
     OutputManager(const OutputManager&) = delete;
@@ -78,29 +82,28 @@ private:
     adios2::Variable<VVM::Real> var_time_;
 
     void define_variables();
-    void define_field_variable(
-        const std::string& field_name,
+    void define_field_variable(const std::string& field_name,
         const adios2::Dims& shape,
         const adios2::Dims& start,
         const adios2::Dims& count);
     void put_field(const std::string& field_name, const VVM::Real* data, size_t elements);
-    void define_adios_field_metadata(
-        const std::string& field_name,
+    void define_adios_field_metadata(const std::string& field_name,
         const VVM::Core::FieldMetadata& metadata);
     void attach_hdf5_field_metadata(const std::string& filename);
 
     void grads_ctl_file();
-    std::vector<GradsVariable> grads_variables(
-        const std::string& dataset_prefix,
+    std::vector<GradsVariable> grads_variables(const std::string& dataset_prefix,
         std::size_t levels) const;
 
     std::string format_to_six_digits(int number);
 
-
     std::map<std::string, Kokkos::View<VVM::Real*, Kokkos::HostSpace>> host_buffers_1d_;
-    std::map<std::string, Kokkos::View<VVM::Real**, Kokkos::LayoutRight, Kokkos::HostSpace>> host_buffers_2d_;
-    std::map<std::string, Kokkos::View<VVM::Real***, Kokkos::LayoutRight, Kokkos::HostSpace>> host_buffers_3d_;
-    std::map<std::string, Kokkos::View<VVM::Real****, Kokkos::LayoutRight, Kokkos::HostSpace>> host_buffers_4d_;
+    std::map<std::string, Kokkos::View<VVM::Real**, Kokkos::LayoutRight, Kokkos::HostSpace>>
+        host_buffers_2d_;
+    std::map<std::string, Kokkos::View<VVM::Real***, Kokkos::LayoutRight, Kokkos::HostSpace>>
+        host_buffers_3d_;
+    std::map<std::string, Kokkos::View<VVM::Real****, Kokkos::LayoutRight, Kokkos::HostSpace>>
+        host_buffers_4d_;
 
     std::map<std::string, Kokkos::View<VVM::Real**, Kokkos::LayoutRight>> dev_buffers_2d_;
     std::map<std::string, Kokkos::View<VVM::Real***, Kokkos::LayoutRight>> dev_buffers_3d_;

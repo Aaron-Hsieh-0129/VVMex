@@ -11,11 +11,12 @@ namespace Dynamics {
 
 class StretchingTerm : public TendencyTerm {
 public:
-    explicit StretchingTerm(std::unique_ptr<SpatialScheme> scheme, std::string var_name, VVM::Core::HaloExchanger& halo_exchanger);
+    explicit StretchingTerm(std::unique_ptr<SpatialScheme> scheme,
+        std::string var_name,
+        VVM::Core::HaloExchanger& halo_exchanger);
     ~StretchingTerm() override;
 
-    void compute_tendency(
-        Core::State& state,
+    void compute_tendency(Core::State& state,
         const Core::Grid& grid,
         const Core::Parameters& params,
         Core::Field<3>& out_tendency) const override;

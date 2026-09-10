@@ -8,37 +8,51 @@
 namespace VVM {
 namespace Physics {
 
-TurbulenceProcess::TurbulenceProcess(const Utils::ConfigurationManager& config, 
-                                     const Core::Grid& grid, 
-                                     const Core::Parameters& params,
-                                     Core::HaloExchanger& halo_exchanger,
-                                     Core::State& state)
+TurbulenceProcess::TurbulenceProcess(const Utils::ConfigurationManager& config,
+    const Core::Grid& grid,
+    const Core::Parameters& params,
+    Core::HaloExchanger& halo_exchanger,
+    Core::State& state)
     : config_(config), grid_(grid), params_(params), halo_exchanger_(halo_exchanger),
-      masks_(grid.get_local_total_points_z(), grid.get_local_total_points_y(), grid.get_local_total_points_x()) 
-{
+      masks_(grid.get_local_total_points_z(),
+          grid.get_local_total_points_y(),
+          grid.get_local_total_points_x()) {
     int nz = grid_.get_local_total_points_z();
     int ny = grid_.get_local_total_points_y();
     int nx = grid_.get_local_total_points_x();
 
-    auto dims = std::array<int, 3>{
-          grid.get_local_total_points_z(),
-          grid.get_local_total_points_y(),
-          grid.get_local_total_points_x()
-    };
-    if (!state.has_field("RKM")) state.add_field<3>("RKM", dims, Core::FieldMetadata{Core::GridStaggering::Centered, "m2 s-1", "turbulent eddy viscosity"});
-    if (!state.has_field("RKH")) state.add_field<3>("RKH", dims, Core::FieldMetadata{Core::GridStaggering::Centered, "m2 s-1", "turbulent eddy diffusivity"});
+    auto dims = std::array<int, 3>{grid.get_local_total_points_z(),
+        grid.get_local_total_points_y(),
+        grid.get_local_total_points_x()};
+    if (!state.has_field("RKM")) {
+        state.add_field<3>("RKM",
+            dims,
+            Core::FieldMetadata{Core::GridStaggering::Centered,
+                "m2 s-1",
+                "turbulent eddy viscosity"});
+    }
+    if (!state.has_field("RKH")) {
+        state.add_field<3>("RKH",
+            dims,
+            Core::FieldMetadata{Core::GridStaggering::Centered,
+                "m2 s-1",
+                "turbulent eddy diffusivity"});
+    }
 
     dynamics_vars_ = {"xi", "eta", "zeta"};
     thermodynamics_vars_ = {"th", "qv"};
     if (config.get_value<bool>("physics.p3.enable_p3", false)) {
-        thermodynamics_vars_.insert(thermodynamics_vars_.end(), {"qc", "qr", "qi", "nc", "nr", "ni", "bm", "qm"});
+        thermodynamics_vars_.insert(thermodynamics_vars_.end(),
+            {"qc", "qr", "qi", "nc", "nr", "ni", "bm", "qm"});
     }
     const auto& tracer_names = state.get_tracer_names();
-    thermodynamics_vars_.insert(thermodynamics_vars_.end(), tracer_names.begin(), tracer_names.end());
+    thermodynamics_vars_.insert(thermodynamics_vars_.end(),
+        tracer_names.begin(),
+        tracer_names.end());
 }
 
-
-void TurbulenceProcess::initialize(Core::State& state) {
+void
+TurbulenceProcess::initialize(Core::State& state) {
     int nz = grid_.get_local_total_points_z();
     int ny = grid_.get_local_total_points_y();
     int nx = grid_.get_local_total_points_x();
@@ -56,9 +70,8 @@ void TurbulenceProcess::initialize(Core::State& state) {
         else if (!metadata.units.empty()) {
             units = metadata.units + " s-1";
         }
-        const std::string long_name = metadata.long_name.empty()
-            ? var_name + " tendency"
-            : metadata.long_name + " tendency";
+        const std::string long_name =
+            metadata.long_name.empty() ? var_name + " tendency" : metadata.long_name + " tendency";
         return Core::FieldMetadata{metadata.grid_staggering, units, long_name};
     };
     for (const auto& var_name : thermodynamics_vars_) {
@@ -70,8 +83,12 @@ void TurbulenceProcess::initialize(Core::State& state) {
     for (const auto& var_name : dynamics_vars_) {
         std::string fe_tendency_name = "fe_tendency_" + var_name;
         if (!state.has_field(fe_tendency_name)) {
-            if (var_name == "zeta") state.add_field<2>(fe_tendency_name, {ny, nx}, tendency_metadata(var_name));
-            else state.add_field<3>(fe_tendency_name, dims, tendency_metadata(var_name));
+            if (var_name == "zeta") {
+                state.add_field<2>(fe_tendency_name, {ny, nx}, tendency_metadata(var_name));
+            }
+            else {
+                state.add_field<3>(fe_tendency_name, dims, tendency_metadata(var_name));
+            }
         }
     }
     Kokkos::deep_copy(dx_, params_.dx);
@@ -84,9 +101,9 @@ void TurbulenceProcess::initialize(Core::State& state) {
     Kokkos::deep_copy(rdy2_, params_.rdy2);
     Kokkos::deep_copy(rdz2_, params_.rdz2);
     Kokkos::deep_copy(grav_, params_.gravity);
-    
+
     vk_ = 0.4;
-    deld_ = std::pow(dx_ * dy_ * dz_, 1.0/3.0);
+    deld_ = std::pow(dx_ * dy_ * dz_, 1.0 / 3.0);
     ramd0s_ = std::pow(0.23 * deld_, 2.0);
     critmn_ = 1.0;
 
@@ -94,160 +111,182 @@ void TurbulenceProcess::initialize(Core::State& state) {
     return;
 }
 
-void TurbulenceProcess::init_boundary_masks(Core::State& state) {
+void
+TurbulenceProcess::init_boundary_masks(Core::State& state) {
     const auto& ITYPEU = ITYPEU_ref_.get(state, "ITYPEU").get_device_data();
     const auto& ITYPEV = ITYPEV_ref_.get(state, "ITYPEV").get_device_data();
     const auto& ITYPEW = ITYPEW_ref_.get(state, "ITYPEW").get_device_data();
-    const auto& hx     = topo_ref_.get(state, "topo").get_device_data();
+    const auto& hx = topo_ref_.get(state, "topo").get_device_data();
 
     int nz = grid_.get_local_total_points_z();
     int ny = grid_.get_local_total_points_y();
     int nx = grid_.get_local_total_points_x();
     int h = grid_.get_halo_cells();
-    int max_topo = params_.max_topo_idx; 
+    int max_topo = params_.max_topo_idx;
 
     auto masks = masks_;
 
     masks_.reset_to_ones();
 
     Kokkos::parallel_for("Init_DH_Topo_Inside",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny-h, nx-h}}),
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny - h, nx - h}}),
         KOKKOS_LAMBDA(const int j, const int i) {
-            int NN = static_cast<int>(hx(j, i)); 
-            if (NN != 0) { 
-                for (int k = h; k < NN; ++k) { 
+            int NN = static_cast<int>(hx(j, i));
+            if (NN != 0) {
+                for (int k = h; k < NN; ++k) {
                     masks.turn_off_all(k, j, i);
                 }
             }
-        }
-    );
+        });
 
     Kokkos::parallel_for("Init_DH_ITYPEW",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{h, h, h}}, {{max_topo+1, ny-h, nx-h}}),
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{h, h, h}}, {{max_topo + 1, ny - h, nx - h}}),
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
             if (ITYPEW(k, j, i) != 1) {
-                masks.turn_off(k, j, i-1, UU1); 
-                masks.turn_off(k, j, i-1, UV1); 
-                masks.turn_off(k, j, i-1, UW1);
-                masks.turn_off(k, j-1, i, VU1); 
-                masks.turn_off(k, j-1, i, VV1); 
-                masks.turn_off(k, j-1, i, VW1);
-                
-                masks.turn_off(k, j, i-1, UU2); 
-                masks.turn_off(k, j, i-1, UV2); 
-                masks.turn_off(k, j, i-1, UW2);
-                masks.turn_off(k, j-1, i, VU2); 
-                masks.turn_off(k, j-1, i, VV2); 
-                masks.turn_off(k, j-1, i, VW2);
-                
-                masks.turn_off(k, j, i+1, WU2);
-                masks.turn_off(k, j, i-1, WU1); 
-                masks.turn_off(k, j+1, i, WV2);
-                masks.turn_off(k, j-1, i, WV1);
-                masks.turn_off(k+1, j, i, WW2);
-                masks.turn_off(k-1, j, i, WW1);
+                masks.turn_off(k, j, i - 1, UU1);
+                masks.turn_off(k, j, i - 1, UV1);
+                masks.turn_off(k, j, i - 1, UW1);
+                masks.turn_off(k, j - 1, i, VU1);
+                masks.turn_off(k, j - 1, i, VV1);
+                masks.turn_off(k, j - 1, i, VW1);
+
+                masks.turn_off(k, j, i - 1, UU2);
+                masks.turn_off(k, j, i - 1, UV2);
+                masks.turn_off(k, j, i - 1, UW2);
+                masks.turn_off(k, j - 1, i, VU2);
+                masks.turn_off(k, j - 1, i, VV2);
+                masks.turn_off(k, j - 1, i, VW2);
+
+                masks.turn_off(k, j, i + 1, WU2);
+                masks.turn_off(k, j, i - 1, WU1);
+                masks.turn_off(k, j + 1, i, WV2);
+                masks.turn_off(k, j - 1, i, WV1);
+                masks.turn_off(k + 1, j, i, WW2);
+                masks.turn_off(k - 1, j, i, WW1);
             }
-        }
-    );
+        });
 
     Kokkos::parallel_for("Init_DH_ITYPEU",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{h, h, h}}, {{nz-h, ny-h, nx-h}}), 
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{h, h, h}}, {{nz - h, ny - h, nx - h}}),
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
             if (ITYPEU(k, j, i) != 1) {
-                masks.turn_off(k, j, i+1, UU2);
-                masks.turn_off(k, j, i-1, UU1);
-                masks.turn_off(k, j+1, i, UV2);
-                masks.turn_off(k, j-1, i, UV1);
-                masks.turn_off(k+1, j, i, UW2);
-                masks.turn_off(k-1, j, i, UW1);
+                masks.turn_off(k, j, i + 1, UU2);
+                masks.turn_off(k, j, i - 1, UU1);
+                masks.turn_off(k, j + 1, i, UV2);
+                masks.turn_off(k, j - 1, i, UV1);
+                masks.turn_off(k + 1, j, i, UW2);
+                masks.turn_off(k - 1, j, i, UW1);
             }
-        }
-    );
+        });
 
     Kokkos::parallel_for("Init_DH_ITYPEV",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{h, h, h}}, {{nz-h, ny-h, nx-h}}),
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{h, h, h}}, {{nz - h, ny - h, nx - h}}),
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
             if (ITYPEV(k, j, i) != 1) {
-                masks.turn_off(k, j, i+1, VU2);
-                masks.turn_off(k, j, i-1, VU1);
-                masks.turn_off(k, j+1, i, VV2);
-                masks.turn_off(k, j-1, i, VV1);
-                masks.turn_off(k+1, j, i, VW2);
-                masks.turn_off(k-1, j, i, VW1);
+                masks.turn_off(k, j, i + 1, VU2);
+                masks.turn_off(k, j, i - 1, VU1);
+                masks.turn_off(k, j + 1, i, VV2);
+                masks.turn_off(k, j - 1, i, VV1);
+                masks.turn_off(k + 1, j, i, VW2);
+                masks.turn_off(k - 1, j, i, VW1);
             }
-        }
-    );
+        });
 
     Kokkos::parallel_for("Init_DH_ITYPEW_2D",
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{0, 0}}, {{nz, nx}}),
         KOKKOS_LAMBDA(const int k, const int i) {
             // North Boundary
-            if (ITYPEW(k, ny-h, i) != 1) {
-                masks.turn_off(k, ny-h-1, i, VU1); masks.turn_off(k, ny-h-1, i, VV1); masks.turn_off(k, ny-h-1, i, VW1);
-                masks.turn_off(k, ny-h-1, i, VU2); masks.turn_off(k, ny-h-1, i, VV2); masks.turn_off(k, ny-h-1, i, VW2);
-                masks.turn_off(k, ny-h-1, i, WV1);
+            if (ITYPEW(k, ny - h, i) != 1) {
+                masks.turn_off(k, ny - h - 1, i, VU1);
+                masks.turn_off(k, ny - h - 1, i, VV1);
+                masks.turn_off(k, ny - h - 1, i, VW1);
+                masks.turn_off(k, ny - h - 1, i, VU2);
+                masks.turn_off(k, ny - h - 1, i, VV2);
+                masks.turn_off(k, ny - h - 1, i, VW2);
+                masks.turn_off(k, ny - h - 1, i, WV1);
             }
             // South Boundary
-            if (ITYPEW(k, h-1, i) != 1) masks.turn_off(k, h, i, WV2);
+            if (ITYPEW(k, h - 1, i) != 1) {
+                masks.turn_off(k, h, i, WV2);
+            }
 
-            if (ITYPEU(k, ny-h, i) != 1) masks.turn_off(k, ny-h-1, i, UV1);
-            if (ITYPEU(k, h-1, i) != 1) masks.turn_off(k, h, i, UV2);
-            
-            if (ITYPEV(k, ny-h, i) != 1) masks.turn_off(k, ny-h-1, i, VV1);
-            if (ITYPEV(k, h-1, i) != 1) masks.turn_off(k, h, i, VV2);
-        }
-    );
+            if (ITYPEU(k, ny - h, i) != 1) {
+                masks.turn_off(k, ny - h - 1, i, UV1);
+            }
+            if (ITYPEU(k, h - 1, i) != 1) {
+                masks.turn_off(k, h, i, UV2);
+            }
+
+            if (ITYPEV(k, ny - h, i) != 1) {
+                masks.turn_off(k, ny - h - 1, i, VV1);
+            }
+            if (ITYPEV(k, h - 1, i) != 1) {
+                masks.turn_off(k, h, i, VV2);
+            }
+        });
 
     Kokkos::parallel_for("Init_DH_Edge_X",
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{0, 0}}, {{nz, ny}}),
         KOKKOS_LAMBDA(const int k, const int j) {
             // East Boundary
-            if (ITYPEW(k, j, nx-h) != 1) {
-                masks.turn_off(k, j, nx-h-1, UU1); masks.turn_off(k, j, nx-h-1, UV1); masks.turn_off(k, j, nx-h-1, UW1);
-                masks.turn_off(k, j, nx-h-1, UU2); masks.turn_off(k, j, nx-h-1, UV2); masks.turn_off(k, j, nx-h-1, UW2);
-                masks.turn_off(k, j, nx-h-1, WU1);
+            if (ITYPEW(k, j, nx - h) != 1) {
+                masks.turn_off(k, j, nx - h - 1, UU1);
+                masks.turn_off(k, j, nx - h - 1, UV1);
+                masks.turn_off(k, j, nx - h - 1, UW1);
+                masks.turn_off(k, j, nx - h - 1, UU2);
+                masks.turn_off(k, j, nx - h - 1, UV2);
+                masks.turn_off(k, j, nx - h - 1, UW2);
+                masks.turn_off(k, j, nx - h - 1, WU1);
             }
             // West Boundary
-            if (ITYPEW(k, j, h-1) != 1) masks.turn_off(k, j, h, WU2);
+            if (ITYPEW(k, j, h - 1) != 1) {
+                masks.turn_off(k, j, h, WU2);
+            }
 
-            if (ITYPEU(k, j, nx-h) != 1) masks.turn_off(k, j, nx-h-1, UU1);
-            if (ITYPEU(k, j, h-1) != 1) masks.turn_off(k, j, h, UU2);
+            if (ITYPEU(k, j, nx - h) != 1) {
+                masks.turn_off(k, j, nx - h - 1, UU1);
+            }
+            if (ITYPEU(k, j, h - 1) != 1) {
+                masks.turn_off(k, j, h, UU2);
+            }
 
-            if (ITYPEV(k, j, nx-h) != 1) masks.turn_off(k, j, nx-h-1, VU1);
-            if (ITYPEV(k, j, h-1) != 1) masks.turn_off(k, j, h, VU2);
-        }
-    );
-    
+            if (ITYPEV(k, j, nx - h) != 1) {
+                masks.turn_off(k, j, nx - h - 1, VU1);
+            }
+            if (ITYPEV(k, j, h - 1) != 1) {
+                masks.turn_off(k, j, h, VU2);
+            }
+        });
+
     Kokkos::parallel_for("Init_DH_WW_Bound",
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{0, 0}}, {{ny, nx}}),
         KOKKOS_LAMBDA(const int j, const int i) {
-            int NN = static_cast<int>(hx(j, i)); 
-            if (NN>1 && ITYPEW(NN-1,j,i) == 0) {
-                 masks.turn_off(NN,j,i, WW1);
-                 masks.turn_off(NN,j,i, WU1);
-                 masks.turn_off(NN,j,i, WU2);
-                 masks.turn_off(NN,j,i, WV1);
-                 masks.turn_off(NN,j,i, WV2);
+            int NN = static_cast<int>(hx(j, i));
+            if (NN > 1 && ITYPEW(NN - 1, j, i) == 0) {
+                masks.turn_off(NN, j, i, WW1);
+                masks.turn_off(NN, j, i, WU1);
+                masks.turn_off(NN, j, i, WU2);
+                masks.turn_off(NN, j, i, WV1);
+                masks.turn_off(NN, j, i, WV2);
             }
-            if (NN>1 && ITYPEV(NN,j,i) == 0) {
-                 masks.turn_off(NN,j,i, VU1);
-                 masks.turn_off(NN,j,i, VU2);
-                 masks.turn_off(NN,j,i, VV1);
-                 masks.turn_off(NN,j,i, VW1);
+            if (NN > 1 && ITYPEV(NN, j, i) == 0) {
+                masks.turn_off(NN, j, i, VU1);
+                masks.turn_off(NN, j, i, VU2);
+                masks.turn_off(NN, j, i, VV1);
+                masks.turn_off(NN, j, i, VW1);
             }
-            if (NN>1 && ITYPEU(NN,j,i) == 0) {
-                 masks.turn_off(NN,j,i, UU1);
-                 masks.turn_off(NN,j,i, UU2);
-                 masks.turn_off(NN,j,i, UV1);
-                 masks.turn_off(NN,j,i, UV2);
-                 masks.turn_off(NN,j,i, UW1);
+            if (NN > 1 && ITYPEU(NN, j, i) == 0) {
+                masks.turn_off(NN, j, i, UU1);
+                masks.turn_off(NN, j, i, UU2);
+                masks.turn_off(NN, j, i, UV1);
+                masks.turn_off(NN, j, i, UV2);
+                masks.turn_off(NN, j, i, UW1);
             }
-        }
-    );
+        });
 }
 
-void TurbulenceProcess::compute_coefficients(Core::State& state, VVM::Real dt) 
-{
+void
+TurbulenceProcess::compute_coefficients(Core::State& state, VVM::Real dt) {
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
@@ -260,7 +299,7 @@ void TurbulenceProcess::compute_coefficients(Core::State& state, VVM::Real dt)
     const auto& R_eta = R_eta_ref_.get(state, "R_eta").get_device_data();
     const auto& R_zeta = R_zeta_ref_.get(state, "R_zeta").get_device_data();
     const auto& th = th_ref_.get(state, "th").get_device_data();
-    const auto& z_mid = params_.z_mid.get_device_data(); 
+    const auto& z_mid = params_.z_mid.get_device_data();
     const auto& flex_height_coef_mid = params_.flex_height_coef_mid.get_device_data();
     const auto& flex_height_coef_up = params_.flex_height_coef_up.get_device_data();
     const auto& ITYPEU = ITYPEU_ref_.get(state, "ITYPEU").get_device_data();
@@ -273,7 +312,7 @@ void TurbulenceProcess::compute_coefficients(Core::State& state, VVM::Real dt)
     const VVM::Real rdx = rdx_;
     const VVM::Real rdy = rdy_;
     const VVM::Real rdz = rdz_;
-    
+
     const VVM::Real grav = grav_;
     const VVM::Real vk = vk_;
     const VVM::Real ramd0s = ramd0s_;
@@ -282,38 +321,46 @@ void TurbulenceProcess::compute_coefficients(Core::State& state, VVM::Real dt)
 
     const auto& masks = masks_;
     Kokkos::parallel_for("ShuttsGray_Coeffs",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{h, h, h}}, {{nz-h, ny-h, nx-h}}),
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{h, h, h}}, {{nz - h, ny - h, nx - h}}),
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            VVM::Real du_dx = (u(k, j, i) - u(k, j, i-1)) * rdx;
-            VVM::Real dv_dy = (v(k, j, i) - v(k, j-1, i)) * rdy;
-            VVM::Real dw_dz = flex_height_coef_mid(k) * (w(k, j, i) - w(k-1, j, i)) * rdz;
+            VVM::Real du_dx = (u(k, j, i) - u(k, j, i - 1)) * rdx;
+            VVM::Real dv_dy = (v(k, j, i) - v(k, j - 1, i)) * rdy;
+            VVM::Real dw_dz = flex_height_coef_mid(k) * (w(k, j, i) - w(k - 1, j, i)) * rdz;
 
-            VVM::Real TERM1 =  Kokkos::pow(R_zeta(k,j-1,i-1), real(2.)) + Kokkos::pow(R_zeta(k,j,i-1), real(2.))
-                             + Kokkos::pow(R_zeta(k,j-1,  i), real(2.)) + Kokkos::pow(R_zeta(k,j,  i), real(2.))
-                             + Kokkos::pow(R_eta(k,   j,i-1), real(2.)) + Kokkos::pow(R_eta(k,  j,i), real(2.))
-                             + Kokkos::pow(R_eta(k-1, j,i-1), real(2.)) + Kokkos::pow(R_eta(k-1,j,i), real(2.))
-                             + Kokkos::pow(R_xi(k,  j-1,i), real(2.)) + Kokkos::pow(R_xi(k,  j,i), real(2.))
-                             + Kokkos::pow(R_xi(k-1,j-1,i), real(2.)) + Kokkos::pow(R_xi(k-1,j,i), real(2.));
-                             
-            TERM1 = real(0.25) * TERM1 + real(2.0) * (du_dx*du_dx + dv_dy*dv_dy + dw_dz*dw_dz);
-            
-            if (ITYPEW(k,j,i) != 1) TERM1 = real(0.);
+            VVM::Real TERM1 =
+                Kokkos::pow(R_zeta(k, j - 1, i - 1), real(2.)) +
+                Kokkos::pow(R_zeta(k, j, i - 1), real(2.)) +
+                Kokkos::pow(R_zeta(k, j - 1, i), real(2.)) +
+                Kokkos::pow(R_zeta(k, j, i), real(2.)) + Kokkos::pow(R_eta(k, j, i - 1), real(2.)) +
+                Kokkos::pow(R_eta(k, j, i), real(2.)) +
+                Kokkos::pow(R_eta(k - 1, j, i - 1), real(2.)) +
+                Kokkos::pow(R_eta(k - 1, j, i), real(2.)) +
+                Kokkos::pow(R_xi(k, j - 1, i), real(2.)) + Kokkos::pow(R_xi(k, j, i), real(2.)) +
+                Kokkos::pow(R_xi(k - 1, j - 1, i), real(2.)) +
+                Kokkos::pow(R_xi(k - 1, j, i), real(2.));
 
+            TERM1 =
+                real(0.25) * TERM1 + real(2.0) * (du_dx * du_dx + dv_dy * dv_dy + dw_dz * dw_dz);
+
+            if (ITYPEW(k, j, i) != 1) {
+                TERM1 = real(0.);
+            }
 
             // N^2
-            VVM::Real DDY_top = grav*flex_height_coef_up(k) * (th(k+1,j,i)-th(k,j,i)) * rdz
-                         / (th(k+1,j,i)+th(k,j,i)) * masks.val(k,j,i,WW1);
+            VVM::Real DDY_top = grav * flex_height_coef_up(k) * (th(k + 1, j, i) - th(k, j, i)) *
+                                rdz / (th(k + 1, j, i) + th(k, j, i)) * masks.val(k, j, i, WW1);
 
-            VVM::Real DDY_bot = grav*flex_height_coef_up(k-1) * (th(k,j,i)-th(k-1,j,i)) * rdz
-                         / (th(k,j,i)+th(k-1,j,i)) * masks.val(k,j,i,WW2);
+            VVM::Real DDY_bot = grav * flex_height_coef_up(k - 1) *
+                                (th(k, j, i) - th(k - 1, j, i)) * rdz /
+                                (th(k, j, i) + th(k - 1, j, i)) * masks.val(k, j, i, WW2);
 
             VVM::Real DDY = DDY_top + DDY_bot;
-
 
             // Mixing Length
             VVM::Real z = z_mid(k);
             VVM::Real ZROUGH = real(2e-4);
-            VVM::Real DDX = (ramd0s * vk*vk*Kokkos::pow(z+ZROUGH, real(2.))) / (ramd0s + vk*vk*Kokkos::pow(z+ZROUGH, real(2.)));
+            VVM::Real DDX = (ramd0s * vk * vk * Kokkos::pow(z + ZROUGH, real(2.))) /
+                            (ramd0s + vk * vk * Kokkos::pow(z + ZROUGH, real(2.)));
 
             // Richardson Number
             VVM::Real Ri = DDY / TERM1;
@@ -328,15 +375,17 @@ void TurbulenceProcess::compute_coefficients(Core::State& state, VVM::Real dt)
                 rkh_val = real(0.);
             }
             else {
-                if (Ri < real(0.0)) { 
+                if (Ri < real(0.0)) {
                     rkm_val = sqrt_TERM1 * DDX * Kokkos::sqrt(real(1.0) - real(16.0) * Ri);
-                    rkh_val = sqrt_TERM1 * DDX * real(1.4) * Kokkos::sqrt(real(1.0) - real(40.0) * Ri);
-                } 
-                else if (Ri < real(0.25)) { 
-                    rkm_val = sqrt_TERM1 * DDX * Kokkos::pow(real(1.)-real(4.)*Ri, real(4.));
-                    rkh_val = sqrt_TERM1 * DDX * real(1.4) * (real(1.0) - real(1.2) * Ri) * Kokkos::pow(real(1.)-real(4.)*Ri, real(4.)); 
-                } 
-                else { 
+                    rkh_val =
+                        sqrt_TERM1 * DDX * real(1.4) * Kokkos::sqrt(real(1.0) - real(40.0) * Ri);
+                }
+                else if (Ri < real(0.25)) {
+                    rkm_val = sqrt_TERM1 * DDX * Kokkos::pow(real(1.) - real(4.) * Ri, real(4.));
+                    rkh_val = sqrt_TERM1 * DDX * real(1.4) * (real(1.0) - real(1.2) * Ri) *
+                              Kokkos::pow(real(1.) - real(4.) * Ri, real(4.));
+                }
+                else {
                     rkm_val = real(0.0);
                     rkh_val = real(0.0);
                 }
@@ -348,25 +397,23 @@ void TurbulenceProcess::compute_coefficients(Core::State& state, VVM::Real dt)
             rkm_val = Kokkos::min(rkm_val, critmx);
             rkh_val = Kokkos::min(rkh_val, critmx);
 
-            if (ITYPEW(k,j,i) != 1) {
-                rkh_val = real(0.); 
-                rkm_val = real(0.); 
+            if (ITYPEW(k, j, i) != 1) {
+                rkh_val = real(0.);
+                rkm_val = real(0.);
             }
 
             rkm(k, j, i) = rkm_val;
             rkh(k, j, i) = rkh_val;
-        }
-    );
+        });
 
     halo_exchanger_.exchange_halos(RKM_ref_.get(state, "RKM"));
     halo_exchanger_.exchange_halos(RKH_ref_.get(state, "RKH"));
 }
 
-template<size_t Dim>
-void TurbulenceProcess::calculate_tendencies(Core::State& state, 
-                                             const std::string& var_name, 
-                                             Core::Field<Dim>& out_tendency) 
-{
+template <size_t Dim>
+void
+TurbulenceProcess::calculate_tendencies(
+    Core::State& state, const std::string& var_name, Core::Field<Dim>& out_tendency) {
     const auto& RKM = RKM_ref_.get(state, "RKM").get_device_data();
     const auto& RKH = RKH_ref_.get(state, "RKH").get_device_data();
     const auto& var = state.get_field<3>(var_name).get_device_data();
@@ -375,138 +422,172 @@ void TurbulenceProcess::calculate_tendencies(Core::State& state,
     const auto& flex_height_coef_up = params_.flex_height_coef_up.get_device_data();
     const auto& rhobar_up = rhobar_up_ref_.get(state, "rhobar_up").get_device_data();
     const auto& rhobar = rhobar_ref_.get(state, "rhobar").get_device_data();
-    const auto& hx     = topo_ref_.get(state, "topo").get_device_data();
-    const auto& hxv     = topov_ref_.get(state, "topov").get_device_data();
+    const auto& hx = topo_ref_.get(state, "topo").get_device_data();
+    const auto& hxv = topov_ref_.get(state, "topov").get_device_data();
 
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
     const int h = grid_.get_halo_cells();
-    
+
     const VVM::Real rdx2 = rdx2_;
     const VVM::Real rdy2 = rdy2_;
     const VVM::Real rdz2 = rdz2_;
 
     const auto masks = masks_;
 
-    int NK2 = nz-h-1;
-    int NK1 = nz-h-2;
+    int NK2 = nz - h - 1;
+    int NK1 = nz - h - 2;
     const auto& ITYPEW = ITYPEW_ref_.get(state, "ITYPEW").get_device_data();
     auto step = state.get_step();
     if constexpr (Dim == 3) {
         if (var_name == "xi") {
             Kokkos::parallel_for("Compute_Diff_Tendency_" + var_name,
-                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{h, h, h}}, {{nz-h-1, ny-h, nx-h}}),
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{h, h, h}}, {{nz - h - 1, ny - h, nx - h}}),
                 KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                    VVM::Real d2dx2 = ((RKM(k,  j,i)+RKM(k,  j,i+1)+RKM(k,  j+1,i)+RKM(k,  j+1,i+1)
-                                    +RKM(k+1,j,i)+RKM(k+1,j,i+1)+RKM(k+1,j+1,i)+RKM(k+1,j+1,i+1))
-                                        *(var(k,j,i+1)-var(k,j,i))*masks.val(k, j, i, VU1) -
-                                    (RKM(k,  j,i-1)+RKM(k,  j,i)+RKM(k,j+1,i-1)+RKM(k,j+1,i)
-                                    +RKM(k+1,j,i-1)+RKM(k+1,j,i)+RKM(k+1,j+1,i-1)+RKM(k+1,j+1,i)) 
-                                        *(var(k,j,i)-var(k,j,i-1))*masks.val(k, j, i, VU2) )
-                                    * real(0.125) * rdx2;
-                    
-                    VVM::Real d2dy2 = ((RKM(k,j+1,i)+RKM(k+1,j+1,i))*(var(k,j+1,i)-var(k,j,  i))*masks.val(k, j, i, VV1)
-                                   -(RKM(k,j,  i)+RKM(k+1,j,  i))*(var(k,j,  i)-var(k,j-1,i))*masks.val(k, j, i, VV2))
-                                    * real(0.5)*rdy2;
+                    VVM::Real d2dx2 =
+                        ((RKM(k, j, i) + RKM(k, j, i + 1) + RKM(k, j + 1, i) +
+                             RKM(k, j + 1, i + 1) + RKM(k + 1, j, i) + RKM(k + 1, j, i + 1) +
+                             RKM(k + 1, j + 1, i) + RKM(k + 1, j + 1, i + 1)) *
+                                (var(k, j, i + 1) - var(k, j, i)) * masks.val(k, j, i, VU1) -
+                            (RKM(k, j, i - 1) + RKM(k, j, i) + RKM(k, j + 1, i - 1) +
+                                RKM(k, j + 1, i) + RKM(k + 1, j, i - 1) + RKM(k + 1, j, i) +
+                                RKM(k + 1, j + 1, i - 1) + RKM(k + 1, j + 1, i)) *
+                                (var(k, j, i) - var(k, j, i - 1)) * masks.val(k, j, i, VU2)) *
+                        real(0.125) * rdx2;
 
-                    VVM::Real d2dz2 = (flex_height_coef_mid(k+1)*rhobar(k+1)*(RKM(k+1,j,i)+RKM(k+1,j+1,i))
-                                        *(var(k+1,j,i)-var(k,  j,i))*masks.val(k, j, i, VW1)
-                                  - flex_height_coef_mid(k)*rhobar(k)*(RKM(k,j,i)+RKM(k,j+1,i))
-                                        *(var(k,  j,i)-var(k-1,j,i))*masks.val(k, j, i, VW2))
-                                    *real(0.5) * rdz2 / (rhobar_up(k))*flex_height_coef_up(k);
+                    VVM::Real d2dy2 =
+                        ((RKM(k, j + 1, i) + RKM(k + 1, j + 1, i)) *
+                                (var(k, j + 1, i) - var(k, j, i)) * masks.val(k, j, i, VV1) -
+                            (RKM(k, j, i) + RKM(k + 1, j, i)) * (var(k, j, i) - var(k, j - 1, i)) *
+                                masks.val(k, j, i, VV2)) *
+                        real(0.5) * rdy2;
 
-                    tend(k,j,i) = d2dx2 + d2dy2 + d2dz2;
-                }
-            );
+                    VVM::Real d2dz2 =
+                        (flex_height_coef_mid(k + 1) * rhobar(k + 1) *
+                                (RKM(k + 1, j, i) + RKM(k + 1, j + 1, i)) *
+                                (var(k + 1, j, i) - var(k, j, i)) * masks.val(k, j, i, VW1) -
+                            flex_height_coef_mid(k) * rhobar(k) *
+                                (RKM(k, j, i) + RKM(k, j + 1, i)) *
+                                (var(k, j, i) - var(k - 1, j, i)) * masks.val(k, j, i, VW2)) *
+                        real(0.5) * rdz2 / (rhobar_up(k)) * flex_height_coef_up(k);
+
+                    tend(k, j, i) = d2dx2 + d2dy2 + d2dz2;
+                });
         }
         else if (var_name == "eta") {
             Kokkos::parallel_for("Compute_Diff_Tendency_" + var_name,
-                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{h, h, h}}, {{nz-h-1, ny-h, nx-h}}),
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{h, h, h}}, {{nz - h - 1, ny - h, nx - h}}),
                 KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                    VVM::Real d2dx2 = ((RKM(k,j,i+1)+RKM(k+1,j,i+1))*(var(k,j,i+1)-var(k,j,i  )) * masks.val(k, j, i, UU1)
-                                   -(RKM(k,j,i  )+RKM(k+1,j,i  ))*(var(k,j,i  )-var(k,j,i-1)) * masks.val(k, j, i, UU2))
-                                    * real(0.5) * rdx2;
+                    VVM::Real d2dx2 =
+                        ((RKM(k, j, i + 1) + RKM(k + 1, j, i + 1)) *
+                                (var(k, j, i + 1) - var(k, j, i)) * masks.val(k, j, i, UU1) -
+                            (RKM(k, j, i) + RKM(k + 1, j, i)) * (var(k, j, i) - var(k, j, i - 1)) *
+                                masks.val(k, j, i, UU2)) *
+                        real(0.5) * rdx2;
 
-                    VVM::Real d2dy2 = ((RKM(k,j,i)+RKM(k,j,i+1)+RKM(k,j+1,i)+RKM(k,j+1,i+1) 
-                                    +RKM(k+1,j,i)+RKM(k+1,j,i+1)+RKM(k+1,j+1,i)+RKM(k+1,j+1,i+1))
-                                                *(var(k,j+1,i)-var(k,j,i))*masks.val(k, j, i, UV1) -      
-                                    (RKM(k,j-1,i)+RKM(k,j-1,i+1)+RKM(k,j,i)+RKM(k,j,i+1) 
-                                    +RKM(k+1,j-1,i)+RKM(k+1,j-1,i+1)+RKM(k+1,j,i)+RKM(k+1,j,i+1))
-                                                *(var(k,j,i)-var(k,j-1,i))*masks.val(k, j, i, UV2))
-                                    * real(0.125) * rdy2;
+                    VVM::Real d2dy2 =
+                        ((RKM(k, j, i) + RKM(k, j, i + 1) + RKM(k, j + 1, i) +
+                             RKM(k, j + 1, i + 1) + RKM(k + 1, j, i) + RKM(k + 1, j, i + 1) +
+                             RKM(k + 1, j + 1, i) + RKM(k + 1, j + 1, i + 1)) *
+                                (var(k, j + 1, i) - var(k, j, i)) * masks.val(k, j, i, UV1) -
+                            (RKM(k, j - 1, i) + RKM(k, j - 1, i + 1) + RKM(k, j, i) +
+                                RKM(k, j, i + 1) + RKM(k + 1, j - 1, i) + RKM(k + 1, j - 1, i + 1) +
+                                RKM(k + 1, j, i) + RKM(k + 1, j, i + 1)) *
+                                (var(k, j, i) - var(k, j - 1, i)) * masks.val(k, j, i, UV2)) *
+                        real(0.125) * rdy2;
 
+                    VVM::Real d2dz2 =
+                        (flex_height_coef_mid(k + 1) * rhobar(k + 1) *
+                                (RKM(k + 1, j, i) + RKM(k + 1, j, i + 1)) *
+                                (var(k + 1, j, i) - var(k, j, i)) * masks.val(k, j, i, UW1) -
+                            flex_height_coef_mid(k) * rhobar(k) *
+                                (RKM(k, j, i) + RKM(k, j, i + 1)) *
+                                (var(k, j, i) - var(k - 1, j, i)) * masks.val(k, j, i, UW2)) *
+                        real(0.5) * rdz2 / rhobar_up(k) * flex_height_coef_up(k);
 
-                    VVM::Real d2dz2 = (flex_height_coef_mid(k+1)*rhobar(k+1)*(RKM(k+1,j,i)+RKM(k+1,j,i+1))  
-                                       *(var(k+1,j,i)-var(k,  j,i))*masks.val(k, j, i, UW1)
-                                   -flex_height_coef_mid(k)*rhobar(k)*(RKM(k,j,i)+RKM(k,j,i+1))
-                                       *(var(k,  j,i)-var(k-1,j,i))*masks.val(k, j, i, UW2))
-                                    * real(0.5) * rdz2 / rhobar_up(k) * flex_height_coef_up(k);
-
-                    tend(k,j,i) = d2dx2 + d2dy2 + d2dz2;
-                }
-            );
+                    tend(k, j, i) = d2dx2 + d2dy2 + d2dz2;
+                });
         }
         else {
             Kokkos::parallel_for("Compute_Diff_Tendency_" + var_name,
-                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{h, h, h}}, {{nz-h, ny-h, nx-h}}),
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{h, h, h}}, {{nz - h, ny - h, nx - h}}),
                 KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                    VVM::Real d2dx2 = real(0.5)*( (RKH(k,j,i+1)+RKH(k,j,i))
-                                            *(var(k,j,i+1)-var(k,j,i))*masks.val(k, j, i, WU1)
-                                       - (RKH(k,j,i)+RKH(k,j,i-1))
-                                            *(var(k,j,i)-var(k,j,i-1))*masks.val(k, j, i, WU2) ) * rdx2;
+                    VVM::Real d2dx2 =
+                        real(0.5) *
+                        ((RKH(k, j, i + 1) + RKH(k, j, i)) * (var(k, j, i + 1) - var(k, j, i)) *
+                                masks.val(k, j, i, WU1) -
+                            (RKH(k, j, i) + RKH(k, j, i - 1)) * (var(k, j, i) - var(k, j, i - 1)) *
+                                masks.val(k, j, i, WU2)) *
+                        rdx2;
 
-                    VVM::Real d2dy2 = real(0.5)*( (RKH(k,j+1,i)+RKH(k,j,i))
-                                            *(var(k,j+1,i)-var(k,j  ,i))*masks.val(k, j, i, WV1)
-                                       - (RKH(k,j,i)+RKH(k,j-1,i))
-                                            *(var(k,j  ,i)-var(k,j-1,i))*masks.val(k, j, i, WV2) ) * rdy2;
-                     
+                    VVM::Real d2dy2 =
+                        real(0.5) *
+                        ((RKH(k, j + 1, i) + RKH(k, j, i)) * (var(k, j + 1, i) - var(k, j, i)) *
+                                masks.val(k, j, i, WV1) -
+                            (RKH(k, j, i) + RKH(k, j - 1, i)) * (var(k, j, i) - var(k, j - 1, i)) *
+                                masks.val(k, j, i, WV2)) *
+                        rdy2;
+
                     VVM::Real d2dz2 = real(0.);
 
-                    if (k == nz-h-1) {
-                        d2dz2 = -real(0.5)*flex_height_coef_mid(NK2)*(flex_height_coef_up(NK1)*rhobar_up(NK1)*(RKH(NK2,j,i)+RKH(NK1,j,i))
-                                    *(var(NK2,j,i)-var(NK1,j,i))) / rhobar(NK2) * rdz2; 
+                    if (k == nz - h - 1) {
+                        d2dz2 = -real(0.5) * flex_height_coef_mid(NK2) *
+                                (flex_height_coef_up(NK1) * rhobar_up(NK1) *
+                                    (RKH(NK2, j, i) + RKH(NK1, j, i)) *
+                                    (var(NK2, j, i) - var(NK1, j, i))) /
+                                rhobar(NK2) * rdz2;
                     }
                     else {
-                        d2dz2 =  real(0.5) * flex_height_coef_mid(k)*(
-                                       flex_height_coef_up(k)*rhobar_up(k)*(RKH(k+1,j,i)+RKH(k,j,i))
-                                            *(var(k+1,j,i)-var(k,j,i))*masks.val(k, j, i, WW1)
-                                      -flex_height_coef_up(k-1)*rhobar_up(k-1)*(RKH(k,j,i)+RKH(k-1,j,i))
-                                            *(var(k,j,i)-var(k-1,j,i))*masks.val(k, j, i, WW2) ) / rhobar(k) * rdz2;
+                        d2dz2 =
+                            real(0.5) * flex_height_coef_mid(k) *
+                            (flex_height_coef_up(k) * rhobar_up(k) *
+                                    (RKH(k + 1, j, i) + RKH(k, j, i)) *
+                                    (var(k + 1, j, i) - var(k, j, i)) * masks.val(k, j, i, WW1) -
+                                flex_height_coef_up(k - 1) * rhobar_up(k - 1) *
+                                    (RKH(k, j, i) + RKH(k - 1, j, i)) *
+                                    (var(k, j, i) - var(k - 1, j, i)) * masks.val(k, j, i, WW2)) /
+                            rhobar(k) * rdz2;
                     }
-                    tend(k,j,i) = d2dx2 + d2dy2 + d2dz2;
-                }
-            );
+                    tend(k, j, i) = d2dx2 + d2dy2 + d2dz2;
+                });
         }
     }
     else if constexpr (Dim == 2) {
         if (var_name == "zeta") {
             Kokkos::parallel_for("Compute_Diff_Tendency_" + var_name,
-                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny-h, nx-h}}),
+                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny - h, nx - h}}),
                 KOKKOS_LAMBDA(const int j, const int i) {
-                
-                    VVM::Real d2dx2 = ((RKM(NK2,j,i+1)+RKM(NK2,j+1,i+1))*(var(NK2,j,i+1)-var(NK2,j,i  ))
-                                   -(RKM(NK2,j,i  )+RKM(NK2,j+1,i  ))*(var(NK2,j,i  )-var(NK2,j,i-1)))  
-                                    * real(0.5) * rdx2;
+                    VVM::Real d2dx2 = ((RKM(NK2, j, i + 1) + RKM(NK2, j + 1, i + 1)) *
+                                              (var(NK2, j, i + 1) - var(NK2, j, i)) -
+                                          (RKM(NK2, j, i) + RKM(NK2, j + 1, i)) *
+                                              (var(NK2, j, i) - var(NK2, j, i - 1))) *
+                                      real(0.5) * rdx2;
 
-                    VVM::Real d2dy2 = ((RKM(NK2,j+1,i)+RKM(NK2,j+1,i+1))*(var(NK2,j+1,i)-var(NK2,j,  i))
-                                   -(RKM(NK2,j  ,i)+RKM(NK2,j,  i+1))*(var(NK2,j  ,i)-var(NK2,j-1,i)))
-                                    * real(0.5) * rdy2;
+                    VVM::Real d2dy2 = ((RKM(NK2, j + 1, i) + RKM(NK2, j + 1, i + 1)) *
+                                              (var(NK2, j + 1, i) - var(NK2, j, i)) -
+                                          (RKM(NK2, j, i) + RKM(NK2, j, i + 1)) *
+                                              (var(NK2, j, i) - var(NK2, j - 1, i))) *
+                                      real(0.5) * rdy2;
 
-                    VVM::Real d2dz2 = -(flex_height_coef_up(NK1)*rhobar_up(NK1)*
-                                     (RKM(NK2,j,i)+RKM(NK2,j,i+1)+RKM(NK2,j+1,i)+RKM(NK2,j+1,i+1) 
-                                     +RKM(NK1,j,i)+RKM(NK1,j,i+1)+RKM(NK1,j+1,i)+RKM(NK1,j+1,i+1))
-                                    *(var(NK2,j,i)-var(NK1,j,i))) * real(0.125) * rdz2 / rhobar(NK2) * flex_height_coef_mid(NK2); 
+                    VVM::Real d2dz2 =
+                        -(flex_height_coef_up(NK1) * rhobar_up(NK1) *
+                            (RKM(NK2, j, i) + RKM(NK2, j, i + 1) + RKM(NK2, j + 1, i) +
+                                RKM(NK2, j + 1, i + 1) + RKM(NK1, j, i) + RKM(NK1, j, i + 1) +
+                                RKM(NK1, j + 1, i) + RKM(NK1, j + 1, i + 1)) *
+                            (var(NK2, j, i) - var(NK1, j, i))) *
+                        real(0.125) * rdz2 / rhobar(NK2) * flex_height_coef_mid(NK2);
 
-                    tend(j,i) = d2dx2 + d2dy2 + d2dz2;
-                }
-            );
+                    tend(j, i) = d2dx2 + d2dy2 + d2dz2;
+                });
         }
     }
 }
 
-template void TurbulenceProcess::calculate_tendencies(Core::State& state, const std::string& var_name, Core::Field<2ul>& out_tendency);
-template void TurbulenceProcess::calculate_tendencies(Core::State& state, const std::string& var_name, Core::Field<3ul>& out_tendency);
+template void TurbulenceProcess::calculate_tendencies(
+    Core::State& state, const std::string& var_name, Core::Field<2ul>& out_tendency);
+template void TurbulenceProcess::calculate_tendencies(
+    Core::State& state, const std::string& var_name, Core::Field<3ul>& out_tendency);
 
 } // namespace Physics
 } // namespace VVM

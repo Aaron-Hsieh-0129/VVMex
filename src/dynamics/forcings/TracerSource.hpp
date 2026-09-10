@@ -16,7 +16,8 @@ public:
     TracerSource(const Core::Grid& grid, const Core::State& state);
     void apply(Core::State& state, VVM::Real dt) const;
 
-    const std::vector<std::string>& get_target_vars() const {
+    const std::vector<std::string>&
+    get_target_vars() const {
         return target_vars_;
     }
 

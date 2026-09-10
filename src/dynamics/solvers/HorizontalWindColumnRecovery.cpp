@@ -13,38 +13,46 @@ namespace Dynamics {
 #if defined(KOKKOS_ENABLE_CUDA)
 namespace {
 
-void require_cuda_success(cudaError_t status, const char* operation) {
+void
+require_cuda_success(cudaError_t status, const char* operation) {
     if (status != cudaSuccess) {
-        throw std::runtime_error(std::string("HorizontalWindColumnRecovery: ") + operation + ": " + cudaGetErrorString(status));
+        throw std::runtime_error(std::string("HorizontalWindColumnRecovery: ") + operation + ": " +
+                                 cudaGetErrorString(status));
     }
 }
 
 } // namespace
 #endif
 
-HorizontalWindColumnRecovery::HorizontalWindColumnRecovery(const Core::Geometry::HorizontalGeometry& geometry)
+HorizontalWindColumnRecovery::HorizontalWindColumnRecovery(
+    const Core::Geometry::HorizontalGeometry& geometry)
     : layout_(geometry.layout()),
       reconstruction_(Operators::make_horizontal_wind_reconstruction_device_view(geometry)),
       vorticity_(Operators::make_horizontal_vorticity_device_view(geometry)) {
 
     if (layout_.halo < 1 || layout_.local_physical_nx < 1 || layout_.local_physical_ny < 1) {
-        throw std::invalid_argument("HorizontalWindColumnRecovery requires physical horizontal cells and at least one halo cell.");
+        throw std::invalid_argument("HorizontalWindColumnRecovery requires physical horizontal "
+                                    "cells and at least one halo cell.");
     }
 }
 
-void HorizontalWindColumnRecovery::prepare_execution() {
+void
+HorizontalWindColumnRecovery::prepare_execution() {
 #if defined(KOKKOS_ENABLE_CUDA)
     if (!Kokkos::is_initialized()) {
-        throw std::logic_error("HorizontalWindColumnRecovery::prepare_execution requires initialized Kokkos.");
+        throw std::logic_error(
+            "HorizontalWindColumnRecovery::prepare_execution requires initialized Kokkos.");
     }
 
     const Kokkos::Cuda execution;
     cudaStreamCaptureStatus capture_status = cudaStreamCaptureStatusNone;
 
-    require_cuda_success(cudaStreamIsCapturing(execution.cuda_stream(), &capture_status), "query capture status");
+    require_cuda_success(cudaStreamIsCapturing(execution.cuda_stream(), &capture_status),
+        "query capture status");
 
     if (capture_status != cudaStreamCaptureStatusNone) {
-        throw std::logic_error("HorizontalWindColumnRecovery::prepare_execution must run before CUDA graph capture.");
+        throw std::logic_error(
+            "HorizontalWindColumnRecovery::prepare_execution must run before CUDA graph capture.");
     }
 
     require_cuda_success(cudaGetLastError(), "CUDA error before backend preparation");
@@ -58,42 +66,57 @@ void HorizontalWindColumnRecovery::prepare_execution() {
     // The kernel itself does not access any model or scratch fields.
     Kokkos::parallel_for("PrepareHorizontalWindColumnRecovery",
         Kokkos::RangePolicy<Kokkos::Cuda>(execution, 0, 1),
-        KOKKOS_LAMBDA(const int) {}
-    );
+        KOKKOS_LAMBDA(const int){});
 
     require_cuda_success(cudaGetLastError(), "launch backend preparation");
     execution.fence("Complete HorizontalWindColumnRecovery backend preparation");
 #endif
 }
 
-void HorizontalWindColumnRecovery::validate_horizontal_field(const Core::Field<2>& field, const char* role) const {
+void
+HorizontalWindColumnRecovery::validate_horizontal_field(const Core::Field<2>& field,
+    const char* role) const {
     const auto& data = field.get_device_data();
 
-    if (static_cast<int>(data.extent(0)) != layout_.local_total_ny()
-        || static_cast<int>(data.extent(1)) != layout_.local_total_nx()) {
-        throw std::invalid_argument(std::string("HorizontalWindColumnRecovery: incorrect horizontal extents for ") + role + ".");
+    if (static_cast<int>(data.extent(0)) != layout_.local_total_ny() ||
+        static_cast<int>(data.extent(1)) != layout_.local_total_nx()) {
+        throw std::invalid_argument(
+            std::string("HorizontalWindColumnRecovery: incorrect horizontal extents for ") + role +
+            ".");
     }
 }
 
-void HorizontalWindColumnRecovery::validate_volume(const Core::Field<3>& field, int nz, const char* role) const {
+void
+HorizontalWindColumnRecovery::validate_volume(
+    const Core::Field<3>& field, int nz, const char* role) const {
     const auto& data = field.get_device_data();
 
-    if (static_cast<int>(data.extent(0)) != nz
-        || static_cast<int>(data.extent(1)) != layout_.local_total_ny()
-        || static_cast<int>(data.extent(2)) != layout_.local_total_nx()) {
-        throw std::invalid_argument(std::string("HorizontalWindColumnRecovery: incorrect volume extents for ") + role + ".");
+    if (static_cast<int>(data.extent(0)) != nz ||
+        static_cast<int>(data.extent(1)) != layout_.local_total_ny() ||
+        static_cast<int>(data.extent(2)) != layout_.local_total_nx()) {
+        throw std::invalid_argument(
+            std::string("HorizontalWindColumnRecovery: incorrect volume extents for ") + role +
+            ".");
     }
 }
 
-void HorizontalWindColumnRecovery::recover(const Core::Field<2>& psi, const Core::Field<2>& chi,
-    const Core::Field<3>& w, const Core::Field<3>& omega1, const Core::Field<3>& omega2,
-    const Core::Field<1>& spacing, Core::Field<3>& output1, Core::Field<3>& output2,
-    int bottom_level, int top_level) const {
+void
+HorizontalWindColumnRecovery::recover(const Core::Field<2>& psi,
+    const Core::Field<2>& chi,
+    const Core::Field<3>& w,
+    const Core::Field<3>& omega1,
+    const Core::Field<3>& omega2,
+    const Core::Field<1>& spacing,
+    Core::Field<3>& output1,
+    Core::Field<3>& output2,
+    int bottom_level,
+    int top_level) const {
 
     const int nz = static_cast<int>(w.get_device_data().extent(0));
 
     if (bottom_level < 0 || top_level < bottom_level || top_level >= nz) {
-        throw std::invalid_argument("HorizontalWindColumnRecovery: invalid bottom/top level range.");
+        throw std::invalid_argument(
+            "HorizontalWindColumnRecovery: invalid bottom/top level range.");
     }
 
     validate_horizontal_field(psi, "psi");
@@ -106,7 +129,8 @@ void HorizontalWindColumnRecovery::recover(const Core::Field<2>& psi, const Core
 
     // The highest spacing entry used is top_level-1.
     if (static_cast<int>(spacing.get_device_data().extent(0)) < top_level) {
-        throw std::invalid_argument("HorizontalWindColumnRecovery: insufficient vertical spacing entries.");
+        throw std::invalid_argument(
+            "HorizontalWindColumnRecovery: insufficient vertical spacing entries.");
     }
 
     const auto psi_data = psi.get_device_data();
@@ -119,17 +143,21 @@ void HorizontalWindColumnRecovery::recover(const Core::Field<2>& psi, const Core
     const auto output2_data = output2.get_mutable_device_data();
 
     if (output1_data.data() == output2_data.data()) {
-        throw std::invalid_argument("HorizontalWindColumnRecovery requires distinct output storage.");
+        throw std::invalid_argument(
+            "HorizontalWindColumnRecovery requires distinct output storage.");
     }
 
-    const Real* input_data[] = {
-        psi_data.data(), chi_data.data(), w_data.data(),
-        omega1_data.data(), omega2_data.data(), spacing_data.data()
-    };
+    const Real* input_data[] = {psi_data.data(),
+        chi_data.data(),
+        w_data.data(),
+        omega1_data.data(),
+        omega2_data.data(),
+        spacing_data.data()};
 
     for (const Real* input : input_data) {
         if (input == output1_data.data() || input == output2_data.data()) {
-            throw std::invalid_argument("HorizontalWindColumnRecovery requires distinct input and output storage.");
+            throw std::invalid_argument(
+                "HorizontalWindColumnRecovery requires distinct input and output storage.");
         }
     }
 
@@ -138,31 +166,41 @@ void HorizontalWindColumnRecovery::recover(const Core::Field<2>& psi, const Core
     const int ny = layout_.local_total_ny();
 
     const auto policy = Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h});
-    const auto compact_policy = Kokkos::Experimental::require(
-        policy, Kokkos::Experimental::WorkItemProperty::HintLightWeight);
+    const auto compact_policy = Kokkos::Experimental::require(policy,
+        Kokkos::Experimental::WorkItemProperty::HintLightWeight);
 
     const auto reconstruction = reconstruction_;
 
-    Kokkos::parallel_for("ReconstructCovariantTopWind", compact_policy,
+    Kokkos::parallel_for("ReconstructCovariantTopWind",
+        compact_policy,
         KOKKOS_LAMBDA(const int j, const int i) {
-            output1_data(top_level, j, i) = reconstruction.calculate_covariant_q1_at_u(psi_data, chi_data, j, i);
-            output2_data(top_level, j, i) = reconstruction.calculate_covariant_q2_at_v(psi_data, chi_data, j, i);
-        }
-    );
+            output1_data(top_level, j, i) =
+                reconstruction.calculate_covariant_q1_at_u(psi_data, chi_data, j, i);
+            output2_data(top_level, j, i) =
+                reconstruction.calculate_covariant_q2_at_v(psi_data, chi_data, j, i);
+        });
 
     const auto vorticity = vorticity_;
 
-    Kokkos::parallel_for("RecoverCovariantWindColumn", compact_policy,
+    Kokkos::parallel_for("RecoverCovariantWindColumn",
+        compact_policy,
         KOKKOS_LAMBDA(const int j, const int i) {
             for (int k = top_level - 1; k >= bottom_level; --k) {
-                const Real du1_dz = vorticity.calculate_covariant_q1_vertical_shear_at_u(w_data, omega2_data, k, j, i);
-                const Real du2_dz = vorticity.calculate_covariant_q2_vertical_shear_at_v(w_data, omega1_data, k, j, i);
+                const Real du1_dz = vorticity.calculate_covariant_q1_vertical_shear_at_u(w_data,
+                    omega2_data,
+                    k,
+                    j,
+                    i);
+                const Real du2_dz = vorticity.calculate_covariant_q2_vertical_shear_at_v(w_data,
+                    omega1_data,
+                    k,
+                    j,
+                    i);
 
                 output1_data(k, j, i) = output1_data(k + 1, j, i) - du1_dz * spacing_data(k);
                 output2_data(k, j, i) = output2_data(k + 1, j, i) - du2_dz * spacing_data(k);
             }
-        }
-    );
+        });
 }
 
 } // namespace Dynamics

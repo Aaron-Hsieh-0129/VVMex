@@ -15,10 +15,10 @@ namespace IO {
 
 class TxtReader : public Reader {
 public:
-    TxtReader(const std::string& filepath, 
-              const VVM::Core::Grid& grid, 
-              const VVM::Core::Parameters& params, 
-              const VVM::Utils::ConfigurationManager& config);
+    TxtReader(const std::string& filepath,
+        const VVM::Core::Grid& grid,
+        const VVM::Core::Parameters& params,
+        const VVM::Utils::ConfigurationManager& config);
 
     void read_and_initialize(VVM::Core::State& state) override;
 
@@ -35,7 +35,10 @@ private:
     void calculate_input_heights();
     void initialize_thermodynamics(VVM::Core::State& state);
     void initialize_forcing(VVM::Core::State& state);
-    VVM::Real interpolate(VVM::Real target_x, const std::vector<VVM::Real>& x_vec, const std::vector<VVM::Real>& y_vec, bool is_pressure_coord = false) const;
+    VVM::Real interpolate(VVM::Real target_x,
+        const std::vector<VVM::Real>& x_vec,
+        const std::vector<VVM::Real>& y_vec,
+        bool is_pressure_coord = false) const;
 };
 
 } // namespace IO

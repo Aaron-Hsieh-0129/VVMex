@@ -6,35 +6,28 @@
 namespace VVM {
 namespace Dynamics {
 
-SSPRK2::SSPRK2(
-    std::string var_name,
-    const std::array<int, 3>& dimensions)
+SSPRK2::SSPRK2(std::string var_name, const std::array<int, 3>& dimensions)
     : variable_name_(std::move(var_name)),
       original_("ssprk2_original_" + variable_name_, dimensions),
       stage_one_("ssprk2_stage_one_" + variable_name_, dimensions) {}
 
-void SSPRK2::step(
-    Core::State&,
-    const Core::Grid&,
-    const Core::Parameters&,
-    VVM::Real) const {
+void
+SSPRK2::step(Core::State&, const Core::Grid&, const Core::Parameters&, VVM::Real) const {
     throw std::runtime_error(
         "SSPRK2 for '" + variable_name_ +
         "' must be orchestrated by TimeIntegrator with tendency recomputation.");
 }
 
-void SSPRK2::begin_multistage_step(
-    Core::State& state,
-    const Core::Grid&,
-    const Core::Parameters&) const {
-    Kokkos::deep_copy(
-        Kokkos::DefaultExecutionSpace(),
+void
+SSPRK2::begin_multistage_step(
+    Core::State& state, const Core::Grid&, const Core::Parameters&) const {
+    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
         original_.get_mutable_device_data(),
         state.get_field<3>(variable_name_).get_device_data());
 }
 
-void SSPRK2::advance_multistage(
-    Core::State& state,
+void
+SSPRK2::advance_multistage(Core::State& state,
     const Core::Grid& grid,
     const Core::Parameters&,
     const Core::Field<3>& tendency,
@@ -42,8 +35,7 @@ void SSPRK2::advance_multistage(
     int stage) const {
     if (stage != 0 && stage != 1) {
         throw std::runtime_error(
-            "SSPRK2 for '" + variable_name_ +
-            "' received an invalid stage index.");
+            "SSPRK2 for '" + variable_name_ + "' received an invalid stage index.");
     }
 
     const int nz = grid.get_local_total_points_z();
@@ -69,8 +61,8 @@ void SSPRK2::advance_multistage(
     Kokkos::parallel_for("SSPRK2_stage_two_" + variable_name_,
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {nz - h, ny - h, nx - h}),
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            q(k, j, i) = VVM::real(0.5) * qn(k, j, i) +
-                         VVM::real(0.5) * (q1(k, j, i) + dt * rhs(k, j, i));
+            q(k, j, i) =
+                VVM::real(0.5) * qn(k, j, i) + VVM::real(0.5) * (q1(k, j, i) + dt * rhs(k, j, i));
         });
 }
 

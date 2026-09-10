@@ -18,20 +18,18 @@ namespace Physics {
 
 class SurfaceProcess {
 public:
-
-    SurfaceProcess(const Utils::ConfigurationManager& config, 
-                      const Core::Grid& grid, 
-                      const Core::Parameters& params,
-                      Core::HaloExchanger& halo_exchanger,
-                      Core::State& state);
+    SurfaceProcess(const Utils::ConfigurationManager& config,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::HaloExchanger& halo_exchanger,
+        Core::State& state);
 
     void initialize(Core::State& state);
     void compute_coefficients(Core::State& state);
 
-    template<size_t Dim>
-    void calculate_tendencies(Core::State& state, 
-                              const std::string& var_name, 
-                              Core::Field<Dim>& out_tendency);
+    template <size_t Dim>
+    void calculate_tendencies(
+        Core::State& state, const std::string& var_name, Core::Field<Dim>& out_tendency);
 
 private:
     const Utils::ConfigurationManager& config_;
@@ -39,18 +37,29 @@ private:
     const Core::Parameters& params_;
     Core::HaloExchanger& halo_exchanger_;
 
-    static KOKKOS_INLINE_FUNCTION
-    void sflux_2d(VVM::Real sigmau, VVM::Real thvm, VVM::Real thvsm, VVM::Real speed1, 
-                  VVM::Real zr, VVM::Real zrough, VVM::Real speed1_filter,
-                  VVM::Real& ustar, VVM::Real ventfc[2], VVM::Real& molen);
+    static KOKKOS_INLINE_FUNCTION void sflux_2d(VVM::Real sigmau,
+        VVM::Real thvm,
+        VVM::Real thvsm,
+        VVM::Real speed1,
+        VVM::Real zr,
+        VVM::Real zrough,
+        VVM::Real speed1_filter,
+        VVM::Real& ustar,
+        VVM::Real ventfc[2],
+        VVM::Real& molen);
 
-    static KOKKOS_INLINE_FUNCTION
-    void sflux_tc_2d(VVM::Real sigmau, VVM::Real thvm, VVM::Real thvsm, VVM::Real speed1, 
-                     VVM::Real zr, VVM::Real zrough, VVM::Real speed1_filter, 
-                     VVM::Real& ustar, VVM::Real ventfc[2], VVM::Real& molen);
+    static KOKKOS_INLINE_FUNCTION void sflux_tc_2d(VVM::Real sigmau,
+        VVM::Real thvm,
+        VVM::Real thvsm,
+        VVM::Real speed1,
+        VVM::Real zr,
+        VVM::Real zrough,
+        VVM::Real speed1_filter,
+        VVM::Real& ustar,
+        VVM::Real ventfc[2],
+        VVM::Real& molen);
 
-    static KOKKOS_INLINE_FUNCTION
-    VVM::Real compute_es(VVM::Real t);
+    static KOKKOS_INLINE_FUNCTION VVM::Real compute_es(VVM::Real t);
 
     std::string mode_;
     std::string land_scheme_;

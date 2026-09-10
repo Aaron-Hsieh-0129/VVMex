@@ -9,40 +9,23 @@
 namespace VVM {
 namespace Core {
 
-Parameters::Parameters(const Utils::ConfigurationManager& config, const Grid& grid) :
-    gravity("gravity"),
-    Rd("Rd"),
-    PSFC("PSFC"),
-    P0("P0"),
-    Cp("Cp"),
-    Lv("Lv"),
-    dx("dx"),
-    dy("dy"),
-    dz("dz"),
-    dt("dt"),
-    rdx("rdx"),
-    rdy("rdy"),
-    rdz("rdz"),
-    rdx2("rdx2"),
-    rdy2("rdy2"),
-    rdz2("rdz2"),
-    WRXMU("WRXMU"),
-    fact1_zeta("fact1_zeta", {}),
-    fact2_zeta("fact2_zeta", {}),
-    z_mid("z_mid", {grid.get_local_total_points_z()}),
-    z_up("z_up", {grid.get_local_total_points_z()}),
-    flex_height_coef_mid("flex_height_coef_mid", {grid.get_local_total_points_z()}),
-    flex_height_coef_up("flex_height_coef_up", {grid.get_local_total_points_z()}),
-    dz_mid("dz_mid", {grid.get_local_total_points_z()}),
-    dz_up("dz_up", {grid.get_local_total_points_z()}),
-    fact1_xi_eta("fact1_xi_eta", {grid.get_local_total_points_z()}),
-    fact2_xi_eta("fact2_xi_eta", {grid.get_local_total_points_z()}),
-    AGAU("AGAU", {grid.get_local_total_points_z()}),
-    BGAU("BGAU", {grid.get_local_total_points_z()}),
-    CGAU("CGAU", {grid.get_local_total_points_z()}),
-    bn_new("bn_new", {grid.get_local_total_points_z()}),
-    cn_new("cn_new", {grid.get_local_total_points_z()})
-{
+Parameters::Parameters(const Utils::ConfigurationManager& config, const Grid& grid)
+    : gravity("gravity"), Rd("Rd"), PSFC("PSFC"), P0("P0"), Cp("Cp"), Lv("Lv"), dx("dx"), dy("dy"),
+      dz("dz"), dt("dt"), rdx("rdx"), rdy("rdy"), rdz("rdz"), rdx2("rdx2"), rdy2("rdy2"),
+      rdz2("rdz2"), WRXMU("WRXMU"), fact1_zeta("fact1_zeta", {}), fact2_zeta("fact2_zeta", {}),
+      z_mid("z_mid", {grid.get_local_total_points_z()}),
+      z_up("z_up", {grid.get_local_total_points_z()}),
+      flex_height_coef_mid("flex_height_coef_mid", {grid.get_local_total_points_z()}),
+      flex_height_coef_up("flex_height_coef_up", {grid.get_local_total_points_z()}),
+      dz_mid("dz_mid", {grid.get_local_total_points_z()}),
+      dz_up("dz_up", {grid.get_local_total_points_z()}),
+      fact1_xi_eta("fact1_xi_eta", {grid.get_local_total_points_z()}),
+      fact2_xi_eta("fact2_xi_eta", {grid.get_local_total_points_z()}),
+      AGAU("AGAU", {grid.get_local_total_points_z()}),
+      BGAU("BGAU", {grid.get_local_total_points_z()}),
+      CGAU("CGAU", {grid.get_local_total_points_z()}),
+      bn_new("bn_new", {grid.get_local_total_points_z()}),
+      cn_new("cn_new", {grid.get_local_total_points_z()}) {
     const auto& horizontal = grid.horizontal_specification();
     const auto& vertical = grid.vertical_specification();
 
@@ -52,14 +35,15 @@ Parameters::Parameters(const Utils::ConfigurationManager& config, const Grid& gr
     if (horizontal.geometry.kind != Geometry::GeometryKind::Cartesian) {
         if (is_rll_idealized(config)) {
             validate_jung2019_rll(config, GridSpecification::from_config(config));
-        } else {
+        }
+        else {
             throw std::runtime_error(
-                "Parameters still exposes Cartesian dx/dy in metres. Non-Cartesian Parameters construction "
+                "Parameters still exposes Cartesian dx/dy in metres. Non-Cartesian Parameters "
+                "construction "
                 "is not enabled until its spacing-dependent consumers have been migrated. "
                 "Use Grid geometry directly in the existing RLL component tests.");
         }
     }
-
 
     Kokkos::deep_copy(gravity, config.get_value<VVM::Real>("constants.gravity"));
     Kokkos::deep_copy(Rd, config.get_value<VVM::Real>("constants.Rd"));
@@ -80,9 +64,8 @@ Parameters::Parameters(const Utils::ConfigurationManager& config, const Grid& gr
 
     const auto require_finite_positive = [](VVM::Real value, const char* key) {
         if (!std::isfinite(value) || value <= VVM::real(0.0)) {
-            throw std::runtime_error(
-                std::string("Configuration error: '") + key +
-                "' must be finite and greater than zero.");
+            throw std::runtime_error(std::string("Configuration error: '") + key +
+                                     "' must be finite and greater than zero.");
         }
     };
     require_finite_positive(dx_val, "grid.dx");
@@ -98,7 +81,7 @@ Parameters::Parameters(const Utils::ConfigurationManager& config, const Grid& gr
     Kokkos::deep_copy(rdx, real(1.0) / dx_val);
     Kokkos::deep_copy(rdy, real(1.0) / dy_val);
     Kokkos::deep_copy(rdz, real(1.0) / dz_val);
-    
+
     Kokkos::deep_copy(rdx2, real(1.0) / (dx_val * dx_val));
     Kokkos::deep_copy(rdy2, real(1.0) / (dy_val * dy_val));
     Kokkos::deep_copy(rdz2, real(1.0) / (dz_val * dz_val));
@@ -111,7 +94,8 @@ Parameters::Parameters(const Utils::ConfigurationManager& config, const Grid& gr
     Kokkos::fence();
 }
 
-VVM::Real Parameters::get_value_host(const Kokkos::View<VVM::Real>& device_view) const {
+VVM::Real
+Parameters::get_value_host(const Kokkos::View<VVM::Real>& device_view) const {
     VVM::Real host_value;
     Kokkos::deep_copy(host_value, device_view);
     return host_value;

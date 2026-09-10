@@ -24,8 +24,8 @@ struct GradsAxis {
 struct GradsVariable {
     std::string dataset_name;
     std::string grads_name;
-    std::size_t levels = 0;  // 0 marks a surface field
-    std::string dimensions;  // "z,y,x", "y,x" or "z"
+    std::size_t levels = 0; // 0 marks a surface field
+    std::string dimensions; // "z,y,x", "y,x" or "z"
     std::string description;
 };
 
@@ -48,8 +48,7 @@ struct GradsCtl {
     std::vector<std::string> notes;
 };
 
-std::pair<GradsAxis, GradsAxis> grads_horizontal_axes(
-    const Core::Grid& grid,
+std::pair<GradsAxis, GradsAxis> grads_horizontal_axes(const Core::Grid& grid,
     const Core::State& state,
     bool use_taiwanvvm_coordinates,
     MPI_Comm comm);
@@ -57,8 +56,7 @@ std::pair<GradsAxis, GradsAxis> grads_horizontal_axes(
 std::string grads_start_time(int start_hour);
 std::string grads_time_increment(VVM::Real output_interval_s);
 
-std::string unique_grads_variable_name(
-    const std::string& field_name,
+std::string unique_grads_variable_name(const std::string& field_name,
     std::unordered_set<std::string>& taken);
 
 void write_grads_ctl(const std::filesystem::path& path, const GradsCtl& ctl);

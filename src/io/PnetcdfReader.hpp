@@ -21,13 +21,13 @@ namespace IO {
 
 class PnetcdfReader : public Reader {
 public:
-    PnetcdfReader(const std::string& filepath, 
-                  const VVM::Core::Grid& grid, 
-                  const VVM::Core::Parameters& params, 
-                  const VVM::Utils::ConfigurationManager& config, 
-                  VVM::Core::HaloExchanger& halo_exchanger,
-                  const std::string& config_prefix = "netcdf_reader");
-    
+    PnetcdfReader(const std::string& filepath,
+        const VVM::Core::Grid& grid,
+        const VVM::Core::Parameters& params,
+        const VVM::Utils::ConfigurationManager& config,
+        VVM::Core::HaloExchanger& halo_exchanger,
+        const std::string& config_prefix = "netcdf_reader");
+
     ~PnetcdfReader() override;
 
     void read_and_initialize(VVM::Core::State& state) override;
@@ -40,20 +40,23 @@ public:
 private:
     void check_ncmpi_error(int status, const std::string& msg) const;
 
-    template<size_t Dim>
+    template <size_t Dim>
     void read_variable_1d(int ncid, const std::string& var_name, VVM::Core::Field<Dim>& field);
 
-    template<size_t Dim>
+    template <size_t Dim>
     void read_variable_2d(int ncid, const std::string& var_name, VVM::Core::Field<Dim>& field);
 
-    template<size_t Dim>
-    void read_variable_3d(int ncid, const std::string& var_name,
-                          VVM::Core::Field<Dim>& field, bool required_tracer = false);
+    template <size_t Dim>
+    void read_variable_3d(int ncid,
+        const std::string& var_name,
+        VVM::Core::Field<Dim>& field,
+        bool required_tracer = false);
 
     std::map<std::string, MPI_Offset> get_file_dimensions(int ncid) const;
     void validate_dimensions(const std::map<std::string, MPI_Offset>& file_dims) const;
-    void validate_variable_dimensions(
-        int ncid, int varid, const std::string& variable,
+    void validate_variable_dimensions(int ncid,
+        int varid,
+        const std::string& variable,
         const std::vector<std::string>& expected_names,
         const std::vector<MPI_Offset>& expected_sizes) const;
 
@@ -63,11 +66,11 @@ private:
     const VVM::Utils::ConfigurationManager& config_;
     std::string config_prefix_;
     bool strict_missing_variables_ = false;
-    
+
     MPI_Comm comm_;
     int rank_;
     int ncid_; // NetCDF file ID
-    
+
     Core::HaloExchanger& halo_exchanger_;
 };
 

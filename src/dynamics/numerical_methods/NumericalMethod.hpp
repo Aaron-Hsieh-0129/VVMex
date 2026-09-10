@@ -12,11 +12,7 @@
 namespace VVM {
 namespace Dynamics {
 
-enum class TemporalSchemeType {
-    AdamsBashforth2,
-    ForwardEuler,
-    Multistage
-};
+enum class TemporalSchemeType { AdamsBashforth2, ForwardEuler, Multistage };
 
 struct ConfiguredTendency {
     TemporalSchemeType temporal_scheme;
@@ -31,8 +27,7 @@ public:
         bool forward_euler_tendency = false;
     };
 
-    NumericalMethod(
-        std::string variable_name,
+    NumericalMethod(std::string variable_name,
         std::vector<ConfiguredTendency> tendencies,
         std::unique_ptr<TemporalScheme> multistage_scheme,
         bool has_external_forward_euler = false);
@@ -42,27 +37,24 @@ public:
     NumericalMethod& operator=(const NumericalMethod&) = delete;
 
     void calculate_tendencies(
-        Core::State& state,
-        const Core::Grid& grid,
-        const Core::Parameters& params);
+        Core::State& state, const Core::Grid& grid, const Core::Parameters& params);
 
-    void advance(
-        Core::State& state,
+    void advance(Core::State& state,
         const Core::Grid& grid,
         const Core::Parameters& params,
         VVM::Real dt,
         const TimeIntegrator::StageProcessor& process_stage = {}) const;
 
-    bool uses_multistage_scheme() const {
+    bool
+    uses_multistage_scheme() const {
         return integrator_->uses_multistage_scheme();
     }
 
-    StateRequirements state_requirements() const {
-        return {
-            has_ab2_terms_ || has_forward_euler_terms_,
+    StateRequirements
+    state_requirements() const {
+        return {has_ab2_terms_ || has_forward_euler_terms_,
             has_ab2_terms_,
-            has_forward_euler_terms_
-        };
+            has_forward_euler_terms_};
     }
 
 private:

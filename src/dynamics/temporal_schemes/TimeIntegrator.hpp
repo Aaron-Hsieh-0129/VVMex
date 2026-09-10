@@ -12,35 +12,34 @@ namespace Dynamics {
 
 class TimeIntegrator : public TemporalScheme {
 public:
-    using TendencyEvaluator =
-        std::function<Core::Field<3>&(VVM::Real)>;
+    using TendencyEvaluator = std::function<Core::Field<3>&(VVM::Real)>;
     using StageProcessor = std::function<void()>;
 
-    explicit TimeIntegrator(
-        std::string var_name, bool has_ab2, bool has_fe,
+    explicit TimeIntegrator(std::string var_name,
+        bool has_ab2,
+        bool has_fe,
         std::unique_ptr<TemporalScheme> multistage_scheme = nullptr);
     ~TimeIntegrator() override;
 
-    void step(
-        Core::State& state,
+    void step(Core::State& state,
         const Core::Grid& grid,
         const Core::Parameters& params,
-        VVM::Real dt
-    ) const override;
+        VVM::Real dt) const override;
 
-    void step(
-        Core::State& state,
+    void step(Core::State& state,
         const Core::Grid& grid,
         const Core::Parameters& params,
         VVM::Real dt,
         const TendencyEvaluator& evaluate_tendency,
         const StageProcessor& process_stage) const;
 
-    bool uses_multistage_scheme() const {
+    bool
+    uses_multistage_scheme() const {
         return multistage_scheme_ != nullptr;
     }
 
-    std::vector<std::string> get_required_state_suffixes() const override {
+    std::vector<std::string>
+    get_required_state_suffixes() const override {
         // Only AB2 needs a previous state (_m)
         return has_ab2_terms_ ? std::vector<std::string>{"_m"} : std::vector<std::string>{};
     }
@@ -48,13 +47,23 @@ public:
     // This is for sequential splitting due to the order of physics doesn't have to be the same with the dynamics.
     // This method is designed for update State in any physical process that can be called directly to do integration.
     // These process generally uses forward Euler.
-    template<size_t Dim>
-    static void apply_forward_update(Core::State& state, const std::string& var_name, const Core::Grid& grid, VVM::Real dt, Core::Field<Dim>& tend_field) {
+    template <size_t Dim>
+    static void
+    apply_forward_update(Core::State& state,
+        const std::string& var_name,
+        const Core::Grid& grid,
+        VVM::Real dt,
+        Core::Field<Dim>& tend_field) {
         apply_forward_update(state.get_field<3>(var_name), var_name, grid, dt, tend_field);
     }
 
-    template<size_t Dim>
-    static void apply_forward_update(Core::Field<3>& target, const std::string& var_name, const Core::Grid& grid, VVM::Real dt, Core::Field<Dim>& tend_field) {
+    template <size_t Dim>
+    static void
+    apply_forward_update(Core::Field<3>& target,
+        const std::string& var_name,
+        const Core::Grid& grid,
+        VVM::Real dt,
+        Core::Field<Dim>& tend_field) {
         const int nz = grid.get_local_total_points_z();
         const int ny = grid.get_local_total_points_y();
         const int nx = grid.get_local_total_points_x();
@@ -65,28 +74,26 @@ public:
         if constexpr (Dim == 2) {
             const auto& fe_tendency_data = tend_field.get_device_data();
             if (var_name == "zeta") {
-                int NK2 = nz-h-1;
+                int NK2 = nz - h - 1;
                 Kokkos::parallel_for("Pure_Forward_Euler_Step",
-                    Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny-h, nx-h}),
+                    Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
                     KOKKOS_LAMBDA(const int j, const int i) {
                         field_new_view(NK2, j, i) += dt * fe_tendency_data(j, i);
-                    }
-                );
+                    });
             }
         }
-        else if constexpr(Dim == 3) {
+        else if constexpr (Dim == 3) {
             const auto& fe_tendency_data = tend_field.get_device_data();
             int k_start = h;
-            int k_end = nz-h;
+            int k_end = nz - h;
             if (var_name == "xi" || var_name == "eta") {
-                k_end = nz-h-1;
+                k_end = nz - h - 1;
             }
             Kokkos::parallel_for("Pure_Forward_Euler_Step",
-                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({k_start, h, h}, {k_end, ny-h, nx-h}),
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({k_start, h, h}, {k_end, ny - h, nx - h}),
                 KOKKOS_LAMBDA(const int k, const int j, const int i) {
                     field_new_view(k, j, i) += dt * fe_tendency_data(k, j, i);
-                }
-            );
+                });
         }
         return;
     }

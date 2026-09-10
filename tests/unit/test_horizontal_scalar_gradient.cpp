@@ -16,13 +16,14 @@ using VVM::Core::Geometry::HorizontalDomainLayout;
 using VVM::Core::Geometry::HorizontalGeometryDeviceView;
 using VVM::Core::Geometry::HorizontalLocation;
 using VVM::Dynamics::Operators::HorizontalScalarGradientDeviceView;
-using VVM::Dynamics::Operators::ScalarStencilAtT;
 using VVM::Dynamics::Operators::load_scalar_stencil_at_t;
 using VVM::Dynamics::Operators::make_horizontal_scalar_gradient_device_view;
+using VVM::Dynamics::Operators::ScalarStencilAtT;
 
 int failures = 0;
 
-void check(const bool condition, const char* message) {
+void
+check(const bool condition, const char* message) {
     if (condition) {
         return;
     }
@@ -31,11 +32,15 @@ void check(const bool condition, const char* message) {
     std::fprintf(stderr, "FAIL: %s\n", message);
 }
 
-bool close(const VVM::Real actual, const VVM::Real expected, const VVM::Real tolerance = VVM::real(1.0e-5)) {
+bool
+close(const VVM::Real actual,
+    const VVM::Real expected,
+    const VVM::Real tolerance = VVM::real(1.0e-5)) {
     return std::abs(actual - expected) <= tolerance;
 }
 
-HorizontalDomainLayout make_layout(const int nx, const int ny, const int halo = 2) {
+HorizontalDomainLayout
+make_layout(const int nx, const int ny, const int halo = 2) {
     HorizontalDomainLayout layout;
 
     layout.global_nx = nx;
@@ -50,8 +55,8 @@ HorizontalDomainLayout make_layout(const int nx, const int ny, const int halo = 
     return layout;
 }
 
-void set_constant_inverse_metric(
-    HorizontalGeometryDeviceView& geometry,
+void
+set_constant_inverse_metric(HorizontalGeometryDeviceView& geometry,
     const VVM::Real g11,
     const VVM::Real g12,
     const VVM::Real g22) {
@@ -62,11 +67,9 @@ void set_constant_inverse_metric(
     geometry.sqrt_g_g_contra.a22 = GeometryField2D::constant_value(g22);
 }
 
-ScalarStencilAtT make_affine_stencil(
-    const VVM::Real slope_q1,
-    const VVM::Real slope_q2,
-    const VVM::Real dq1,
-    const VVM::Real dq2) {
+ScalarStencilAtT
+make_affine_stencil(
+    const VVM::Real slope_q1, const VVM::Real slope_q2, const VVM::Real dq1, const VVM::Real dq2) {
 
     ScalarStencilAtT scalar;
 
@@ -83,7 +86,8 @@ ScalarStencilAtT make_affine_stencil(
     return scalar;
 }
 
-void test_cross_metric_affine_gradient() {
+void
+test_cross_metric_affine_gradient() {
     const VVM::Real dq1 = VVM::real(2.0);
     const VVM::Real dq2 = VVM::real(3.0);
     const VVM::Real slope_q1 = VVM::real(1.25);
@@ -96,24 +100,15 @@ void test_cross_metric_affine_gradient() {
     gradient.v.dq1 = dq1;
     gradient.v.dq2 = dq2;
 
-    set_constant_inverse_metric(
-        gradient.u,
-        VVM::real(2.0),
-        VVM::real(0.5),
-        VVM::real(1.5));
+    set_constant_inverse_metric(gradient.u, VVM::real(2.0), VVM::real(0.5), VVM::real(1.5));
 
-    set_constant_inverse_metric(
-        gradient.v,
-        VVM::real(2.0),
-        VVM::real(0.5),
-        VVM::real(1.5));
+    set_constant_inverse_metric(gradient.v, VVM::real(2.0), VVM::real(0.5), VVM::real(1.5));
 
     const ScalarStencilAtT scalar = make_affine_stencil(slope_q1, slope_q2, dq1, dq2);
 
     Kokkos::View<VVM::Real*> result("cross_metric_gradient", 2);
 
-    Kokkos::parallel_for(
-        "EvaluateCrossMetricGradient",
+    Kokkos::parallel_for("EvaluateCrossMetricGradient",
         Kokkos::RangePolicy<>(0, 1),
         KOKKOS_LAMBDA(const int) {
             result(0) = gradient.calculate_q1_at_u(0, 0, scalar);
@@ -129,7 +124,8 @@ void test_cross_metric_affine_gradient() {
     check(close(result_host(1), expected_q2), "The V gradient component must include g12 and g22");
 }
 
-void test_constant_cartesian_scalar() {
+void
+test_constant_cartesian_scalar() {
     const HorizontalDomainLayout layout = make_layout(12, 10);
     const CartesianGeometry geometry(layout, VVM::real(500.0), VVM::real(750.0));
     const auto gradient = make_horizontal_scalar_gradient_device_view(geometry);
@@ -148,8 +144,7 @@ void test_constant_cartesian_scalar() {
 
     Kokkos::View<VVM::Real*> result("constant_scalar_gradient", 2);
 
-    Kokkos::parallel_for(
-        "EvaluateConstantScalarGradient",
+    Kokkos::parallel_for("EvaluateConstantScalarGradient",
         Kokkos::RangePolicy<>(0, 1),
         KOKKOS_LAMBDA(const int) {
             result(0) = gradient.calculate_q1_at_u(layout.halo, layout.halo, scalar);
@@ -162,7 +157,8 @@ void test_constant_cartesian_scalar() {
     check(close(result_host(1), VVM::real(0.0)), "A constant scalar must have zero q2 gradient");
 }
 
-void test_cartesian_affine_scalar() {
+void
+test_cartesian_affine_scalar() {
     const HorizontalDomainLayout layout = make_layout(16, 12);
     const VVM::Real dx = VVM::real(100.0);
     const VVM::Real dy = VVM::real(200.0);
@@ -181,15 +177,13 @@ void test_cartesian_affine_scalar() {
     Kokkos::View<VVM::Real**> gradient_q1("affine_gradient_q1", ny, nx);
     Kokkos::View<VVM::Real**> gradient_q2("affine_gradient_q2", ny, nx);
 
-    Kokkos::parallel_for(
-        "InitializeAffineScalar",
+    Kokkos::parallel_for("InitializeAffineScalar",
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
         KOKKOS_LAMBDA(const int j, const int i) {
             scalar(j, i) = slope_x * t.q1(j, i) + slope_y * t.q2(j, i) + VVM::real(3.0);
         });
 
-    Kokkos::parallel_for(
-        "EvaluateAffineScalarGradient",
+    Kokkos::parallel_for("EvaluateAffineScalarGradient",
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
         KOKKOS_LAMBDA(const int j, const int i) {
             const ScalarStencilAtT stencil = load_scalar_stencil_at_t(scalar, j, i);
@@ -211,26 +205,26 @@ void test_cartesian_affine_scalar() {
         }
     }
 
-    check(maximum_q1_error <= VVM::real(1.0e-5), "Cartesian q1 gradient must reproduce an affine x derivative");
-    check(maximum_q2_error <= VVM::real(1.0e-5), "Cartesian q2 gradient must reproduce an affine y derivative");
+    check(maximum_q1_error <= VVM::real(1.0e-5),
+        "Cartesian q1 gradient must reproduce an affine x derivative");
+    check(maximum_q2_error <= VVM::real(1.0e-5),
+        "Cartesian q2 gradient must reproduce an affine y derivative");
 }
 
-void test_three_dimensional_stencil_loader() {
+void
+test_three_dimensional_stencil_loader() {
     Kokkos::View<VVM::Real***> scalar("three_dimensional_scalar", 2, 3, 3);
     Kokkos::View<VVM::Real*> result("three_dimensional_stencil", 9);
 
-    Kokkos::parallel_for(
-        "InitializeThreeDimensionalScalar",
+    Kokkos::parallel_for("InitializeThreeDimensionalScalar",
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {2, 3, 3}),
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            scalar(k, j, i) =
-                VVM::real(100.0) * static_cast<VVM::Real>(k) +
-                VVM::real(10.0) * static_cast<VVM::Real>(j) +
-                static_cast<VVM::Real>(i);
+            scalar(k, j, i) = VVM::real(100.0) * static_cast<VVM::Real>(k) +
+                              VVM::real(10.0) * static_cast<VVM::Real>(j) +
+                              static_cast<VVM::Real>(i);
         });
 
-    Kokkos::parallel_for(
-        "LoadThreeDimensionalStencil",
+    Kokkos::parallel_for("LoadThreeDimensionalStencil",
         Kokkos::RangePolicy<>(0, 1),
         KOKKOS_LAMBDA(const int) {
             const ScalarStencilAtT stencil = load_scalar_stencil_at_t(scalar, 1, 1, 1);
@@ -249,17 +243,26 @@ void test_three_dimensional_stencil_loader() {
     const auto result_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), result);
 
     check(close(result_host(0), VVM::real(111.0)), "3-D stencil center must be loaded correctly");
-    check(close(result_host(1), VVM::real(110.0)), "3-D stencil west value must be loaded correctly");
-    check(close(result_host(2), VVM::real(112.0)), "3-D stencil east value must be loaded correctly");
-    check(close(result_host(3), VVM::real(101.0)), "3-D stencil south value must be loaded correctly");
-    check(close(result_host(4), VVM::real(121.0)), "3-D stencil north value must be loaded correctly");
-    check(close(result_host(5), VVM::real(100.0)), "3-D stencil southwest value must be loaded correctly");
-    check(close(result_host(6), VVM::real(102.0)), "3-D stencil southeast value must be loaded correctly");
-    check(close(result_host(7), VVM::real(120.0)), "3-D stencil northwest value must be loaded correctly");
-    check(close(result_host(8), VVM::real(122.0)), "3-D stencil northeast value must be loaded correctly");
+    check(close(result_host(1), VVM::real(110.0)),
+        "3-D stencil west value must be loaded correctly");
+    check(close(result_host(2), VVM::real(112.0)),
+        "3-D stencil east value must be loaded correctly");
+    check(close(result_host(3), VVM::real(101.0)),
+        "3-D stencil south value must be loaded correctly");
+    check(close(result_host(4), VVM::real(121.0)),
+        "3-D stencil north value must be loaded correctly");
+    check(close(result_host(5), VVM::real(100.0)),
+        "3-D stencil southwest value must be loaded correctly");
+    check(close(result_host(6), VVM::real(102.0)),
+        "3-D stencil southeast value must be loaded correctly");
+    check(close(result_host(7), VVM::real(120.0)),
+        "3-D stencil northwest value must be loaded correctly");
+    check(close(result_host(8), VVM::real(122.0)),
+        "3-D stencil northeast value must be loaded correctly");
 }
 
-VVM::Real periodic_gradient_error(const int n) {
+VVM::Real
+periodic_gradient_error(const int n) {
     const VVM::Real pi = std::acos(VVM::real(-1.0));
     const VVM::Real domain_length = VVM::real(2.0) * pi;
     const VVM::Real spacing = domain_length / static_cast<VVM::Real>(n);
@@ -279,15 +282,13 @@ VVM::Real periodic_gradient_error(const int n) {
     Kokkos::View<VVM::Real**> gradient_q1("periodic_gradient_q1", ny, nx);
     Kokkos::View<VVM::Real**> gradient_q2("periodic_gradient_q2", ny, nx);
 
-    Kokkos::parallel_for(
-        "InitializePeriodicGradientScalar",
+    Kokkos::parallel_for("InitializePeriodicGradientScalar",
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
         KOKKOS_LAMBDA(const int j, const int i) {
             scalar(j, i) = Kokkos::sin(t.q1(j, i)) + Kokkos::cos(t.q2(j, i));
         });
 
-    Kokkos::parallel_for(
-        "EvaluatePeriodicGradient",
+    Kokkos::parallel_for("EvaluatePeriodicGradient",
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
         KOKKOS_LAMBDA(const int j, const int i) {
             const ScalarStencilAtT stencil = load_scalar_stencil_at_t(scalar, j, i);
@@ -298,8 +299,10 @@ VVM::Real periodic_gradient_error(const int n) {
 
     const auto q1_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), gradient_q1);
     const auto q2_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), gradient_q2);
-    const auto u_q1_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), u.q1.one_dimensional);
-    const auto v_q2_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), v.q2.one_dimensional);
+    const auto u_q1_host =
+        Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), u.q1.one_dimensional);
+    const auto v_q2_host =
+        Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), v.q2.one_dimensional);
 
     VVM::Real squared_error = VVM::real(0.0);
 
@@ -317,18 +320,21 @@ VVM::Real periodic_gradient_error(const int n) {
     return std::sqrt(squared_error / static_cast<VVM::Real>(2 * n * n));
 }
 
-void test_second_order_convergence() {
+void
+test_second_order_convergence() {
     const VVM::Real coarse_error = periodic_gradient_error(32);
     const VVM::Real fine_error = periodic_gradient_error(64);
     const VVM::Real error_ratio = coarse_error / fine_error;
 
     check(coarse_error > fine_error, "Refining the Cartesian grid must reduce the gradient error");
-    check(error_ratio > VVM::real(3.5), "The centered U/V gradient must show second-order convergence");
+    check(error_ratio > VVM::real(3.5),
+        "The centered U/V gradient must show second-order convergence");
 }
 
 } // namespace
 
-int main(int argc, char** argv) {
+int
+main(int argc, char** argv) {
     Kokkos::initialize(argc, argv);
 
     {
@@ -338,7 +344,8 @@ int main(int argc, char** argv) {
             test_cartesian_affine_scalar();
             test_three_dimensional_stencil_loader();
             test_second_order_convergence();
-        } catch (const std::exception& error) {
+        }
+        catch (const std::exception& error) {
             ++failures;
             std::fprintf(stderr, "Unexpected exception: %s\n", error.what());
         }
@@ -348,7 +355,8 @@ int main(int argc, char** argv) {
 
     if (failures == 0) {
         std::fprintf(stdout, "test_horizontal_scalar_gradient: PASS\n");
-    } else {
+    }
+    else {
         std::fprintf(stderr, "test_horizontal_scalar_gradient: %d failure(s)\n", failures);
     }
 

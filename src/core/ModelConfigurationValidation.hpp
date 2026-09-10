@@ -18,7 +18,9 @@ namespace Core {
 //
 // MPI must already be initialized. Kokkos initialization and Grid construction
 // are not required.
-inline void validate_model_numerical_configuration(const Utils::ConfigurationManager& config, const int compute_ranks) {
+inline void
+validate_model_numerical_configuration(const Utils::ConfigurationManager& config,
+    const int compute_ranks) {
     const GridSpecification specification = GridSpecification::from_config(config);
     const auto& horizontal = specification.horizontal;
     const auto& vertical = specification.vertical;
@@ -29,16 +31,17 @@ inline void validate_model_numerical_configuration(const Utils::ConfigurationMan
     if (horizontal.geometry.kind != Geometry::GeometryKind::Cartesian) {
         if (is_rll_idealized(config)) {
             validate_jung2019_rll(config, specification);
-        } else {
+        }
+        else {
             throw std::runtime_error(
                 "Non-Cartesian full-model execution is not enabled yet. "
                 "RLL Grid and component tests remain available, but the model's "
-                "spacing-dependent dynamics and physical lateral boundaries still require migration.");
+                "spacing-dependent dynamics and physical lateral boundaries still require "
+                "migration.");
         }
     }
 
-    const Utils::NumericalConfigurationValues values{
-        horizontal.nx,
+    const Utils::NumericalConfigurationValues values{horizontal.nx,
         horizontal.ny,
         vertical.nz,
         horizontal.n_halo_cells,
@@ -47,8 +50,7 @@ inline void validate_model_numerical_configuration(const Utils::ConfigurationMan
         static_cast<double>(vertical.dz),
         config.get_value<double>("simulation.dt_s"),
         config.get_value<double>("simulation.total_time_s"),
-        config.get_value<double>("simulation.output_interval_s")
-    };
+        config.get_value<double>("simulation.output_interval_s")};
 
     Utils::validate_numerical_configuration_values(values, compute_ranks);
 }

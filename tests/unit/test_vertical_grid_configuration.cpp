@@ -38,18 +38,28 @@ using VVM::Core::State;
 using VVM::Utils::ConfigurationManager;
 using Json = nlohmann::json;
 
-const std::array<const char*, 8> vertical_names = {
-    "z_mid", "z_up",
-    "flex_height_coef_mid", "flex_height_coef_up",
-    "dz_mid", "dz_up",
-    "fact1_xi_eta", "fact2_xi_eta"
-};
+const std::array<const char*, 8> vertical_names = {"z_mid",
+    "z_up",
+    "flex_height_coef_mid",
+    "flex_height_coef_up",
+    "dz_mid",
+    "dz_up",
+    "fact1_xi_eta",
+    "fact2_xi_eta"};
 
-const std::array<const char*, 13> profile_names = {
-    "Tbar", "qvbar", "pbar", "pibar", "pibar_up",
-    "thbar", "Tvbar", "rhobar", "rhobar_up",
-    "U", "V", "Q1", "Q2"
-};
+const std::array<const char*, 13> profile_names = {"Tbar",
+    "qvbar",
+    "pbar",
+    "pibar",
+    "pibar_up",
+    "thbar",
+    "Tvbar",
+    "rhobar",
+    "rhobar_up",
+    "U",
+    "V",
+    "Q1",
+    "Q2"};
 
 struct Snapshot {
     std::array<std::vector<Real>, 8> vertical;
@@ -58,14 +68,16 @@ struct Snapshot {
 
 int failures = 0;
 
-void check(const bool condition, const std::string& message) {
+void
+check(const bool condition, const std::string& message) {
     if (!condition) {
         ++failures;
         std::fprintf(stderr, "FAIL: %s\n", message.c_str());
     }
 }
 
-void check_close(const Real actual, const Real expected, const std::string& message) {
+void
+check_close(const Real actual, const Real expected, const std::string& message) {
     const Real scale = std::max(std::abs(expected), std::numeric_limits<Real>::min());
     const Real tolerance = Real(64) * std::numeric_limits<Real>::epsilon() * scale;
 
@@ -75,7 +87,8 @@ void check_close(const Real actual, const Real expected, const std::string& mess
 class TemporaryDirectory {
 public:
     TemporaryDirectory() {
-        const std::string pattern = (std::filesystem::temp_directory_path() / "vvm_vertical_grid_XXXXXX").string();
+        const std::string pattern =
+            (std::filesystem::temp_directory_path() / "vvm_vertical_grid_XXXXXX").string();
         std::vector<char> buffer(pattern.begin(), pattern.end());
         buffer.push_back('\0');
 
@@ -95,7 +108,8 @@ public:
     TemporaryDirectory(const TemporaryDirectory&) = delete;
     TemporaryDirectory& operator=(const TemporaryDirectory&) = delete;
 
-    const std::filesystem::path& path() const noexcept {
+    const std::filesystem::path&
+    path() const noexcept {
         return path_;
     }
 
@@ -103,7 +117,8 @@ private:
     std::filesystem::path path_;
 };
 
-void write_text(const std::filesystem::path& path, const std::string& text) {
+void
+write_text(const std::filesystem::path& path, const std::string& text) {
     std::ofstream output(path);
     if (!output) {
         throw std::runtime_error("Cannot create test file: " + path.string());
@@ -117,30 +132,23 @@ void write_text(const std::filesystem::path& path, const std::string& text) {
     }
 }
 
-Json make_configuration(const std::string& type, const double dz1, const bool structured,
-    const std::string& grid_data_path, const bool consistent_reference_state) {
+Json
+make_configuration(const std::string& type,
+    const double dz1,
+    const bool structured,
+    const std::string& grid_data_path,
+    const bool consistent_reference_state) {
 
     const int nz = type == "rcemip" ? 4 : 32;
 
-    Json config = {
-        {"constants", {
-            {"gravity", 9.81},
-            {"Rd", 287.0},
-            {"P0", 100000.0},
-            {"Cp", 1004.0},
-            {"Lv", 2500000.0}
-        }},
-        {"simulation", {
-            {"dt_s", 2.0},
-            {"idealized_test", "2dbubble"}
-        }},
-        {"dynamics", {
-            {"solver", {
-                {"WRXMU", 0.25},
-                {"iteration", 4}
-            }}
-        }}
-    };
+    Json config = {{"constants",
+                       {{"gravity", 9.81},
+                           {"Rd", 287.0},
+                           {"P0", 100000.0},
+                           {"Cp", 1004.0},
+                           {"Lv", 2500000.0}}},
+        {"simulation", {{"dt_s", 2.0}, {"idealized_test", "2dbubble"}}},
+        {"dynamics", {{"solver", {{"WRXMU", 0.25}, {"iteration", 4}}}}}};
 
     // Leave the option absent for the compatibility case, checking that
     // its existing default remains unchanged.
@@ -152,31 +160,21 @@ Json make_configuration(const std::string& type, const double dz1, const bool st
     // explicitly after the Initializer constructor has generated the grid.
     if (structured) {
         config["grid"] = {
-            {"horizontal", {
-                {"nx", 4},
-                {"ny", 4},
-                {"n_halo_cells", 2},
-                {"geometry", {
-                    {"kind", "cartesian"},
-                    {"dx", 500.0},
-                    {"dy", 500.0}
-                }},
-                {"topology", {
-                    {"q1", "periodic"},
-                    {"q2", "periodic"}
-                }}
-            }},
-            {"vertical", {
-                {"nz", nz},
-                {"type", type},
-                {"dz", 500.0},
-                {"dz1", dz1},
-                {"rcemip_grid_data_path", grid_data_path}
-            }}
-        };
-    } else {
-        config["grid"] = {
-            {"nx", 4},
+            {"horizontal",
+                {{"nx", 4},
+                    {"ny", 4},
+                    {"n_halo_cells", 2},
+                    {"geometry", {{"kind", "cartesian"}, {"dx", 500.0}, {"dy", 500.0}}},
+                    {"topology", {{"q1", "periodic"}, {"q2", "periodic"}}}}},
+            {"vertical",
+                {{"nz", nz},
+                    {"type", type},
+                    {"dz", 500.0},
+                    {"dz1", dz1},
+                    {"rcemip_grid_data_path", grid_data_path}}}};
+    }
+    else {
+        config["grid"] = {{"nx", 4},
             {"ny", 4},
             {"nz", nz},
             {"n_halo_cells", 2},
@@ -185,24 +183,22 @@ Json make_configuration(const std::string& type, const double dz1, const bool st
             {"dz", 500.0},
             {"dz1", dz1},
             {"vertical_coordinate_type", type},
-            {"rcemip_grid_data_path", grid_data_path}
-        };
+            {"rcemip_grid_data_path", grid_data_path}};
     }
 
     return config;
 }
 
-Snapshot take_snapshot(const Parameters& parameters, const State& state, const int halo) {
-    const std::array<const Field<1>*, 8> fields = {
-        &parameters.z_mid,
+Snapshot
+take_snapshot(const Parameters& parameters, const State& state, const int halo) {
+    const std::array<const Field<1>*, 8> fields = {&parameters.z_mid,
         &parameters.z_up,
         &parameters.flex_height_coef_mid,
         &parameters.flex_height_coef_up,
         &parameters.dz_mid,
         &parameters.dz_up,
         &parameters.fact1_xi_eta,
-        &parameters.fact2_xi_eta
-    };
+        &parameters.fact2_xi_eta};
 
     Snapshot result;
 
@@ -229,9 +225,14 @@ Snapshot take_snapshot(const Parameters& parameters, const State& state, const i
 }
 
 #if defined(ENABLE_NCCL)
-Snapshot initialize_configuration(const std::filesystem::path& path, const std::filesystem::path& sounding_path, ncclComm_t communicator) {
+Snapshot
+initialize_configuration(const std::filesystem::path& path,
+    const std::filesystem::path& sounding_path,
+    ncclComm_t communicator) {
 #else
-Snapshot initialize_configuration(const std::filesystem::path& path, const std::filesystem::path& sounding_path) {
+Snapshot
+initialize_configuration(const std::filesystem::path& path,
+    const std::filesystem::path& sounding_path) {
 #endif
     const ConfigurationManager config(path.string());
     const Grid grid(config);
@@ -257,7 +258,9 @@ Snapshot initialize_configuration(const std::filesystem::path& path, const std::
     return take_snapshot(parameters, state, grid.get_halo_cells());
 }
 
-void compare_vector(const std::vector<Real>& expected, const std::vector<Real>& actual, const std::string& label) {
+void
+compare_vector(
+    const std::vector<Real>& expected, const std::vector<Real>& actual, const std::string& label) {
     if (expected.size() != actual.size()) {
         check(false, label + ": different extent.");
         return;
@@ -271,7 +274,8 @@ void compare_vector(const std::vector<Real>& expected, const std::vector<Real>& 
     }
 }
 
-void compare_snapshots(const Snapshot& expected, const Snapshot& actual, const std::string& label) {
+void
+compare_snapshots(const Snapshot& expected, const Snapshot& actual, const std::string& label) {
     for (std::size_t n = 0; n < vertical_names.size(); ++n) {
         compare_vector(expected.vertical[n], actual.vertical[n], label + ": " + vertical_names[n]);
     }
@@ -281,7 +285,8 @@ void compare_snapshots(const Snapshot& expected, const Snapshot& actual, const s
     }
 }
 
-void check_physical_grid(const Snapshot& snapshot, const std::string& label) {
+void
+check_physical_grid(const Snapshot& snapshot, const std::string& label) {
     const auto& values = snapshot.vertical;
     const int h = 2;
     const int nz = static_cast<int>(values[0].size());
@@ -296,8 +301,10 @@ void check_physical_grid(const Snapshot& snapshot, const std::string& label) {
         }
 
         if (k < nz - h - 1) {
-            check(std::isfinite(values[6][k]) && values[6][k] > Real(0), label + ": positive fact1_xi_eta.");
-            check(std::isfinite(values[7][k]) && values[7][k] > Real(0), label + ": positive fact2_xi_eta.");
+            check(std::isfinite(values[6][k]) && values[6][k] > Real(0),
+                label + ": positive fact1_xi_eta.");
+            check(std::isfinite(values[7][k]) && values[7][k] > Real(0),
+                label + ": positive fact2_xi_eta.");
         }
 
         // Profile snapshots start at model index h-1.
@@ -308,13 +315,16 @@ void check_physical_grid(const Snapshot& snapshot, const std::string& label) {
     }
 }
 
-void check_uniform_grid(const Snapshot& snapshot) {
+void
+check_uniform_grid(const Snapshot& snapshot) {
     const int h = 2;
     const int nz = static_cast<int>(snapshot.vertical[0].size());
 
     for (int k = h; k < nz - h; ++k) {
-        check(snapshot.vertical[0][k] == Real(k - h + 0.5) * Real(500), "Uniform z_mid must match its expected height.");
-        check(snapshot.vertical[1][k] == Real(k - h + 1) * Real(500), "Uniform z_up must match its expected height.");
+        check(snapshot.vertical[0][k] == Real(k - h + 0.5) * Real(500),
+            "Uniform z_mid must match its expected height.");
+        check(snapshot.vertical[1][k] == Real(k - h + 1) * Real(500),
+            "Uniform z_up must match its expected height.");
         check(snapshot.vertical[2][k] == Real(1), "Uniform mid flex coefficient must equal one.");
         check(snapshot.vertical[3][k] == Real(1), "Uniform up flex coefficient must equal one.");
         check(snapshot.vertical[4][k] == Real(500), "Uniform dz_mid must equal 500 m.");
@@ -322,14 +332,17 @@ void check_uniform_grid(const Snapshot& snapshot) {
     }
 }
 
-void check_rcemip_reference(const Snapshot& snapshot, const bool consistent_reference_state) {
+void
+check_rcemip_reference(const Snapshot& snapshot, const bool consistent_reference_state) {
     const int h = 2;
     const std::array<Real, 4> expected_mid = {Real(50), Real(170), Real(330), Real(530)};
     const std::array<Real, 4> expected_up = {Real(100), Real(240), Real(420), Real(640)};
 
     for (int k = 0; k < 4; ++k) {
-        check(snapshot.vertical[0][h + k] == expected_mid[k], "RCEMIP z_mid must come from the selected grid file.");
-        check(snapshot.vertical[1][h + k] == expected_up[k], "RCEMIP z_up must come from the selected grid file.");
+        check(snapshot.vertical[0][h + k] == expected_mid[k],
+            "RCEMIP z_mid must come from the selected grid file.");
+        check(snapshot.vertical[1][h + k] == expected_up[k],
+            "RCEMIP z_up must come from the selected grid file.");
     }
 
     // Snapshot profile index 1 corresponds to the first physical level,
@@ -345,30 +358,40 @@ void check_rcemip_reference(const Snapshot& snapshot, const bool consistent_refe
 
     const Real source_exner = std::pow(pressure / p0, rd_over_cp);
     const Real theta = Real(300) / source_exner;
-    const Real exner = consistent_reference_state
-        ? std::pow(pressure / p0, rd_over_cp)
-        : std::pow(pressure / p0, 2.0 / 7.0);
+    const Real exner = consistent_reference_state ? std::pow(pressure / p0, rd_over_cp)
+                                                  : std::pow(pressure / p0, 2.0 / 7.0);
 
     const Real temperature = theta * exner;
     const Real virtual_temperature = temperature * (Real(1) + Real(0.608) * qv);
-    const Real density = consistent_reference_state
-        ? pressure / (rd * virtual_temperature)
-        : pressure / (rd * theta * exner);
+    const Real density = consistent_reference_state ? pressure / (rd * virtual_temperature)
+                                                    : pressure / (rd * theta * exner);
 
-    check_close(snapshot.profiles[2][index], pressure, "RCEMIP pressure must use the matching sounding row.");
-    check_close(snapshot.profiles[3][index], exner, "RCEMIP Exner compatibility setting must be preserved.");
-    check_close(snapshot.profiles[7][index], density, "RCEMIP density compatibility setting must be preserved.");
+    check_close(snapshot.profiles[2][index],
+        pressure,
+        "RCEMIP pressure must use the matching sounding row.");
+    check_close(snapshot.profiles[3][index],
+        exner,
+        "RCEMIP Exner compatibility setting must be preserved.");
+    check_close(snapshot.profiles[7][index],
+        density,
+        "RCEMIP density compatibility setting must be preserved.");
 
     check_close(snapshot.profiles[9][index], Real(4), "RCEMIP U must use direct row indexing.");
     check_close(snapshot.profiles[10][index], Real(-2), "RCEMIP V must use direct row indexing.");
-    check_close(snapshot.profiles[11][index], -Real(2) / exner / Real(86400), "RCEMIP Q1 conversion must remain unchanged.");
-    check_close(snapshot.profiles[12][index], Real(1) / ((lv / cp) * Real(86400)), "RCEMIP Q2 conversion must remain unchanged.");
+    check_close(snapshot.profiles[11][index],
+        -Real(2) / exner / Real(86400),
+        "RCEMIP Q1 conversion must remain unchanged.");
+    check_close(snapshot.profiles[12][index],
+        Real(1) / ((lv / cp) * Real(86400)),
+        "RCEMIP Q2 conversion must remain unchanged.");
 }
 
 #if defined(ENABLE_NCCL)
-void run_tests(ncclComm_t communicator) {
+void
+run_tests(ncclComm_t communicator) {
 #else
-void run_tests() {
+void
+run_tests() {
 #endif
     TemporaryDirectory temporary;
     const auto grid_data_path = temporary.path() / "rcemip_grid.txt";
@@ -398,19 +421,25 @@ void run_tests() {
         bool consistent_reference_state;
     };
 
-    const std::array<TestCase, 5> cases = {{
-        {"uniform", "default", 500.0, false},
+    const std::array<TestCase, 5> cases = {{{"uniform", "default", 500.0, false},
         {"stretched", "default", 250.0, false},
         {"taiwanvvm", "taiwanvvm", 250.0, false},
         {"rcemip", "rcemip", 250.0, false},
-        {"rcemip_consistent", "rcemip", 250.0, true}
-    }};
+        {"rcemip_consistent", "rcemip", 250.0, true}}};
 
     for (const auto& test_case : cases) {
         const int failures_before = failures;
 
-        const Json legacy = make_configuration(test_case.type, test_case.dz1, false, grid_data_path.string(), test_case.consistent_reference_state);
-        const Json structured = make_configuration(test_case.type, test_case.dz1, true, grid_data_path.string(), test_case.consistent_reference_state);
+        const Json legacy = make_configuration(test_case.type,
+            test_case.dz1,
+            false,
+            grid_data_path.string(),
+            test_case.consistent_reference_state);
+        const Json structured = make_configuration(test_case.type,
+            test_case.dz1,
+            true,
+            grid_data_path.string(),
+            test_case.consistent_reference_state);
 
         Json mixed = structured;
         mixed["grid"]["nx"] = 12;
@@ -422,10 +451,12 @@ void run_tests() {
         mixed["grid"]["dz"] = 33.0;
         mixed["grid"]["dz1"] = 33.0;
         mixed["grid"]["vertical_coordinate_type"] = "deliberately_ignored";
-        mixed["grid"]["rcemip_grid_data_path"] = (temporary.path() / "must_not_be_opened.txt").string();
+        mixed["grid"]["rcemip_grid_data_path"] =
+            (temporary.path() / "must_not_be_opened.txt").string();
 
         const auto legacy_path = temporary.path() / (std::string(test_case.name) + "_legacy.json");
-        const auto structured_path = temporary.path() / (std::string(test_case.name) + "_structured.json");
+        const auto structured_path =
+            temporary.path() / (std::string(test_case.name) + "_structured.json");
         const auto mixed_path = temporary.path() / (std::string(test_case.name) + "_mixed.json");
 
         write_text(legacy_path, legacy.dump(4));
@@ -433,8 +464,10 @@ void run_tests() {
         write_text(mixed_path, mixed.dump(4));
 
 #if defined(ENABLE_NCCL)
-        const auto legacy_values = initialize_configuration(legacy_path, sounding_path, communicator);
-        const auto structured_values = initialize_configuration(structured_path, sounding_path, communicator);
+        const auto legacy_values =
+            initialize_configuration(legacy_path, sounding_path, communicator);
+        const auto structured_values =
+            initialize_configuration(structured_path, sounding_path, communicator);
         const auto mixed_values = initialize_configuration(mixed_path, sounding_path, communicator);
 #else
         const auto legacy_values = initialize_configuration(legacy_path, sounding_path);
@@ -442,8 +475,12 @@ void run_tests() {
         const auto mixed_values = initialize_configuration(mixed_path, sounding_path);
 #endif
 
-        compare_snapshots(legacy_values, structured_values, std::string(test_case.name) + " legacy/structured");
-        compare_snapshots(structured_values, mixed_values, std::string(test_case.name) + " precedence");
+        compare_snapshots(legacy_values,
+            structured_values,
+            std::string(test_case.name) + " legacy/structured");
+        compare_snapshots(structured_values,
+            mixed_values,
+            std::string(test_case.name) + " precedence");
         check_physical_grid(structured_values, test_case.name);
 
         if (std::string(test_case.name) == "uniform") {
@@ -455,12 +492,14 @@ void run_tests() {
         }
 
         std::printf("%s grid_profiles_and_precedence %s\n",
-            test_case.name, failures == failures_before ? "PASS" : "FAIL");
+            test_case.name,
+            failures == failures_before ? "PASS" : "FAIL");
     }
 }
 
 #if defined(ENABLE_NCCL)
-void require_nccl(const ncclResult_t status, const char* operation) {
+void
+require_nccl(const ncclResult_t status, const char* operation) {
     if (status != ncclSuccess) {
         throw std::runtime_error(std::string(operation) + ": " + ncclGetErrorString(status));
     }
@@ -469,7 +508,8 @@ void require_nccl(const ncclResult_t status, const char* operation) {
 
 } // namespace
 
-int main(int argc, char* argv[]) {
+int
+main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);
     Kokkos::initialize(argc, argv);
 
@@ -478,7 +518,8 @@ int main(int argc, char* argv[]) {
         MPI_Comm_size(MPI_COMM_WORLD, &mpi_size);
 
         if (mpi_size != 1) {
-            throw std::invalid_argument("This vertical-grid configuration test requires one MPI rank.");
+            throw std::invalid_argument(
+                "This vertical-grid configuration test requires one MPI rank.");
         }
 
 #if defined(ENABLE_NCCL)
@@ -486,11 +527,13 @@ int main(int argc, char* argv[]) {
         require_nccl(ncclGetUniqueId(&identifier), "Create NCCL identifier");
 
         ncclComm_t communicator = nullptr;
-        require_nccl(ncclCommInitRank(&communicator, 1, identifier, 0), "Initialize NCCL communicator");
+        require_nccl(ncclCommInitRank(&communicator, 1, identifier, 0),
+            "Initialize NCCL communicator");
 
         try {
             run_tests(communicator);
-        } catch (...) {
+        }
+        catch (...) {
             ncclCommAbort(communicator);
             throw;
         }
@@ -499,7 +542,8 @@ int main(int argc, char* argv[]) {
 #else
         run_tests();
 #endif
-    } catch (const std::exception& error) {
+    }
+    catch (const std::exception& error) {
         ++failures;
         std::fprintf(stderr, "test_vertical_grid_configuration: %s\n", error.what());
     }

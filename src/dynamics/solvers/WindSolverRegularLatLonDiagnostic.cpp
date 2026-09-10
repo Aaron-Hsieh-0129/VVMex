@@ -12,69 +12,77 @@
 namespace VVM {
 namespace Dynamics {
 
-void WindSolver::prepare_regular_latlon_diagnostic_execution() {
+void
+WindSolver::prepare_regular_latlon_diagnostic_execution() {
     VerticalEllipticSolver::prepare_execution();
     prepare_horizontal_diagnostic_execution();
 
 #if defined(KOKKOS_ENABLE_CUDA)
     Kokkos::parallel_for("PrepareWindSolverRegularLatLonDiagnostic",
         Kokkos::RangePolicy<Kokkos::Cuda>(0, 1),
-        KOKKOS_LAMBDA(const int) {});
+        KOKKOS_LAMBDA(const int){});
 
     Kokkos::Cuda().fence("Prepare WindSolver regular latitude-longitude diagnostic");
 
     const auto result = cudaGetLastError();
-    if (result != cudaSuccess) throw std::runtime_error(cudaGetErrorString(result));
+    if (result != cudaSuccess) {
+        throw std::runtime_error(cudaGetErrorString(result));
+    }
 #endif
 }
 
-void WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid, Core::HaloExchanger& halo,
-    VerticalEllipticSolver& vertical_solver, HorizontalEllipticSolver& horizontal_solver,
-    const RegularLatLonDiagnosticFields& fields, const HorizontalDiagnosticWorkspace& workspace,
+void
+WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
+    Core::HaloExchanger& halo,
+    VerticalEllipticSolver& vertical_solver,
+    HorizontalEllipticSolver& horizontal_solver,
+    const RegularLatLonDiagnosticFields& fields,
+    const HorizontalDiagnosticWorkspace& workspace,
     const RegularLatLonDiagnosticOptions& options) {
 
     if (grid.geometry().kind() != Core::Geometry::GeometryKind::RegularLatLon) {
-        throw std::invalid_argument("Regular latitude-longitude wind diagnostic requires RegularLatLon geometry.");
+        throw std::invalid_argument(
+            "Regular latitude-longitude wind diagnostic requires RegularLatLon geometry.");
     }
 
     const auto& horizontal = grid.horizontal_specification();
 
     if (horizontal.topology.q1 != Core::HorizontalEdgeTopology::Periodic) {
-        throw std::invalid_argument("Regular latitude-longitude wind diagnostic requires periodic q1.");
+        throw std::invalid_argument(
+            "Regular latitude-longitude wind diagnostic requires periodic q1.");
     }
 
     if (horizontal.topology.q2 != Core::HorizontalEdgeTopology::Bounded) {
-        throw std::invalid_argument("Regular latitude-longitude wind diagnostic requires bounded q2.");
+        throw std::invalid_argument(
+            "Regular latitude-longitude wind diagnostic requires bounded q2.");
     }
 
     const bool reference_boundary =
-        options.boundary_policy ==
-        HorizontalDiagnosticBoundaryPolicy::CvvmMode2Reference;
+        options.boundary_policy == HorizontalDiagnosticBoundaryPolicy::CvvmMode2Reference;
 
     const bool free_slip_boundary =
-        options.boundary_policy ==
-        HorizontalDiagnosticBoundaryPolicy::RegularLatLonFreeSlipChannel;
+        options.boundary_policy == HorizontalDiagnosticBoundaryPolicy::RegularLatLonFreeSlipChannel;
 
     if (!reference_boundary && !free_slip_boundary) {
         throw std::invalid_argument("Unknown regular latitude-longitude boundary policy.");
     }
 
     if (options.vertical_iterations <= 0) {
-        throw std::invalid_argument("Regular latitude-longitude wind diagnostic requires positive fixed vertical iterations.");
+        throw std::invalid_argument("Regular latitude-longitude wind diagnostic requires positive "
+                                    "fixed vertical iterations.");
     }
 
-    if (!std::isfinite(options.inverse_dz) ||
-        options.inverse_dz <= real(0.0)) {
-        throw std::invalid_argument("Regular latitude-longitude wind diagnostic requires a finite positive inverse reference dz.");
+    if (!std::isfinite(options.inverse_dz) || options.inverse_dz <= real(0.0)) {
+        throw std::invalid_argument("Regular latitude-longitude wind diagnostic requires a finite "
+                                    "positive inverse reference dz.");
     }
 
-    if (options.horizontal.iterations <= 0 ||
-        !std::isfinite(options.horizontal.diagonal_shift) ||
+    if (options.horizontal.iterations <= 0 || !std::isfinite(options.horizontal.diagonal_shift) ||
         options.horizontal.diagonal_shift < real(0.0) ||
         !options.horizontal.refresh_initial_halos) {
-        throw std::invalid_argument(
-            "Regular latitude-longitude wind diagnostic requires positive fixed horizontal iterations, "
-            "a nonnegative shift, and initial halo refresh.");
+        throw std::invalid_argument("Regular latitude-longitude wind diagnostic requires positive "
+                                    "fixed horizontal iterations, "
+                                    "a nonnegative shift, and initial halo refresh.");
     }
 
     const int nz = grid.get_local_total_points_z();
@@ -86,102 +94,79 @@ void WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid, Core::Halo
     const int top = nz - h - 1;
 
     if (h < 1 || top <= bottom || top + 1 >= nz) {
-        throw std::invalid_argument("Regular latitude-longitude wind diagnostic received an invalid vertical layout.");
+        throw std::invalid_argument(
+            "Regular latitude-longitude wind diagnostic received an invalid vertical layout.");
     }
 
-    const std::array<const Core::Field<3>*, 7> volumes = {
-        &fields.zeta,
+    const std::array<const Core::Field<3>*, 7> volumes = {&fields.zeta,
         &fields.w,
         &fields.w_previous,
         &fields.xi,
         &fields.eta,
         &fields.u,
-        &fields.v
-    };
+        &fields.v};
 
     for (const auto* field : volumes) {
         const auto& data = field->get_device_data();
 
-        if (static_cast<int>(data.extent(0)) != nz ||
-            static_cast<int>(data.extent(1)) != ny ||
+        if (static_cast<int>(data.extent(0)) != nz || static_cast<int>(data.extent(1)) != ny ||
             static_cast<int>(data.extent(2)) != nx) {
-            throw std::invalid_argument("Regular latitude-longitude diagnostic volume extent mismatch.");
+            throw std::invalid_argument(
+                "Regular latitude-longitude diagnostic volume extent mismatch.");
         }
     }
 
     if (static_cast<int>(fields.spacing.get_device_data().extent(0)) <= top) {
-        throw std::invalid_argument("Regular latitude-longitude diagnostic has insufficient spacing entries.");
+        throw std::invalid_argument(
+            "Regular latitude-longitude diagnostic has insufficient spacing entries.");
     }
 
     Core::Boundary::HorizontalBoundaryStencils boundary(grid);
 
-    vertical_solver.solve(
-        fields.xi,
+    vertical_solver.solve(fields.xi,
         fields.eta,
         fields.w,
         fields.w_previous,
         options.vertical_iterations);
 
     if (free_slip_boundary) {
-        halo.exchange_multiple_halos(
-            std::vector<Core::Field<3>*>{
-                &fields.w,
-                &fields.w_previous
-            });
+        halo.exchange_multiple_halos(std::vector<Core::Field<3>*>{&fields.w, &fields.w_previous});
 
         boundary.fill_centered_q2_neumann_halos(fields.w);
         boundary.fill_centered_q2_neumann_halos(fields.w_previous);
     }
 
-    const auto operation =
-        make_vertical_wind_diagnostic_device_view(grid.geometry());
+    const auto operation = make_vertical_wind_diagnostic_device_view(grid.geometry());
 
     const auto xi = fields.xi.get_device_data();
     const auto eta = fields.eta.get_device_data();
     const auto spacing = fields.spacing.get_device_data();
     const auto zeta = fields.zeta.get_mutable_device_data();
 
-    const bool owns_north_wall =
-        grid.get_local_physical_end_y() ==
-        grid.get_global_points_y() - 1;
+    const bool owns_north_wall = grid.get_local_physical_end_y() == grid.get_global_points_y() - 1;
 
-    const int zeta_end_j =
-        free_slip_boundary && owns_north_wall
-        ? ny - h - 1
-        : ny - h;
+    const int zeta_end_j = free_slip_boundary && owns_north_wall ? ny - h - 1 : ny - h;
 
     const auto zeta_policy = Kokkos::Experimental::require(
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
-            {h, h},
-            {zeta_end_j, nx - h}),
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {zeta_end_j, nx - h}),
         Kokkos::Experimental::WorkItemProperty::HintLightWeight);
 
-    Kokkos::parallel_for(
-        "DiagnoseRegularLatLonZetaColumn",
+    Kokkos::parallel_for("DiagnoseRegularLatLonZetaColumn",
         zeta_policy,
         KOKKOS_LAMBDA(const int j, const int i) {
-            operation.integrate_zeta_column(
-                xi,
-                eta,
-                spacing,
-                zeta,
-                bottom,
-                top,
-                j,
-                i,
-                true);
+            operation.integrate_zeta_column(xi, eta, spacing, zeta, bottom, top, j, i, true);
         });
 
     halo.exchange_halos(fields.zeta);
 
     if (free_slip_boundary) {
         boundary.fill_positive_face_q2_homogeneous_dirichlet_halos(fields.zeta);
-    } else {
+    }
+    else {
         boundary.fill_constant_q2_halos(fields.zeta);
     }
 
-    const HorizontalDiagnosticFields horizontal_fields{
-        fields.psi,
+    const HorizontalDiagnosticFields horizontal_fields{fields.psi,
         fields.psi_previous,
         fields.chi,
         fields.chi_previous,
@@ -195,11 +180,9 @@ void WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid, Core::Halo
         fields.rhobar_up,
         fields.flex_mid,
         fields.spacing,
-        fields.zonal_covariant_increment
-    };
+        fields.zonal_covariant_increment};
 
-    diagnose_horizontal_wind(
-        grid,
+    diagnose_horizontal_wind(grid,
         halo,
         horizontal_solver,
         horizontal_fields,
@@ -210,17 +193,11 @@ void WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid, Core::Halo
         top,
         options.boundary_policy);
 
-    halo.exchange_multiple_halos(
-        std::vector<Core::Field<3>*>{
-            &fields.u,
-            &fields.v
-        });
+    halo.exchange_multiple_halos(std::vector<Core::Field<3>*>{&fields.u, &fields.v});
 
     if (free_slip_boundary) {
-        boundary.fill_regular_lat_lon_free_slip_physical_wind_halos(
-            fields.u,
-            fields.v);
-    } 
+        boundary.fill_regular_lat_lon_free_slip_physical_wind_halos(fields.u, fields.v);
+    }
     else {
         boundary.fill_constant_q2_halos(fields.u);
         boundary.fill_constant_q2_halos(fields.v);

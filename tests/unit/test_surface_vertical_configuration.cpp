@@ -26,28 +26,29 @@ namespace {
 using VVM::Real;
 using VVM::real;
 using VVM::Core::Grid;
+using VVM::Core::HaloExchanger;
 using VVM::Core::Parameters;
 using VVM::Core::State;
-using VVM::Core::HaloExchanger;
 using VVM::Physics::SurfaceProcess;
 using VVM::Utils::ConfigurationManager;
 
 int failures = 0;
 
 constexpr std::array<const char*, 5> output_names = {
-    "VEN2D", "sfc_flux_th", "sfc_flux_qv", "sfc_flux_u", "sfc_flux_v"
-};
+    "VEN2D", "sfc_flux_th", "sfc_flux_qv", "sfc_flux_u", "sfc_flux_v"};
 
 using Snapshot = std::array<std::vector<Real>, output_names.size()>;
 
-void check(bool condition, const std::string& message) {
+void
+check(bool condition, const std::string& message) {
     if (!condition) {
         ++failures;
         std::fprintf(stderr, "FAIL: %s\n", message.c_str());
     }
 }
 
-void check_near(Real actual, Real expected, const std::string& message) {
+void
+check_near(Real actual, Real expected, const std::string& message) {
     const Real scale = std::max(std::abs(expected), std::numeric_limits<Real>::min());
     const Real tolerance = real(128.0) * std::numeric_limits<Real>::epsilon() * scale;
     check(std::isfinite(actual) && std::abs(actual - expected) <= tolerance, message);
@@ -56,12 +57,15 @@ void check_near(Real actual, Real expected, const std::string& message) {
 class TemporaryDirectory {
 public:
     TemporaryDirectory() {
-        const std::string pattern = (std::filesystem::temp_directory_path() / "vvm_surface_vertical_XXXXXX").string();
+        const std::string pattern =
+            (std::filesystem::temp_directory_path() / "vvm_surface_vertical_XXXXXX").string();
         std::vector<char> buffer(pattern.begin(), pattern.end());
         buffer.push_back('\0');
 
         const char* directory = ::mkdtemp(buffer.data());
-        if (!directory) throw std::runtime_error("Cannot create temporary test directory.");
+        if (!directory) {
+            throw std::runtime_error("Cannot create temporary test directory.");
+        }
         path_ = directory;
     }
 
@@ -73,7 +77,8 @@ public:
     TemporaryDirectory(const TemporaryDirectory&) = delete;
     TemporaryDirectory& operator=(const TemporaryDirectory&) = delete;
 
-    const std::filesystem::path& path() const {
+    const std::filesystem::path&
+    path() const {
         return path_;
     }
 
@@ -94,10 +99,13 @@ struct Communication {
     }
 
     ~Communication() {
-        if (comm) ncclCommDestroy(comm);
+        if (comm) {
+            ncclCommDestroy(comm);
+        }
     }
 
-    static void require(ncclResult_t status, const char* operation) {
+    static void
+    require(ncclResult_t status, const char* operation) {
         if (status != ncclSuccess) {
             throw std::runtime_error(std::string(operation) + ": " + ncclGetErrorString(status));
         }
@@ -105,26 +113,30 @@ struct Communication {
 #endif
 };
 
-void write_json(const std::filesystem::path& path, const nlohmann::json& value) {
+void
+write_json(const std::filesystem::path& path, const nlohmann::json& value) {
     std::ofstream output(path);
-    if (!output) throw std::runtime_error("Cannot create " + path.string());
+    if (!output) {
+        throw std::runtime_error("Cannot create " + path.string());
+    }
     output << value.dump(4) << '\n';
     output.close();
-    if (!output) throw std::runtime_error("Cannot write " + path.string());
+    if (!output) {
+        throw std::runtime_error("Cannot write " + path.string());
+    }
 }
 
-nlohmann::json make_configuration(const std::string& type, int mode, const std::string& rcemip_path) {
+nlohmann::json
+make_configuration(const std::string& type, int mode, const std::string& rcemip_path) {
     nlohmann::json config;
 
     // Keep horizontal configuration identical to isolate vertical-type selection.
-    config["grid"] = {
-        {"nx", 4},
+    config["grid"] = {{"nx", 4},
         {"ny", 4},
         {"n_halo_cells", 2},
         {"dx", 100.0},
         {"dy", 100.0},
-        {"boundary_condition", {{"x", "periodic"}, {"y", "periodic"}}}
-    };
+        {"boundary_condition", {{"x", "periodic"}, {"y", "periodic"}}}};
 
     const double dz1 = type == "taiwanvvm" ? 50.0 : 100.0;
 
@@ -134,14 +146,13 @@ nlohmann::json make_configuration(const std::string& type, int mode, const std::
         config["grid"]["dz1"] = dz1;
         config["grid"]["vertical_coordinate_type"] = type;
         config["grid"]["rcemip_grid_data_path"] = rcemip_path;
-    } else {
-        config["grid"]["vertical"] = {
-            {"nz", 4},
+    }
+    else {
+        config["grid"]["vertical"] = {{"nz", 4},
             {"type", type},
             {"dz", 100.0},
             {"dz1", dz1},
-            {"rcemip_grid_data_path", rcemip_path}
-        };
+            {"rcemip_grid_data_path", rcemip_path}};
 
         if (mode == 2) {
             config["grid"]["nz"] = 8;
@@ -152,38 +163,32 @@ nlohmann::json make_configuration(const std::string& type, int mode, const std::
         }
     }
 
-    config["constants"] = {
-        {"gravity", 9.81},
+    config["constants"] = {{"gravity", 9.81},
         {"Rd", 287.0},
         {"P0", 100000.0},
         {"Cp", 1004.0},
-        {"Lv", 2500000.0}
-    };
+        {"Lv", 2500000.0}};
 
-    config["simulation"] = {
-        {"dt_s", 1.0},
-        {"idealized_test", "2dbubble"}
-    };
+    config["simulation"] = {{"dt_s", 1.0}, {"idealized_test", "2dbubble"}};
 
-    config["dynamics"]["solver"] = {
-        {"WRXMU", 0.25},
-        {"iteration", 4}
-    };
+    config["dynamics"]["solver"] = {{"WRXMU", 0.25}, {"iteration", 4}};
 
-    config["physics"]["surface_process"] = {
-        {"ocean_scheme", "sflux_2d"},
-        {"land_scheme", "none"}
-    };
+    config["physics"]["surface_process"] = {{"ocean_scheme", "sflux_2d"}, {"land_scheme", "none"}};
 
     return config;
 }
 
-template<std::size_t Dim>
-void fill(State& state, const char* name, Real value) {
+template <std::size_t Dim>
+void
+fill(State& state, const char* name, Real value) {
     Kokkos::deep_copy(state.get_field<Dim>(name).get_mutable_device_data(), value);
 }
 
-Snapshot run_case(const std::filesystem::path& config_path, const std::string& type, Real wind, const Communication& communication) {
+Snapshot
+run_case(const std::filesystem::path& config_path,
+    const std::string& type,
+    Real wind,
+    const Communication& communication) {
     const ConfigurationManager config(config_path.string());
     const Grid grid(config);
     Parameters parameters(config, grid);
@@ -243,7 +248,8 @@ Snapshot run_case(const std::filesystem::path& config_path, const std::string& t
 
         for (int j = h; j < ny - h; ++j) {
             for (int i = h; i < nx - h; ++i) {
-                check(std::isfinite(host(j, i)), std::string(output_names[field]) + " must be finite.");
+                check(std::isfinite(host(j, i)),
+                    std::string(output_names[field]) + " must be finite.");
                 snapshot[field].push_back(host(j, i));
             }
         }
@@ -263,13 +269,15 @@ Snapshot run_case(const std::filesystem::path& config_path, const std::string& t
     return snapshot;
 }
 
-void compare(const Snapshot& actual, const Snapshot& expected, const std::string& label) {
+void
+compare(const Snapshot& actual, const Snapshot& expected, const std::string& label) {
     for (std::size_t field = 0; field < output_names.size(); ++field) {
         check(actual[field] == expected[field], label + ": identical " + output_names[field]);
     }
 }
 
-void run_tests(const Communication& communication) {
+void
+run_tests(const Communication& communication) {
     TemporaryDirectory temporary;
     const auto grid_path = temporary.path() / "rcemip_grid.txt";
 
@@ -277,7 +285,9 @@ void run_tests(const Communication& communication) {
         std::ofstream output(grid_path);
         output << "zz zt\n100 50\n200 150\n300 250\n400 350\n";
         output.close();
-        if (!output) throw std::runtime_error("Cannot write temporary RCEMIP grid.");
+        if (!output) {
+            throw std::runtime_error("Cannot write temporary RCEMIP grid.");
+        }
     }
 
     for (const std::string type : {"default", "taiwanvvm", "rcemip"}) {
@@ -297,26 +307,31 @@ void run_tests(const Communication& communication) {
             compare(mixed, legacy, type + " conflicting legacy");
 
             std::printf("Checked %s wind=%.1f: legacy, structured, conflicting legacy\n",
-                type.c_str(), static_cast<double>(wind));
+                type.c_str(),
+                static_cast<double>(wind));
         }
     }
 }
 
 } // namespace
 
-int main(int argc, char* argv[]) {
+int
+main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);
     Kokkos::initialize(argc, argv);
 
     try {
         int size = 0;
         MPI_Comm_size(MPI_COMM_WORLD, &size);
-        if (size != 1) throw std::runtime_error("This test requires one MPI rank.");
+        if (size != 1) {
+            throw std::runtime_error("This test requires one MPI rank.");
+        }
 
         Communication communication;
         run_tests(communication);
         Kokkos::fence();
-    } catch (const std::exception& error) {
+    }
+    catch (const std::exception& error) {
         ++failures;
         std::fprintf(stderr, "test_surface_vertical_configuration: %s\n", error.what());
     }

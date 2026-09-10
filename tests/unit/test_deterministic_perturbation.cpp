@@ -12,7 +12,8 @@ static_assert(random_bits(1129, 0, 2, 0, 0) == UINT64_C(0x2d6a29225eefb5ff));
 static_assert(random_bits(1129, 7, 4, 383, 383) == UINT64_C(0xe461fe746d5a4598));
 static_assert(random_bits(12345, 1, 10, 20, 30) == UINT64_C(0x96ad8774f38ee4d7));
 
-int main(int argc, char** argv) {
+int
+main(int argc, char** argv) {
     Kokkos::initialize(argc, argv);
     int result = 0;
     {
@@ -47,12 +48,10 @@ int main(int argc, char** argv) {
             for (int j = 0; j < ny && result == 0; ++j) {
                 for (int i = 0; i < nx; ++i) {
                     const VVM::Real host_value = signed_unit_random(seed, step, k, j, i);
-                    if (md_host(k, j, i) != flat_host(k, j, i) ||
-                        md_host(k, j, i) != host_value ||
-                        md_host(k, j, i) < VVM::real(-1.0) ||
-                        md_host(k, j, i) >= VVM::real(1.0)) {
-                        std::cerr << "deterministic perturbation mismatch at "
-                                  << k << ',' << j << ',' << i << '\n';
+                    if (md_host(k, j, i) != flat_host(k, j, i) || md_host(k, j, i) != host_value ||
+                        md_host(k, j, i) < VVM::real(-1.0) || md_host(k, j, i) >= VVM::real(1.0)) {
+                        std::cerr << "deterministic perturbation mismatch at " << k << ',' << j
+                                  << ',' << i << '\n';
                         result = 1;
                         break;
                     }

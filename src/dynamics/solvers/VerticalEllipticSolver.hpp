@@ -19,7 +19,14 @@ public:
     // Initialization only, outside capture. Density/stretching values are frozen
     // into private coefficients. Construct another solver if they change.
     // Grid and HaloExchanger must describe the same decomposition and stream.
-    VerticalEllipticSolver(const Core::Grid& grid, Core::HaloExchanger& halo, const Core::Field<1>& rhobar, const Core::Field<1>& rhobar_up, const Core::Field<1>& flex_mid, const Core::Field<1>& flex_up, Real inverse_dz, Real diagonal_shift);
+    VerticalEllipticSolver(const Core::Grid& grid,
+        Core::HaloExchanger& halo,
+        const Core::Field<1>& rhobar,
+        const Core::Field<1>& rhobar_up,
+        const Core::Field<1>& flex_mid,
+        const Core::Field<1>& flex_up,
+        Real inverse_dz,
+        Real diagonal_shift);
 
     VerticalEllipticSolver(const VerticalEllipticSolver&) = delete;
     VerticalEllipticSolver& operator=(const VerticalEllipticSolver&) = delete;
@@ -35,7 +42,11 @@ public:
     // All inputs/outputs must be distinct, full Grid-sized allocations.
     // Solver, geometry, halo, and field allocations must outlive queued work
     // and captured graphs. Do not call this solver concurrently on two streams.
-    void solve(const Core::Field<3>& xi, const Core::Field<3>& eta, Core::Field<3>& w, Core::Field<3>& previous_w, int iterations);
+    void solve(const Core::Field<3>& xi,
+        const Core::Field<3>& eta,
+        Core::Field<3>& w,
+        Core::Field<3>& previous_w,
+        int iterations);
 
 private:
     using WorkField = Core::Field<3, Kokkos::LayoutRight>;
@@ -56,4 +67,3 @@ private:
 } // namespace VVM
 
 #endif
-

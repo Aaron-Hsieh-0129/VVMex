@@ -35,11 +35,12 @@ struct CovariantVectorStencilAtZ {
     VVM::Real q2_at_v_j_ip1 = VVM::real(0.0);
 };
 
-template<typename CovariantQ1View, typename CovariantQ2View>
-KOKKOS_INLINE_FUNCTION
-CovariantVectorStencilAtZ load_covariant_vector_stencil_at_z(
-    const CovariantQ1View& covariant_q1_at_u, const CovariantQ2View& covariant_q2_at_v,
-    const int j, const int i) noexcept {
+template <typename CovariantQ1View, typename CovariantQ2View>
+KOKKOS_INLINE_FUNCTION CovariantVectorStencilAtZ
+load_covariant_vector_stencil_at_z(const CovariantQ1View& covariant_q1_at_u,
+    const CovariantQ2View& covariant_q2_at_v,
+    const int j,
+    const int i) noexcept {
     CovariantVectorStencilAtZ stencil;
 
     stencil.q1_at_u_j_i = covariant_q1_at_u(j, i);
@@ -51,11 +52,13 @@ CovariantVectorStencilAtZ load_covariant_vector_stencil_at_z(
     return stencil;
 }
 
-template<typename CovariantQ1View, typename CovariantQ2View>
-KOKKOS_INLINE_FUNCTION
-CovariantVectorStencilAtZ load_covariant_vector_stencil_at_z(
-    const CovariantQ1View& covariant_q1_at_u, const CovariantQ2View& covariant_q2_at_v,
-    const int k, const int j, const int i) noexcept {
+template <typename CovariantQ1View, typename CovariantQ2View>
+KOKKOS_INLINE_FUNCTION CovariantVectorStencilAtZ
+load_covariant_vector_stencil_at_z(const CovariantQ1View& covariant_q1_at_u,
+    const CovariantQ2View& covariant_q2_at_v,
+    const int k,
+    const int j,
+    const int i) noexcept {
     CovariantVectorStencilAtZ stencil;
 
     stencil.q1_at_u_j_i = covariant_q1_at_u(k, j, i);
@@ -71,33 +74,43 @@ struct HorizontalCurlDeviceView {
     Core::Geometry::HorizontalGeometryDeviceView z;
 
     KOKKOS_INLINE_FUNCTION
-    VVM::Real calculate_at_z(const int j, const int i, const CovariantVectorStencilAtZ& vector) const noexcept {
+    VVM::Real
+    calculate_at_z(
+        const int j, const int i, const CovariantVectorStencilAtZ& vector) const noexcept {
         const VVM::Real dq2_component_dq1 = (vector.q2_at_v_j_ip1 - vector.q2_at_v_j_i) / z.dq1;
         const VVM::Real dq1_component_dq2 = (vector.q1_at_u_jp1_i - vector.q1_at_u_j_i) / z.dq2;
 
         return z.inv_sqrt_g(j, i) * (dq2_component_dq1 - dq1_component_dq2);
     }
 
-    template<typename CovariantQ1View, typename CovariantQ2View>
-    KOKKOS_INLINE_FUNCTION
-    VVM::Real calculate_at_z(
-        const CovariantQ1View& covariant_q1_at_u, const CovariantQ2View& covariant_q2_at_v,
-        const int j, const int i) const noexcept {
+    template <typename CovariantQ1View, typename CovariantQ2View>
+    KOKKOS_INLINE_FUNCTION VVM::Real
+    calculate_at_z(const CovariantQ1View& covariant_q1_at_u,
+        const CovariantQ2View& covariant_q2_at_v,
+        const int j,
+        const int i) const noexcept {
 
-        return calculate_at_z(j, i, load_covariant_vector_stencil_at_z(covariant_q1_at_u, covariant_q2_at_v, j, i));
+        return calculate_at_z(j,
+            i,
+            load_covariant_vector_stencil_at_z(covariant_q1_at_u, covariant_q2_at_v, j, i));
     }
 
-    template<typename CovariantQ1View, typename CovariantQ2View>
-    KOKKOS_INLINE_FUNCTION
-    VVM::Real calculate_at_z(const CovariantQ1View& covariant_q1_at_u, const CovariantQ2View& covariant_q2_at_v,
-        const int k, const int j, const int i) const noexcept {
+    template <typename CovariantQ1View, typename CovariantQ2View>
+    KOKKOS_INLINE_FUNCTION VVM::Real
+    calculate_at_z(const CovariantQ1View& covariant_q1_at_u,
+        const CovariantQ2View& covariant_q2_at_v,
+        const int k,
+        const int j,
+        const int i) const noexcept {
 
-        return calculate_at_z(j, i, load_covariant_vector_stencil_at_z(covariant_q1_at_u, covariant_q2_at_v, k, j, i));
+        return calculate_at_z(j,
+            i,
+            load_covariant_vector_stencil_at_z(covariant_q1_at_u, covariant_q2_at_v, k, j, i));
     }
 };
 
-inline HorizontalCurlDeviceView make_horizontal_curl_device_view(
-    const Core::Geometry::HorizontalGeometry& geometry) {
+inline HorizontalCurlDeviceView
+make_horizontal_curl_device_view(const Core::Geometry::HorizontalGeometry& geometry) {
 
     HorizontalCurlDeviceView result;
 

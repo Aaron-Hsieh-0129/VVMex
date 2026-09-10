@@ -32,29 +32,30 @@ public:
     // positive/negative-velocity stencil is q_{i-3},...,q_{i+3}.
     static constexpr int required_halo_width = 3;
 
-    static Options validate_configuration(
-        const std::string& variable_name,
+    static Options validate_configuration(const std::string& variable_name,
         const std::string& spatial_scheme,
         const std::string& temporal_scheme,
         const nlohmann::json& advection_config,
         size_t enabled_tendency_count,
         int configured_halo_width);
 
-    WENO5(
-        std::string variable_name,
+    WENO5(std::string variable_name,
         const nlohmann::json& advection_config,
         const Utils::ConfigurationManager& config,
         const Core::Grid& grid,
         Core::HaloExchanger& halo_exchanger,
         const Core::BoundaryConditionManager& bc_manager);
 
-    bool handles_multidimensional_advection() const override { return true; }
-    bool produces_anelastic_scalar_flux_divergence() const override {
+    bool
+    handles_multidimensional_advection() const override {
+        return true;
+    }
+    bool
+    produces_anelastic_scalar_flux_divergence() const override {
         return true;
     }
 
-    void calculate_advection_tendency(
-        const Core::State& state,
+    void calculate_advection_tendency(const Core::State& state,
         const Core::Field<3>& scalar,
         const Core::Field<3>& mass_flux_x,
         const Core::Field<3>& mass_flux_y,
@@ -67,8 +68,8 @@ public:
 
     // q^-_{i+1/2} from cell averages q_{i-2},...,q_{i+2}.
     KOKKOS_INLINE_FUNCTION
-    static VVM::Real reconstruct_left(
-        VVM::Real q_im2,
+    static VVM::Real
+    reconstruct_left(VVM::Real q_im2,
         VVM::Real q_im1,
         VVM::Real q_i,
         VVM::Real q_ip1,
@@ -76,36 +77,23 @@ public:
         VVM::Real epsilon) {
         const VVM::Real one_sixth = VVM::real(1.0) / VVM::real(6.0);
         const VVM::Real p0 =
-            one_sixth *
-            (VVM::real(2.0) * q_im2 - VVM::real(7.0) * q_im1 +
-             VVM::real(11.0) * q_i);
-        const VVM::Real p1 =
-            one_sixth *
-            (-q_im1 + VVM::real(5.0) * q_i +
-             VVM::real(2.0) * q_ip1);
-        const VVM::Real p2 =
-            one_sixth *
-            (VVM::real(2.0) * q_i + VVM::real(5.0) * q_ip1 -
-             q_ip2);
+            one_sixth * (VVM::real(2.0) * q_im2 - VVM::real(7.0) * q_im1 + VVM::real(11.0) * q_i);
+        const VVM::Real p1 = one_sixth * (-q_im1 + VVM::real(5.0) * q_i + VVM::real(2.0) * q_ip1);
+        const VVM::Real p2 = one_sixth * (VVM::real(2.0) * q_i + VVM::real(5.0) * q_ip1 - q_ip2);
 
         const VVM::Real d20 = q_im2 - VVM::real(2.0) * q_im1 + q_i;
-        const VVM::Real d10 =
-            q_im2 - VVM::real(4.0) * q_im1 + VVM::real(3.0) * q_i;
+        const VVM::Real d10 = q_im2 - VVM::real(4.0) * q_im1 + VVM::real(3.0) * q_i;
         const VVM::Real d21 = q_im1 - VVM::real(2.0) * q_i + q_ip1;
         const VVM::Real d11 = q_im1 - q_ip1;
         const VVM::Real d22 = q_i - VVM::real(2.0) * q_ip1 + q_ip2;
-        const VVM::Real d12 =
-            VVM::real(3.0) * q_i - VVM::real(4.0) * q_ip1 + q_ip2;
+        const VVM::Real d12 = VVM::real(3.0) * q_i - VVM::real(4.0) * q_ip1 + q_ip2;
 
         const VVM::Real beta0 =
-            (VVM::real(13.0) / VVM::real(12.0)) * d20 * d20 +
-            VVM::real(0.25) * d10 * d10;
+            (VVM::real(13.0) / VVM::real(12.0)) * d20 * d20 + VVM::real(0.25) * d10 * d10;
         const VVM::Real beta1 =
-            (VVM::real(13.0) / VVM::real(12.0)) * d21 * d21 +
-            VVM::real(0.25) * d11 * d11;
+            (VVM::real(13.0) / VVM::real(12.0)) * d21 * d21 + VVM::real(0.25) * d11 * d11;
         const VVM::Real beta2 =
-            (VVM::real(13.0) / VVM::real(12.0)) * d22 * d22 +
-            VVM::real(0.25) * d12 * d12;
+            (VVM::real(13.0) / VVM::real(12.0)) * d22 * d22 + VVM::real(0.25) * d12 * d12;
 
         const VVM::Real e0 = epsilon + beta0;
         const VVM::Real e1 = epsilon + beta1;
@@ -115,8 +103,7 @@ public:
         const VVM::Real alpha2 = VVM::real(0.3) / (e2 * e2);
         const VVM::Real alpha_sum = alpha0 + alpha1 + alpha2;
 
-        return
-            (alpha0 * p0 + alpha1 * p1 + alpha2 * p2) / alpha_sum;
+        return (alpha0 * p0 + alpha1 * p1 + alpha2 * p2) / alpha_sum;
     }
 
     // q^+_{i+1/2} uses q_{i-1},...,q_{i+3}. The indexing is the explicit
@@ -124,22 +111,23 @@ public:
     //   (q_{i-2},q_{i-1},q_i,q_{i+1},q_{i+2})
     // ->(q_{i+3},q_{i+2},q_{i+1},q_i,q_{i-1}).
     KOKKOS_INLINE_FUNCTION
-    static VVM::Real reconstruct_right(
-        VVM::Real q_im1,
+    static VVM::Real
+    reconstruct_right(VVM::Real q_im1,
         VVM::Real q_i,
         VVM::Real q_ip1,
         VVM::Real q_ip2,
         VVM::Real q_ip3,
         VVM::Real epsilon) {
-        return reconstruct_left(
-            q_ip3, q_ip2, q_ip1, q_i, q_im1, epsilon);
+        return reconstruct_left(q_ip3, q_ip2, q_ip1, q_i, q_im1, epsilon);
     }
 
-    const Options& options() const { return options_; }
+    const Options&
+    options() const {
+        return options_;
+    }
 
 private:
-    static Options parse_options(
-        const std::string& variable_name,
+    static Options parse_options(const std::string& variable_name,
         const nlohmann::json& advection_config);
 
     std::string variable_name_;

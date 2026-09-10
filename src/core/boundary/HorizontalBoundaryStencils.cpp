@@ -6,8 +6,7 @@ namespace VVM {
 namespace Core {
 namespace Boundary {
 
-HorizontalBoundaryStencils::HorizontalBoundaryStencils(const Grid& grid)
-    : grid_(grid) {
+HorizontalBoundaryStencils::HorizontalBoundaryStencils(const Grid& grid) : grid_(grid) {
 
     const auto& horizontal = grid_.horizontal_specification();
 

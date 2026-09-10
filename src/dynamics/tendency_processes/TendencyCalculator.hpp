@@ -15,14 +15,16 @@ namespace Dynamics {
 class TendencyCalculator {
 public:
     explicit TendencyCalculator(std::string var_name,
-                                std::vector<std::unique_ptr<TendencyTerm>> ab2_terms,
-                                std::vector<std::unique_ptr<TendencyTerm>> fe_terms,
-                                std::vector<std::unique_ptr<TendencyTerm>> multistage_terms = {});
+        std::vector<std::unique_ptr<TendencyTerm>> ab2_terms,
+        std::vector<std::unique_ptr<TendencyTerm>> fe_terms,
+        std::vector<std::unique_ptr<TendencyTerm>> multistage_terms = {});
 
-    void calculate_tendencies(Core::State& state, const Core::Grid& grid, const Core::Parameters& params);
-    Core::Field<3>& calculate_multistage_tendency(
-        Core::State& state, const Core::Grid& grid,
-        const Core::Parameters& params, VVM::Real stage_dt);
+    void calculate_tendencies(
+        Core::State& state, const Core::Grid& grid, const Core::Parameters& params);
+    Core::Field<3>& calculate_multistage_tendency(Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        VVM::Real stage_dt);
 
 private:
     std::string variable_name_;

@@ -29,33 +29,25 @@ struct RegularLatLonDryBuoyancyDeviceView {
     HorizontalScalarGradientDeviceView gradient;
 
     KOKKOS_INLINE_FUNCTION
-    VVM::Real calculate_xi_at_v(
-        const int j,
+    VVM::Real
+    calculate_xi_at_v(const int j,
         const int i,
         const ScalarStencilAtT& lower,
         const ScalarStencilAtT& upper,
         const VVM::Real gravity) const noexcept {
 
-        const VVM::Real lower_contravariant =
-            gradient.calculate_q2_at_v(j, i, lower);
-        const VVM::Real upper_contravariant =
-            gradient.calculate_q2_at_v(j, i, upper);
+        const VVM::Real lower_contravariant = gradient.calculate_q2_at_v(j, i, lower);
+        const VVM::Real upper_contravariant = gradient.calculate_q2_at_v(j, i, upper);
 
-        const VVM::Real physical_scale =
-            gradient.v
-                .contravariant_to_physical
-                .a22(j, i);
+        const VVM::Real physical_scale = gradient.v.contravariant_to_physical.a22(j, i);
 
-        return VVM::real(0.5)
-            * gravity
-            * physical_scale
-            * (lower_contravariant
-               + upper_contravariant);
+        return VVM::real(0.5) * gravity * physical_scale *
+               (lower_contravariant + upper_contravariant);
     }
 
     KOKKOS_INLINE_FUNCTION
-    VVM::Real calculate_eta_at_u(
-        const int j,
+    VVM::Real
+    calculate_eta_at_u(const int j,
         const int i,
         const ScalarStencilAtT& lower,
         const ScalarStencilAtT& upper,
@@ -66,12 +58,12 @@ struct RegularLatLonDryBuoyancyDeviceView {
 
         const VVM::Real physical_scale = gradient.u.contravariant_to_physical.a11(j, i);
 
-        return VVM::real(0.5) * gravity * physical_scale * (lower_contravariant + upper_contravariant);
+        return VVM::real(0.5) * gravity * physical_scale *
+               (lower_contravariant + upper_contravariant);
     }
 };
 
-RegularLatLonDryBuoyancyDeviceView
-make_regular_lat_lon_dry_buoyancy_device_view(
+RegularLatLonDryBuoyancyDeviceView make_regular_lat_lon_dry_buoyancy_device_view(
     const Core::Geometry::HorizontalGeometry& geometry);
 
 // Field-level dry buoyancy launcher.
@@ -90,23 +82,20 @@ make_regular_lat_lon_dry_buoyancy_device_view(
 // boundaries, synchronize, or include moisture buoyancy.
 class RegularLatLonDryBuoyancy {
 public:
-    explicit RegularLatLonDryBuoyancy(
-        const Core::Geometry::HorizontalGeometry& geometry);
+    explicit RegularLatLonDryBuoyancy(const Core::Geometry::HorizontalGeometry& geometry);
 
     // Prepare the exact CUDA launch functor before manual graph capture.
     // Repeated calls are allowed. This is a no-op on CPU.
     static void prepare_execution();
 
-    void add_xi_tendency(
-        const Core::Field<3>& th,
+    void add_xi_tendency(const Core::Field<3>& th,
         const Core::Field<1>& thbar,
         const Kokkos::View<VVM::Real>& gravity,
         Core::Field<3>& out_tendency,
         int k_begin,
         int k_end) const;
 
-    void add_eta_tendency(
-        const Core::Field<3>& th,
+    void add_eta_tendency(const Core::Field<3>& th,
         const Core::Field<1>& thbar,
         const Kokkos::View<VVM::Real>& gravity,
         Core::Field<3>& out_tendency,
@@ -114,8 +103,7 @@ public:
         int k_end) const;
 
 private:
-    void add_tendency(
-        const Core::Field<3>& th,
+    void add_tendency(const Core::Field<3>& th,
         const Core::Field<1>& thbar,
         const Kokkos::View<VVM::Real>& gravity,
         Core::Field<3>& out_tendency,
@@ -123,10 +111,7 @@ private:
         int k_end,
         bool xi_component) const;
 
-    void validate_volume(
-        const Core::Field<3>& field,
-        int nz,
-        const char* role) const;
+    void validate_volume(const Core::Field<3>& field, int nz, const char* role) const;
 
     Core::Geometry::HorizontalDomainLayout layout_;
     RegularLatLonDryBuoyancyDeviceView operator_;

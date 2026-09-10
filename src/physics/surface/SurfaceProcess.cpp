@@ -6,58 +6,142 @@
 namespace VVM {
 namespace Physics {
 
-SurfaceProcess::SurfaceProcess(const Utils::ConfigurationManager& config, 
-                                     const Core::Grid& grid, 
-                                     const Core::Parameters& params,
-                                     Core::HaloExchanger& halo_exchanger,
-                                     Core::State& state)
+SurfaceProcess::SurfaceProcess(const Utils::ConfigurationManager& config,
+    const Core::Grid& grid,
+    const Core::Parameters& params,
+    Core::HaloExchanger& halo_exchanger,
+    Core::State& state)
     : config_(config), grid_(grid), params_(params), halo_exchanger_(halo_exchanger) {
 
     v_coord_type_ = Core::vertical_coordinate_type_to_string(grid_.vertical_specification().type);
 
-    if (v_coord_type_ == "rcemip") speed1_filter_ = 1;
-    else speed1_filter_ = 1e-3;
+    if (v_coord_type_ == "rcemip") {
+        speed1_filter_ = 1;
+    }
+    else {
+        speed1_filter_ = 1e-3;
+    }
     return;
 }
 
-void SurfaceProcess::initialize(Core::State& state) {
+void
+SurfaceProcess::initialize(Core::State& state) {
     int nz = grid_.get_local_total_points_z();
     int ny = grid_.get_local_total_points_y();
     int nx = grid_.get_local_total_points_x();
-    
-    if (!state.has_field("qc")) state.add_field<3>("qc", {nz, ny, nx}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "cloud liquid water mass mixing ratio"});
-    if (!state.has_field("qi")) state.add_field<3>("qi", {nz, ny, nx}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "total ice mass mixing ratio"});
 
-    if (!state.has_field("sfc_flux_th")) state.add_field<2>("sfc_flux_th", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "kg K m-2 s-1", "density-weighted surface potential-temperature flux"});
-    if (!state.has_field("sfc_flux_qv")) state.add_field<2>("sfc_flux_qv", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "kg m-2 s-1", "surface water-vapor mass flux"});
-    if (!state.has_field("sfc_flux_u"))  state.add_field<2>("sfc_flux_u", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "kg m-1 s-2", "surface x-momentum flux"});
-    if (!state.has_field("sfc_flux_v"))  state.add_field<2>("sfc_flux_v", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "kg m-1 s-2", "surface y-momentum flux"});
-    
-    if (!state.has_field("gwet")) state.add_field<2>("gwet", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "1", "surface wetness"}); // Surface Wetness
-    if (!state.has_field("zrough")) state.add_field<2>("zrough", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m", "surface roughness length"}); // Roughness Length
-    if (!state.has_field("VEN2D")) state.add_field<2>("VEN2D", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m s-1", "surface momentum exchange coefficient"}); // Roughness Length
+    if (!state.has_field("qc")) {
+        state.add_field<3>("qc",
+            {nz, ny, nx},
+            Core::FieldMetadata{Core::GridStaggering::Centered,
+                "kg kg-1",
+                "cloud liquid water mass mixing ratio"});
+    }
+    if (!state.has_field("qi")) {
+        state.add_field<3>("qi",
+            {nz, ny, nx},
+            Core::FieldMetadata{Core::GridStaggering::Centered,
+                "kg kg-1",
+                "total ice mass mixing ratio"});
+    }
+
+    if (!state.has_field("sfc_flux_th")) {
+        state.add_field<2>("sfc_flux_th",
+            {ny, nx},
+            Core::FieldMetadata{Core::GridStaggering::Surface,
+                "kg K m-2 s-1",
+                "density-weighted surface potential-temperature flux"});
+    }
+    if (!state.has_field("sfc_flux_qv")) {
+        state.add_field<2>("sfc_flux_qv",
+            {ny, nx},
+            Core::FieldMetadata{Core::GridStaggering::Surface,
+                "kg m-2 s-1",
+                "surface water-vapor mass flux"});
+    }
+    if (!state.has_field("sfc_flux_u")) {
+        state.add_field<2>("sfc_flux_u",
+            {ny, nx},
+            Core::FieldMetadata{Core::GridStaggering::Surface,
+                "kg m-1 s-2",
+                "surface x-momentum flux"});
+    }
+    if (!state.has_field("sfc_flux_v")) {
+        state.add_field<2>("sfc_flux_v",
+            {ny, nx},
+            Core::FieldMetadata{Core::GridStaggering::Surface,
+                "kg m-1 s-2",
+                "surface y-momentum flux"});
+    }
+
+    if (!state.has_field("gwet")) {
+        state.add_field<2>("gwet",
+            {ny, nx},
+            Core::FieldMetadata{Core::GridStaggering::Surface,
+                "1",
+                "surface wetness"}); // Surface Wetness
+    }
+    if (!state.has_field("zrough")) {
+        state.add_field<2>("zrough",
+            {ny, nx},
+            Core::FieldMetadata{Core::GridStaggering::Surface,
+                "m",
+                "surface roughness length"}); // Roughness Length
+    }
+    if (!state.has_field("VEN2D")) {
+        state.add_field<2>("VEN2D",
+            {ny, nx},
+            Core::FieldMetadata{Core::GridStaggering::Surface,
+                "m s-1",
+                "surface momentum exchange coefficient"}); // Roughness Length
+    }
     Kokkos::deep_copy(gwet_ref_.get(state, "gwet").get_mutable_device_data(), -1.);
     Kokkos::deep_copy(zrough_ref_.get(state, "zrough").get_mutable_device_data(), 2e-4);
-    
-    if (!state.has_field("ustar")) state.add_field<2>("ustar", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m s-1", "surface friction velocity"});
-    if (!state.has_field("molen")) state.add_field<2>("molen", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "m", "Monin-Obukhov length"});
 
-    if (!state.has_field("sea_land_ice_mask")) state.add_field<2>("sea_land_ice_mask", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "Mask", "sea-land-ice surface classification"});
+    if (!state.has_field("ustar")) {
+        state.add_field<2>("ustar",
+            {ny, nx},
+            Core::FieldMetadata{Core::GridStaggering::Surface,
+                "m s-1",
+                "surface friction velocity"});
+    }
+    if (!state.has_field("molen")) {
+        state.add_field<2>("molen",
+            {ny, nx},
+            Core::FieldMetadata{Core::GridStaggering::Surface, "m", "Monin-Obukhov length"});
+    }
+
+    if (!state.has_field("sea_land_ice_mask")) {
+        state.add_field<2>("sea_land_ice_mask",
+            {ny, nx},
+            Core::FieldMetadata{Core::GridStaggering::Surface,
+                "Mask",
+                "sea-land-ice surface classification"});
+    }
 
     mode_ = config_.get_value<std::string>("physics.surface_process.ocean_scheme", "none");
     land_scheme_ = config_.get_value<std::string>("physics.surface_process.land_scheme", "none");
 }
 
 KOKKOS_INLINE_FUNCTION
-VVM::Real SurfaceProcess::compute_es(VVM::Real t) {
+VVM::Real
+SurfaceProcess::compute_es(VVM::Real t) {
     VVM::Real es = real(611.2) * Kokkos::exp(real(17.67) * (t - real(273.15)) / (t - real(29.65)));
-    return es; 
+    return es;
 }
 
 KOKKOS_INLINE_FUNCTION
-void SurfaceProcess::sflux_2d(VVM::Real sigmau, VVM::Real thvm, VVM::Real thvsm, VVM::Real speed1, 
-                              VVM::Real zr, VVM::Real zrough, VVM::Real speed1_filter, 
-                              VVM::Real& ustar, VVM::Real ventfc[2], VVM::Real& molen) {
+void
+SurfaceProcess::sflux_2d(VVM::Real sigmau,
+    VVM::Real thvm,
+    VVM::Real thvsm,
+    VVM::Real speed1,
+    VVM::Real zr,
+    VVM::Real zrough,
+    VVM::Real speed1_filter,
+    VVM::Real& ustar,
+    VVM::Real ventfc[2],
+    VVM::Real& molen) {
     const VVM::Real bus = real(0.74);
     const VVM::Real crit = real(0.003);
     const int maxit = 5;
@@ -80,7 +164,9 @@ void SurfaceProcess::sflux_2d(VVM::Real sigmau, VVM::Real thvm, VVM::Real thvsm,
     VVM::Real cu = real(1.0) / cuni;
     VVM::Real ct = real(1.0) / ctni;
 
-    if (!stable) speedm = (speedm > sigmau) ? speedm : sigmau;
+    if (!stable) {
+        speedm = (speedm > sigmau) ? speedm : sigmau;
+    }
 
     VVM::Real cui, cti;
     while (!stopit) {
@@ -103,10 +189,10 @@ void SurfaceProcess::sflux_2d(VVM::Real sigmau, VVM::Real thvm, VVM::Real thvsm,
             VVM::Real x = Kokkos::pow(real(1.0) - real(15.0) * zeta, real(0.25));
             VVM::Real y = Kokkos::pow(real(1.0) - real(9.0) * zeta, real(0.25));
 
-            VVM::Real tem2 = tem1 - (Kokkos::log((real(1.0) + x * x) / real(2.0))
-                                + real(2.0) * Kokkos::log((real(1.0) + x) / real(2.0))
-                                - real(2.0) * Kokkos::atan(x) + pi / real(2.0));
-            
+            VVM::Real tem2 = tem1 - (Kokkos::log((real(1.0) + x * x) / real(2.0)) +
+                                        real(2.0) * Kokkos::log((real(1.0) + x) / real(2.0)) -
+                                        real(2.0) * Kokkos::atan(x) + pi / real(2.0));
+
             VVM::Real tem3 = tem1 - real(2.0) * Kokkos::log((real(1.0) + y * y) / real(2.0));
 
             cui = tem2 / vk;
@@ -117,20 +203,23 @@ void SurfaceProcess::sflux_2d(VVM::Real sigmau, VVM::Real thvm, VVM::Real thvsm,
         }
 
         // STOPIT = STOPIT .OR. IT .EQ. MAXIT
-        if (it == maxit) stopit = true;
+        if (it == maxit) {
+            stopit = true;
+        }
 
         if (stopit) {
             cu = real(1.0) / cui;
             ct = real(1.0) / cti;
-        } 
+        }
         else {
             // CHECK FOR CONVERGENCE
             VVM::Real custar = cu;
             VVM::Real ctstar = ct;
             cu = real(1.0) / cui;
             ct = real(1.0) / cti;
-            
-            if (Kokkos::abs(cu / custar - real(1.0)) <= crit && Kokkos::abs(ct / ctstar - real(1.0)) <= crit) {
+
+            if (Kokkos::abs(cu / custar - real(1.0)) <= crit &&
+                Kokkos::abs(ct / ctstar - real(1.0)) <= crit) {
                 stopit = true;
             }
         }
@@ -143,7 +232,7 @@ void SurfaceProcess::sflux_2d(VVM::Real sigmau, VVM::Real thvm, VVM::Real thvsm,
 
     // CHECK TOWNSEND'S LIMIT (Unstable only)
     if (!stable && cti < real(0.3) * ctni) {
-        ventfc[1] = Kokkos::max(ventfc[1], real(0.0019) * Kokkos::pow(thvsm, real(1.)/real(3.)) ); 
+        ventfc[1] = Kokkos::max(ventfc[1], real(0.0019) * Kokkos::pow(thvsm, real(1.) / real(3.)));
     }
 
     // MONIN-OBUKHOV LENGTH
@@ -152,18 +241,25 @@ void SurfaceProcess::sflux_2d(VVM::Real sigmau, VVM::Real thvm, VVM::Real thvsm,
     molen = zr / Kokkos::min(zeta, real(2.45));
 }
 
-
 KOKKOS_INLINE_FUNCTION
-void SurfaceProcess::sflux_tc_2d(VVM::Real sigmau, VVM::Real thvm, VVM::Real thvsm, VVM::Real speed1, 
-                                 VVM::Real zr, VVM::Real zrough, VVM::Real speed1_filter, 
-                                 VVM::Real& ustar, VVM::Real ventfc[2], VVM::Real& molen) {
+void
+SurfaceProcess::sflux_tc_2d(VVM::Real sigmau,
+    VVM::Real thvm,
+    VVM::Real thvsm,
+    VVM::Real speed1,
+    VVM::Real zr,
+    VVM::Real zrough,
+    VVM::Real speed1_filter,
+    VVM::Real& ustar,
+    VVM::Real ventfc[2],
+    VVM::Real& molen) {
     const VVM::Real crit = real(0.003);
     const int maxit = 20;
     const VVM::Real verysmall = real(1.e-6);
     const VVM::Real z0m_min = real(1.27e-7);
     const VVM::Real z0m_max = real(2.85e-3);
     const VVM::Real z0s = real(1.0e-4); // scalar roughness (fixed)
-    
+
     const VVM::Real vk = real(0.4);
     const VVM::Real pi = real(3.141592653589793);
     const VVM::Real grav = real(9.806);
@@ -174,7 +270,9 @@ void SurfaceProcess::sflux_tc_2d(VVM::Real sigmau, VVM::Real thvm, VVM::Real thv
     bool stable = (thvsm < 0.0);
 
     // Unstable case (Gustiness floor for unstable case)
-    if (!stable) speedm = (speedm > sigmau) ? speedm : sigmau;
+    if (!stable) {
+        speedm = (speedm > sigmau) ? speedm : sigmau;
+    }
 
     // Initial guess for coefficients
     VVM::Real z0m = Kokkos::max(Kokkos::min(zrough, z0m_max), z0m_min);
@@ -202,15 +300,17 @@ void SurfaceProcess::sflux_tc_2d(VVM::Real sigmau, VVM::Real thvm, VVM::Real thv
         // Update z0m (WRF-like high-wind formula)
         VVM::Real zw = Kokkos::min(real(1.0), Kokkos::pow(ustar_tmp / real(1.06), real(0.3)));
         VVM::Real z1 = real(0.011) * ustar_tmp * ustar_tmp / grav + real(1.59e-5);
-        VVM::Real z2 = real(10.0) * Kokkos::exp(-real(9.5) * Kokkos::pow(ustar_tmp, -real(1.0)/real(3.0))) 
-                  + real(1.65e-6) / Kokkos::max(ustar_tmp, real(0.01));
+        VVM::Real z2 =
+            real(10.0) * Kokkos::exp(-real(9.5) * Kokkos::pow(ustar_tmp, -real(1.0) / real(3.0))) +
+            real(1.65e-6) / Kokkos::max(ustar_tmp, real(0.01));
 
         z0m = (real(1.0) - zw) * z1 + zw * z2;
         z0m = Kokkos::max(Kokkos::min(z0m, z0m_max), z0m_min);
 
         // zeta = z / L
-        VVM::Real zeta = -zr * cs_old * vk * grav * thvsm / 
-                      (thvm * Kokkos::pow(Kokkos::max(cd_old, verysmall), real(1.5)) * speedm * speedm);
+        VVM::Real zeta =
+            -zr * cs_old * vk * grav * thvsm /
+            (thvm * Kokkos::pow(Kokkos::max(cd_old, verysmall), real(1.5)) * speedm * speedm);
 
         VVM::Real psi_m, psi_h;
         if (stable) {
@@ -221,15 +321,15 @@ void SurfaceProcess::sflux_tc_2d(VVM::Real sigmau, VVM::Real thvm, VVM::Real thv
             }
             psi_m = -real(4.7) * zeta;
             psi_h = -real(4.7) * zeta;
-        } 
+        }
         else {
             // UNSTABLE OR NEUTRAL CASE
             VVM::Real x = Kokkos::pow(real(1.0) - real(15.0) * zeta, real(0.25));
             VVM::Real y = Kokkos::pow(real(1.0) - real(9.0) * zeta, real(0.25));
 
-            psi_m = Kokkos::log((real(1.0) + x * x) / real(2.0)) 
-                  + real(2.0) * Kokkos::log((real(1.0) + x) / real(2.0)) 
-                  - real(2.0) * Kokkos::atan(x) + pi / real(2.0);
+            psi_m = Kokkos::log((real(1.0) + x * x) / real(2.0)) +
+                    real(2.0) * Kokkos::log((real(1.0) + x) / real(2.0)) -
+                    real(2.0) * Kokkos::atan(x) + pi / real(2.0);
 
             psi_h = real(2.0) * Kokkos::log((real(1.0) + y * y) / real(2.0));
         }
@@ -270,25 +370,26 @@ void SurfaceProcess::sflux_tc_2d(VVM::Real sigmau, VVM::Real thvm, VVM::Real thv
     ventfc[1] = cs * speedm; // Cs * U
 
     // FINAL MONIN-OBUKHOV LENGTH
-    VVM::Real zeta = -zr * cs * vk * grav * thvsm / 
-                  (thvm * Kokkos::pow(Kokkos::max(cd, verysmall), real(1.5)) * speedm * speedm);
-                  
+    VVM::Real zeta = -zr * cs * vk * grav * thvsm /
+                     (thvm * Kokkos::pow(Kokkos::max(cd, verysmall), real(1.5)) * speedm * speedm);
+
     zeta = Kokkos::max(Kokkos::abs(zeta), real(1e-6)) * Kokkos::copysign(real(1.0), zeta);
     molen = zr / Kokkos::min(zeta, real(2.45));
 }
 
-
-void SurfaceProcess::compute_coefficients(Core::State& state) {
+void
+SurfaceProcess::compute_coefficients(Core::State& state) {
     const auto& u = u_ref_.get(state, "u").get_device_data();
     const auto& v = v_ref_.get(state, "v").get_device_data();
     const auto& th = th_ref_.get(state, "th").get_device_data();
     const auto& qv = qv_ref_.get(state, "qv").get_device_data();
     const auto& qc = qc_ref_.get(state, "qc").get_device_data();
     const auto& qi = qi_ref_.get(state, "qi").get_device_data();
-    
+
     const auto& pbar = pbar_ref_.get(state, "pbar").get_device_data();
     const auto& pibar = pibar_ref_.get(state, "pibar").get_device_data();
-    const auto& z_mid = params_.z_mid.get_device_data(); const auto& z_up = params_.z_up.get_device_data();
+    const auto& z_mid = params_.z_mid.get_device_data();
+    const auto& z_up = params_.z_up.get_device_data();
     const auto& rhobar = rhobar_ref_.get(state, "rhobar").get_device_data();
     const auto& rhobar_up = rhobar_up_ref_.get(state, "rhobar_up").get_device_data();
     const auto& thbar = thbar_ref_.get(state, "thbar").get_device_data();
@@ -297,7 +398,8 @@ void SurfaceProcess::compute_coefficients(Core::State& state) {
     const auto& Tg = Tg_ref_.get(state, "Tg").get_device_data();
     const auto& gwet = gwet_ref_.get(state, "gwet").get_device_data();
     const auto& zrough = zrough_ref_.get(state, "zrough").get_device_data();
-    const auto& sea_land_ice_mask = sea_land_ice_mask_ref_.get(state, "sea_land_ice_mask").get_device_data();
+    const auto& sea_land_ice_mask =
+        sea_land_ice_mask_ref_.get(state, "sea_land_ice_mask").get_device_data();
 
     auto& sfc_flux_th = sfc_flux_th_ref_.get(state, "sfc_flux_th").get_mutable_device_data();
     auto& sfc_flux_qv = sfc_flux_qv_ref_.get(state, "sfc_flux_qv").get_mutable_device_data();
@@ -307,16 +409,16 @@ void SurfaceProcess::compute_coefficients(Core::State& state) {
     auto& molen_view = molen_ref_.get(state, "molen").get_mutable_device_data();
     auto& VEN2D = VEN2D_ref_.get(state, "VEN2D").get_mutable_device_data();
 
-    const auto& hx     = topo_ref_.get(state, "topo").get_device_data();
-    const auto& hxu    = topou_ref_.get(state, "topou").get_device_data();
-    const auto& hxv    = topov_ref_.get(state, "topov").get_device_data();
+    const auto& hx = topo_ref_.get(state, "topo").get_device_data();
+    const auto& hxu = topou_ref_.get(state, "topou").get_device_data();
+    const auto& hxv = topov_ref_.get(state, "topov").get_device_data();
 
     int ny = grid_.get_local_total_points_y();
     int nx = grid_.get_local_total_points_x();
-    int h = grid_.get_halo_cells(); 
-    const auto& dz = params_.dz; 
-    
-    // Constants from 
+    int h = grid_.get_halo_cells();
+    const auto& dz = params_.dz;
+
+    // Constants from
     const VVM::Real cp = real(1004.5);
     const auto& grav = params_.gravity;
     const VVM::Real hlf = real(2.5e6);
@@ -326,90 +428,106 @@ void SurfaceProcess::compute_coefficients(Core::State& state) {
     const VVM::Real local_speed1_filter = this->speed1_filter_;
     if (mode_ == "sflux_2d") {
         Kokkos::parallel_for("SFlux_3D",
-            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny-h, nx-h}}),
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny - h, nx - h}}),
             KOKKOS_LAMBDA(const int j, const int i) {
                 // If not sea, return
-                if (sea_land_ice_mask(j,i) != 0) return;
+                if (sea_land_ice_mask(j, i) != 0) {
+                    return;
+                }
 
                 // NOTE: Need to check about the difference between original VVM and this
-                int hx1 = hx(j,i);
-                int hxp = hx(j,i)+1;
+                int hx1 = hx(j, i);
+                int hxp = hx(j, i) + 1;
 
                 VVM::Real ztmp = real(0.5) * dz() / flex_height_coef_mid(hxp);
-                VVM::Real speedtp = real(0.5) * Kokkos::sqrt(
-                                Kokkos::pow(u(hxp,j,i-1) + u(hxp,j,i), real(2)) + 
-                                Kokkos::pow(v(hxp,j-1,i) + v(hxp,j,i), real(2))
-                             );
+                VVM::Real speedtp =
+                    real(0.5) * Kokkos::sqrt(Kokkos::pow(u(hxp, j, i - 1) + u(hxp, j, i), real(2)) +
+                                             Kokkos::pow(v(hxp, j - 1, i) + v(hxp, j, i), real(2)));
 
                 // TODO: check compute_es
-                VVM::Real es1 = compute_es(Tg(j, i)); 
+                VVM::Real es1 = compute_es(Tg(j, i));
                 VVM::Real qsfc = es1 * real(0.622) / (pbar(hx1) - es1);
-                VVM::Real ts = cp * Tg(j, i) + grav() * z_up(hx1); 
+                VVM::Real ts = cp * Tg(j, i) + grav() * z_up(hx1);
 
                 VVM::Real Q = qv(hxp, j, i) + qc(hxp, j, i) + qi(hxp, j, i);
-                VVM::Real T = cp * th(hxp, j, i) * pibar(hxp) 
-                             - hlf * qc(hxp, j, i)
-                             + grav() * z_mid(hxp)
-                             - (hlf + hlm) * qi(hxp, j, i);
-                VVM::Real thvsm = Tg(j,i) / pibar(hx1) - th(hxp,j,i) + 
-                               Kokkos::abs(gwet(j,i))*thbar(hxp) * (delta * (qsfc-qv(hxp,j,i)));
+                VVM::Real T = cp * th(hxp, j, i) * pibar(hxp) - hlf * qc(hxp, j, i) +
+                              grav() * z_mid(hxp) - (hlf + hlm) * qi(hxp, j, i);
+                VVM::Real thvsm =
+                    Tg(j, i) / pibar(hx1) - th(hxp, j, i) +
+                    Kokkos::abs(gwet(j, i)) * thbar(hxp) * (delta * (qsfc - qv(hxp, j, i)));
 
                 VVM::Real sigmau = real(0.0);
                 VVM::Real ustar, molen;
                 VVM::Real ventfc[2];
-                sflux_2d(sigmau, thbar(hxp), thvsm, speedtp, ztmp, zrough(j, i), local_speed1_filter, ustar, ventfc, molen);
+                sflux_2d(sigmau,
+                    thbar(hxp),
+                    thvsm,
+                    speedtp,
+                    ztmp,
+                    zrough(j, i),
+                    local_speed1_filter,
+                    ustar,
+                    ventfc,
+                    molen);
 
                 VVM::Real wt = ventfc[1] * (ts - T);
                 VVM::Real wq = ventfc[1] * Kokkos::abs(gwet(j, i)) * (qsfc - Q);
-                VEN2D(j,i) = ventfc[0];
+                VEN2D(j, i) = ventfc[0];
 
-                sfc_flux_qv(j,i) = wq * rhobar_up(hx1);
-                sfc_flux_th(j,i) = wt * rhobar_up(hx1) / (cp * pibar(hx1));
-            }
-        );
+                sfc_flux_qv(j, i) = wq * rhobar_up(hx1);
+                sfc_flux_th(j, i) = wt * rhobar_up(hx1) / (cp * pibar(hx1));
+            });
     }
     else if (mode_ == "sflux_tc_2d") {
         Kokkos::parallel_for("SFlux_3D",
-            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny-h, nx-h}}),
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny - h, nx - h}}),
             KOKKOS_LAMBDA(const int j, const int i) {
                 // If not sea, return
-                if (sea_land_ice_mask(j,i) != 0) return;
+                if (sea_land_ice_mask(j, i) != 0) {
+                    return;
+                }
 
                 // NOTE: Need to check about the difference between original VVM and this
-                int hx1 = hx(j,i);
-                int hxp = hx(j,i)+1;
+                int hx1 = hx(j, i);
+                int hxp = hx(j, i) + 1;
 
                 VVM::Real ztmp = real(0.5) * dz() / flex_height_coef_mid(hxp);
-                VVM::Real speedtp = real(0.5) * Kokkos::sqrt(
-                                Kokkos::pow(u(hxp,j,i-1) + u(hxp,j,i), real(2)) + 
-                                Kokkos::pow(v(hxp,j-1,i) + v(hxp,j,i), real(2))
-                             );
+                VVM::Real speedtp =
+                    real(0.5) * Kokkos::sqrt(Kokkos::pow(u(hxp, j, i - 1) + u(hxp, j, i), real(2)) +
+                                             Kokkos::pow(v(hxp, j - 1, i) + v(hxp, j, i), real(2)));
 
-                VVM::Real es1 = compute_es(Tg(j, i)); 
+                VVM::Real es1 = compute_es(Tg(j, i));
                 VVM::Real qsfc = es1 * real(0.622) / (pbar(hx1) - es1);
-                VVM::Real ts = cp * Tg(j, i) + grav() * z_up(hx1); 
+                VVM::Real ts = cp * Tg(j, i) + grav() * z_up(hx1);
 
                 VVM::Real Q = qv(hxp, j, i) + qc(hxp, j, i) + qi(hxp, j, i);
-                VVM::Real T = cp * th(hxp, j, i) * pibar(hxp) 
-                             - hlf * qc(hxp, j, i)
-                             + grav() * z_mid(hxp)
-                             - (hlf + hlm) * qi(hxp, j, i);
-                VVM::Real thvsm = Tg(j,i) / pibar(hx1) - th(hxp,j,i) + 
-                               Kokkos::abs(gwet(j,i))*thbar(hxp) * (delta * (qsfc-qv(hxp,j,i)));
+                VVM::Real T = cp * th(hxp, j, i) * pibar(hxp) - hlf * qc(hxp, j, i) +
+                              grav() * z_mid(hxp) - (hlf + hlm) * qi(hxp, j, i);
+                VVM::Real thvsm =
+                    Tg(j, i) / pibar(hx1) - th(hxp, j, i) +
+                    Kokkos::abs(gwet(j, i)) * thbar(hxp) * (delta * (qsfc - qv(hxp, j, i)));
 
                 VVM::Real sigmau = real(0.0);
                 VVM::Real ustar, molen;
                 VVM::Real ventfc[2];
-                sflux_tc_2d(sigmau, thbar(hxp), thvsm, speedtp, ztmp, zrough(j, i), local_speed1_filter, ustar, ventfc, molen);
+                sflux_tc_2d(sigmau,
+                    thbar(hxp),
+                    thvsm,
+                    speedtp,
+                    ztmp,
+                    zrough(j, i),
+                    local_speed1_filter,
+                    ustar,
+                    ventfc,
+                    molen);
 
                 VVM::Real wt = ventfc[1] * (ts - T);
                 VVM::Real wq = ventfc[1] * Kokkos::abs(gwet(j, i)) * (qsfc - Q);
-                VEN2D(j,i) = ventfc[0];
+                VEN2D(j, i) = ventfc[0];
 
-                sfc_flux_qv(j,i) = wq * rhobar_up(hx1);
-                sfc_flux_th(j,i) = wt * rhobar_up(hx1) / (cp * pibar(hx1));
-            }
-        );
+                sfc_flux_qv(j, i) = wq * rhobar_up(hx1);
+                sfc_flux_th(j, i) = wt * rhobar_up(hx1) / (cp * pibar(hx1));
+            });
     }
 
     if (land_scheme_ == "noahlsm") {
@@ -417,140 +535,156 @@ void SurfaceProcess::compute_coefficients(Core::State& state) {
 
         if (mode_ == "sflux_2d" || mode_ == "sflux_tc_2d") {
             Kokkos::parallel_for("OverwriteLandVEN2D",
-                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny-h, nx-h}}),
+                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny - h, nx - h}}),
                 KOKKOS_LAMBDA(const int j, const int i) {
                     if (sea_land_ice_mask(j, i) != 0) {
                         VEN2D(j, i) = cmx(j, i);
                     }
-                }
-            );
+                });
         }
         else if (mode_ == "tco_ocean") {
             Kokkos::parallel_for("OverwriteLandVEN2D",
-                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny-h, nx-h}}),
-                KOKKOS_LAMBDA(const int j, const int i) {
-                    VEN2D(j, i) = cmx(j, i);
-                }
-            );
+                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny - h, nx - h}}),
+                KOKKOS_LAMBDA(const int j, const int i) { VEN2D(j, i) = cmx(j, i); });
         }
     }
     halo_exchanger_.exchange_halos(VEN2D_ref_.get(state, "VEN2D"));
 
     bool has_topo = (params_.max_topo_idx > h);
     Kokkos::parallel_for("SFlux_uv",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny-h, nx-h}}),
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny - h, nx - h}}),
         KOKKOS_LAMBDA(const int j, const int i) {
-            int hx1 = hx(j,i);
-            int hxp = hx(j,i)+1;
-            int hxup = hxu(j,i) + 1;
-            int hxvp = hxv(j,i) + 1;
+            int hx1 = hx(j, i);
+            int hxp = hx(j, i) + 1;
+            int hxup = hxu(j, i) + 1;
+            int hxvp = hxv(j, i) + 1;
 
             if (has_topo) {
-                if (hxup > 1) sfc_flux_u(j,i) = -VEN2D(j,i+1) * u(hxup,j,i);
-                else sfc_flux_u(j,i) = -VEN2D(j,i) * u(hxp,j,i);
-                if (hxvp > 1) sfc_flux_v(j,i) = -VEN2D(j,i) * v(hxvp,j,i);
-                else sfc_flux_v(j,i) = -VEN2D(j+1,i) * v(hxp,j,i);
+                if (hxup > 1) {
+                    sfc_flux_u(j, i) = -VEN2D(j, i + 1) * u(hxup, j, i);
+                }
+                else {
+                    sfc_flux_u(j, i) = -VEN2D(j, i) * u(hxp, j, i);
+                }
+                if (hxvp > 1) {
+                    sfc_flux_v(j, i) = -VEN2D(j, i) * v(hxvp, j, i);
+                }
+                else {
+                    sfc_flux_v(j, i) = -VEN2D(j + 1, i) * v(hxp, j, i);
+                }
             }
             else {
-                sfc_flux_u(j,i) = -real(0.5) * (VEN2D(j,i)+VEN2D(j,i+1)) * u(h,j,i);
-                sfc_flux_v(j,i) = -real(0.5) * (VEN2D(j,i)+VEN2D(j+1,i)) * v(h,j,i);
+                sfc_flux_u(j, i) = -real(0.5) * (VEN2D(j, i) + VEN2D(j, i + 1)) * u(h, j, i);
+                sfc_flux_v(j, i) = -real(0.5) * (VEN2D(j, i) + VEN2D(j + 1, i)) * v(h, j, i);
             }
-        }
-    );
+        });
 
     Kokkos::parallel_for("SFlux_uv",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny-h, nx-h}}),
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny - h, nx - h}}),
         KOKKOS_LAMBDA(const int j, const int i) {
-            int hx1 = hx(j,i);
-            int hxu1 = hxu(j,i);
-            int hxv1 = hxv(j,i);
+            int hx1 = hx(j, i);
+            int hxu1 = hxu(j, i);
+            int hxv1 = hxv(j, i);
 
-            if (hxu1 > 0) sfc_flux_u(j,i) = sfc_flux_u(j,i) * rhobar_up(hxu1);
-            else sfc_flux_u(j,i) = sfc_flux_u(j,i) * rhobar_up(hx1);
-            if (hxv1 > 0) sfc_flux_v(j,i) = sfc_flux_v(j,i) * rhobar_up(hxv1);
-            else sfc_flux_v(j,i) = sfc_flux_v(j,i) * rhobar_up(hx1);
-        }
-    );
+            if (hxu1 > 0) {
+                sfc_flux_u(j, i) = sfc_flux_u(j, i) * rhobar_up(hxu1);
+            }
+            else {
+                sfc_flux_u(j, i) = sfc_flux_u(j, i) * rhobar_up(hx1);
+            }
+            if (hxv1 > 0) {
+                sfc_flux_v(j, i) = sfc_flux_v(j, i) * rhobar_up(hxv1);
+            }
+            else {
+                sfc_flux_v(j, i) = sfc_flux_v(j, i) * rhobar_up(hx1);
+            }
+        });
 }
 
-template<size_t Dim>
-void SurfaceProcess::calculate_tendencies(Core::State& state, 
-                                          const std::string& var_name, 
-                                          Core::Field<Dim>& out_tendency) {
-    if (var_name != "th" && var_name != "qv" && var_name != "xi" && var_name != "eta") return;
+template <size_t Dim>
+void
+SurfaceProcess::calculate_tendencies(
+    Core::State& state, const std::string& var_name, Core::Field<Dim>& out_tendency) {
+    if (var_name != "th" && var_name != "qv" && var_name != "xi" && var_name != "eta") {
+        return;
+    }
 
     auto tend = out_tendency.get_mutable_device_data();
     int ny = grid_.get_local_total_points_y();
     int nx = grid_.get_local_total_points_x();
 
     int h = grid_.get_halo_cells();
-    const auto& hxu    = topou_ref_.get(state, "topou").get_device_data();
-    const auto& hxv    = topov_ref_.get(state, "topov").get_device_data();
+    const auto& hxu = topou_ref_.get(state, "topou").get_device_data();
+    const auto& hxv = topov_ref_.get(state, "topov").get_device_data();
 
     const auto& rhobar = rhobar_ref_.get(state, "rhobar").get_device_data(); // Density
-    const auto& hx     = topo_ref_.get(state, "topo").get_device_data();
-    const auto& rdz = params_.rdz; 
-    const auto& rdz2 = params_.rdz2; 
+    const auto& hx = topo_ref_.get(state, "topo").get_device_data();
+    const auto& rdz = params_.rdz;
+    const auto& rdz2 = params_.rdz2;
     const auto& flex_height_coef_mid = params_.flex_height_coef_mid.get_device_data();
     const auto& flex_height_coef_up = params_.flex_height_coef_up.get_device_data();
-    const auto& sea_land_ice_mask = sea_land_ice_mask_ref_.get(state, "sea_land_ice_mask").get_device_data();
+    const auto& sea_land_ice_mask =
+        sea_land_ice_mask_ref_.get(state, "sea_land_ice_mask").get_device_data();
 
     if (var_name == "th") {
         const auto& flux = sfc_flux_th_ref_.get(state, "sfc_flux_th").get_device_data();
         Kokkos::parallel_for("SfcFlux_Tendency_TH",
-            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny-h, nx-h}}),
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny - h, nx - h}}),
             KOKKOS_LAMBDA(const int j, const int i) {
                 // If not sea, return
-                if (sea_land_ice_mask(j,i) != 0) return;
+                if (sea_land_ice_mask(j, i) != 0) {
+                    return;
+                }
 
-                int hxp = hx(j,i)+1;
+                int hxp = hx(j, i) + 1;
                 tend(hxp, j, i) += flux(j, i) * flex_height_coef_mid(hxp) * rdz() / rhobar(hxp);
-            }
-        );
-    } 
+            });
+    }
     else if (var_name == "qv") {
         const auto& flux = sfc_flux_qv_ref_.get(state, "sfc_flux_qv").get_device_data();
         Kokkos::parallel_for("SfcFlux_Tendency_QV",
-            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny-h, nx-h}}),
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny - h, nx - h}}),
             KOKKOS_LAMBDA(const int j, const int i) {
                 // If not sea, return
-                if (sea_land_ice_mask(j,i) != 0) return;
+                if (sea_land_ice_mask(j, i) != 0) {
+                    return;
+                }
 
-                int hxp = hx(j,i)+1;
+                int hxp = hx(j, i) + 1;
                 tend(hxp, j, i) += flux(j, i) * flex_height_coef_mid(hxp) * rdz() / rhobar(hxp);
-            }
-        );
+            });
     }
     else if (var_name == "xi") {
         const auto& flux = sfc_flux_v_ref_.get(state, "sfc_flux_v").get_device_data();
         Kokkos::parallel_for("SfcFlux_Tendency_XI",
-            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny-h, nx-h}}),
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny - h, nx - h}}),
             KOKKOS_LAMBDA(const int j, const int i) {
-                int hxp = hx(j,i) + 1;
-                int hxvp = hxv(j,i) + 1;
+                int hxp = hx(j, i) + 1;
+                int hxvp = hxv(j, i) + 1;
                 int target_k = (hxvp > 1) ? hxvp : hxp;
-                
-                tend(target_k, j, i) += flux(j, i) * flex_height_coef_mid(target_k) * flex_height_coef_up(target_k) * rdz2() / rhobar(target_k);
-            }
-        );
+
+                tend(target_k, j, i) += flux(j, i) * flex_height_coef_mid(target_k) *
+                                        flex_height_coef_up(target_k) * rdz2() / rhobar(target_k);
+            });
     }
     else if (var_name == "eta") {
         const auto& flux = sfc_flux_u_ref_.get(state, "sfc_flux_u").get_device_data();
         Kokkos::parallel_for("SfcFlux_Tendency_ETA",
-            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny-h, nx-h}}),
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny - h, nx - h}}),
             KOKKOS_LAMBDA(const int j, const int i) {
-                int hxp = hx(j,i) + 1;
-                int hxup = hxu(j,i) + 1;
+                int hxp = hx(j, i) + 1;
+                int hxup = hxu(j, i) + 1;
                 int target_k = (hxup > 1) ? hxup : hxp;
-                
-                tend(target_k, j, i) += flux(j, i) * flex_height_coef_mid(target_k) * flex_height_coef_up(target_k) * rdz2() / rhobar(target_k);
-            }
-        );
+
+                tend(target_k, j, i) += flux(j, i) * flex_height_coef_mid(target_k) *
+                                        flex_height_coef_up(target_k) * rdz2() / rhobar(target_k);
+            });
     }
     return;
 }
 
-template void SurfaceProcess::calculate_tendencies(Core::State& state, const std::string& var_name, Core::Field<3ul>& out_tendency);
+template void SurfaceProcess::calculate_tendencies(
+    Core::State& state, const std::string& var_name, Core::Field<3ul>& out_tendency);
 
 } // namespace Physics
 } // namespace VVM

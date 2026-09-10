@@ -14,12 +14,12 @@ namespace VVM::IO::BP5 {
 enum class CpuBufferMode { Direct, Pack };
 enum class ExistingDatasetPolicy { Error, Replace, Append };
 
-using VVM::IO::OutputElementType;
-using VVM::IO::OutputPrecision;
 using VVM::IO::output_element_matches_real;
 using VVM::IO::output_element_size;
 using VVM::IO::output_element_type_name;
 using VVM::IO::output_precision_name;
+using VVM::IO::OutputElementType;
+using VVM::IO::OutputPrecision;
 
 const char* cpu_buffer_mode_name(CpuBufferMode mode) noexcept;
 const char* existing_dataset_policy_name(ExistingDatasetPolicy policy) noexcept;
@@ -38,11 +38,9 @@ struct Bp5OutputConfig {
     // than output.precision, so the writer can say so once on rank 0.
     bool precision_from_bp5_block = false;
 
-    static Bp5OutputConfig from_json(
-        const nlohmann::json& value,
+    static Bp5OutputConfig from_json(const nlohmann::json& value,
         OutputPrecision default_precision = OutputPrecision::Native);
-    static Bp5OutputConfig from_config(
-        const Utils::ConfigurationManager& config);
+    static Bp5OutputConfig from_config(const Utils::ConfigurationManager& config);
 
     OutputElementType element_type() const noexcept;
 

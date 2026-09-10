@@ -37,23 +37,33 @@ struct HorizontalVorticityDeviceView {
     VVM::Real dq1 = VVM::real(0.0);
     VVM::Real dq2 = VVM::real(0.0);
 
-    template<typename WView, typename CovariantQ2View>
-    KOKKOS_INLINE_FUNCTION
-    VVM::Real calculate_contravariant_q1_at_v(const WView& w, const CovariantQ2View& covariant_q2_at_v,
-        const int k, const int j, const int i, const VVM::Real inverse_vertical_spacing) const noexcept {
+    template <typename WView, typename CovariantQ2View>
+    KOKKOS_INLINE_FUNCTION VVM::Real
+    calculate_contravariant_q1_at_v(const WView& w,
+        const CovariantQ2View& covariant_q2_at_v,
+        const int k,
+        const int j,
+        const int i,
+        const VVM::Real inverse_vertical_spacing) const noexcept {
 
         const VVM::Real dw_dq2 = (w(k, j + 1, i) - w(k, j, i)) / dq2;
-        const VVM::Real du2_dz = (covariant_q2_at_v(k + 1, j, i) - covariant_q2_at_v(k, j, i)) * inverse_vertical_spacing;
+        const VVM::Real du2_dz = (covariant_q2_at_v(k + 1, j, i) - covariant_q2_at_v(k, j, i)) *
+                                 inverse_vertical_spacing;
 
         return (dw_dq2 - du2_dz) / sqrt_g_at_v(j, i);
     }
 
-    template<typename WView, typename CovariantQ1View>
-    KOKKOS_INLINE_FUNCTION
-    VVM::Real calculate_contravariant_q2_at_u(const WView& w, const CovariantQ1View& covariant_q1_at_u,
-        const int k, const int j, const int i, const VVM::Real inverse_vertical_spacing) const noexcept {
+    template <typename WView, typename CovariantQ1View>
+    KOKKOS_INLINE_FUNCTION VVM::Real
+    calculate_contravariant_q2_at_u(const WView& w,
+        const CovariantQ1View& covariant_q1_at_u,
+        const int k,
+        const int j,
+        const int i,
+        const VVM::Real inverse_vertical_spacing) const noexcept {
 
-        const VVM::Real du1_dz = (covariant_q1_at_u(k + 1, j, i) - covariant_q1_at_u(k, j, i)) * inverse_vertical_spacing;
+        const VVM::Real du1_dz = (covariant_q1_at_u(k + 1, j, i) - covariant_q1_at_u(k, j, i)) *
+                                 inverse_vertical_spacing;
         const VVM::Real dw_dq1 = (w(k, j, i + 1) - w(k, j, i)) / dq1;
 
         return (du1_dz - dw_dq1) / sqrt_g_at_u(j, i);
@@ -61,20 +71,26 @@ struct HorizontalVorticityDeviceView {
 
     // CVVM WIND_3D covariant-wind integration uses:
     //   u_1(k) = u_1(k+1) - du_1/dz(k) * physical_dz(k).
-    template<typename WView, typename VorticityQ2View>
-    KOKKOS_INLINE_FUNCTION
-    VVM::Real calculate_covariant_q1_vertical_shear_at_u(const WView& w, const VorticityQ2View& contravariant_q2_at_u,
-        const int k, const int j, const int i) const noexcept {
+    template <typename WView, typename VorticityQ2View>
+    KOKKOS_INLINE_FUNCTION VVM::Real
+    calculate_covariant_q1_vertical_shear_at_u(const WView& w,
+        const VorticityQ2View& contravariant_q2_at_u,
+        const int k,
+        const int j,
+        const int i) const noexcept {
 
         const VVM::Real dw_dq1 = (w(k, j, i + 1) - w(k, j, i)) / dq1;
 
         return dw_dq1 + sqrt_g_at_u(j, i) * contravariant_q2_at_u(k, j, i);
     }
 
-    template<typename WView, typename VorticityQ1View>
-    KOKKOS_INLINE_FUNCTION
-    VVM::Real calculate_covariant_q2_vertical_shear_at_v(const WView& w, const VorticityQ1View& contravariant_q1_at_v,
-        const int k, const int j, const int i) const noexcept {
+    template <typename WView, typename VorticityQ1View>
+    KOKKOS_INLINE_FUNCTION VVM::Real
+    calculate_covariant_q2_vertical_shear_at_v(const WView& w,
+        const VorticityQ1View& contravariant_q1_at_v,
+        const int k,
+        const int j,
+        const int i) const noexcept {
 
         const VVM::Real dw_dq2 = (w(k, j + 1, i) - w(k, j, i)) / dq2;
 
@@ -82,14 +98,16 @@ struct HorizontalVorticityDeviceView {
     }
 };
 
-inline HorizontalVorticityDeviceView make_horizontal_vorticity_device_view(
-    const Core::Geometry::HorizontalGeometry& geometry) {
+inline HorizontalVorticityDeviceView
+make_horizontal_vorticity_device_view(const Core::Geometry::HorizontalGeometry& geometry) {
 
     using Core::Geometry::GeometryKind;
     using Core::Geometry::HorizontalLocation;
 
-    if (geometry.kind() != GeometryKind::Cartesian && geometry.kind() != GeometryKind::RegularLatLon) {
-        throw std::invalid_argument("HorizontalVorticity currently supports Cartesian and regular latitude-longitude geometry.");
+    if (geometry.kind() != GeometryKind::Cartesian &&
+        geometry.kind() != GeometryKind::RegularLatLon) {
+        throw std::invalid_argument("HorizontalVorticity currently supports Cartesian and regular "
+                                    "latitude-longitude geometry.");
     }
 
     const auto u = geometry.device_view(HorizontalLocation::U);

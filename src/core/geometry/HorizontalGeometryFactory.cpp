@@ -10,21 +10,23 @@ namespace VVM {
 namespace Core {
 namespace Geometry {
 
-std::unique_ptr<HorizontalGeometry> HorizontalGeometryFactory::create(
-    const HorizontalGridSpec& spec, HorizontalDomainLayout layout) {
+std::unique_ptr<HorizontalGeometry>
+HorizontalGeometryFactory::create(const HorizontalGridSpec& spec, HorizontalDomainLayout layout) {
 
     switch (spec.kind) {
-        case GeometryKind::Cartesian:
-            return std::make_unique<CartesianGeometry>(layout, spec.dq1, spec.dq2);
+    case GeometryKind::Cartesian:
+        return std::make_unique<CartesianGeometry>(layout, spec.dq1, spec.dq2);
 
-        case GeometryKind::RegularLatLon:
-            return std::make_unique<RegularLatLonGeometry>(layout,
-                spec.dq1, spec.dq2,
-                spec.regular_lat_lon.longitude_west_edge, spec.regular_lat_lon.latitude_south_edge,
-                spec.regular_lat_lon.radius);
+    case GeometryKind::RegularLatLon:
+        return std::make_unique<RegularLatLonGeometry>(layout,
+            spec.dq1,
+            spec.dq2,
+            spec.regular_lat_lon.longitude_west_edge,
+            spec.regular_lat_lon.latitude_south_edge,
+            spec.regular_lat_lon.radius);
 
-        case GeometryKind::CubedSphere:
-            throw std::invalid_argument("Cubed-sphere geometry is not implemented.");
+    case GeometryKind::CubedSphere:
+        throw std::invalid_argument("Cubed-sphere geometry is not implemented.");
     }
 
     throw std::invalid_argument("HorizontalGeometryFactory received an invalid GeometryKind.");

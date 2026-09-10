@@ -12,7 +12,8 @@ namespace Geometry {
 
 class HorizontalGeometryFactory {
 public:
-    static std::unique_ptr<HorizontalGeometry> create(const HorizontalGridSpec& spec, HorizontalDomainLayout layout);
+    static std::unique_ptr<HorizontalGeometry> create(const HorizontalGridSpec& spec,
+        HorizontalDomainLayout layout);
 };
 
 } // namespace Geometry

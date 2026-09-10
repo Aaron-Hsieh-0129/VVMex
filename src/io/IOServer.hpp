@@ -6,7 +6,7 @@
 
 namespace VVM {
 namespace IO {
-    void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& config);
+void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& config);
 }
 }
 #endif

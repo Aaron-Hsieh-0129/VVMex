@@ -17,11 +17,19 @@ class MeanWindState {
 public:
     enum class Variant { None, Xi, Eta, Zeta, Scalar };
 
-    bool holds(Variant variant, size_t step) const {
+    bool
+    holds(Variant variant, size_t step) const {
         return variant_ != Variant::None && variant_ == variant && step_ == step;
     }
-    void set(Variant variant, size_t step) { variant_ = variant; step_ = step; }
-    void invalidate() { variant_ = Variant::None; }
+    void
+    set(Variant variant, size_t step) {
+        variant_ = variant;
+        step_ = step;
+    }
+    void
+    invalidate() {
+        variant_ = Variant::None;
+    }
 
 private:
     Variant variant_ = Variant::None;
@@ -30,8 +38,7 @@ private:
 
 class AdvectionTerm : public TendencyTerm {
 public:
-    AdvectionTerm(
-        std::unique_ptr<SpatialScheme> scheme,
+    AdvectionTerm(std::unique_ptr<SpatialScheme> scheme,
         std::string var_name,
         VVM::Core::HaloExchanger& halo_exchanger,
         const Core::BoundaryConditionManager& bc_manager,
@@ -39,23 +46,21 @@ public:
         bool force_anelastic_scalar_normalization = false);
     ~AdvectionTerm() override;
 
-    void compute_tendency(
-        Core::State& state, 
+    void compute_tendency(Core::State& state,
         const Core::Grid& grid,
-        const Core::Parameters& params, 
+        const Core::Parameters& params,
         Core::Field<3>& out_tendency) const override;
-    void compute_stage_tendency(
-        Core::State& state,
+    void compute_stage_tendency(Core::State& state,
         const Core::Grid& grid,
         const Core::Parameters& params,
         Core::Field<3>& out_tendency,
         VVM::Real stage_dt) const override;
-    void compute_tendency_impl(
-        Core::State& state,
+    void compute_tendency_impl(Core::State& state,
         const Core::Grid& grid,
         const Core::Parameters& params,
         Core::Field<3>& out_tendency,
         VVM::Real stage_dt) const;
+
 private:
     std::unique_ptr<SpatialScheme> scheme_;
     std::string variable_name_;

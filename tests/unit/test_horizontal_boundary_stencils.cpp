@@ -18,7 +18,8 @@ using VVM::Core::Boundary::HorizontalBoundaryStencils;
 int failures = 0;
 int mpi_rank = 0;
 
-void check(const bool condition, const char* message) {
+void
+check(const bool condition, const char* message) {
     if (condition) {
         return;
     }
@@ -27,7 +28,8 @@ void check(const bool condition, const char* message) {
     std::fprintf(stderr, "Rank %d FAIL: %s\n", mpi_rank, message);
 }
 
-void test_constant_q2_halos_2d(const Grid& grid) {
+void
+test_constant_q2_halos_2d(const Grid& grid) {
     const int halo = grid.get_halo_cells();
     const int ny = grid.get_local_total_points_y();
     const int nx = grid.get_local_total_points_x();
@@ -35,15 +37,10 @@ void test_constant_q2_halos_2d(const Grid& grid) {
     Field<2> field("boundary_test_2d", {ny, nx});
     auto data = field.get_mutable_device_data();
 
-    Kokkos::parallel_for(
-        "initialize_boundary_test_2d",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
-            {0, 0},
-            {ny, nx}),
+    Kokkos::parallel_for("initialize_boundary_test_2d",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
         KOKKOS_LAMBDA(const int j, const int i) {
-            data(j, i) =
-                VVM::real(1000.0) * static_cast<VVM::Real>(j) +
-                static_cast<VVM::Real>(i);
+            data(j, i) = VVM::real(1000.0) * static_cast<VVM::Real>(j) + static_cast<VVM::Real>(i);
         });
 
     HorizontalBoundaryStencils stencils(grid);
@@ -51,18 +48,15 @@ void test_constant_q2_halos_2d(const Grid& grid) {
 
     const auto host = field.get_host_data();
 
-    const bool is_south_boundary =
-        grid.get_local_physical_start_y() == 0;
+    const bool is_south_boundary = grid.get_local_physical_start_y() == 0;
 
     const bool is_north_boundary =
-        grid.get_local_physical_end_y() ==
-        grid.get_global_points_y() - 1;
+        grid.get_local_physical_end_y() == grid.get_global_points_y() - 1;
 
     if (is_south_boundary) {
         for (int j = 0; j < halo; ++j) {
             for (int i = 0; i < nx; ++i) {
-                check(
-                    host(j, i) == host(halo, i),
+                check(host(j, i) == host(halo, i),
                     "2-D south q2 halo must equal the first physical row");
             }
         }
@@ -73,8 +67,7 @@ void test_constant_q2_halos_2d(const Grid& grid) {
 
         for (int j = ny - halo; j < ny; ++j) {
             for (int i = 0; i < nx; ++i) {
-                check(
-                    host(j, i) == host(last_physical_j, i),
+                check(host(j, i) == host(last_physical_j, i),
                     "2-D north q2 halo must equal the last physical row");
             }
         }
@@ -83,18 +76,16 @@ void test_constant_q2_halos_2d(const Grid& grid) {
     for (int j = halo; j < ny - halo; ++j) {
         for (int i = 0; i < nx; ++i) {
             const VVM::Real expected =
-                VVM::real(1000.0) * static_cast<VVM::Real>(j) +
-                static_cast<VVM::Real>(i);
+                VVM::real(1000.0) * static_cast<VVM::Real>(j) + static_cast<VVM::Real>(i);
 
-            check(
-                host(j, i) == expected,
-                "2-D physical rows must remain unchanged");
+            check(host(j, i) == expected, "2-D physical rows must remain unchanged");
         }
     }
 }
 
-template<typename Layout>
-void test_constant_q2_halos_3d(const Grid& grid) {
+template <typename Layout>
+void
+test_constant_q2_halos_3d(const Grid& grid) {
     const int halo = grid.get_halo_cells();
     const int nz = grid.get_local_total_points_z();
     const int ny = grid.get_local_total_points_y();
@@ -103,16 +94,12 @@ void test_constant_q2_halos_3d(const Grid& grid) {
     Field<3, Layout> field("boundary_test_3d", {nz, ny, nx});
     auto data = field.get_mutable_device_data();
 
-    Kokkos::parallel_for(
-        "initialize_boundary_test_3d",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>(
-            {0, 0, 0},
-            {nz, ny, nx}),
+    Kokkos::parallel_for("initialize_boundary_test_3d",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            data(k, j, i) =
-                VVM::real(1000000.0) * static_cast<VVM::Real>(k) +
-                VVM::real(1000.0) * static_cast<VVM::Real>(j) +
-                static_cast<VVM::Real>(i);
+            data(k, j, i) = VVM::real(1000000.0) * static_cast<VVM::Real>(k) +
+                            VVM::real(1000.0) * static_cast<VVM::Real>(j) +
+                            static_cast<VVM::Real>(i);
         });
 
     HorizontalBoundaryStencils stencils(grid);
@@ -120,19 +107,16 @@ void test_constant_q2_halos_3d(const Grid& grid) {
 
     const auto host = field.get_host_data();
 
-    const bool is_south_boundary =
-        grid.get_local_physical_start_y() == 0;
+    const bool is_south_boundary = grid.get_local_physical_start_y() == 0;
 
     const bool is_north_boundary =
-        grid.get_local_physical_end_y() ==
-        grid.get_global_points_y() - 1;
+        grid.get_local_physical_end_y() == grid.get_global_points_y() - 1;
 
     if (is_south_boundary) {
         for (int k = 0; k < nz; ++k) {
             for (int j = 0; j < halo; ++j) {
                 for (int i = 0; i < nx; ++i) {
-                    check(
-                        host(k, j, i) == host(k, halo, i),
+                    check(host(k, j, i) == host(k, halo, i),
                         "3-D south q2 halo must equal the first physical row");
                 }
             }
@@ -145,9 +129,7 @@ void test_constant_q2_halos_3d(const Grid& grid) {
         for (int k = 0; k < nz; ++k) {
             for (int j = ny - halo; j < ny; ++j) {
                 for (int i = 0; i < nx; ++i) {
-                    check(
-                        host(k, j, i) ==
-                            host(k, last_physical_j, i),
+                    check(host(k, j, i) == host(k, last_physical_j, i),
                         "3-D north q2 halo must equal the last physical row");
                 }
             }
@@ -157,16 +139,11 @@ void test_constant_q2_halos_3d(const Grid& grid) {
     for (int k = 0; k < nz; ++k) {
         for (int j = halo; j < ny - halo; ++j) {
             for (int i = 0; i < nx; ++i) {
-                const VVM::Real expected =
-                    VVM::real(1000000.0) *
-                        static_cast<VVM::Real>(k) +
-                    VVM::real(1000.0) *
-                        static_cast<VVM::Real>(j) +
-                    static_cast<VVM::Real>(i);
+                const VVM::Real expected = VVM::real(1000000.0) * static_cast<VVM::Real>(k) +
+                                           VVM::real(1000.0) * static_cast<VVM::Real>(j) +
+                                           static_cast<VVM::Real>(i);
 
-                check(
-                    host(k, j, i) == expected,
-                    "3-D physical cells must remain unchanged");
+                check(host(k, j, i) == expected, "3-D physical cells must remain unchanged");
             }
         }
     }
@@ -174,7 +151,8 @@ void test_constant_q2_halos_3d(const Grid& grid) {
 
 } // namespace
 
-int main(int argc, char* argv[]) {
+int
+main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
 
@@ -187,8 +165,7 @@ int main(int argc, char* argv[]) {
         return 2;
     }
 
-    Kokkos::initialize(
-        Kokkos::InitializationSettings().set_device_id(0));
+    Kokkos::initialize(Kokkos::InitializationSettings().set_device_id(0));
 
     {
         try {
@@ -198,35 +175,24 @@ int main(int argc, char* argv[]) {
             test_constant_q2_halos_2d(grid);
             test_constant_q2_halos_3d<void>(grid);
             test_constant_q2_halos_3d<Kokkos::LayoutRight>(grid);
-        } catch (const std::exception& error) {
+        }
+        catch (const std::exception& error) {
             ++failures;
-            std::fprintf(
-                stderr,
-                "Rank %d unexpected exception: %s\n",
-                mpi_rank,
-                error.what());
+            std::fprintf(stderr, "Rank %d unexpected exception: %s\n", mpi_rank, error.what());
         }
     }
 
     Kokkos::finalize();
 
     int global_failures = 0;
-    MPI_Allreduce(
-        &failures,
-        &global_failures,
-        1,
-        MPI_INT,
-        MPI_SUM,
-        MPI_COMM_WORLD);
+    MPI_Allreduce(&failures, &global_failures, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
     if (mpi_rank == 0) {
         if (global_failures == 0) {
-            std::fprintf(
-                stdout,
-                "test_horizontal_boundary_stencils: PASS\n");
-        } else {
-            std::fprintf(
-                stderr,
+            std::fprintf(stdout, "test_horizontal_boundary_stencils: PASS\n");
+        }
+        else {
+            std::fprintf(stderr,
                 "test_horizontal_boundary_stencils: %d failure(s)\n",
                 global_failures);
         }

@@ -64,9 +64,9 @@ struct ContravariantGradientAroundZ {
     VVM::Real q2_at_u_j_i = VVM::real(0.0);
 };
 
-template<typename ScalarView>
-KOKKOS_INLINE_FUNCTION
-ScalarStencilAtT load_scalar_stencil_at_t(const ScalarView& scalar, const int j, const int i) noexcept {
+template <typename ScalarView>
+KOKKOS_INLINE_FUNCTION ScalarStencilAtT
+load_scalar_stencil_at_t(const ScalarView& scalar, const int j, const int i) noexcept {
     ScalarStencilAtT stencil;
 
     stencil.center = scalar(j, i);
@@ -82,9 +82,9 @@ ScalarStencilAtT load_scalar_stencil_at_t(const ScalarView& scalar, const int j,
     return stencil;
 }
 
-template<typename ScalarView>
-KOKKOS_INLINE_FUNCTION
-ScalarStencilAtT load_scalar_stencil_at_t(const ScalarView& scalar, const int k, const int j, const int i) noexcept {
+template <typename ScalarView>
+KOKKOS_INLINE_FUNCTION ScalarStencilAtT
+load_scalar_stencil_at_t(const ScalarView& scalar, const int k, const int j, const int i) noexcept {
     ScalarStencilAtT stencil;
 
     stencil.center = scalar(k, j, i);
@@ -100,9 +100,9 @@ ScalarStencilAtT load_scalar_stencil_at_t(const ScalarView& scalar, const int k,
     return stencil;
 }
 
-template<typename ScalarView>
-KOKKOS_INLINE_FUNCTION
-ScalarStencilAtZ load_scalar_stencil_at_z(const ScalarView& scalar, const int j, const int i) noexcept {
+template <typename ScalarView>
+KOKKOS_INLINE_FUNCTION ScalarStencilAtZ
+load_scalar_stencil_at_z(const ScalarView& scalar, const int j, const int i) noexcept {
     ScalarStencilAtZ stencil;
 
     stencil.center = scalar(j, i);
@@ -118,9 +118,9 @@ ScalarStencilAtZ load_scalar_stencil_at_z(const ScalarView& scalar, const int j,
     return stencil;
 }
 
-template<typename ScalarView>
-KOKKOS_INLINE_FUNCTION
-ScalarStencilAtZ load_scalar_stencil_at_z(const ScalarView& scalar, const int k, const int j, const int i) noexcept {
+template <typename ScalarView>
+KOKKOS_INLINE_FUNCTION ScalarStencilAtZ
+load_scalar_stencil_at_z(const ScalarView& scalar, const int k, const int j, const int i) noexcept {
     ScalarStencilAtZ stencil;
 
     stencil.center = scalar(k, j, i);
@@ -141,28 +141,39 @@ struct HorizontalScalarGradientDeviceView {
     Core::Geometry::HorizontalGeometryDeviceView v;
 
     KOKKOS_INLINE_FUNCTION
-    VVM::Real calculate_q1_at_u(const int j, const int i, const ScalarStencilAtT& scalar) const noexcept {
+    VVM::Real
+    calculate_q1_at_u(const int j, const int i, const ScalarStencilAtT& scalar) const noexcept {
         const VVM::Real dscalar_dq1_at_u = (scalar.east - scalar.center) / u.dq1;
-        const VVM::Real dscalar_dq2_at_u = (scalar.north + scalar.northeast - scalar.south - scalar.southeast) / (VVM::real(4.0) * u.dq2);
+        const VVM::Real dscalar_dq2_at_u =
+            (scalar.north + scalar.northeast - scalar.south - scalar.southeast) /
+            (VVM::real(4.0) * u.dq2);
 
         return u.g_contra_11(j, i) * dscalar_dq1_at_u + u.g_contra_12(j, i) * dscalar_dq2_at_u;
     }
 
     KOKKOS_INLINE_FUNCTION
-    VVM::Real calculate_q2_at_v(const int j, const int i, const ScalarStencilAtT& scalar) const noexcept {
-        const VVM::Real dscalar_dq1_at_v = (scalar.east + scalar.northeast - scalar.west - scalar.northwest) / (VVM::real(4.0) * v.dq1);
+    VVM::Real
+    calculate_q2_at_v(const int j, const int i, const ScalarStencilAtT& scalar) const noexcept {
+        const VVM::Real dscalar_dq1_at_v =
+            (scalar.east + scalar.northeast - scalar.west - scalar.northwest) /
+            (VVM::real(4.0) * v.dq1);
         const VVM::Real dscalar_dq2_at_v = (scalar.north - scalar.center) / v.dq2;
 
         return v.g_contra_12(j, i) * dscalar_dq1_at_v + v.g_contra_22(j, i) * dscalar_dq2_at_v;
     }
 
     KOKKOS_INLINE_FUNCTION
-    ContravariantGradientAroundT calculate_uv_around_t(const int j, const int i, const ScalarStencilAtT& scalar) const noexcept {
+    ContravariantGradientAroundT
+    calculate_uv_around_t(const int j, const int i, const ScalarStencilAtT& scalar) const noexcept {
 
         const VVM::Real dscalar_dq1_at_u_j_im1 = (scalar.center - scalar.west) / u.dq1;
-        const VVM::Real dscalar_dq2_at_u_j_im1 = (scalar.north + scalar.northwest - scalar.south - scalar.southwest) / (VVM::real(4.0) * u.dq2);
+        const VVM::Real dscalar_dq2_at_u_j_im1 =
+            (scalar.north + scalar.northwest - scalar.south - scalar.southwest) /
+            (VVM::real(4.0) * u.dq2);
 
-        const VVM::Real dscalar_dq1_at_v_jm1_i = (scalar.east + scalar.southeast - scalar.west - scalar.southwest) / (VVM::real(4.0) * v.dq1);
+        const VVM::Real dscalar_dq1_at_v_jm1_i =
+            (scalar.east + scalar.southeast - scalar.west - scalar.southwest) /
+            (VVM::real(4.0) * v.dq1);
         const VVM::Real dscalar_dq2_at_v_jm1_i = (scalar.center - scalar.south) / v.dq2;
 
         ContravariantGradientAroundT result;
@@ -170,38 +181,54 @@ struct HorizontalScalarGradientDeviceView {
         result.q1_at_u_j_i = calculate_q1_at_u(j, i, scalar);
         result.q2_at_v_j_i = calculate_q2_at_v(j, i, scalar);
 
-        result.q1_at_u_j_im1 = u.g_contra_11(j, i - 1) * dscalar_dq1_at_u_j_im1 + u.g_contra_12(j, i - 1) * dscalar_dq2_at_u_j_im1;
-        result.q2_at_v_jm1_i = v.g_contra_12(j - 1, i) * dscalar_dq1_at_v_jm1_i + v.g_contra_22(j - 1, i) * dscalar_dq2_at_v_jm1_i;
+        result.q1_at_u_j_im1 = u.g_contra_11(j, i - 1) * dscalar_dq1_at_u_j_im1 +
+                               u.g_contra_12(j, i - 1) * dscalar_dq2_at_u_j_im1;
+        result.q2_at_v_jm1_i = v.g_contra_12(j - 1, i) * dscalar_dq1_at_v_jm1_i +
+                               v.g_contra_22(j - 1, i) * dscalar_dq2_at_v_jm1_i;
 
         return result;
     }
 
     KOKKOS_INLINE_FUNCTION
-    ContravariantGradientAroundZ calculate_vu_around_z(const int j, const int i, const ScalarStencilAtZ& scalar) const noexcept {
+    ContravariantGradientAroundZ
+    calculate_vu_around_z(const int j, const int i, const ScalarStencilAtZ& scalar) const noexcept {
         const VVM::Real dscalar_dq1_at_v_j_ip1 = (scalar.east - scalar.center) / v.dq1;
-        const VVM::Real dscalar_dq2_at_v_j_ip1 = (scalar.north + scalar.northeast - scalar.south - scalar.southeast) / (VVM::real(4.0) * v.dq2);
+        const VVM::Real dscalar_dq2_at_v_j_ip1 =
+            (scalar.north + scalar.northeast - scalar.south - scalar.southeast) /
+            (VVM::real(4.0) * v.dq2);
 
         const VVM::Real dscalar_dq1_at_v_j_i = (scalar.center - scalar.west) / v.dq1;
-        const VVM::Real dscalar_dq2_at_v_j_i = (scalar.north + scalar.northwest - scalar.south - scalar.southwest) / (VVM::real(4.0) * v.dq2);
+        const VVM::Real dscalar_dq2_at_v_j_i =
+            (scalar.north + scalar.northwest - scalar.south - scalar.southwest) /
+            (VVM::real(4.0) * v.dq2);
 
-        const VVM::Real dscalar_dq1_at_u_jp1_i = (scalar.east + scalar.northeast - scalar.west - scalar.northwest) / (VVM::real(4.0) * u.dq1);
+        const VVM::Real dscalar_dq1_at_u_jp1_i =
+            (scalar.east + scalar.northeast - scalar.west - scalar.northwest) /
+            (VVM::real(4.0) * u.dq1);
         const VVM::Real dscalar_dq2_at_u_jp1_i = (scalar.north - scalar.center) / u.dq2;
 
-        const VVM::Real dscalar_dq1_at_u_j_i = (scalar.east + scalar.southeast - scalar.west - scalar.southwest) / (VVM::real(4.0) * u.dq1);
+        const VVM::Real dscalar_dq1_at_u_j_i =
+            (scalar.east + scalar.southeast - scalar.west - scalar.southwest) /
+            (VVM::real(4.0) * u.dq1);
         const VVM::Real dscalar_dq2_at_u_j_i = (scalar.center - scalar.south) / u.dq2;
 
         ContravariantGradientAroundZ result;
 
-        result.q1_at_v_j_ip1 = v.g_contra_11(j, i + 1) * dscalar_dq1_at_v_j_ip1 + v.g_contra_12(j, i + 1) * dscalar_dq2_at_v_j_ip1;
-        result.q1_at_v_j_i = v.g_contra_11(j, i) * dscalar_dq1_at_v_j_i + v.g_contra_12(j, i) * dscalar_dq2_at_v_j_i;
-        result.q2_at_u_jp1_i = u.g_contra_12(j + 1, i) * dscalar_dq1_at_u_jp1_i + u.g_contra_22(j + 1, i) * dscalar_dq2_at_u_jp1_i;
-        result.q2_at_u_j_i = u.g_contra_12(j, i) * dscalar_dq1_at_u_j_i + u.g_contra_22(j, i) * dscalar_dq2_at_u_j_i;
+        result.q1_at_v_j_ip1 = v.g_contra_11(j, i + 1) * dscalar_dq1_at_v_j_ip1 +
+                               v.g_contra_12(j, i + 1) * dscalar_dq2_at_v_j_ip1;
+        result.q1_at_v_j_i =
+            v.g_contra_11(j, i) * dscalar_dq1_at_v_j_i + v.g_contra_12(j, i) * dscalar_dq2_at_v_j_i;
+        result.q2_at_u_jp1_i = u.g_contra_12(j + 1, i) * dscalar_dq1_at_u_jp1_i +
+                               u.g_contra_22(j + 1, i) * dscalar_dq2_at_u_jp1_i;
+        result.q2_at_u_j_i =
+            u.g_contra_12(j, i) * dscalar_dq1_at_u_j_i + u.g_contra_22(j, i) * dscalar_dq2_at_u_j_i;
 
         return result;
     }
 };
 
-inline HorizontalScalarGradientDeviceView make_horizontal_scalar_gradient_device_view(const Core::Geometry::HorizontalGeometry& geometry) {
+inline HorizontalScalarGradientDeviceView
+make_horizontal_scalar_gradient_device_view(const Core::Geometry::HorizontalGeometry& geometry) {
     HorizontalScalarGradientDeviceView result;
 
     result.u = geometry.device_view(Core::Geometry::HorizontalLocation::U);
@@ -213,6 +240,5 @@ inline HorizontalScalarGradientDeviceView make_horizontal_scalar_gradient_device
 } // namespace Operators
 } // namespace Dynamics
 } // namespace VVM
-
 
 #endif // VVM_DYNAMICS_OPERATORS_HORIZONTAL_SCALAR_GRADIENT_HPP

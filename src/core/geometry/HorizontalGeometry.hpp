@@ -11,7 +11,6 @@
 #include "core/geometry/HorizontalStaggering.hpp"
 #include "core/vvm_types.hpp"
 
-
 namespace VVM {
 namespace Core {
 namespace Geometry {
@@ -31,11 +30,13 @@ struct HorizontalDomainLayout {
 
     int panel_id = -1; // For cubed sphere
 
-    int local_total_nx() const noexcept {
+    int
+    local_total_nx() const noexcept {
         return local_physical_nx + 2 * halo;
     }
 
-    int local_total_ny() const noexcept {
+    int
+    local_total_ny() const noexcept {
         return local_physical_ny + 2 * halo;
     }
 };
@@ -55,23 +56,26 @@ struct SymmetricTensorDeviceView {
     GeometryField2D a22;
 
     KOKKOS_INLINE_FUNCTION
-    void apply(const int j, const int i,
-               const VVM::Real x1, const VVM::Real x2,
-               VVM::Real& y1, VVM::Real& y2) const noexcept {
+    void
+    apply(const int j,
+        const int i,
+        const VVM::Real x1,
+        const VVM::Real x2,
+        VVM::Real& y1,
+        VVM::Real& y2) const noexcept {
         y1 = a11(j, i) * x1 + a12(j, i) * x2;
         y2 = a12(j, i) * x1 + a22(j, i) * x2;
     }
 
     KOKKOS_INLINE_FUNCTION
-    VVM::Real component_1(const int j, const int i,
-                          const VVM::Real x1, const VVM::Real x2) const noexcept {
+    VVM::Real
+    component_1(const int j, const int i, const VVM::Real x1, const VVM::Real x2) const noexcept {
         return a11(j, i) * x1 + a12(j, i) * x2;
     }
 
     KOKKOS_INLINE_FUNCTION
-    VVM::Real component_2(
-        const int j, const int i,
-        const VVM::Real x1, const VVM::Real x2) const noexcept {
+    VVM::Real
+    component_2(const int j, const int i, const VVM::Real x1, const VVM::Real x2) const noexcept {
         return a12(j, i) * x1 + a22(j, i) * x2;
     }
 };
@@ -90,8 +94,8 @@ struct Matrix2DeviceView {
     GeometryField2D a22;
 
     KOKKOS_INLINE_FUNCTION
-    void apply(
-        const int j,
+    void
+    apply(const int j,
         const int i,
         const VVM::Real x1,
         const VVM::Real x2,
@@ -103,26 +107,19 @@ struct Matrix2DeviceView {
     }
 
     KOKKOS_INLINE_FUNCTION
-    VVM::Real component_1(
-        const int j,
-        const int i,
-        const VVM::Real x1,
-        const VVM::Real x2) const noexcept {
+    VVM::Real
+    component_1(const int j, const int i, const VVM::Real x1, const VVM::Real x2) const noexcept {
 
         return a11(j, i) * x1 + a12(j, i) * x2;
     }
 
     KOKKOS_INLINE_FUNCTION
-    VVM::Real component_2(
-        const int j,
-        const int i,
-        const VVM::Real x1,
-        const VVM::Real x2) const noexcept {
+    VVM::Real
+    component_2(const int j, const int i, const VVM::Real x1, const VVM::Real x2) const noexcept {
 
         return a21(j, i) * x1 + a22(j, i) * x2;
     }
 };
-
 
 // ============================================================================
 // Geometry data for one horizontal location
@@ -191,17 +188,20 @@ struct HorizontalGeometryDeviceView {
     // Recover the unweighted inverse metric when an operator needs g^ij.
     // Most conservative operators should use sqrt_g_g_contra directly.
     KOKKOS_INLINE_FUNCTION
-    VVM::Real g_contra_11(const int j, const int i) const noexcept {
+    VVM::Real
+    g_contra_11(const int j, const int i) const noexcept {
         return inv_sqrt_g(j, i) * sqrt_g_g_contra.a11(j, i);
     }
 
     KOKKOS_INLINE_FUNCTION
-    VVM::Real g_contra_12(const int j, const int i) const noexcept {
+    VVM::Real
+    g_contra_12(const int j, const int i) const noexcept {
         return inv_sqrt_g(j, i) * sqrt_g_g_contra.a12(j, i);
     }
 
     KOKKOS_INLINE_FUNCTION
-    VVM::Real g_contra_22(const int j, const int i) const noexcept {
+    VVM::Real
+    g_contra_22(const int j, const int i) const noexcept {
         return inv_sqrt_g(j, i) * sqrt_g_g_contra.a22(j, i);
     }
 };
@@ -234,17 +234,18 @@ public:
     virtual VVM::Real dq2() const noexcept = 0;
 
     // Select geometry explicitly using T/U/V/Z.
-    HorizontalGeometryDeviceView device_view(const HorizontalLocation location) const {
+    HorizontalGeometryDeviceView
+    device_view(const HorizontalLocation location) const {
         return device_view_impl(location);
     }
 
     // Select geometry from existing VVMex FieldMetadata.
     // The field name is optional but produces a more useful exception when
     // the field has Unspecified or NotApplicable staggering.
-    HorizontalGeometryDeviceView device_view(const GridStaggering staggering, const std::string& field_name = {}) const {
+    HorizontalGeometryDeviceView
+    device_view(const GridStaggering staggering, const std::string& field_name = {}) const {
         return device_view_impl(horizontal_location_or_throw(staggering, field_name));
     }
-
 
 protected:
     HorizontalGeometry() = default;

@@ -11,24 +11,35 @@
 namespace VVM {
 namespace Dynamics {
 
-void WindSolver::prepare_horizontal_diagnostic_execution() {
+void
+WindSolver::prepare_horizontal_diagnostic_execution() {
     HorizontalWindStateAdapter::prepare_execution();
 
 #if defined(KOKKOS_ENABLE_CUDA)
     Kokkos::parallel_for("PrepareWindSolverHorizontalDiagnostic",
-        Kokkos::RangePolicy<Kokkos::Cuda>(0, 1), KOKKOS_LAMBDA(const int) {});
+        Kokkos::RangePolicy<Kokkos::Cuda>(0, 1),
+        KOKKOS_LAMBDA(const int){});
 
     Kokkos::Cuda().fence("Prepare WindSolver horizontal diagnostic");
 
     const auto result = cudaGetLastError();
-    if (result != cudaSuccess) throw std::runtime_error(cudaGetErrorString(result));
+    if (result != cudaSuccess) {
+        throw std::runtime_error(cudaGetErrorString(result));
+    }
 #endif
 }
 
-void WindSolver::diagnose_horizontal_wind(const Core::Grid& grid, Core::HaloExchanger& halo,
-    HorizontalEllipticSolver& solver, const HorizontalDiagnosticFields& fields,
-    const HorizontalDiagnosticWorkspace& workspace, const HorizontalEllipticSolver::Options& options,
-    Real inverse_dz, int bottom, int top, HorizontalDiagnosticBoundaryPolicy boundary_policy) {
+void
+WindSolver::diagnose_horizontal_wind(const Core::Grid& grid,
+    Core::HaloExchanger& halo,
+    HorizontalEllipticSolver& solver,
+    const HorizontalDiagnosticFields& fields,
+    const HorizontalDiagnosticWorkspace& workspace,
+    const HorizontalEllipticSolver::Options& options,
+    Real inverse_dz,
+    int bottom,
+    int top,
+    HorizontalDiagnosticBoundaryPolicy boundary_policy) {
 
     const int nx = grid.get_local_total_points_x();
     const int ny = grid.get_local_total_points_y();
@@ -54,9 +65,10 @@ void WindSolver::diagnose_horizontal_wind(const Core::Grid& grid, Core::HaloExch
         throw std::invalid_argument("Invalid inverse reference dz.");
     }
 
-    if (options.iterations <= 0 || !std::isfinite(options.diagonal_shift)
-        || options.diagonal_shift < real(0.0) || !options.refresh_initial_halos) {
-        throw std::invalid_argument("Horizontal diagnostic requires positive fixed iterations, nonnegative shift, and initial halo refresh.");
+    if (options.iterations <= 0 || !std::isfinite(options.diagonal_shift) ||
+        options.diagonal_shift < real(0.0) || !options.refresh_initial_halos) {
+        throw std::invalid_argument("Horizontal diagnostic requires positive fixed iterations, "
+                                    "nonnegative shift, and initial halo refresh.");
     }
 
     if (horizontal.nx > 1 && horizontal.topology.q1 == Core::HorizontalEdgeTopology::Bounded) {
@@ -65,27 +77,30 @@ void WindSolver::diagnose_horizontal_wind(const Core::Grid& grid, Core::HaloExch
 
     if (free_slip_boundary &&
         (grid.geometry().kind() != Core::Geometry::GeometryKind::RegularLatLon ||
-         horizontal.topology.q1 != Core::HorizontalEdgeTopology::Periodic ||
-         horizontal.topology.q2 != Core::HorizontalEdgeTopology::Bounded)) {
-        throw std::invalid_argument("Free-slip channel diagnostics require RLL geometry, periodic q1, and bounded q2.");
+            horizontal.topology.q1 != Core::HorizontalEdgeTopology::Periodic ||
+            horizontal.topology.q2 != Core::HorizontalEdgeTopology::Bounded)) {
+        throw std::invalid_argument(
+            "Free-slip channel diagnostics require RLL geometry, periodic q1, and bounded q2.");
     }
 
     const HorizontalWindStateAdapter adapter(grid.geometry());
 
-    const std::array<const Core::Field<2>*, 8> planes = {
-        &fields.psi, &fields.psi_previous, &fields.chi, &fields.chi_previous,
-        &workspace.rhs_psi, &workspace.rhs_chi, &workspace.solution_psi, &workspace.solution_chi
-    };
+    const std::array<const Core::Field<2>*, 8> planes = {&fields.psi,
+        &fields.psi_previous,
+        &fields.chi,
+        &fields.chi_previous,
+        &workspace.rhs_psi,
+        &workspace.rhs_chi,
+        &workspace.solution_psi,
+        &workspace.solution_chi};
 
-    const std::array<const Core::Field<3>*, 6> volumes = {
-        &fields.zeta, &fields.w, &fields.xi, &fields.eta, &fields.u, &fields.v
-    };
+    const std::array<const Core::Field<3>*, 6> volumes =
+        {&fields.zeta, &fields.w, &fields.xi, &fields.eta, &fields.u, &fields.v};
 
     for (const auto* field : planes) {
         const auto& data = field->get_device_data();
 
-        if (static_cast<int>(data.extent(0)) != ny ||
-            static_cast<int>(data.extent(1)) != nx) {
+        if (static_cast<int>(data.extent(0)) != ny || static_cast<int>(data.extent(1)) != nx) {
             throw std::invalid_argument("Incorrect diagnostic plane extents.");
         }
     }
@@ -93,8 +108,7 @@ void WindSolver::diagnose_horizontal_wind(const Core::Grid& grid, Core::HaloExch
     for (const auto* field : volumes) {
         const auto& data = field->get_device_data();
 
-        if (static_cast<int>(data.extent(0)) != nz ||
-            static_cast<int>(data.extent(1)) != ny ||
+        if (static_cast<int>(data.extent(0)) != nz || static_cast<int>(data.extent(1)) != ny ||
             static_cast<int>(data.extent(2)) != nx) {
             throw std::invalid_argument("Incorrect diagnostic volume extents.");
         }
@@ -113,8 +127,12 @@ void WindSolver::diagnose_horizontal_wind(const Core::Grid& grid, Core::HaloExch
     std::array<const Real*, 19> addresses = {};
     int count = 0;
 
-    for (const auto* field : planes) addresses[count++] = field->get_device_data().data();
-    for (const auto* field : volumes) addresses[count++] = field->get_device_data().data();
+    for (const auto* field : planes) {
+        addresses[count++] = field->get_device_data().data();
+    }
+    for (const auto* field : volumes) {
+        addresses[count++] = field->get_device_data().data();
+    }
 
     addresses[count++] = fields.rhobar.get_device_data().data();
     addresses[count++] = fields.rhobar_up.get_device_data().data();
@@ -123,7 +141,9 @@ void WindSolver::diagnose_horizontal_wind(const Core::Grid& grid, Core::HaloExch
     addresses[count++] = fields.zonal_covariant_increment.get_device_data().data();
 
     for (int a = 0; a < count; ++a) {
-        if (!addresses[a]) throw std::invalid_argument("Unallocated diagnostic storage.");
+        if (!addresses[a]) {
+            throw std::invalid_argument("Unallocated diagnostic storage.");
+        }
 
         for (int b = 0; b < a; ++b) {
             if (addresses[a] == addresses[b]) {
@@ -152,15 +172,14 @@ void WindSolver::diagnose_horizontal_wind(const Core::Grid& grid, Core::HaloExch
     solver.make_extrapolated_guess(fields.chi, fields.chi_previous, workspace.solution_chi);
 
     if (free_slip_boundary) {
-        solver.solve_regular_lat_lon_channel_at_z_and_t(
-            workspace.rhs_psi,
+        solver.solve_regular_lat_lon_channel_at_z_and_t(workspace.rhs_psi,
             workspace.solution_psi,
             workspace.rhs_chi,
             workspace.solution_chi,
             options);
-    } else {
-        solver.solve_at_z_and_t(
-            workspace.rhs_psi,
+    }
+    else {
+        solver.solve_at_z_and_t(workspace.rhs_psi,
             workspace.solution_psi,
             workspace.rhs_chi,
             workspace.solution_chi,
@@ -183,24 +202,25 @@ void WindSolver::diagnose_horizontal_wind(const Core::Grid& grid, Core::HaloExch
             chi(j, i) = solved_chi(j, i);
         });
 
-    halo.exchange_multiple_halos(
-        std::vector<Core::Field<2>*>{
-            &fields.psi,
-            &fields.chi,
-            &fields.psi_previous,
-            &fields.chi_previous
-        });
+    halo.exchange_multiple_halos(std::vector<Core::Field<2>*>{&fields.psi,
+        &fields.chi,
+        &fields.psi_previous,
+        &fields.chi_previous});
 
-    if (horizontal.ny > 1 &&
-        horizontal.topology.q2 == Core::HorizontalEdgeTopology::Bounded) {
+    if (horizontal.ny > 1 && horizontal.topology.q2 == Core::HorizontalEdgeTopology::Bounded) {
         Core::Boundary::HorizontalBoundaryStencils boundary(grid);
 
         if (free_slip_boundary) {
-            boundary.fill_positive_face_q2_dirichlet_halos(fields.psi, options.channel_psi_south, options.channel_psi_north);
-            boundary.fill_positive_face_q2_dirichlet_halos(fields.psi_previous, options.channel_psi_south, options.channel_psi_north);
+            boundary.fill_positive_face_q2_dirichlet_halos(fields.psi,
+                options.channel_psi_south,
+                options.channel_psi_north);
+            boundary.fill_positive_face_q2_dirichlet_halos(fields.psi_previous,
+                options.channel_psi_south,
+                options.channel_psi_north);
             boundary.fill_centered_q2_neumann_halos(fields.chi);
             boundary.fill_centered_q2_neumann_halos(fields.chi_previous);
-        } else {
+        }
+        else {
             boundary.fill_constant_q2_halos(fields.psi);
             boundary.fill_constant_q2_halos(fields.chi);
             boundary.fill_constant_q2_halos(fields.psi_previous);
@@ -210,10 +230,9 @@ void WindSolver::diagnose_horizontal_wind(const Core::Grid& grid, Core::HaloExch
 
     adapter.reconstruct_top(fields.psi, fields.chi, fields.u, fields.v, top);
 
-    const auto inverse_h1 =
-        grid.geometry()
-            .device_view(Core::Geometry::HorizontalLocation::U)
-            .physical_to_contravariant.a11;
+    const auto inverse_h1 = grid.geometry()
+                                .device_view(Core::Geometry::HorizontalLocation::U)
+                                .physical_to_contravariant.a11;
 
     const auto increment = fields.zonal_covariant_increment.get_device_data();
     const auto u = fields.u.get_mutable_device_data();
@@ -224,8 +243,7 @@ void WindSolver::diagnose_horizontal_wind(const Core::Grid& grid, Core::HaloExch
             u(top, j, i) += increment() * inverse_h1(j, i);
         });
 
-    adapter.integrate_from_top(
-        fields.w,
+    adapter.integrate_from_top(fields.w,
         fields.xi,
         fields.eta,
         fields.spacing,

@@ -20,8 +20,8 @@
 namespace VVM {
 namespace Dynamics {
 
-TemporalSchemeType NumericalMethodFactory::parse_temporal_scheme(
-    const std::string& variable_name,
+TemporalSchemeType
+NumericalMethodFactory::parse_temporal_scheme(const std::string& variable_name,
     const std::string& term_name,
     const std::string& scheme_name,
     bool is_tracer) const {
@@ -36,58 +36,45 @@ TemporalSchemeType NumericalMethodFactory::parse_temporal_scheme(
     }
 
     if (is_tracer) {
-        throw std::runtime_error(
-            "Tracer '" + variable_name + "', tendency term '" + term_name +
-            "': unsupported temporal method '" + scheme_name + "'.");
+        throw std::runtime_error("Tracer '" + variable_name + "', tendency term '" + term_name +
+                                 "': unsupported temporal method '" + scheme_name + "'.");
     }
     throw std::runtime_error("Unknown temporal scheme: " + scheme_name);
 }
 
 std::unique_ptr<SpatialScheme>
-NumericalMethodFactory::create_spatial_scheme(
-    const std::string& variable_name,
+NumericalMethodFactory::create_spatial_scheme(const std::string& variable_name,
     const std::string& term_name,
     const nlohmann::json& term_config,
     const std::string& scheme_name,
     bool is_tracer) const {
     if (scheme_name == "Takacs") {
-        const auto geometry_kind =
-            grid_.geometry().kind();
+        const auto geometry_kind = grid_.geometry().kind();
 
-        if (geometry_kind
-            == Core::Geometry::GeometryKind::Cartesian) {
+        if (geometry_kind == Core::Geometry::GeometryKind::Cartesian) {
 
             // Preserve the original Cartesian construction and arithmetic.
-            return std::make_unique<Takacs>(
-                config_,
-                grid_,
-                halo_exchanger_,
-                bc_manager_);
+            return std::make_unique<Takacs>(config_, grid_, halo_exchanger_, bc_manager_);
         }
 
-        if (geometry_kind
-            == Core::Geometry::GeometryKind::RegularLatLon) {
+        if (geometry_kind == Core::Geometry::GeometryKind::RegularLatLon) {
 
             const bool scalar_advection =
-                term_name == "advection"
-                && (variable_name == "th" || is_tracer);
-            const bool horizontal_buoyancy =
-                term_name == "buoyancy"
-                && !is_tracer
-                && (variable_name == "xi" || variable_name == "eta");
-            const bool vorticity_term = !is_tracer
-                && (variable_name == "xi" || variable_name == "eta" || variable_name == "zeta")
-                && (term_name == "advection" || term_name == "stretching" || term_name == "twisting" || term_name == "coriolis");
+                term_name == "advection" && (variable_name == "th" || is_tracer);
+            const bool horizontal_buoyancy = term_name == "buoyancy" && !is_tracer &&
+                                             (variable_name == "xi" || variable_name == "eta");
+            const bool vorticity_term =
+                !is_tracer &&
+                (variable_name == "xi" || variable_name == "eta" || variable_name == "zeta") &&
+                (term_name == "advection" || term_name == "stretching" || term_name == "twisting" ||
+                    term_name == "coriolis");
 
             if (!scalar_advection && !horizontal_buoyancy && !vorticity_term) {
                 throw std::runtime_error(
                     "Regular latitude-longitude Takacs currently supports "
                     "only potential-temperature or passive-tracer advection "
-                    "and dry vorticity transport, deformation and xi/eta buoyancy; field '"
-                    + variable_name
-                    + "', tendency term '"
-                    + term_name
-                    + "' is not enabled yet.");
+                    "and dry vorticity transport, deformation and xi/eta buoyancy; field '" +
+                    variable_name + "', tendency term '" + term_name + "' is not enabled yet.");
             }
 
             if (horizontal_buoyancy) {
@@ -99,18 +86,16 @@ NumericalMethodFactory::create_spatial_scheme(
                 // P3 being disabled does not establish a dry configuration:
                 // water-vapor tendencies can still be configured separately.
                 for (const char* moisture_name :
-                     {"qv", "qc", "qr", "qi", "qm", "nc", "nr", "ni", "bm", "qp"}) {
+                    {"qv", "qc", "qr", "qi", "qm", "nc", "nr", "ni", "bm", "qp"}) {
 
-                    const std::string key =
-                        std::string("dynamics.prognostic_variables.")
-                        + moisture_name + ".tendency_terms";
+                    const std::string key = std::string("dynamics.prognostic_variables.") +
+                                            moisture_name + ".tendency_terms";
 
                     if (!config_.has_key(key)) {
                         continue;
                     }
 
-                    const auto moisture_terms =
-                        config_.get_value<nlohmann::json>(key);
+                    const auto moisture_terms = config_.get_value<nlohmann::json>(key);
 
                     if (!moisture_terms.is_object()) {
                         throw std::runtime_error(
@@ -121,75 +106,84 @@ NumericalMethodFactory::create_spatial_scheme(
                         if (item.value().value("enable", true)) {
                             throw std::runtime_error(
                                 "Regular latitude-longitude dry buoyancy does not "
-                                "support enabled moisture tendencies for field '"
-                                + std::string(moisture_name) + "'.");
+                                "support enabled moisture tendencies for field '" +
+                                std::string(moisture_name) + "'.");
                         }
                     }
                 }
             }
 
-            return std::make_unique<RegularLatLonTakacs>(
-                grid_.geometry(), horizontal_buoyancy);
+            return std::make_unique<RegularLatLonTakacs>(grid_.geometry(), horizontal_buoyancy);
         }
 
-        throw std::runtime_error(
-            "Spatial scheme 'Takacs' is not implemented for "
-            "horizontal geometry '"
-            + std::string(grid_.geometry().name())
-            + "'.");
+        throw std::runtime_error("Spatial scheme 'Takacs' is not implemented for "
+                                 "horizontal geometry '" +
+                                 std::string(grid_.geometry().name()) + "'.");
     }
     if (scheme_name == "MUSCL") {
-        return std::make_unique<MUSCL>(
-            variable_name, term_config, grid_);
+        return std::make_unique<MUSCL>(variable_name, term_config, grid_);
     }
     if (scheme_name == "weno5") {
         if (!is_tracer || term_name != "advection") {
-            throw std::runtime_error(
-                "Spatial scheme 'weno5' is limited to passive-tracer "
-                "advection; field '" + variable_name + "', tendency term '" +
-                term_name + "' is not supported.");
+            throw std::runtime_error("Spatial scheme 'weno5' is limited to passive-tracer "
+                                     "advection; field '" +
+                                     variable_name + "', tendency term '" + term_name +
+                                     "' is not supported.");
         }
-        return std::make_unique<WENO5>(
-            variable_name, term_config, config_, grid_,
-            halo_exchanger_, bc_manager_);
+        return std::make_unique<WENO5>(variable_name,
+            term_config,
+            config_,
+            grid_,
+            halo_exchanger_,
+            bc_manager_);
     }
 
     if (is_tracer) {
-        throw std::runtime_error(
-            "Tracer '" + variable_name + "', tendency term '" + term_name +
-            "': unsupported spatial method '" + scheme_name + "'.");
+        throw std::runtime_error("Tracer '" + variable_name + "', tendency term '" + term_name +
+                                 "': unsupported spatial method '" + scheme_name + "'.");
     }
     throw std::runtime_error("Unknown spatial scheme: " + scheme_name);
 }
 
 std::unique_ptr<TendencyTerm>
-NumericalMethodFactory::create_tendency_term(
-    const std::string& variable_name,
+NumericalMethodFactory::create_tendency_term(const std::string& variable_name,
     const std::string& term_name,
     std::unique_ptr<SpatialScheme> spatial_scheme,
     bool normalize_anelastic_scalar) const {
     if (term_name == "advection") {
-        return std::make_unique<AdvectionTerm>(std::move(spatial_scheme), variable_name, halo_exchanger_, bc_manager_, mean_wind_state_, normalize_anelastic_scalar);
+        return std::make_unique<AdvectionTerm>(std::move(spatial_scheme),
+            variable_name,
+            halo_exchanger_,
+            bc_manager_,
+            mean_wind_state_,
+            normalize_anelastic_scalar);
     }
     if (term_name == "stretching") {
-        return std::make_unique<StretchingTerm>(std::move(spatial_scheme), variable_name, halo_exchanger_);
+        return std::make_unique<StretchingTerm>(std::move(spatial_scheme),
+            variable_name,
+            halo_exchanger_);
     }
     if (term_name == "twisting") {
-        return std::make_unique<TwistingTerm>(std::move(spatial_scheme), variable_name, halo_exchanger_);
+        return std::make_unique<TwistingTerm>(std::move(spatial_scheme),
+            variable_name,
+            halo_exchanger_);
     }
     if (term_name == "buoyancy") {
-        return std::make_unique<BuoyancyTerm>(std::move(spatial_scheme), variable_name, halo_exchanger_);
+        return std::make_unique<BuoyancyTerm>(std::move(spatial_scheme),
+            variable_name,
+            halo_exchanger_);
     }
     if (term_name == "coriolis") {
-        return std::make_unique<CoriolisTerm>(std::move(spatial_scheme), variable_name, halo_exchanger_);
+        return std::make_unique<CoriolisTerm>(std::move(spatial_scheme),
+            variable_name,
+            halo_exchanger_);
     }
-    throw std::runtime_error(
-        "Unknown tendency term '" + term_name +
-        "' for prognostic variable '" + variable_name + "'.");
+    throw std::runtime_error("Unknown tendency term '" + term_name + "' for prognostic variable '" +
+                             variable_name + "'.");
 }
 
-std::unique_ptr<NumericalMethod> NumericalMethodFactory::create(
-    const std::string& variable_name,
+std::unique_ptr<NumericalMethod>
+NumericalMethodFactory::create(const std::string& variable_name,
     const nlohmann::json& variable_config,
     bool is_tracer,
     bool is_thermodynamic,
@@ -200,8 +194,7 @@ std::unique_ptr<NumericalMethod> NumericalMethodFactory::create(
 
     size_t enabled_tendency_count = 0;
     if (variable_config.contains("tendency_terms")) {
-        for (const auto& item :
-             variable_config.at("tendency_terms").items()) {
+        for (const auto& item : variable_config.at("tendency_terms").items()) {
             if (item.value().value("enable", true)) {
                 ++enabled_tendency_count;
             }
@@ -209,36 +202,34 @@ std::unique_ptr<NumericalMethod> NumericalMethodFactory::create(
     }
 
     if (variable_config.contains("tendency_terms")) {
-        for (const auto& item :
-             variable_config.at("tendency_terms").items()) {
+        for (const auto& item : variable_config.at("tendency_terms").items()) {
             const std::string& term_name = item.key();
             const auto& term_config = item.value();
 
             if (!term_config.value("enable", true)) {
                 if (grid_.get_mpi_rank() == 0) {
-                    std::cout << "    - [Disabled] Tendency term: "
-                              << term_name << " is skipped." << std::endl;
+                    std::cout << "    - [Disabled] Tendency term: " << term_name << " is skipped."
+                              << std::endl;
                 }
                 continue;
             }
 
             if (is_tracer && term_name != "advection") {
-                throw std::runtime_error(
-                    "Tracer '" + variable_name +
-                    "' has unsupported tendency term '" + term_name +
-                    "'; passive tracers currently support advection only.");
+                throw std::runtime_error("Tracer '" + variable_name +
+                                         "' has unsupported tendency term '" + term_name +
+                                         "'; passive tracers currently support advection only.");
             }
 
             const std::string spatial_scheme_name = term_config.at("spatial_scheme");
-            const std::string temporal_scheme_name = term_config.value("temporal_scheme", "AdamsBashforth2");
-            const TemporalSchemeType temporal_scheme = parse_temporal_scheme(variable_name, term_name, temporal_scheme_name, is_tracer);
+            const std::string temporal_scheme_name =
+                term_config.value("temporal_scheme", "AdamsBashforth2");
+            const TemporalSchemeType temporal_scheme =
+                parse_temporal_scheme(variable_name, term_name, temporal_scheme_name, is_tracer);
 
             if (grid_.get_mpi_rank() == 0) {
                 std::cout << "    - Tendency term: " << term_name
-                          << " | Temporal Scheme: "
-                          << temporal_scheme_name
-                          << " | Spatial Scheme: "
-                          << spatial_scheme_name << std::endl;
+                          << " | Temporal Scheme: " << temporal_scheme_name
+                          << " | Spatial Scheme: " << spatial_scheme_name << std::endl;
             }
 
             const bool requests_muscl = spatial_scheme_name == "MUSCL";
@@ -246,63 +237,64 @@ std::unique_ptr<NumericalMethod> NumericalMethodFactory::create(
             const bool requests_ssprk2 = temporal_scheme == TemporalSchemeType::Multistage;
             if (requests_muscl) {
                 if (!is_thermodynamic || term_name != "advection") {
-                    throw std::runtime_error(
-                        "Field '" + variable_name +
-                        "' requested spatial scheme '" +
-                        spatial_scheme_name + "' and temporal scheme '" +
-                        temporal_scheme_name +
-                        "'; supported use is advection of a configured "
-                        "tracer or thermodynamic scalar with spatial scheme "
-                        "'MUSCL' and temporal scheme 'SSPRK2'.");
+                    throw std::runtime_error("Field '" + variable_name +
+                                             "' requested spatial scheme '" + spatial_scheme_name +
+                                             "' and temporal scheme '" + temporal_scheme_name +
+                                             "'; supported use is advection of a configured "
+                                             "tracer or thermodynamic scalar with spatial scheme "
+                                             "'MUSCL' and temporal scheme 'SSPRK2'.");
                 }
-                (void) MUSCL::validate_configuration(
-                    variable_name, spatial_scheme_name,
-                    temporal_scheme_name, term_config,
-                    enabled_tendency_count, grid_.get_halo_cells());
+                (void)MUSCL::validate_configuration(variable_name,
+                    spatial_scheme_name,
+                    temporal_scheme_name,
+                    term_config,
+                    enabled_tendency_count,
+                    grid_.get_halo_cells());
             }
             else if (requests_weno5) {
                 if (!is_tracer || term_name != "advection") {
-                    throw std::runtime_error(
-                        "Field '" + variable_name +
-                        "' requested spatial scheme 'weno5'; WENO5 is "
-                        "limited to passive-tracer advection.");
+                    throw std::runtime_error("Field '" + variable_name +
+                                             "' requested spatial scheme 'weno5'; WENO5 is "
+                                             "limited to passive-tracer advection.");
                 }
-                (void) WENO5::validate_configuration(
-                    variable_name, spatial_scheme_name,
-                    temporal_scheme_name, term_config,
-                    enabled_tendency_count, grid_.get_halo_cells());
+                (void)WENO5::validate_configuration(variable_name,
+                    spatial_scheme_name,
+                    temporal_scheme_name,
+                    term_config,
+                    enabled_tendency_count,
+                    grid_.get_halo_cells());
             }
             else if (requests_ssprk2) {
-                throw std::runtime_error(
-                    "Field '" + variable_name +
-                    "' requested temporal scheme 'SSPRK2' with spatial "
-                    "scheme '" + spatial_scheme_name +
-                    "'; supported SSPRK2 spatial schemes are 'MUSCL' and "
-                    "'weno5'.");
+                throw std::runtime_error("Field '" + variable_name +
+                                         "' requested temporal scheme 'SSPRK2' with spatial "
+                                         "scheme '" +
+                                         spatial_scheme_name +
+                                         "'; supported SSPRK2 spatial schemes are 'MUSCL' and "
+                                         "'weno5'.");
             }
             if (requests_ssprk2 && !multistage_scheme) {
-                multistage_scheme =
-                    std::make_unique<SSPRK2>(variable_name, dimensions);
+                multistage_scheme = std::make_unique<SSPRK2>(variable_name, dimensions);
             }
 
-            auto spatial_scheme = create_spatial_scheme(
-                variable_name, term_name, term_config,
-                spatial_scheme_name, is_tracer);
+            auto spatial_scheme = create_spatial_scheme(variable_name,
+                term_name,
+                term_config,
+                spatial_scheme_name,
+                is_tracer);
             const bool normalize_anelastic_scalar =
-                is_thermodynamic &&
-                spatial_scheme->
-                    produces_anelastic_scalar_flux_divergence();
-            auto tendency_term = create_tendency_term(
-                variable_name, term_name, std::move(spatial_scheme),
+                is_thermodynamic && spatial_scheme->produces_anelastic_scalar_flux_divergence();
+            auto tendency_term = create_tendency_term(variable_name,
+                term_name,
+                std::move(spatial_scheme),
                 normalize_anelastic_scalar);
-            configured_tendencies.push_back({
-                temporal_scheme, std::move(tendency_term)});
+            configured_tendencies.push_back({temporal_scheme, std::move(tendency_term)});
         }
     }
 
-    return std::make_unique<NumericalMethod>(
-        variable_name, std::move(configured_tendencies),
-        std::move(multistage_scheme), has_external_forward_euler);
+    return std::make_unique<NumericalMethod>(variable_name,
+        std::move(configured_tendencies),
+        std::move(multistage_scheme),
+        has_external_forward_euler);
 }
 
 } // namespace Dynamics

@@ -14,40 +14,56 @@ namespace VVM {
 namespace IO {
 
 namespace {
-void checked_hdf5_call(herr_t status, const std::string& message) {
-    if (status < 0) throw std::runtime_error(message);
+void
+checked_hdf5_call(herr_t status, const std::string& message) {
+    if (status < 0) {
+        throw std::runtime_error(message);
+    }
 }
 
-std::vector<hsize_t> expected_shape_for_dim(size_t dim, const Core::Grid& grid) {
-    if (dim == 1) return {static_cast<size_t>(grid.get_global_points_z())};
-    if (dim == 2) return {static_cast<size_t>(grid.get_global_points_y()),
-                          static_cast<size_t>(grid.get_global_points_x())};
-    if (dim == 3) return {static_cast<size_t>(grid.get_global_points_z()),
-                          static_cast<size_t>(grid.get_global_points_y()),
-                          static_cast<size_t>(grid.get_global_points_x())};
+std::vector<hsize_t>
+expected_shape_for_dim(size_t dim, const Core::Grid& grid) {
+    if (dim == 1) {
+        return {static_cast<size_t>(grid.get_global_points_z())};
+    }
+    if (dim == 2) {
+        return {static_cast<size_t>(grid.get_global_points_y()),
+            static_cast<size_t>(grid.get_global_points_x())};
+    }
+    if (dim == 3) {
+        return {static_cast<size_t>(grid.get_global_points_z()),
+            static_cast<size_t>(grid.get_global_points_y()),
+            static_cast<size_t>(grid.get_global_points_x())};
+    }
     return {};
 }
 
-hid_t open_restart_dataset(hid_t file_id, const std::string& var_name) {
+hid_t
+open_restart_dataset(hid_t file_id, const std::string& var_name) {
     const std::string step_path = "/Step0/" + var_name;
     hid_t dataset = -1;
     H5E_BEGIN_TRY {
         dataset = H5Dopen2(file_id, step_path.c_str(), H5P_DEFAULT);
-    } H5E_END_TRY;
-    if (dataset >= 0) return dataset;
+    }
+    H5E_END_TRY;
+    if (dataset >= 0) {
+        return dataset;
+    }
 
     H5E_BEGIN_TRY {
         dataset = H5Dopen2(file_id, ("/" + var_name).c_str(), H5P_DEFAULT);
-    } H5E_END_TRY;
+    }
+    H5E_END_TRY;
 
     if (dataset < 0) {
-        throw std::runtime_error("[Hdf5RestartReader] Variable '" + var_name +
-                                 "' is missing from restart file.");
+        throw std::runtime_error(
+            "[Hdf5RestartReader] Variable '" + var_name + "' is missing from restart file.");
     }
     return dataset;
 }
 
-hid_t native_real_type() {
+hid_t
+native_real_type() {
 #ifdef VVM_USE_DOUBLE_PRECISION
     return H5T_NATIVE_DOUBLE;
 #else
@@ -57,20 +73,17 @@ hid_t native_real_type() {
 } // namespace
 
 Hdf5RestartReader::Hdf5RestartReader(const std::string& filepath,
-                                     const Core::Grid& grid,
-                                     const Core::Parameters& params,
-                                     const Utils::ConfigurationManager& config,
-                                     Core::HaloExchanger& halo_exchanger)
-    : source_file_(filepath),
-      grid_(grid),
-      params_(params),
-      config_(config),
-      halo_exchanger_(halo_exchanger),
-      comm_(grid.get_cart_comm()) {
+    const Core::Grid& grid,
+    const Core::Parameters& params,
+    const Utils::ConfigurationManager& config,
+    Core::HaloExchanger& halo_exchanger)
+    : source_file_(filepath), grid_(grid), params_(params), config_(config),
+      halo_exchanger_(halo_exchanger), comm_(grid.get_cart_comm()) {
     MPI_Comm_rank(comm_, &rank_);
 }
 
-void Hdf5RestartReader::read_and_initialize(Core::State& state) {
+void
+Hdf5RestartReader::read_and_initialize(Core::State& state) {
     const RestartVariables variables =
         select_restart_variables(config_, state, rank_, "Hdf5RestartReader");
     const std::vector<std::string>& vars_1d = variables.vars_1d;
@@ -78,7 +91,8 @@ void Hdf5RestartReader::read_and_initialize(Core::State& state) {
     const std::vector<std::string>& vars_3d = variables.vars_3d;
 
     if (variables.empty()) {
-        throw std::runtime_error("[Hdf5RestartReader] No restart variables selected from " + source_file_);
+        throw std::runtime_error(
+            "[Hdf5RestartReader] No restart variables selected from " + source_file_);
     }
 
     print_restart_variables(variables, source_file_, rank_, "Hdf5RestartReader");
@@ -89,10 +103,17 @@ void Hdf5RestartReader::read_and_initialize(Core::State& state) {
     }
 
     try {
-        for (const auto& var_name : vars_1d) read_field(file_id, var_name, state.get_field<1>(var_name));
-        for (const auto& var_name : vars_2d) read_field(file_id, var_name, state.get_field<2>(var_name));
-        for (const auto& var_name : vars_3d) read_field(file_id, var_name, state.get_field<3>(var_name));
-    } catch (...) {
+        for (const auto& var_name : vars_1d) {
+            read_field(file_id, var_name, state.get_field<1>(var_name));
+        }
+        for (const auto& var_name : vars_2d) {
+            read_field(file_id, var_name, state.get_field<2>(var_name));
+        }
+        for (const auto& var_name : vars_3d) {
+            read_field(file_id, var_name, state.get_field<3>(var_name));
+        }
+    }
+    catch (...) {
         H5Fclose(file_id);
         throw;
     }
@@ -106,20 +127,24 @@ void Hdf5RestartReader::read_and_initialize(Core::State& state) {
     // pointers and crash when exchange_multiple_halos resizes the buffers in the
     // first run_step.
     for (const auto& var_name : vars_1d) {
-        if (state.has_field(var_name))
+        if (state.has_field(var_name)) {
             halo_exchanger_.exchange_halos(state.get_field<1>(var_name));
+        }
     }
     for (const auto& var_name : vars_2d) {
-        if (state.has_field(var_name))
+        if (state.has_field(var_name)) {
             halo_exchanger_.exchange_halos(state.get_field<2>(var_name));
+        }
     }
     for (const auto& var_name : vars_3d) {
-        if (state.has_field(var_name))
+        if (state.has_field(var_name)) {
             halo_exchanger_.exchange_halos(state.get_field<3>(var_name));
+        }
     }
 }
 
-VVM::Utils::RestartFileMetadata Hdf5RestartReader::read_restart_metadata() {
+VVM::Utils::RestartFileMetadata
+Hdf5RestartReader::read_restart_metadata() {
     hid_t file_id = H5Fopen(source_file_.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
     if (file_id < 0) {
         throw std::runtime_error(
@@ -133,25 +158,31 @@ VVM::Utils::RestartFileMetadata Hdf5RestartReader::read_restart_metadata() {
         if (!metadata.has_time && !metadata.has_step) {
             std::cout << "  [Hdf5RestartReader] No restart clock stored in " << source_file_
                       << " (looked for model_time_s, model_step, time)." << std::endl;
-        } else {
+        }
+        else {
             std::cout << "  [Hdf5RestartReader] Restart clock read from " << source_file_ << ":";
-            if (metadata.has_time) std::cout << " time=" << metadata.time_s << " s";
-            if (metadata.has_step) std::cout << " step=" << metadata.step;
+            if (metadata.has_time) {
+                std::cout << " time=" << metadata.time_s << " s";
+            }
+            if (metadata.has_step) {
+                std::cout << " step=" << metadata.step;
+            }
             std::cout << std::endl;
         }
     }
     return metadata;
 }
 
-template<size_t Dim>
-void Hdf5RestartReader::read_field(hid_t file_id,
-                                   const std::string& var_name,
-                                   Core::Field<Dim>& field) const {
+template <size_t Dim>
+void
+Hdf5RestartReader::read_field(
+    hid_t file_id, const std::string& var_name, Core::Field<Dim>& field) const {
     hid_t dataset = open_restart_dataset(file_id, var_name);
     hid_t filespace = H5Dget_space(dataset);
     if (filespace < 0) {
         H5Dclose(dataset);
-        throw std::runtime_error("[Hdf5RestartReader] Failed to inspect variable '" + var_name + "'.");
+        throw std::runtime_error(
+            "[Hdf5RestartReader] Failed to inspect variable '" + var_name + "'.");
     }
 
     const int ndims = H5Sget_simple_extent_ndims(filespace);
@@ -159,7 +190,8 @@ void Hdf5RestartReader::read_field(hid_t file_id,
     if (ndims != static_cast<int>(expected_shape.size())) {
         H5Sclose(filespace);
         H5Dclose(dataset);
-        throw std::runtime_error("[Hdf5RestartReader] Variable '" + var_name + "' rank does not match current field.");
+        throw std::runtime_error(
+            "[Hdf5RestartReader] Variable '" + var_name + "' rank does not match current field.");
     }
 
     std::vector<hsize_t> shape(expected_shape.size());
@@ -167,7 +199,8 @@ void Hdf5RestartReader::read_field(hid_t file_id,
     if (shape != expected_shape) {
         H5Sclose(filespace);
         H5Dclose(dataset);
-        throw std::runtime_error("[Hdf5RestartReader] Variable '" + var_name + "' shape does not match current grid.");
+        throw std::runtime_error(
+            "[Hdf5RestartReader] Variable '" + var_name + "' shape does not match current grid.");
     }
 
     const size_t h = static_cast<size_t>(grid_.get_halo_cells());
@@ -180,14 +213,19 @@ void Hdf5RestartReader::read_field(hid_t file_id,
         std::vector<VVM::Real> buffer(nz);
         hsize_t start[1] = {0};
         hsize_t count[1] = {nz};
-        checked_hdf5_call(H5Sselect_hyperslab(filespace, H5S_SELECT_SET, start, nullptr, count, nullptr),
-                         "[Hdf5RestartReader] Failed to select hyperslab for '" + var_name + "'.");
+        checked_hdf5_call(
+            H5Sselect_hyperslab(filespace, H5S_SELECT_SET, start, nullptr, count, nullptr),
+            "[Hdf5RestartReader] Failed to select hyperslab for '" + var_name + "'.");
         hid_t memspace = H5Screate_simple(1, count, nullptr);
-        checked_hdf5_call(H5Dread(dataset, native_real_type(), memspace, filespace, H5P_DEFAULT, buffer.data()),
-                         "[Hdf5RestartReader] Failed to read variable '" + var_name + "'.");
+        checked_hdf5_call(
+            H5Dread(dataset, native_real_type(), memspace, filespace, H5P_DEFAULT, buffer.data()),
+            "[Hdf5RestartReader] Failed to read variable '" + var_name + "'.");
         H5Sclose(memspace);
-        for (size_t k = 0; k < nz; ++k) field_view_host(k + h) = buffer[k];
-    } else if constexpr (Dim == 2) {
+        for (size_t k = 0; k < nz; ++k) {
+            field_view_host(k + h) = buffer[k];
+        }
+    }
+    else if constexpr (Dim == 2) {
         const size_t ny = static_cast<size_t>(grid_.get_local_physical_points_y());
         const size_t nx = static_cast<size_t>(grid_.get_local_physical_points_x());
         const size_t y0 = static_cast<size_t>(grid_.get_local_physical_start_y());
@@ -195,11 +233,13 @@ void Hdf5RestartReader::read_field(hid_t file_id,
         std::vector<VVM::Real> buffer(ny * nx);
         hsize_t start[2] = {y0, x0};
         hsize_t count[2] = {ny, nx};
-        checked_hdf5_call(H5Sselect_hyperslab(filespace, H5S_SELECT_SET, start, nullptr, count, nullptr),
-                         "[Hdf5RestartReader] Failed to select hyperslab for '" + var_name + "'.");
+        checked_hdf5_call(
+            H5Sselect_hyperslab(filespace, H5S_SELECT_SET, start, nullptr, count, nullptr),
+            "[Hdf5RestartReader] Failed to select hyperslab for '" + var_name + "'.");
         hid_t memspace = H5Screate_simple(2, count, nullptr);
-        checked_hdf5_call(H5Dread(dataset, native_real_type(), memspace, filespace, H5P_DEFAULT, buffer.data()),
-                         "[Hdf5RestartReader] Failed to read variable '" + var_name + "'.");
+        checked_hdf5_call(
+            H5Dread(dataset, native_real_type(), memspace, filespace, H5P_DEFAULT, buffer.data()),
+            "[Hdf5RestartReader] Failed to read variable '" + var_name + "'.");
         H5Sclose(memspace);
 
         for (size_t j = 0; j < ny; ++j) {
@@ -207,7 +247,8 @@ void Hdf5RestartReader::read_field(hid_t file_id,
                 field_view_host(j + h, i + h) = buffer[j * nx + i];
             }
         }
-    } else if constexpr (Dim == 3) {
+    }
+    else if constexpr (Dim == 3) {
         const size_t nz = static_cast<size_t>(grid_.get_global_points_z());
         const size_t ny = static_cast<size_t>(grid_.get_local_physical_points_y());
         const size_t nx = static_cast<size_t>(grid_.get_local_physical_points_x());
@@ -216,11 +257,13 @@ void Hdf5RestartReader::read_field(hid_t file_id,
         std::vector<VVM::Real> buffer(nz * ny * nx);
         hsize_t start[3] = {0, y0, x0};
         hsize_t count[3] = {nz, ny, nx};
-        checked_hdf5_call(H5Sselect_hyperslab(filespace, H5S_SELECT_SET, start, nullptr, count, nullptr),
-                         "[Hdf5RestartReader] Failed to select hyperslab for '" + var_name + "'.");
+        checked_hdf5_call(
+            H5Sselect_hyperslab(filespace, H5S_SELECT_SET, start, nullptr, count, nullptr),
+            "[Hdf5RestartReader] Failed to select hyperslab for '" + var_name + "'.");
         hid_t memspace = H5Screate_simple(3, count, nullptr);
-        checked_hdf5_call(H5Dread(dataset, native_real_type(), memspace, filespace, H5P_DEFAULT, buffer.data()),
-                         "[Hdf5RestartReader] Failed to read variable '" + var_name + "'.");
+        checked_hdf5_call(
+            H5Dread(dataset, native_real_type(), memspace, filespace, H5P_DEFAULT, buffer.data()),
+            "[Hdf5RestartReader] Failed to read variable '" + var_name + "'.");
         H5Sclose(memspace);
 
         for (size_t k = 0; k < nz; ++k) {

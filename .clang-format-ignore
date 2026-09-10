@@ -1,0 +1,23 @@
+tools
+
+# Build directories and caches
+build*
+**/build/**
+.cache/
+.clangd/
+
+# External dependencies and tools
+externals/**
+tools/**
+
+# Third-party / EAMxx ported physics and shared utilities
+externals
+src/share/**
+src/physics/p3/**
+src/physics/rrtmgp/**
+src/physics/land/**
+
+# Non-source / experiment and documentation trees
+experiments/**
+docs/**
+site/**

@@ -19,13 +19,11 @@ namespace VVM {
 namespace IO {
 
 namespace {
-std::string uppercase_transport_name(std::string value) {
-    std::transform(
-        value.begin(),
-        value.end(),
-        value.begin(),
-        [](unsigned char c) { return static_cast<char>(std::toupper(c)); }
-    );
+std::string
+uppercase_transport_name(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
     return value;
 }
 
@@ -35,36 +33,43 @@ std::string uppercase_transport_name(std::string value) {
 // the same metadata as one the HDF5 engine wrote directly.
 using AttributeCache = std::map<std::string, std::string>;
 
-void cache_stream_attributes(adios2::IO& input_io, AttributeCache& cache)
-{
+void
+cache_stream_attributes(adios2::IO& input_io, AttributeCache& cache) {
     for (const auto& item : input_io.AvailableAttributes()) {
         const std::string& name = item.first;
-        if (cache.count(name)) continue;
+        if (cache.count(name)) {
+            continue;
+        }
 
         const auto attribute = input_io.InquireAttribute<std::string>(name);
-        if (!attribute) continue;  // VVMex writes no non-string attributes
+        if (!attribute) {
+            continue; // VVMex writes no non-string attributes
+        }
 
         const auto values = attribute.Data();
-        if (values.empty() || values.front().empty()) continue;
+        if (values.empty() || values.front().empty()) {
+            continue;
+        }
 
         cache[name] = values.front();
     }
 }
 
-void define_relayed_attributes(adios2::IO& output_io, const AttributeCache& cache)
-{
+void
+define_relayed_attributes(adios2::IO& output_io, const AttributeCache& cache) {
     for (const auto& attribute : cache) {
-        if (output_io.InquireAttribute<std::string>(attribute.first)) continue;
+        if (output_io.InquireAttribute<std::string>(attribute.first)) {
+            continue;
+        }
         output_io.DefineAttribute<std::string>(attribute.first, attribute.second);
     }
 }
 
-void write_hdf5_string_attribute(
-    hid_t dataset,
-    const std::string& name,
-    const std::string& value)
-{
-    if (value.empty()) return;
+void
+write_hdf5_string_attribute(hid_t dataset, const std::string& name, const std::string& value) {
+    if (value.empty()) {
+        return;
+    }
 
     hid_t space = H5Screate(H5S_SCALAR);
     hid_t type = H5Tcopy(H5T_C_S1);
@@ -72,8 +77,7 @@ void write_hdf5_string_attribute(
     H5Tset_size(type, value.size() + 1);
     H5Tset_strpad(type, H5T_STR_NULLTERM);
 
-    hid_t attribute =
-        H5Acreate2(dataset, name.c_str(), type, space, H5P_DEFAULT, H5P_DEFAULT);
+    hid_t attribute = H5Acreate2(dataset, name.c_str(), type, space, H5P_DEFAULT, H5P_DEFAULT);
 
     if (attribute >= 0) {
         H5Awrite(attribute, type, value.c_str());
@@ -84,15 +88,14 @@ void write_hdf5_string_attribute(
     H5Sclose(space);
 }
 
-void attach_sst_hdf5_field_metadata(
-    const std::string& filename,
+void
+attach_sst_hdf5_field_metadata(const std::string& filename,
     const AttributeCache& metadata_cache,
-    const std::vector<std::string>& field_names)
-{
+    const std::vector<std::string>& field_names) {
     hid_t file = H5Fopen(filename.c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
     if (file < 0) {
-        std::cerr << "[IO-Server] Failed to reopen HDF5 file '"
-                  << filename << "' for metadata output.\n";
+        std::cerr << "[IO-Server] Failed to reopen HDF5 file '" << filename
+                  << "' for metadata output.\n";
         return;
     }
 
@@ -100,15 +103,19 @@ void attach_sst_hdf5_field_metadata(
     // reader that looks at /Step0/u sees them without consulting the root.
     for (const auto& attribute : metadata_cache) {
         const auto separator = attribute.first.rfind('/');
-        if (separator == std::string::npos) continue;  // file-level attribute
+        if (separator == std::string::npos) {
+            continue; // file-level attribute
+        }
 
-        const std::string dataset_path =
-            "/Step0/" + attribute.first.substr(0, separator);
+        const std::string dataset_path = "/Step0/" + attribute.first.substr(0, separator);
         hid_t dataset = H5Dopen2(file, dataset_path.c_str(), H5P_DEFAULT);
-        if (dataset < 0) continue;
+        if (dataset < 0) {
+            continue;
+        }
 
-        write_hdf5_string_attribute(
-            dataset, attribute.first.substr(separator + 1), attribute.second);
+        write_hdf5_string_attribute(dataset,
+            attribute.first.substr(separator + 1),
+            attribute.second);
 
         H5Dclose(dataset);
     }
@@ -119,40 +126,46 @@ void attach_sst_hdf5_field_metadata(
 }
 } // namespace
 
-std::string format_six_digits(int number) {
+std::string
+format_six_digits(int number) {
     std::stringstream ss;
     ss << std::setfill('0') << std::setw(6) << number;
     return ss.str();
 }
 
-void get_local_range(size_t global_size, int rank, int size, size_t &start, size_t &count) {
+void
+get_local_range(size_t global_size, int rank, int size, size_t& start, size_t& count) {
     size_t base = global_size / size;
     size_t rem = global_size % size;
-    if (rank < rem) { start = rank * (base + 1); count = base + 1; } 
-    else { start = rank * base + rem; count = base; }
+    if (rank < rem) {
+        start = rank * (base + 1);
+        count = base + 1;
+    }
+    else {
+        start = rank * base + rem;
+        count = base;
+    }
 }
 
-void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& config) {
+void
+run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& config) {
     int rank, size;
     MPI_Comm_rank(io_comm, &rank);
     MPI_Comm_size(io_comm, &size);
 
     adios2::ADIOS adios(io_comm);
 
-    const std::string output_dir =
-        config.get_value<std::string>("output.output_dir");
+    const std::string output_dir = config.get_value<std::string>("output.output_dir");
     const std::string filename_prefix =
         config.get_value<std::string>("output.output_filename_prefix");
     const std::vector<std::string> fields_to_output =
         config.get_value<std::vector<std::string>>("output.fields_to_output");
-    const VVM::Real output_interval_s =
-        config.get_value<VVM::Real>("simulation.output_interval_s");
+    const VVM::Real output_interval_s = config.get_value<VVM::Real>("simulation.output_interval_s");
 
     const std::string input_stream_name = output_dir + "/" + filename_prefix;
 
     if (rank == 0) {
-        std::cout << "  [IO-Server] Listening on stream: "
-                  << input_stream_name << std::endl;
+        std::cout << "  [IO-Server] Listening on stream: " << input_stream_name << std::endl;
         mkdir(output_dir.c_str(), 0777);
     }
 
@@ -170,12 +183,10 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
 
     if (rank == 0) {
         std::cout << "  [IO-Server] SST DataTransport: "
-                  << ((data_transport.empty() || data_transport == "AUTO")
-                          ? "AUTO"
-                          : data_transport)
+                  << ((data_transport.empty() || data_transport == "AUTO") ? "AUTO"
+                                                                           : data_transport)
                   << std::endl;
-        std::cout << "  [IO-Server] SST ControlTransport: "
-                  << control_transport << std::endl;
+        std::cout << "  [IO-Server] SST ControlTransport: " << control_transport << std::endl;
     }
 
     if (!data_transport.empty() && data_transport != "AUTO") {
@@ -192,7 +203,7 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
     inIO.SetParameter("OpenTimeoutSecs", "14400");
     inIO.SetParameter("SpeculativePreloadMode", "OFF");
     inIO.SetParameter("AlwaysProvideLatestTimestep", "false");
-    
+
     // -------------------------
     // HDF5 writer: safe settings
     // -------------------------
@@ -207,10 +218,10 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
     adios2::Engine reader;
     try {
         reader = inIO.Open(input_stream_name, adios2::Mode::Read);
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e) {
         if (rank == 0) {
-            std::cerr << "[IO-Server] FATAL: failed to open SST stream: "
-                      << e.what() << std::endl;
+            std::cerr << "[IO-Server] FATAL: failed to open SST stream: " << e.what() << std::endl;
         }
         MPI_Abort(MPI_COMM_WORLD, 10);
     }
@@ -233,10 +244,10 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
         adios2::StepStatus status;
         try {
             status = reader.BeginStep();
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception& e) {
             if (rank == 0) {
-                std::cerr << "[IO-Server] FATAL: BeginStep failed: "
-                          << e.what() << std::endl;
+                std::cerr << "[IO-Server] FATAL: BeginStep failed: " << e.what() << std::endl;
             }
             MPI_Abort(MPI_COMM_WORLD, 11);
         }
@@ -260,7 +271,9 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
             using T = decltype(sample);
 
             auto varIn = inIO.InquireVariable<T>(name);
-            if (!varIn) return;
+            if (!varIn) {
+                return;
+            }
 
             const adios2::Dims shape = varIn.Shape();
             current_step_vars.push_back(name);
@@ -268,7 +281,8 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
             if (!outIO.InquireVariable<T>(name)) {
                 if (shape.empty()) {
                     outIO.DefineVariable<T>(name);
-                } else {
+                }
+                else {
                     adios2::Dims start(shape.size(), 0);
                     adios2::Dims count = shape;
                     outIO.DefineVariable<T>(name, shape, start, count);
@@ -279,7 +293,9 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
             if (shape.empty()) {
                 buffers[name].resize(1);
                 reader.Get(varIn, buffers[name].data(), adios2::Mode::Deferred);
-                if (name == "time") has_time_variable = true;
+                if (name == "time") {
+                    has_time_variable = true;
+                }
                 return;
             }
 
@@ -288,7 +304,9 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
             size_t my_count = 0;
             get_local_range(shape[0], rank, size, my_start, my_count);
 
-            if (my_count == 0) return;
+            if (my_count == 0) {
+                return;
+            }
 
             adios2::Dims start(shape.size(), 0);
             adios2::Dims count = shape;
@@ -311,13 +329,17 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
                 const std::string& name = varPair.first;
 
                 auto typeIt = varPair.second.find("Type");
-                if (typeIt == varPair.second.end()) continue;
+                if (typeIt == varPair.second.end()) {
+                    continue;
+                }
 
                 const std::string& type = typeIt->second;
 
                 if (type == "int64_t") {
                     auto intVarIn = inIO.InquireVariable<int64_t>(name);
-                    if (!intVarIn || !intVarIn.Shape().empty()) continue;
+                    if (!intVarIn || !intVarIn.Shape().empty()) {
+                        continue;
+                    }
 
                     if (!outIO.InquireVariable<int64_t>(name)) {
                         outIO.DefineVariable<int64_t>(name);
@@ -330,7 +352,8 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
 
                 if (type == "float") {
                     stage_variable(float{}, name, float_buffers);
-                } else if (type == "double") {
+                }
+                else if (type == "double") {
                     stage_variable(double{}, name, double_buffers);
                 }
             }
@@ -344,33 +367,30 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
                 const auto double_time = double_buffers.find("time");
                 if (float_time != float_buffers.end() && !float_time->second.empty()) {
                     step_time = static_cast<VVM::Real>(float_time->second[0]);
-                } else if (double_time != double_buffers.end() &&
-                           !double_time->second.empty()) {
+                }
+                else if (double_time != double_buffers.end() && !double_time->second.empty()) {
                     step_time = static_cast<VVM::Real>(double_time->second[0]);
                 }
             }
 
             reader.EndStep();
-
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception& e) {
             if (rank == 0) {
-                std::cerr << "[IO-Server] FATAL: SST read/Get/EndStep failed: "
-                          << e.what() << std::endl;
+                std::cerr << "[IO-Server] FATAL: SST read/Get/EndStep failed: " << e.what()
+                          << std::endl;
             }
             MPI_Abort(MPI_COMM_WORLD, 12);
         }
 
-        const int output_index =
-            static_cast<int>(std::llround(step_time / output_interval_s));
+        const int output_index = static_cast<int>(std::llround(step_time / output_interval_s));
 
         if (rank == 0) {
-            std::cout << "  [IO-Server] Writing Step "
-                      << output_index << "..." << std::endl;
+            std::cout << "  [IO-Server] Writing Step " << output_index << "..." << std::endl;
         }
 
         const std::string h5_name =
-            output_dir + "/" + filename_prefix + "_" +
-            format_six_digits(output_index) + ".h5";
+            output_dir + "/" + filename_prefix + "_" + format_six_digits(output_index) + ".h5";
 
         std::sort(current_step_vars.begin(), current_step_vars.end());
 
@@ -383,10 +403,14 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
                 using T = decltype(sample);
 
                 auto bufIt = buffers.find(name);
-                if (bufIt == buffers.end()) return;
+                if (bufIt == buffers.end()) {
+                    return;
+                }
 
                 auto varOut = outIO.InquireVariable<T>(name);
-                if (!varOut) return;
+                if (!varOut) {
+                    return;
+                }
 
                 auto& buffer = bufIt->second;
 
@@ -402,7 +426,9 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
                 size_t s_count = 0;
                 get_local_range(shape[0], rank, size, s_start, s_count);
 
-                if (s_count == 0) return;
+                if (s_count == 0) {
+                    return;
+                }
 
                 adios2::Dims start(shape.size(), 0);
                 adios2::Dims count = shape;
@@ -431,11 +457,11 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
             writer.PerformPuts();
             writer.EndStep();
             writer.Close();
-
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception& e) {
             if (rank == 0) {
-                std::cerr << "[IO-Server] FATAL: HDF5 write failed for "
-                          << h5_name << ": " << e.what() << std::endl;
+                std::cerr << "[IO-Server] FATAL: HDF5 write failed for " << h5_name << ": "
+                          << e.what() << std::endl;
             }
             MPI_Abort(MPI_COMM_WORLD, 13);
         }
@@ -449,10 +475,10 @@ void run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& con
 
     try {
         reader.Close();
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e) {
         if (rank == 0) {
-            std::cerr << "[IO-Server] Warning: reader.Close() failed: "
-                      << e.what() << std::endl;
+            std::cerr << "[IO-Server] Warning: reader.Close() failed: " << e.what() << std::endl;
         }
     }
 }

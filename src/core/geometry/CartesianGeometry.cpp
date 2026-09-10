@@ -10,8 +10,8 @@ namespace Geometry {
 
 namespace {
 
-GeometryField2D constant_field(
-    const VVM::Real value) noexcept {
+GeometryField2D
+constant_field(const VVM::Real value) noexcept {
     return GeometryField2D::constant_value(value);
 }
 
@@ -24,20 +24,17 @@ struct InitializeCartesianQ1 {
     VVM::Real offset_i;
     VVM::Real dx;
 
-    InitializeCartesianQ1(
-        const Kokkos::View<VVM::Real*>& q1_in,
+    InitializeCartesianQ1(const Kokkos::View<VVM::Real*>& q1_in,
         const int global_start_i_in,
         const int halo_in,
         const VVM::Real offset_i_in,
         const VVM::Real dx_in)
-        : q1(q1_in),
-          global_start_i(global_start_i_in),
-          halo(halo_in),
-          offset_i(offset_i_in),
+        : q1(q1_in), global_start_i(global_start_i_in), halo(halo_in), offset_i(offset_i_in),
           dx(dx_in) {}
 
     KOKKOS_INLINE_FUNCTION
-    void operator()(const int i) const noexcept {
+    void
+    operator()(const int i) const noexcept {
         const int global_i = global_start_i + i - halo;
         q1(i) = (static_cast<VVM::Real>(global_i) + offset_i) * dx;
     }
@@ -52,29 +49,26 @@ struct InitializeCartesianQ2 {
     VVM::Real offset_j;
     VVM::Real dy;
 
-    InitializeCartesianQ2(
-        const Kokkos::View<VVM::Real*>& q2_in,
+    InitializeCartesianQ2(const Kokkos::View<VVM::Real*>& q2_in,
         const int global_start_j_in,
         const int halo_in,
         const VVM::Real offset_j_in,
         const VVM::Real dy_in)
-        : q2(q2_in),
-          global_start_j(global_start_j_in),
-          halo(halo_in),
-          offset_j(offset_j_in),
+        : q2(q2_in), global_start_j(global_start_j_in), halo(halo_in), offset_j(offset_j_in),
           dy(dy_in) {}
 
     KOKKOS_INLINE_FUNCTION
-    void operator()(const int j) const noexcept {
+    void
+    operator()(const int j) const noexcept {
         const int global_j = global_start_j + j - halo;
         q2(j) = (static_cast<VVM::Real>(global_j) + offset_j) * dy;
     }
 };
 
-
 } // namespace
 
-CartesianGeometry::CartesianGeometry(HorizontalDomainLayout layout, const VVM::Real dx, const VVM::Real dy)
+CartesianGeometry::CartesianGeometry(
+    HorizontalDomainLayout layout, const VVM::Real dx, const VVM::Real dy)
     : layout_(layout), dx_(dx), dy_(dy) {
     validate();
 
@@ -86,52 +80,56 @@ CartesianGeometry::CartesianGeometry(HorizontalDomainLayout layout, const VVM::R
     Kokkos::fence();
 }
 
-std::size_t CartesianGeometry::location_index(const HorizontalLocation location) {
+std::size_t
+CartesianGeometry::location_index(const HorizontalLocation location) {
     switch (location) {
-        case HorizontalLocation::T:
-            return 0;
-        case HorizontalLocation::U:
-            return 1;
-        case HorizontalLocation::V:
-            return 2;
-        case HorizontalLocation::Z:
-            return 3;
+    case HorizontalLocation::T:
+        return 0;
+    case HorizontalLocation::U:
+        return 1;
+    case HorizontalLocation::V:
+        return 2;
+    case HorizontalLocation::Z:
+        return 3;
     }
 
     throw std::invalid_argument("CartesianGeometry received an invalid HorizontalLocation.");
 }
 
-VVM::Real CartesianGeometry::q1_offset(const HorizontalLocation location) noexcept {
+VVM::Real
+CartesianGeometry::q1_offset(const HorizontalLocation location) noexcept {
 
     switch (location) {
-        case HorizontalLocation::T:
-        case HorizontalLocation::V:
-            return VVM::real(0.0);
+    case HorizontalLocation::T:
+    case HorizontalLocation::V:
+        return VVM::real(0.0);
 
-        case HorizontalLocation::U:
-        case HorizontalLocation::Z:
-            return VVM::real(0.5);
+    case HorizontalLocation::U:
+    case HorizontalLocation::Z:
+        return VVM::real(0.5);
     }
 
     return VVM::real(0.0);
 }
 
-VVM::Real CartesianGeometry::q2_offset(const HorizontalLocation location) noexcept {
+VVM::Real
+CartesianGeometry::q2_offset(const HorizontalLocation location) noexcept {
 
     switch (location) {
-        case HorizontalLocation::T:
-        case HorizontalLocation::U:
-            return VVM::real(0.0);
+    case HorizontalLocation::T:
+    case HorizontalLocation::U:
+        return VVM::real(0.0);
 
-        case HorizontalLocation::V:
-        case HorizontalLocation::Z:
-            return VVM::real(0.5);
+    case HorizontalLocation::V:
+    case HorizontalLocation::Z:
+        return VVM::real(0.5);
     }
 
     return VVM::real(0.0);
 }
 
-void CartesianGeometry::validate() const {
+void
+CartesianGeometry::validate() const {
     if (layout_.global_nx <= 0) {
         throw std::invalid_argument("CartesianGeometry requires global_nx > 0.");
     }
@@ -181,19 +179,30 @@ void CartesianGeometry::validate() const {
     }
 }
 
-void CartesianGeometry::initialize_location(const HorizontalLocation location) {
+void
+CartesianGeometry::initialize_location(const HorizontalLocation location) {
     const std::size_t storage_index = location_index(location);
     auto& storage = locations_[storage_index];
     const std::string location_name = horizontal_location_to_string(location);
 
-    storage.q1 = Kokkos::View<VVM::Real*>("cartesian_q1_" + location_name, layout_.local_total_nx());
-    storage.q2 = Kokkos::View<VVM::Real*>("cartesian_q2_" + location_name, layout_.local_total_ny());
+    storage.q1 =
+        Kokkos::View<VVM::Real*>("cartesian_q1_" + location_name, layout_.local_total_nx());
+    storage.q2 =
+        Kokkos::View<VVM::Real*>("cartesian_q2_" + location_name, layout_.local_total_ny());
 
     const int local_total_nx = layout_.local_total_nx();
     const int local_total_ny = layout_.local_total_ny();
 
-    const InitializeCartesianQ1 initialize_q1(storage.q1, layout_.global_start_i, layout_.halo, q1_offset(location), dx_);
-    const InitializeCartesianQ2 initialize_q2(storage.q2, layout_.global_start_j, layout_.halo, q2_offset(location), dy_);
+    const InitializeCartesianQ1 initialize_q1(storage.q1,
+        layout_.global_start_i,
+        layout_.halo,
+        q1_offset(location),
+        dx_);
+    const InitializeCartesianQ2 initialize_q2(storage.q2,
+        layout_.global_start_j,
+        layout_.halo,
+        q2_offset(location),
+        dy_);
 
     Kokkos::parallel_for("InitializeCartesianQ1_" + location_name,
         Kokkos::RangePolicy<>(0, local_total_nx),
@@ -205,8 +214,7 @@ void CartesianGeometry::initialize_location(const HorizontalLocation location) {
 }
 
 HorizontalGeometryDeviceView
-CartesianGeometry::device_view_impl(
-    const HorizontalLocation location) const {
+CartesianGeometry::device_view_impl(const HorizontalLocation location) const {
     const auto& storage = locations_[location_index(location)];
 
     const GeometryField2D zero = constant_field(VVM::real(0.0));
@@ -252,4 +260,3 @@ CartesianGeometry::device_view_impl(
 } // namespace Geometry
 } // namespace Core
 } // namespace VVM
-

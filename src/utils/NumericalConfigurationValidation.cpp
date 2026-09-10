@@ -9,25 +9,24 @@
 namespace VVM::Utils {
 namespace {
 
-void require_finite_positive(double value, const char* key) {
+void
+require_finite_positive(double value, const char* key) {
     if (!std::isfinite(value) || value <= 0.0) {
-        throw std::runtime_error(std::string("Configuration error: '") + key + "' must be finite and greater than zero.");
+        throw std::runtime_error(std::string("Configuration error: '") + key +
+                                 "' must be finite and greater than zero.");
     }
 }
 
-void require_local_width(
-    const char* axis,
-    int global_width,
-    int process_width,
-    int halo_width) {
+void
+require_local_width(const char* axis, int global_width, int process_width, int halo_width) {
     const int smallest_local_width = global_width / process_width;
     if (smallest_local_width < halo_width) {
         std::ostringstream message;
-        message << "Configuration error: the " << axis << " domain has "
-                << global_width << " cells over " << process_width
-                << " process(es), giving a smallest local width of "
-                << smallest_local_width << ", but grid.n_halo_cells is "
-                << halo_width << ". Reduce the compute-rank count or enlarge "
+        message << "Configuration error: the " << axis << " domain has " << global_width
+                << " cells over " << process_width
+                << " process(es), giving a smallest local width of " << smallest_local_width
+                << ", but grid.n_halo_cells is " << halo_width
+                << ". Reduce the compute-rank count or enlarge "
                 << "the domain.";
         throw std::runtime_error(message.str());
     }
@@ -35,8 +34,8 @@ void require_local_width(
 
 } // namespace
 
-void validate_numerical_configuration_values(
-    const NumericalConfigurationValues& values,
+void
+validate_numerical_configuration_values(const NumericalConfigurationValues& values,
     int compute_ranks) {
     if (compute_ranks <= 0) {
         throw std::runtime_error(
@@ -70,13 +69,13 @@ void validate_numerical_configuration_values(
             throw std::runtime_error(
                 "Configuration error: a 1x1 horizontal domain supports exactly one compute rank.");
         }
-    } 
+    }
     else if (values.ny == 1) {
         process_dims[1] = compute_ranks;
-    } 
+    }
     else if (values.nx == 1) {
         process_dims[0] = compute_ranks;
-    } 
+    }
     else {
         process_dims[0] = 0;
         process_dims[1] = 0;
@@ -95,20 +94,19 @@ void validate_numerical_configuration_values(
     }
 }
 
-void validate_numerical_configuration(
-    const ConfigurationManager& config,
-    int compute_ranks) {
-    validate_numerical_configuration_values({
-        config.get_value<int>("grid.nx"),
-        config.get_value<int>("grid.ny"),
-        config.get_value<int>("grid.nz"),
-        config.get_value<int>("grid.n_halo_cells"),
-        config.get_value<double>("grid.dx"),
-        config.get_value<double>("grid.dy"),
-        config.get_value<double>("grid.dz"),
-        config.get_value<double>("simulation.dt_s"),
-        config.get_value<double>("simulation.total_time_s"),
-        config.get_value<double>("simulation.output_interval_s")},
+void
+validate_numerical_configuration(const ConfigurationManager& config, int compute_ranks) {
+    validate_numerical_configuration_values(
+        {config.get_value<int>("grid.nx"),
+            config.get_value<int>("grid.ny"),
+            config.get_value<int>("grid.nz"),
+            config.get_value<int>("grid.n_halo_cells"),
+            config.get_value<double>("grid.dx"),
+            config.get_value<double>("grid.dy"),
+            config.get_value<double>("grid.dz"),
+            config.get_value<double>("simulation.dt_s"),
+            config.get_value<double>("simulation.total_time_s"),
+            config.get_value<double>("simulation.output_interval_s")},
         compute_ranks);
 }
 

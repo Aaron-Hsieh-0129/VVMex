@@ -7,48 +7,68 @@ namespace VVM {
 namespace Driver {
 
 Model::Model(const Utils::ConfigurationManager& config,
-             Core::Parameters& params,
-             const Core::Grid& grid,
-             Core::State& state,
-             Core::HaloExchanger& halo_exchanger)
-    : config_(config),
-      params_(params),
-      grid_(grid),
-      state_(state),
-      halo_exchanger_(halo_exchanger), bc_manager_(grid, Core::is_rll_idealized(config))
-{
+    Core::Parameters& params,
+    const Core::Grid& grid,
+    Core::State& state,
+    Core::HaloExchanger& halo_exchanger)
+    : config_(config), params_(params), grid_(grid), state_(state), halo_exchanger_(halo_exchanger),
+      bc_manager_(grid, Core::is_rll_idealized(config)) {
     VVM::Real dt_s = params_.get_value_host(params_.dt);
 
     std::string mode = config_.get_value<std::string>("simulation.idealized_test", "none");
-    std::vector<std::string> no_solver_mode = {"advection_u", "advection_v", "advection_w", "stretching", "twisting"};
+    std::vector<std::string> no_solver_mode = {"advection_u",
+        "advection_v",
+        "advection_w",
+        "stretching",
+        "twisting"};
     auto it = std::find(no_solver_mode.begin(), no_solver_mode.end(), mode);
     if (it != no_solver_mode.end()) {
         wind_solver_ = false;
     }
 
-    dycore_ = std::make_unique<Dynamics::DynamicalCore>(config_, grid_, params_, state_, halo_exchanger_, bc_manager_);
+    dycore_ = std::make_unique<Dynamics::DynamicalCore>(config_,
+        grid_,
+        params_,
+        state_,
+        halo_exchanger_,
+        bc_manager_);
     if (config_.get_value<bool>("physics.p3.enable_p3", false)) {
-        microphysics_ = std::make_unique<Physics::VVM_P3_Interface>(config_, grid_, params_, halo_exchanger_, state_);
+        microphysics_ = std::make_unique<Physics::VVM_P3_Interface>(config_,
+            grid_,
+            params_,
+            halo_exchanger_,
+            state_);
     }
 
     if (config_.get_value<bool>("physics.turbulence.enable_turbulence", false)) {
-        turbulence_ = std::make_unique<Physics::TurbulenceProcess>(config_, grid_, params_, halo_exchanger_, state_);
+        turbulence_ = std::make_unique<Physics::TurbulenceProcess>(config_,
+            grid_,
+            params_,
+            halo_exchanger_,
+            state_);
     }
 
     if (config_.get_value<bool>("physics.rrtmgp.enable_rrtmgp", false)) {
-        radiation_ = std::make_unique<Physics::RRTMGP::RRTMGPRadiation>(config_, grid_, params_, state_);
+        radiation_ =
+            std::make_unique<Physics::RRTMGP::RRTMGPRadiation>(config_, grid_, params_, state_);
 
         VVM::Real rad_freq_s = config_.get_value<VVM::Real>("physics.rrtmgp.rad_frequency_s", 1.0);
 
-        rad_freq_in_steps_ = Utils::interval_steps_from_frequency(rad_freq_s, dt_s, "RRTMGP radiation");
+        rad_freq_in_steps_ =
+            Utils::interval_steps_from_frequency(rad_freq_s, dt_s, "RRTMGP radiation");
     }
 
     if (config_.get_value<bool>("dynamics.forcings.sponge_layer.enable", false)) {
-        sponge_layer_ = std::make_unique<Dynamics::SpongeLayer>(config_, grid_, params_, halo_exchanger_, state_);
+        sponge_layer_ = std::make_unique<Dynamics::SpongeLayer>(config_,
+            grid_,
+            params_,
+            halo_exchanger_,
+            state_);
     }
 
     if (config_.get_value<bool>("dynamics.forcings.lateral_boundary_nudging.enable", false)) {
-        lateral_boundary_nudging_ = std::make_unique<Dynamics::LateralBoundaryNudging>(config_, grid_, params_, state_);
+        lateral_boundary_nudging_ =
+            std::make_unique<Dynamics::LateralBoundaryNudging>(config_, grid_, params_, state_);
     }
 
     uvtau_ = config.get_value<VVM::Real>("dynamics.forcings.areamn.uvtau", 0.0);
@@ -60,14 +80,14 @@ Model::Model(const Utils::ConfigurationManager& config,
         random_forcing_ = std::make_unique<Dynamics::RandomForcing>(config_, grid_, params_);
     }
     if (!state_.get_tracer_source_targets().empty()) {
-        tracer_source_ = std::make_unique<Dynamics::TracerSource>(
-            grid_, state_);
+        tracer_source_ = std::make_unique<Dynamics::TracerSource>(grid_, state_);
     }
 
     dynamics_vars_ = {"xi", "eta", "zeta"};
     thermodynamics_vars_ = {"th", "qv"};
     if (config.get_value<bool>("physics.p3.enable_p3", false)) {
-        thermodynamics_vars_.insert(thermodynamics_vars_.end(), {"qc", "qr", "qi", "nc", "nr", "ni", "bm", "qm"});
+        thermodynamics_vars_.insert(thermodynamics_vars_.end(),
+            {"qc", "qr", "qi", "nc", "nr", "ni", "bm", "qm"});
     }
     if (turbulence_) {
         thermodynamics_vars_ = turbulence_->get_thermodynamics_vars();
@@ -76,53 +96,92 @@ Model::Model(const Utils::ConfigurationManager& config,
     sfc_thermodynamics_vars_ = {"th", "qv"};
     sfc_dynamics_vars_ = {"xi", "eta"};
     enable_surface_process_ = config.get_value<bool>("physics.surface_process.enable", false);
-    std::string land_scheme  = config.get_value<std::string>("physics.surface_process.land_scheme", "none");
-    std::string ocean_scheme = config.get_value<std::string>("physics.surface_process.ocean_scheme", "none");
+    std::string land_scheme =
+        config.get_value<std::string>("physics.surface_process.land_scheme", "none");
+    std::string ocean_scheme =
+        config.get_value<std::string>("physics.surface_process.ocean_scheme", "none");
     if (enable_surface_process_) {
-        surface_ = std::make_unique<Physics::SurfaceProcess>(config_, grid_, params_, halo_exchanger_, state_);
+        surface_ = std::make_unique<Physics::SurfaceProcess>(config_,
+            grid_,
+            params_,
+            halo_exchanger_,
+            state_);
 
         if (land_scheme == "noahlsm") {
-            land_ = std::make_unique<Physics::LandProcess>(config_, grid_, params_, halo_exchanger_, state_, ocean_scheme);
+            land_ = std::make_unique<Physics::LandProcess>(config_,
+                grid_,
+                params_,
+                halo_exchanger_,
+                state_,
+                ocean_scheme);
         }
 
         surface_process_s_ = config_.get_value<VVM::Real>("physics.surface_process.frequency_s", 1);
 
-        surface_process_steps_ = Utils::interval_steps_from_frequency(surface_process_s_, dt_s, "surface process");
+        surface_process_steps_ =
+            Utils::interval_steps_from_frequency(surface_process_s_, dt_s, "surface process");
     }
 }
 
-void Model::init() {
+void
+Model::init() {
     int rank = grid_.get_mpi_rank();
-    if (rank == 0) std::cout << "\n=== Initializing VVM Model ===" << std::endl;
+    if (rank == 0) {
+        std::cout << "\n=== Initializing VVM Model ===" << std::endl;
+    }
 
-    if (rank == 0) std::cout << "Loading Initial Conditions..." << std::endl;
+    if (rank == 0) {
+        std::cout << "Loading Initial Conditions..." << std::endl;
+    }
     Core::Initializer initializer(config_, grid_, params_, state_, halo_exchanger_);
     initializer.initialize_state();
 
-    if (microphysics_) microphysics_->initialize(state_);
-    if (turbulence_) turbulence_->initialize(state_);
-    if (radiation_) radiation_->initialize(state_);
-    if (sponge_layer_) sponge_layer_->initialize(state_);
-    if (lateral_boundary_nudging_) lateral_boundary_nudging_->initialize(state_);
-    if (area_mean_nudging_) area_mean_nudging_->initialize(state_);
-    if (surface_) surface_->initialize(state_);
-    if (land_) land_->init();
-    if (random_forcing_) random_forcing_->initialize(state_);
-    
-    if (rank == 0) std::cout << "=== Model Initialization Complete ===\n" << std::endl;
+    if (microphysics_) {
+        microphysics_->initialize(state_);
+    }
+    if (turbulence_) {
+        turbulence_->initialize(state_);
+    }
+    if (radiation_) {
+        radiation_->initialize(state_);
+    }
+    if (sponge_layer_) {
+        sponge_layer_->initialize(state_);
+    }
+    if (lateral_boundary_nudging_) {
+        lateral_boundary_nudging_->initialize(state_);
+    }
+    if (area_mean_nudging_) {
+        area_mean_nudging_->initialize(state_);
+    }
+    if (surface_) {
+        surface_->initialize(state_);
+    }
+    if (land_) {
+        land_->init();
+    }
+    if (random_forcing_) {
+        random_forcing_->initialize(state_);
+    }
+
+    if (rank == 0) {
+        std::cout << "=== Model Initialization Complete ===\n" << std::endl;
+    }
 
     int nz = grid_.get_local_total_points_z();
     int ny = grid_.get_local_total_points_y();
     int nx = grid_.get_local_total_points_x();
     int h = grid_.get_halo_cells();
-    if (!state_.has_field("th_perturb")) state_.add_field<3>("th_perturb", {nz, ny, nx});
+    if (!state_.has_field("th_perturb")) {
+        state_.add_field<3>("th_perturb", {nz, ny, nx});
+    }
 
     if (area_mean_nudging_ && uvtau_ == 0.0) {
         predict_uvtopmn_ = false;
     }
 
-    if (config_.get_value<bool>(
-            "initial_conditions.diagnose_wind_from_vorticity", false) || Core::is_rll_idealized(config_)) {
+    if (config_.get_value<bool>("initial_conditions.diagnose_wind_from_vorticity", false) ||
+        Core::is_rll_idealized(config_)) {
         dycore_->compute_wind_fields();
     }
     dycore_->compute_diagnostic_fields();
@@ -131,8 +190,11 @@ void Model::init() {
     }
 }
 
-void Model::ensure_field_cache() {
-    if (field_cache_ready_) return;
+void
+Model::ensure_field_cache() {
+    if (field_cache_ready_) {
+        return;
+    }
 
     auto build = [&](const std::vector<std::string>& var_names, bool with_fe_tendency) {
         std::vector<FeTarget> targets;
@@ -144,8 +206,12 @@ void Model::ensure_field_cache() {
             target.zero_gradient_top = (var_name == "th" || var_name == "qv");
             if (with_fe_tendency) {
                 const std::string fe_name = "fe_tendency_" + var_name;
-                if (var_name == "zeta") target.fe_2d = &state_.get_field<2>(fe_name);
-                else target.fe_3d = &state_.get_field<3>(fe_name);
+                if (var_name == "zeta") {
+                    target.fe_2d = &state_.get_field<2>(fe_name);
+                }
+                else {
+                    target.fe_3d = &state_.get_field<3>(fe_name);
+                }
             }
             targets.push_back(std::move(target));
         }
@@ -154,7 +220,9 @@ void Model::ensure_field_cache() {
     auto fields_of = [](const std::vector<FeTarget>& targets) {
         std::vector<Core::Field<3>*> fields;
         fields.reserve(targets.size());
-        for (const auto& target : targets) fields.push_back(target.field);
+        for (const auto& target : targets) {
+            fields.push_back(target.field);
+        }
         return fields;
     };
 
@@ -192,7 +260,8 @@ void Model::ensure_field_cache() {
     field_cache_ready_ = true;
 }
 
-void Model::run_step(VVM::Real dt) {
+void
+Model::run_step(VVM::Real dt) {
     ensure_field_cache();
 
     size_t current_step = state_.get_step();
@@ -222,7 +291,7 @@ void Model::run_step(VVM::Real dt) {
         if (Utils::is_process_step(current_step, rad_freq_in_steps_)) {
             radiation_->run(state_, dt);
         }
-        
+
         // Update forward th tendency
         // The effects of radiation is updated in update_thermodynamics
         radiation_->calculate_tendencies(state_);
@@ -280,9 +349,10 @@ void Model::run_step(VVM::Real dt) {
         // commit (check_output.py --update). See utils/ProcessScheduling.hpp.
         // So do this in the furture:
         // const bool is_compute_step = Utils::is_process_step(current_step, surface_process_steps_);
-        const bool is_compute_step = Utils::is_legacy_surface_compute_step(current_step, surface_process_steps_);
+        const bool is_compute_step =
+            Utils::is_legacy_surface_compute_step(current_step, surface_process_steps_);
         if (is_compute_step) {
-            // NOTE: Even the configuration specified tco_ocean model which is not from surface_, surface_ stil calculates surface friction for xi and eta. 
+            // NOTE: Even the configuration specified tco_ocean model which is not from surface_, surface_ stil calculates surface friction for xi and eta.
             // note that the dt for land module should be calling time step because the soil T needs to be updated
             if (land_) {
                 VVM::Utils::Timer timer("land");
@@ -296,7 +366,9 @@ void Model::run_step(VVM::Real dt) {
         }
 
         for (const auto& target : surface_thermo_targets_) {
-            if (!turbulence_) target.fe_3d->set_to_zero();
+            if (!turbulence_) {
+                target.fe_3d->set_to_zero();
+            }
             if (surface_) {
                 VVM::Utils::Timer timer("surface");
                 surface_->calculate_tendencies(state_, target.name, *target.fe_3d);
@@ -311,7 +383,11 @@ void Model::run_step(VVM::Real dt) {
     if (turbulence_ || enable_surface_process_) {
         VVM::Utils::Timer timer("time_integrator_thermo");
         for (const auto& target : integrate_thermo_targets_) {
-            VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field, target.name, grid_, dt, *target.fe_3d);
+            VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field,
+                target.name,
+                grid_,
+                dt,
+                *target.fe_3d);
         }
     }
 
@@ -322,17 +398,25 @@ void Model::run_step(VVM::Real dt) {
             target.fe_3d->set_to_zero();
             sponge_layer_->calculate_tendencies(state_, target.name, *target.fe_3d);
 
-            VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field, target.name, grid_, dt, *target.fe_3d);
+            VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field,
+                target.name,
+                grid_,
+                dt,
+                *target.fe_3d);
         }
     }
-    
+
     // Apply lateral boundary nudge
     if (lateral_boundary_nudging_) {
         VVM::Utils::Timer timer("lateral_boundary_nudging");
         for (const auto& target : lateral_nudging_targets_) {
             target.fe_3d->set_to_zero();
             lateral_boundary_nudging_->calculate_tendencies(state_, target.name, *target.fe_3d);
-            VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field, target.name, grid_, dt, *target.fe_3d);
+            VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field,
+                target.name,
+                grid_,
+                dt,
+                *target.fe_3d);
         }
     }
 
@@ -341,7 +425,7 @@ void Model::run_step(VVM::Real dt) {
         halo_exchanger_.exchange_multiple_halos(thermo_boundary_fields_);
         for (const auto& target : thermo_boundary_targets_) {
             if (target.zero_gradient_top) {
-                 bc_manager_.apply_zero_gradient(*target.field);
+                bc_manager_.apply_zero_gradient(*target.field);
             }
             else {
                 bc_manager_.apply_zero_gradient_bottom_zero_top(*target.field);
@@ -351,11 +435,11 @@ void Model::run_step(VVM::Real dt) {
 
     // Calculate buoyancy based on thermodynamics variables at t+1
     // dycore_->update_buoyancy_term(state_);
-    // This is included in calculate vorticity tendencies 
+    // This is included in calculate vorticity tendencies
 
     {
         VVM::Utils::Timer timer("dynamics_vorticity");
-        // Caulcate vorticity tendencies using variables at t 
+        // Caulcate vorticity tendencies using variables at t
         dycore_->calculate_vorticity_tendencies();
         // Update vorticity to t+1
         dycore_->update_vorticity(dt);
@@ -379,7 +463,9 @@ void Model::run_step(VVM::Real dt) {
     if (enable_surface_process_) {
         VVM::Utils::Timer timer("surface");
         for (const auto& target : surface_dynamics_targets_) {
-            if (!turbulence_) target.fe_3d->set_to_zero();
+            if (!turbulence_) {
+                target.fe_3d->set_to_zero();
+            }
             surface_->calculate_tendencies(state_, target.name, *target.fe_3d);
         }
     }
@@ -388,10 +474,18 @@ void Model::run_step(VVM::Real dt) {
         VVM::Utils::Timer timer("time_integrator_vorticity");
         for (const auto& target : integrate_dynamics_targets_) {
             if (target.fe_2d != nullptr) {
-                VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field, target.name, grid_, dt, *target.fe_2d);
-            } 
+                VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field,
+                    target.name,
+                    grid_,
+                    dt,
+                    *target.fe_2d);
+            }
             else {
-                VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field, target.name, grid_, dt, *target.fe_3d);
+                VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field,
+                    target.name,
+                    grid_,
+                    dt,
+                    *target.fe_3d);
             }
         }
     }
@@ -402,12 +496,20 @@ void Model::run_step(VVM::Real dt) {
             if (target.fe_2d != nullptr) {
                 target.fe_2d->set_to_zero();
                 sponge_layer_->calculate_tendencies(state_, target.name, *target.fe_2d);
-                VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field, target.name, grid_, dt, *target.fe_2d);
+                VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field,
+                    target.name,
+                    grid_,
+                    dt,
+                    *target.fe_2d);
             }
             else {
                 target.fe_3d->set_to_zero();
                 sponge_layer_->calculate_tendencies(state_, target.name, *target.fe_3d);
-                VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field, target.name, grid_, dt, *target.fe_3d);
+                VVM::Dynamics::TimeIntegrator::apply_forward_update(*target.field,
+                    target.name,
+                    grid_,
+                    dt,
+                    *target.fe_3d);
             }
         }
     }
@@ -428,8 +530,12 @@ void Model::run_step(VVM::Real dt) {
 
     if (wind_solver_) {
         VVM::Utils::Timer timer("dynamics_wind_total");
-        if (predict_uvtopmn_) dycore_->compute_uvtopmn();
-        if (area_mean_nudging_) area_mean_nudging_->apply_uvtopmn(state_, dt);
+        if (predict_uvtopmn_) {
+            dycore_->compute_uvtopmn();
+        }
+        if (area_mean_nudging_) {
+            area_mean_nudging_->apply_uvtopmn(state_, dt);
+        }
         dycore_->compute_wind_fields();
     }
     {
@@ -438,10 +544,17 @@ void Model::run_step(VVM::Real dt) {
     }
 }
 
-void Model::finalize() {
-    if (microphysics_) microphysics_->finalize();
-    if (radiation_) radiation_->finalize();
-    if (land_) land_->finalize();
+void
+Model::finalize() {
+    if (microphysics_) {
+        microphysics_->finalize();
+    }
+    if (radiation_) {
+        radiation_->finalize();
+    }
+    if (land_) {
+        land_->finalize();
+    }
 }
 
 }

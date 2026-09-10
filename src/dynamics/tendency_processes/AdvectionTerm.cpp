@@ -5,43 +5,46 @@
 namespace VVM {
 namespace Dynamics {
 
-AdvectionTerm::AdvectionTerm(
-    std::unique_ptr<SpatialScheme> scheme,
+AdvectionTerm::AdvectionTerm(std::unique_ptr<SpatialScheme> scheme,
     std::string var_name,
     VVM::Core::HaloExchanger& halo_exchanger,
     const Core::BoundaryConditionManager& bc_manager,
     std::shared_ptr<MeanWindState> mean_wind_state,
     bool force_anelastic_scalar_normalization)
-    : scheme_(std::move(scheme)),
-      variable_name_(std::move(var_name)),
-      force_anelastic_scalar_normalization_(
-          force_anelastic_scalar_normalization),
-      halo_exchanger_(halo_exchanger),
-      bc_manager_(bc_manager),
+    : scheme_(std::move(scheme)), variable_name_(std::move(var_name)),
+      force_anelastic_scalar_normalization_(force_anelastic_scalar_normalization),
+      halo_exchanger_(halo_exchanger), bc_manager_(bc_manager),
       mean_wind_state_(std::move(mean_wind_state)) {
 
     thermodynamics_vars_ = {"th", "qv", "qc", "qr", "qi", "nc", "nr", "ni"};
     dynamics_vars_ = {"xi", "eta", "zeta"};
 
-    if (variable_name_ == "xi") mean_wind_variant_ = MeanWindState::Variant::Xi;
-    else if (variable_name_ == "eta") mean_wind_variant_ = MeanWindState::Variant::Eta;
-    else if (variable_name_ == "zeta") mean_wind_variant_ = MeanWindState::Variant::Zeta;
-    else mean_wind_variant_ = MeanWindState::Variant::Scalar;
+    if (variable_name_ == "xi") {
+        mean_wind_variant_ = MeanWindState::Variant::Xi;
+    }
+    else if (variable_name_ == "eta") {
+        mean_wind_variant_ = MeanWindState::Variant::Eta;
+    }
+    else if (variable_name_ == "zeta") {
+        mean_wind_variant_ = MeanWindState::Variant::Zeta;
+    }
+    else {
+        mean_wind_variant_ = MeanWindState::Variant::Scalar;
+    }
 }
 
 AdvectionTerm::~AdvectionTerm() = default;
 
-
-void AdvectionTerm::compute_tendency(
-    Core::State& state, 
+void
+AdvectionTerm::compute_tendency(Core::State& state,
     const Core::Grid& grid,
     const Core::Parameters& params,
     Core::Field<3>& out_tendency) const {
     compute_tendency_impl(state, grid, params, out_tendency, VVM::real(0.0));
 }
 
-void AdvectionTerm::compute_stage_tendency(
-    Core::State& state,
+void
+AdvectionTerm::compute_stage_tendency(Core::State& state,
     const Core::Grid& grid,
     const Core::Parameters& params,
     Core::Field<3>& out_tendency,
@@ -49,8 +52,8 @@ void AdvectionTerm::compute_stage_tendency(
     compute_tendency_impl(state, grid, params, out_tendency, stage_dt);
 }
 
-void AdvectionTerm::compute_tendency_impl(
-    Core::State& state,
+void
+AdvectionTerm::compute_tendency_impl(Core::State& state,
     const Core::Grid& grid,
     const Core::Parameters& params,
     Core::Field<3>& out_tendency,
@@ -64,15 +67,22 @@ void AdvectionTerm::compute_tendency_impl(
     auto& v_mean_field = v_mean_ref_.get(state, "v_mean");
     auto& w_mean_field = w_mean_ref_.get(state, "w_mean");
 
-    if (grid.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon
-        && (variable_name_ == "xi" || variable_name_ == "eta" || variable_name_ == "zeta")) {
+    if (grid.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon &&
+        (variable_name_ == "xi" || variable_name_ == "eta" || variable_name_ == "zeta")) {
         // The RLL vorticity adapter constructs metric-weighted face fluxes
         // directly from physical State winds. It does not read these legacy
         // Cartesian scratch arguments. Avoid computing/exchanging unused
         // Cartesian averages, and leave scalar density normalization below.
-        scheme_->calculate_advection_tendency(
-            state, advected_field, u_mean_field, v_mean_field, w_mean_field,
-            grid, params, out_tendency, variable_name_, stage_dt);
+        scheme_->calculate_advection_tendency(state,
+            advected_field,
+            u_mean_field,
+            v_mean_field,
+            w_mean_field,
+            grid,
+            params,
+            out_tendency,
+            variable_name_,
+            stage_dt);
         return;
     }
 
@@ -100,7 +110,8 @@ void AdvectionTerm::compute_tendency_impl(
     const int num_i = nx - 2 * h;
     const int league_size = num_j * num_i;
 
-    const bool mean_winds_ready = mean_wind_state_ && mean_wind_state_->holds(mean_wind_variant_, state.get_step());
+    const bool mean_winds_ready =
+        mean_wind_state_ && mean_wind_state_->holds(mean_wind_variant_, state.get_step());
 
     if (mean_winds_ready) {
         // Reuse the current variant.
@@ -118,19 +129,24 @@ void AdvectionTerm::compute_tendency_impl(
 
                 Kokkos::parallel_for(Kokkos::TeamThreadRange(team, h - 1, nz - h - 1),
                     [&](const int k) {
-                        if (k >= h) {
-                            u_mean_data(k,j,i) = real(0.25)*(fact1_xi_eta(k) * rhobar(k+1) * ( u(k+1,j,i) + u(k+1,j+1,i))
-                                                           + fact2_xi_eta(k) * rhobar(k)   * ( u(k,j,i)   + u(k,j+1,i)  )  );
-                            v_mean_data(k,j,i) = real(0.25)*(fact1_xi_eta(k) * rhobar(k+1) * ( v(k+1,j,i) + v(k+1,j+1,i))
-                                                           + fact2_xi_eta(k) * rhobar(k)   * ( v(k,j,i)   + v(k,j+1,i)  )  );
-                        }
-                        // WARNING: I think the w needs to have fact but it turns out the source code doesn't have this. The code follows it for now.
-                        w_mean_data(k,j,i) = real(0.25)*(rhobar_up(k+1) * ( w(k+1,j,i) + w(k+1,j+1,i))
-                                                       + rhobar_up(k)   * ( w(k,j,i)   + w(k,j+1,i)  )  );
+                    if (k >= h) {
+                        u_mean_data(k, j, i) =
+                            real(0.25) *
+                            (fact1_xi_eta(k) * rhobar(k + 1) *
+                                    (u(k + 1, j, i) + u(k + 1, j + 1, i)) +
+                                fact2_xi_eta(k) * rhobar(k) * (u(k, j, i) + u(k, j + 1, i)));
+                        v_mean_data(k, j, i) =
+                            real(0.25) *
+                            (fact1_xi_eta(k) * rhobar(k + 1) *
+                                    (v(k + 1, j, i) + v(k + 1, j + 1, i)) +
+                                fact2_xi_eta(k) * rhobar(k) * (v(k, j, i) + v(k, j + 1, i)));
                     }
-                );
-            }
-        );
+                    // WARNING: I think the w needs to have fact but it turns out the source code doesn't have this. The code follows it for now.
+                    w_mean_data(k, j, i) =
+                        real(0.25) * (rhobar_up(k + 1) * (w(k + 1, j, i) + w(k + 1, j + 1, i)) +
+                                         rhobar_up(k) * (w(k, j, i) + w(k, j + 1, i)));
+                });
+            });
     }
     else if (variable_name_ == "eta") {
         const auto& fact1_xi_eta = params.fact1_xi_eta.get_device_data();
@@ -145,19 +161,24 @@ void AdvectionTerm::compute_tendency_impl(
 
                 Kokkos::parallel_for(Kokkos::TeamThreadRange(team, h - 1, nz - h - 1),
                     [&](const int k) {
-                        if (k >= h) {
-                            u_mean_data(k,j,i) = real(0.25)*(fact1_xi_eta(k) * rhobar(k+1) * ( u(k+1,j,i) + u(k+1,j,i+1))
-                                                           + fact2_xi_eta(k) * rhobar(k)   * ( u(k,j,i)   + u(k,j,i+1)  )  );
-                            v_mean_data(k,j,i) = real(0.25)*(fact1_xi_eta(k) * rhobar(k+1) * ( v(k+1,j,i) + v(k+1,j,i+1))
-                                                           + fact2_xi_eta(k) * rhobar(k)   * ( v(k,j,i)   + v(k,j,i+1)  )  );
-                        }
-                        // WARNING: I think the w needs to have fact but it turns out the source code doesn't have this. The code follows it for now.
-                        w_mean_data(k,j,i) = real(0.25)*(rhobar_up(k+1) * ( w(k+1,j,i) + w(k+1,j,i+1))
-                                                       + rhobar_up(k)   * ( w(k,j,i)   + w(k,j,i+1)  )  );
+                    if (k >= h) {
+                        u_mean_data(k, j, i) =
+                            real(0.25) *
+                            (fact1_xi_eta(k) * rhobar(k + 1) *
+                                    (u(k + 1, j, i) + u(k + 1, j, i + 1)) +
+                                fact2_xi_eta(k) * rhobar(k) * (u(k, j, i) + u(k, j, i + 1)));
+                        v_mean_data(k, j, i) =
+                            real(0.25) *
+                            (fact1_xi_eta(k) * rhobar(k + 1) *
+                                    (v(k + 1, j, i) + v(k + 1, j, i + 1)) +
+                                fact2_xi_eta(k) * rhobar(k) * (v(k, j, i) + v(k, j, i + 1)));
                     }
-                );
-            }
-        );
+                    // WARNING: I think the w needs to have fact but it turns out the source code doesn't have this. The code follows it for now.
+                    w_mean_data(k, j, i) =
+                        real(0.25) * (rhobar_up(k + 1) * (w(k + 1, j, i) + w(k + 1, j, i + 1)) +
+                                         rhobar_up(k) * (w(k, j, i) + w(k, j, i + 1)));
+                });
+            });
     }
     else if (variable_name_ == "zeta") {
         Kokkos::parallel_for("calculate_mean_wind_zeta_team",
@@ -169,21 +190,22 @@ void AdvectionTerm::compute_tendency_impl(
 
                 Kokkos::parallel_for(Kokkos::TeamThreadRange(team, nz - h - 3, nz),
                     [&](const int k) {
-                        if (k >= nz - h - 1) {
-                            u_mean_data(k,j,i) = real(0.25)*rhobar(k)*(u(k,j,i)   + u(k,j,i+1)
-                                                                     + u(k,j+1,i) + u(k,j+1,i+1)   );
-                            v_mean_data(k,j,i) = real(0.25)*rhobar(k)*(v(k,j,i)   + v(k,j,i+1)
-                                                                     + v(k,j+1,i) + v(k,j+1,i+1)   );
-                        }
-                        // The original code adopts Tackas 3rd order difference for boundary zeta, so it needs two w.
-                        if (k >= nz - h - 3 && k < nz - h) {
-                            w_mean_data(k,j,i) = real(0.25)*rhobar_up(k)*(w(k,j,i)   + w(k,j,i+1) 
-                                                                        + w(k,j+1,i) + w(k,j+1,i+1));
-                        }
+                    if (k >= nz - h - 1) {
+                        u_mean_data(k, j, i) =
+                            real(0.25) * rhobar(k) *
+                            (u(k, j, i) + u(k, j, i + 1) + u(k, j + 1, i) + u(k, j + 1, i + 1));
+                        v_mean_data(k, j, i) =
+                            real(0.25) * rhobar(k) *
+                            (v(k, j, i) + v(k, j, i + 1) + v(k, j + 1, i) + v(k, j + 1, i + 1));
                     }
-                );
-            }
-        );
+                    // The original code adopts Tackas 3rd order difference for boundary zeta, so it needs two w.
+                    if (k >= nz - h - 3 && k < nz - h) {
+                        w_mean_data(k, j, i) =
+                            real(0.25) * rhobar_up(k) *
+                            (w(k, j, i) + w(k, j, i + 1) + w(k, j + 1, i) + w(k, j + 1, i + 1));
+                    }
+                });
+            });
     }
     else {
         Kokkos::parallel_for("calculate_mean_wind_scalar_team",
@@ -193,15 +215,12 @@ void AdvectionTerm::compute_tendency_impl(
                 const int j = h + league_rank / num_i;
                 const int i = h + league_rank % num_i;
 
-                Kokkos::parallel_for(Kokkos::TeamThreadRange(team, h, nz - h),
-                    [&](const int k) {
-                        u_mean_data(k,j,i) = rhobar(k) * u(k,j,i);
-                        v_mean_data(k,j,i) = rhobar(k) * v(k,j,i);
-                        w_mean_data(k,j,i) = rhobar_up(k) * w(k,j,i);
-                    }
-                );
-            }
-        );
+                Kokkos::parallel_for(Kokkos::TeamThreadRange(team, h, nz - h), [&](const int k) {
+                    u_mean_data(k, j, i) = rhobar(k) * u(k, j, i);
+                    v_mean_data(k, j, i) = rhobar(k) * v(k, j, i);
+                    w_mean_data(k, j, i) = rhobar_up(k) * w(k, j, i);
+                });
+            });
     }
 
     if (!mean_winds_ready) {
@@ -218,39 +237,44 @@ void AdvectionTerm::compute_tendency_impl(
         }
     }
 
-    scheme_->calculate_advection_tendency(
-        state, advected_field, u_mean_field, v_mean_field, w_mean_field,
-        grid, params, out_tendency, variable_name_, stage_dt);
+    scheme_->calculate_advection_tendency(state,
+        advected_field,
+        u_mean_field,
+        v_mean_field,
+        w_mean_field,
+        grid,
+        params,
+        out_tendency,
+        variable_name_,
+        stage_dt);
 
     auto& tendency = out_tendency.get_mutable_device_data();
 
     // Divide rho in tendency for thermodynamics variables
     if (normalize_by_rhobar_ < 0) {
         normalize_by_rhobar_ =
-            (force_anelastic_scalar_normalization_ ||
-             state.is_tracer(variable_name_) ||
-             std::find(thermodynamics_vars_.begin(),
-                       thermodynamics_vars_.end(),
-                       variable_name_) != thermodynamics_vars_.end()) ? 1 : 0;
+            (force_anelastic_scalar_normalization_ || state.is_tracer(variable_name_) ||
+                std::find(thermodynamics_vars_.begin(),
+                    thermodynamics_vars_.end(),
+                    variable_name_) != thermodynamics_vars_.end())
+                ? 1
+                : 0;
     }
 
     if (normalize_by_rhobar_ == 1) {
         const int full_league_size = ny * nx;
-        
-        Kokkos::parallel_for("Divide_rho_for_thermovariables_team", 
+
+        Kokkos::parallel_for("Divide_rho_for_thermovariables_team",
             TeamPolicy(full_league_size, Kokkos::AUTO),
             KOKKOS_LAMBDA(const MemberType& team) {
                 const int league_rank = team.league_rank();
                 const int j = league_rank / nx;
                 const int i = league_rank % nx;
 
-                Kokkos::parallel_for(Kokkos::TeamThreadRange(team, 0, nz),
-                    [&](const int k) {
-                        tendency(k,j,i) /= rhobar(k);
-                    }
-                );
-            }
-        );
+                Kokkos::parallel_for(Kokkos::TeamThreadRange(team, 0, nz), [&](const int k) {
+                    tendency(k, j, i) /= rhobar(k);
+                });
+            });
     }
     return;
 }

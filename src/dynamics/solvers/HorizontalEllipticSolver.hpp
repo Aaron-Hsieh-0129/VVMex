@@ -37,23 +37,29 @@ public:
 
     HorizontalEllipticSolver(const Core::Grid& grid, Core::HaloExchanger& halo_exchanger);
 
-    void make_extrapolated_guess(const Core::Field<2>& current, const Core::Field<2>& previous, Core::Field<2>& guess) const;
+    void make_extrapolated_guess(
+        const Core::Field<2>& current, const Core::Field<2>& previous, Core::Field<2>& guess) const;
 
     // Solve LaplaceBeltrami(solution) = right_hand_side at T points.
     // The caller supplies the physical right-hand side. The solver internally
     // uses the equivalent Jacobian-weighted equation.
-    void solve_at_t(const Core::Field<2>& right_hand_side, Core::Field<2>& solution, const Options& options);
+    void solve_at_t(
+        const Core::Field<2>& right_hand_side, Core::Field<2>& solution, const Options& options);
 
     // Solve LaplaceBeltrami(solution) = right_hand_side at Z points.
     // This is the streamfunction placement used for psi.
-    void solve_at_z(const Core::Field<2>& right_hand_side, Core::Field<2>& solution, const Options& options);
+    void solve_at_z(
+        const Core::Field<2>& right_hand_side, Core::Field<2>& solution, const Options& options);
 
     // Solve the Z-point streamfunction and T-point velocity potential together.
     // They use different metric stencils but share one kernel launch and one
     // batched halo exchange per iteration, preserving the current WindSolver
     // communication pattern.
-    void solve_at_z_and_t(const Core::Field<2>& right_hand_side_at_z, Core::Field<2>& solution_at_z,
-        const Core::Field<2>& right_hand_side_at_t, Core::Field<2>& solution_at_t, const Options& options);
+    void solve_at_z_and_t(const Core::Field<2>& right_hand_side_at_z,
+        Core::Field<2>& solution_at_z,
+        const Core::Field<2>& right_hand_side_at_t,
+        Core::Field<2>& solution_at_t,
+        const Options& options);
 
     // RLL tropical-channel specialization of the same paired fixed-iteration
     // solver. Psi is homogeneous Dirichlet at the V/Z wall faces and chi is
@@ -61,14 +67,17 @@ public:
     //
     // This does not select or evolve the channel circulation. A compatible
     // covariant zonal increment remains a separate wind-diagnostic input.
-    void solve_regular_lat_lon_channel_at_z_and_t(
-        const Core::Field<2>& right_hand_side_at_z, Core::Field<2>& solution_at_z,
-        const Core::Field<2>& right_hand_side_at_t, Core::Field<2>& solution_at_t,
+    void solve_regular_lat_lon_channel_at_z_and_t(const Core::Field<2>& right_hand_side_at_z,
+        Core::Field<2>& solution_at_z,
+        const Core::Field<2>& right_hand_side_at_t,
+        Core::Field<2>& solution_at_t,
         const Options& options);
 
 private:
     void validate_field_extents(const Core::Field<2>& field, const char* role) const;
-    void validate_solve_arguments(const Core::Field<2>& right_hand_side, const Core::Field<2>& solution, const Options& options) const;
+    void validate_solve_arguments(const Core::Field<2>& right_hand_side,
+        const Core::Field<2>& solution,
+        const Options& options) const;
     void refresh_solution_halos(Core::Field<2>& field);
     void refresh_solution_halos(Core::Field<2>& first, Core::Field<2>& second);
 

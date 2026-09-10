@@ -14,12 +14,7 @@ namespace Geometry {
 using GeometryConstView1D = Kokkos::View<const VVM::Real*>;
 using GeometryConstView2D = Kokkos::View<const VVM::Real**>;
 
-enum class GeometryFieldLayout : std::uint8_t {
-    Constant,
-    VaryingI,
-    VaryingJ,
-    Full2D
-};
+enum class GeometryFieldLayout : std::uint8_t { Constant, VaryingI, VaryingJ, Full2D };
 
 struct GeometryField2D {
     GeometryFieldLayout layout = GeometryFieldLayout::Constant;
@@ -30,25 +25,27 @@ struct GeometryField2D {
     GeometryConstView2D two_dimensional;
 
     KOKKOS_INLINE_FUNCTION
-    VVM::Real operator()(const int j, const int i) const noexcept {
+    VVM::Real
+    operator()(const int j, const int i) const noexcept {
         switch (layout) {
-            case GeometryFieldLayout::Constant:
-                return constant;
+        case GeometryFieldLayout::Constant:
+            return constant;
 
-            case GeometryFieldLayout::VaryingI:
-                return one_dimensional(i);
+        case GeometryFieldLayout::VaryingI:
+            return one_dimensional(i);
 
-            case GeometryFieldLayout::VaryingJ:
-                return one_dimensional(j);
+        case GeometryFieldLayout::VaryingJ:
+            return one_dimensional(j);
 
-            case GeometryFieldLayout::Full2D:
-                return two_dimensional(j, i);
+        case GeometryFieldLayout::Full2D:
+            return two_dimensional(j, i);
         }
 
         return VVM::real(0.0);
     }
 
-    static GeometryField2D constant_value(const VVM::Real value) noexcept {
+    static GeometryField2D
+    constant_value(const VVM::Real value) noexcept {
         GeometryField2D result;
 
         result.layout = GeometryFieldLayout::Constant;
@@ -57,7 +54,8 @@ struct GeometryField2D {
         return result;
     }
 
-    static GeometryField2D varying_i(const GeometryConstView1D values) noexcept {
+    static GeometryField2D
+    varying_i(const GeometryConstView1D values) noexcept {
         GeometryField2D result;
 
         result.layout = GeometryFieldLayout::VaryingI;
@@ -66,7 +64,8 @@ struct GeometryField2D {
         return result;
     }
 
-    static GeometryField2D varying_j(const GeometryConstView1D values) noexcept {
+    static GeometryField2D
+    varying_j(const GeometryConstView1D values) noexcept {
         GeometryField2D result;
 
         result.layout = GeometryFieldLayout::VaryingJ;
@@ -75,7 +74,8 @@ struct GeometryField2D {
         return result;
     }
 
-    static GeometryField2D full_2d(const GeometryConstView2D values) noexcept {
+    static GeometryField2D
+    full_2d(const GeometryConstView2D values) noexcept {
         GeometryField2D result;
 
         result.layout = GeometryFieldLayout::Full2D;

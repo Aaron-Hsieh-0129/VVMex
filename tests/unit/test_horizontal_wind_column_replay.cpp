@@ -33,8 +33,9 @@ using VVM::Dynamics::HorizontalWindColumnRecovery;
 
 int failures = 0;
 
-template<std::size_t Dim>
-std::vector<Real> snapshot(const Field<Dim>& field) {
+template <std::size_t Dim>
+std::vector<Real>
+snapshot(const Field<Dim>& field) {
     const auto host = field.get_host_data();
     std::vector<Real> values;
     values.reserve(host.size());
@@ -44,13 +45,15 @@ std::vector<Real> snapshot(const Field<Dim>& field) {
         for (std::size_t i = 0; i < host.extent(0); ++i) {
             values.push_back(host(i));
         }
-    } else if constexpr (Dim == 2) {
+    }
+    else if constexpr (Dim == 2) {
         for (std::size_t j = 0; j < host.extent(0); ++j) {
             for (std::size_t i = 0; i < host.extent(1); ++i) {
                 values.push_back(host(j, i));
             }
         }
-    } else if constexpr (Dim == 3) {
+    }
+    else if constexpr (Dim == 3) {
         for (std::size_t k = 0; k < host.extent(0); ++k) {
             for (std::size_t j = 0; j < host.extent(1); ++j) {
                 for (std::size_t i = 0; i < host.extent(2); ++i) {
@@ -58,21 +61,27 @@ std::vector<Real> snapshot(const Field<Dim>& field) {
                 }
             }
         }
-    } else {
+    }
+    else {
         static_assert(Dim >= 1 && Dim <= 3, "Unsupported snapshot dimension.");
     }
 
     return values;
 }
 
-bool same_bits(const std::vector<Real>& first, const std::vector<Real>& second) {
-    if (first.size() != second.size()) return false;
-    return first.empty() || std::memcmp(first.data(), second.data(), first.size() * sizeof(Real)) == 0;
+bool
+same_bits(const std::vector<Real>& first, const std::vector<Real>& second) {
+    if (first.size() != second.size()) {
+        return false;
+    }
+    return first.empty() ||
+           std::memcmp(first.data(), second.data(), first.size() * sizeof(Real)) == 0;
 }
 
 #if defined(KOKKOS_ENABLE_CUDA)
 
-void require_cuda(cudaError_t status, const char* operation) {
+void
+require_cuda(cudaError_t status, const char* operation) {
     if (status != cudaSuccess) {
         throw std::runtime_error(std::string(operation) + ": " + cudaGetErrorString(status));
     }
@@ -94,20 +103,29 @@ struct TestGraph {
         if (capturing) {
             cudaGraph_t abandoned = nullptr;
             cudaStreamEndCapture(stream, &abandoned);
-            if (abandoned) cudaGraphDestroy(abandoned);
+            if (abandoned) {
+                cudaGraphDestroy(abandoned);
+            }
         }
 
         cudaStreamSynchronize(stream);
-        if (executable) cudaGraphExecDestroy(executable);
-        if (graph) cudaGraphDestroy(graph);
+        if (executable) {
+            cudaGraphExecDestroy(executable);
+        }
+        if (graph) {
+            cudaGraphDestroy(graph);
+        }
     }
 
-    void begin() {
-        require_cuda(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal), "Begin wind-column capture");
+    void
+    begin() {
+        require_cuda(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal),
+            "Begin wind-column capture");
         capturing = true;
     }
 
-    void finish() {
+    void
+    finish() {
         const cudaError_t status = cudaStreamEndCapture(stream, &graph);
         capturing = false;
         require_cuda(status, "End wind-column capture");
@@ -117,16 +135,19 @@ struct TestGraph {
         }
 
         std::size_t node_count = 0;
-        require_cuda(cudaGraphGetNodes(graph, nullptr, &node_count), "Read wind-column graph nodes");
+        require_cuda(cudaGraphGetNodes(graph, nullptr, &node_count),
+            "Read wind-column graph nodes");
 
         if (node_count == 0) {
             throw std::runtime_error("Wind-column capture recorded no nodes.");
         }
 
-        require_cuda(cudaGraphInstantiate(&executable, graph, nullptr, nullptr, 0), "Instantiate wind-column graph");
+        require_cuda(cudaGraphInstantiate(&executable, graph, nullptr, nullptr, 0),
+            "Instantiate wind-column graph");
     }
 
-    void launch() {
+    void
+    launch() {
         require_cuda(cudaGraphLaunch(executable, stream), "Launch wind-column graph");
         require_cuda(cudaStreamSynchronize(stream), "Complete wind-column graph");
     }
@@ -134,7 +155,8 @@ struct TestGraph {
 
 #endif
 
-void test_replay(const HorizontalGeometry& geometry, Real coordinate_scale, int bottom, int top) {
+void
+test_replay(const HorizontalGeometry& geometry, Real coordinate_scale, int bottom, int top) {
     const auto layout = geometry.layout();
     const int nx = layout.local_total_nx();
     const int ny = layout.local_total_ny();
@@ -193,15 +215,20 @@ void test_replay(const HorizontalGeometry& geometry, Real coordinate_scale, int 
             for (int i = 0; i < nx; ++i) {
                 const Real x = static_cast<Real>(i - h);
 
-                psi_host(j, i) = factor * potential_scale * (real(0.125) * x * x - real(0.25) * y + real(0.0625) * x * y);
-                chi_host(j, i) = factor * potential_scale * (real(-0.375) * x + real(0.125) * y * y - real(0.03125) * x * y);
+                psi_host(j, i) = factor * potential_scale *
+                                 (real(0.125) * x * x - real(0.25) * y + real(0.0625) * x * y);
+                chi_host(j, i) = factor * potential_scale *
+                                 (real(-0.375) * x + real(0.125) * y * y - real(0.03125) * x * y);
 
                 for (int k = 0; k < nz; ++k) {
                     const Real level = static_cast<Real>(k);
 
-                    w_host(k, j, i) = factor * real(0.01) * (x + real(2.0) * y + real(0.25) * level * x);
-                    omega1_host(k, j, i) = factor * vorticity_scale * (real(1.0) + real(0.125) * level + real(0.03125) * y);
-                    omega2_host(k, j, i) = -factor * vorticity_scale * (real(0.75) + real(0.0625) * level + real(0.015625) * x);
+                    w_host(k, j, i) =
+                        factor * real(0.01) * (x + real(2.0) * y + real(0.25) * level * x);
+                    omega1_host(k, j, i) = factor * vorticity_scale *
+                                           (real(1.0) + real(0.125) * level + real(0.03125) * y);
+                    omega2_host(k, j, i) = -factor * vorticity_scale *
+                                           (real(0.75) + real(0.0625) * level + real(0.015625) * x);
                 }
             }
         }
@@ -281,7 +308,8 @@ void test_replay(const HorizontalGeometry& geometry, Real coordinate_scale, int 
         const auto actual2 = snapshot(replay2);
 
         const bool exact = same_bits(expected1, actual1) && same_bits(expected2, actual2);
-        const bool updated = replay == 0 || !same_bits(previous1, actual1) || !same_bits(previous2, actual2);
+        const bool updated =
+            replay == 0 || !same_bits(previous1, actual1) || !same_bits(previous2, actual2);
 
         bool finite = true;
         bool untouched = true;
@@ -291,16 +319,23 @@ void test_replay(const HorizontalGeometry& geometry, Real coordinate_scale, int 
             for (int j = 0; j < ny; ++j) {
                 for (int i = 0; i < nx; ++i) {
                     const std::size_t index = (static_cast<std::size_t>(k) * ny + j) * nx + i;
-                    const bool written = k >= bottom && k <= top && j >= h && j < ny - h && i >= h && i < nx - h;
+                    const bool written =
+                        k >= bottom && k <= top && j >= h && j < ny - h && i >= h && i < nx - h;
 
-                    finite = finite && std::isfinite(expected1[index]) && std::isfinite(expected2[index]);
-                    finite = finite && std::isfinite(actual1[index]) && std::isfinite(actual2[index]);
+                    finite = finite && std::isfinite(expected1[index]) &&
+                             std::isfinite(expected2[index]);
+                    finite =
+                        finite && std::isfinite(actual1[index]) && std::isfinite(actual2[index]);
 
                     if (!written) {
-                        untouched = untouched && expected1[index] == sentinel && expected2[index] == sentinel;
-                        untouched = untouched && actual1[index] == sentinel && actual2[index] == sentinel;
-                    } else if (replay == 3) {
-                        zero_result = zero_result && actual1[index] == real(0.0) && actual2[index] == real(0.0);
+                        untouched = untouched && expected1[index] == sentinel &&
+                                    expected2[index] == sentinel;
+                        untouched =
+                            untouched && actual1[index] == sentinel && actual2[index] == sentinel;
+                    }
+                    else if (replay == 3) {
+                        zero_result = zero_result && actual1[index] == real(0.0) &&
+                                      actual2[index] == real(0.0);
                     }
                 }
             }
@@ -309,12 +344,24 @@ void test_replay(const HorizontalGeometry& geometry, Real coordinate_scale, int 
         const bool inputs = direct_inputs && replay_inputs;
         const bool passed = exact && inputs && finite && untouched && updated && zero_result;
 
-        std::printf("%s execution=%s bottom=%d top=%d replay=%d exact=%d inputs=%d untouched=%d updated=%d finite=%d zero=%d %s\n",
-            geometry.name(), execution, bottom, top, replay, static_cast<int>(exact), static_cast<int>(inputs),
-            static_cast<int>(untouched), static_cast<int>(updated), static_cast<int>(finite),
-            static_cast<int>(zero_result), passed ? "PASS" : "FAIL");
+        std::printf("%s execution=%s bottom=%d top=%d replay=%d exact=%d inputs=%d untouched=%d "
+                    "updated=%d finite=%d zero=%d %s\n",
+            geometry.name(),
+            execution,
+            bottom,
+            top,
+            replay,
+            static_cast<int>(exact),
+            static_cast<int>(inputs),
+            static_cast<int>(untouched),
+            static_cast<int>(updated),
+            static_cast<int>(finite),
+            static_cast<int>(zero_result),
+            passed ? "PASS" : "FAIL");
 
-        if (!passed) ++failures;
+        if (!passed) {
+            ++failures;
+        }
 
         previous1 = actual1;
         previous2 = actual2;
@@ -323,14 +370,17 @@ void test_replay(const HorizontalGeometry& geometry, Real coordinate_scale, int 
 
 } // namespace
 
-int main(int argc, char* argv[]) {
+int
+main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);
     Kokkos::initialize(argc, argv);
 
     try {
         int size = 0;
         MPI_Comm_size(MPI_COMM_WORLD, &size);
-        if (size != 1) throw std::runtime_error("This test requires one MPI rank.");
+        if (size != 1) {
+            throw std::runtime_error("This test requires one MPI rank.");
+        }
 
         HorizontalDomainLayout layout;
         layout.global_nx = 12;
@@ -341,7 +391,12 @@ int main(int argc, char* argv[]) {
 
         const Real radius = real(6371220.0);
         const CartesianGeometry cartesian(layout, real(2.0), real(3.0));
-        const RegularLatLonGeometry rll(layout, real(0.08), real(0.04), real(0.0), real(-0.3), radius);
+        const RegularLatLonGeometry rll(layout,
+            real(0.08),
+            real(0.04),
+            real(0.0),
+            real(-0.3),
+            radius);
 
         const std::array<std::array<int, 2>, 3> ranges = {{{0, 4}, {2, 3}, {3, 3}}};
 
@@ -349,7 +404,8 @@ int main(int argc, char* argv[]) {
             test_replay(cartesian, real(1.0), range[0], range[1]);
             test_replay(rll, radius, range[0], range[1]);
         }
-    } catch (const std::exception& error) {
+    }
+    catch (const std::exception& error) {
         ++failures;
         std::fprintf(stderr, "test_horizontal_wind_column_replay: %s\n", error.what());
     }

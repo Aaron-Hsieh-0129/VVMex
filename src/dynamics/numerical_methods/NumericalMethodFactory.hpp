@@ -19,18 +19,15 @@ class SpatialScheme;
 
 class NumericalMethodFactory {
 public:
-    NumericalMethodFactory(
-        const Utils::ConfigurationManager& config,
+    NumericalMethodFactory(const Utils::ConfigurationManager& config,
         const Core::Grid& grid,
         Core::HaloExchanger& halo_exchanger,
         const Core::BoundaryConditionManager& bc_manager,
         std::shared_ptr<MeanWindState> mean_wind_state)
-        : config_(config), grid_(grid),
-          halo_exchanger_(halo_exchanger), bc_manager_(bc_manager),
+        : config_(config), grid_(grid), halo_exchanger_(halo_exchanger), bc_manager_(bc_manager),
           mean_wind_state_(std::move(mean_wind_state)) {}
 
-    std::unique_ptr<NumericalMethod> create(
-        const std::string& variable_name,
+    std::unique_ptr<NumericalMethod> create(const std::string& variable_name,
         const nlohmann::json& variable_config,
         bool is_tracer,
         bool is_thermodynamic,
@@ -38,21 +35,18 @@ public:
         bool has_external_forward_euler = false) const;
 
 private:
-    TemporalSchemeType parse_temporal_scheme(
-        const std::string& variable_name,
+    TemporalSchemeType parse_temporal_scheme(const std::string& variable_name,
         const std::string& term_name,
         const std::string& scheme_name,
         bool is_tracer) const;
 
-    std::unique_ptr<SpatialScheme> create_spatial_scheme(
-        const std::string& variable_name,
+    std::unique_ptr<SpatialScheme> create_spatial_scheme(const std::string& variable_name,
         const std::string& term_name,
         const nlohmann::json& term_config,
         const std::string& scheme_name,
         bool is_tracer) const;
 
-    std::unique_ptr<TendencyTerm> create_tendency_term(
-        const std::string& variable_name,
+    std::unique_ptr<TendencyTerm> create_tendency_term(const std::string& variable_name,
         const std::string& term_name,
         std::unique_ptr<SpatialScheme> spatial_scheme,
         bool normalize_anelastic_scalar) const;

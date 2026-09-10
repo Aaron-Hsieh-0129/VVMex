@@ -6,48 +6,49 @@
 #include <string>
 
 using VVM::IO::BP5::Bp5OutputConfig;
-using VVM::IO::BP5::ExistingDatasetPolicy;
 using VVM::IO::BP5::CpuBufferMode;
+using VVM::IO::BP5::ExistingDatasetPolicy;
 using VVM::IO::BP5::OutputElementType;
 using VVM::IO::BP5::OutputPrecision;
 
 // The on-disk type a 'native' request resolves to in this build. Everything
 // about precision is relative to it, so the assertions below stay valid whether
 // VVM_USE_DOUBLE_PRECISION is on or off.
-constexpr OutputElementType kNative = sizeof(VVM::Real) == sizeof(float)
-                                          ? OutputElementType::Float32
-                                          : OutputElementType::Float64;
-constexpr OutputElementType kConverting = sizeof(VVM::Real) == sizeof(float)
-                                              ? OutputElementType::Float64
-                                              : OutputElementType::Float32;
+constexpr OutputElementType kNative =
+    sizeof(VVM::Real) == sizeof(float) ? OutputElementType::Float32 : OutputElementType::Float64;
+constexpr OutputElementType kConverting =
+    sizeof(VVM::Real) == sizeof(float) ? OutputElementType::Float64 : OutputElementType::Float32;
 
 // The same two, as the request that produces them. Precision now arrives as
 // the resolved output.precision rather than a key inside the BP5 block.
 constexpr OutputPrecision kNativePrecision = OutputPrecision::Native;
-constexpr OutputPrecision kConvertingPrecision = sizeof(VVM::Real) == sizeof(float)
-                                                     ? OutputPrecision::Float64
-                                                     : OutputPrecision::Float32;
+constexpr OutputPrecision kConvertingPrecision =
+    sizeof(VVM::Real) == sizeof(float) ? OutputPrecision::Float64 : OutputPrecision::Float32;
 
 namespace {
 int failures = 0;
 
-void check(bool condition, const char* message) {
+void
+check(bool condition, const char* message) {
     if (!condition) {
         std::fprintf(stderr, "FAIL: %s\n", message);
         ++failures;
     }
 }
 
-void expect_invalid(const nlohmann::json& value, const char* message) {
+void
+expect_invalid(const nlohmann::json& value, const char* message) {
     try {
         (void)Bp5OutputConfig::from_json(value);
         check(false, message);
-    } catch (const std::invalid_argument&) {
+    }
+    catch (const std::invalid_argument&) {
     }
 }
 } // namespace
 
-int main() {
+int
+main() {
     const auto defaults = Bp5OutputConfig::from_json(nlohmann::json::object());
     check(defaults.aggregation_type == "TwoLevelShm", "default aggregation");
     check(defaults.num_subfiles == 10, "default subfiles");
@@ -55,21 +56,20 @@ int main() {
     check(!defaults.async_write, "async defaults off");
     check(defaults.buffer_mode == CpuBufferMode::Direct, "direct defaults on");
     check(defaults.existing_dataset == ExistingDatasetPolicy::Error,
-          "existing datasets default to an error");
+        "existing datasets default to an error");
     // The default must stay lossless and byte-identical to the behaviour that
     // existed before precision was configurable.
     check(defaults.precision == OutputPrecision::Native, "precision defaults to native");
     check(defaults.element_type() == kNative, "native resolves to VVM::Real width");
 #if defined(KOKKOS_ENABLE_CUDA)
     check(defaults.effective_buffer_mode() == CpuBufferMode::Pack,
-          "CUDA fields always resolve to host packing");
+        "CUDA fields always resolve to host packing");
 #else
     check(defaults.effective_buffer_mode() == CpuBufferMode::Direct,
-          "native precision leaves direct mode intact");
+        "native precision leaves direct mode intact");
 #endif
 
-    const nlohmann::json configured = {
-        {"aggregation_type", "TwoLevelShm"},
+    const nlohmann::json configured = {{"aggregation_type", "TwoLevelShm"},
         {"num_subfiles", 4},
         {"stats_level", 1},
         {"async_write", true},
@@ -82,49 +82,43 @@ int main() {
     check(parsed.async_write, "configured async");
     check(parsed.buffer_mode == CpuBufferMode::Pack, "configured pack");
     check(parsed.existing_dataset == ExistingDatasetPolicy::Replace,
-          "legacy overwrite maps to replace");
+        "legacy overwrite maps to replace");
     check(parsed.existing_dataset_from_legacy_overwrite, "legacy overwrite is tracked");
     check(parsed.adios_parameters().at("AsyncWrite") == "true", "ADIOS async parameter");
 
     // The new policy is explicit, case-insensitive, and independent of the legacy key.
-    const auto append =
-        Bp5OutputConfig::from_json({{"existing_dataset", "ApPeNd"}});
+    const auto append = Bp5OutputConfig::from_json({{"existing_dataset", "ApPeNd"}});
     check(append.existing_dataset == ExistingDatasetPolicy::Append,
-          "append policy is case-insensitive");
-    check(!append.existing_dataset_from_legacy_overwrite,
-          "new policy is not marked legacy");
-    const auto replace =
-        Bp5OutputConfig::from_json({{"existing_dataset", "replace"}});
-    check(replace.existing_dataset == ExistingDatasetPolicy::Replace,
-          "replace policy is parsed");
+        "append policy is case-insensitive");
+    check(!append.existing_dataset_from_legacy_overwrite, "new policy is not marked legacy");
+    const auto replace = Bp5OutputConfig::from_json({{"existing_dataset", "replace"}});
+    check(replace.existing_dataset == ExistingDatasetPolicy::Replace, "replace policy is parsed");
 
     // Precision reaches BP5 as the resolved output.precision. Spelling and
     // aliases are test_output_precision's business.
     const auto as_float32 =
         Bp5OutputConfig::from_json(nlohmann::json::object(), OutputPrecision::Float32);
     check(as_float32.precision == OutputPrecision::Float32, "float32 carried in");
-    check(as_float32.element_type() == OutputElementType::Float32,
-          "float32 resolves to float32");
+    check(as_float32.element_type() == OutputElementType::Float32, "float32 resolves to float32");
 
     const auto as_float64 =
         Bp5OutputConfig::from_json(nlohmann::json::object(), OutputPrecision::Float64);
     check(as_float64.precision == OutputPrecision::Float64, "float64 carried in");
-    check(as_float64.element_type() == OutputElementType::Float64,
-          "float64 resolves to float64");
+    check(as_float64.element_type() == OutputElementType::Float64, "float64 resolves to float64");
     check(!as_float64.precision_from_bp5_block,
-          "precision from output.precision is not flagged as deprecated");
+        "precision from output.precision is not flagged as deprecated");
 
     // Deprecated but still honoured: configurations written before precision
     // moved up a level must keep producing the same dataset, which means the
     // BP5-scoped key still wins over the engine-neutral one.
-    const auto legacy = Bp5OutputConfig::from_json(
-        {{"precision", "float64"}}, OutputPrecision::Float32);
+    const auto legacy =
+        Bp5OutputConfig::from_json({{"precision", "float64"}}, OutputPrecision::Float32);
     check(legacy.precision == OutputPrecision::Float64,
-          "output.bp5.precision still overrides output.precision");
+        "output.bp5.precision still overrides output.precision");
     check(legacy.element_type() == OutputElementType::Float64,
-          "the deprecated key resolves the on-disk type");
+        "the deprecated key resolves the on-disk type");
     check(legacy.precision_from_bp5_block,
-          "the deprecated key is flagged so the writer can say so");
+        "the deprecated key is flagged so the writer can say so");
 
     // Requesting the width VVM::Real already has is not a conversion, so it
     // must not silently cost a staging buffer.
@@ -132,24 +126,23 @@ int main() {
 #if defined(KOKKOS_ENABLE_CUDA)
     check(Bp5OutputConfig::from_json(same_width, kNativePrecision).effective_buffer_mode() ==
               CpuBufferMode::Pack,
-          "matching precision still stages CUDA fields");
+        "matching precision still stages CUDA fields");
 #else
     check(Bp5OutputConfig::from_json(same_width, kNativePrecision).effective_buffer_mode() ==
               CpuBufferMode::Direct,
-          "matching precision keeps direct mode");
+        "matching precision keeps direct mode");
 #endif
 
     // Converting cannot hand ADIOS2 the model's own memory, so 'direct'
     // resolves to packing rather than failing or silently writing raw bytes.
     const nlohmann::json converting = {{"buffer_mode", "direct"}};
-    const auto converted =
-        Bp5OutputConfig::from_json(converting, kConvertingPrecision);
+    const auto converted = Bp5OutputConfig::from_json(converting, kConvertingPrecision);
     check(converted.element_type() == kConverting,
-          "a converting request resolves to the other width");
+        "a converting request resolves to the other width");
     check(converted.buffer_mode == CpuBufferMode::Direct,
-          "the requested buffer mode is preserved as asked");
+        "the requested buffer mode is preserved as asked");
     check(converted.effective_buffer_mode() == CpuBufferMode::Pack,
-          "converting precision forces packing");
+        "converting precision forces packing");
 
     expect_invalid(nlohmann::json::array(), "array config accepted");
     expect_invalid({{"unknown", 1}}, "unknown key accepted");
@@ -163,9 +156,11 @@ int main() {
     expect_invalid({{"existing_dataset", "truncate"}}, "invalid existing-dataset policy accepted");
     expect_invalid({{"existing_dataset", 1}}, "wrong existing-dataset policy type accepted");
     expect_invalid({{"existing_dataset", "append"}, {"overwrite", false}},
-                   "conflicting existing-dataset policies accepted");
+        "conflicting existing-dataset policies accepted");
     expect_invalid({{"precision", 32}}, "wrong precision type accepted");
 
-    if (failures == 0) std::puts("test_bp5_output_config: PASS");
+    if (failures == 0) {
+        std::puts("test_bp5_output_config: PASS");
+    }
     return failures == 0 ? 0 : 1;
 }

@@ -9,9 +9,7 @@
 namespace VVM::IO::BP5 {
 
 std::filesystem::path prepare_bp5_dataset_path(
-    const std::string& output_dir,
-    const std::string& prefix,
-    ExistingDatasetPolicy policy);
+    const std::string& output_dir, const std::string& prefix, ExistingDatasetPolicy policy);
 
 } // namespace VVM::IO::BP5
 

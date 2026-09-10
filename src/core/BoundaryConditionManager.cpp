@@ -12,10 +12,12 @@ BoundaryConditionManager::BoundaryConditionManager(const Grid& grid, bool enable
     : grid_(grid), rll_channel_(enable_rll_channel) {
     const auto& horizontal = grid_.horizontal_specification();
     if (rll_channel_) {
-        if (horizontal.geometry.kind != Geometry::GeometryKind::RegularLatLon
-            || horizontal.topology.q1 != HorizontalEdgeTopology::Periodic
-            || horizontal.topology.q2 != HorizontalEdgeTopology::Bounded)
-            throw std::runtime_error("RLL channel boundaries require periodic longitude and bounded latitude.");
+        if (horizontal.geometry.kind != Geometry::GeometryKind::RegularLatLon ||
+            horizontal.topology.q1 != HorizontalEdgeTopology::Periodic ||
+            horizontal.topology.q2 != HorizontalEdgeTopology::Bounded) {
+            throw std::runtime_error(
+                "RLL channel boundaries require periodic longitude and bounded latitude.");
+        }
         return;
     }
 
@@ -26,151 +28,163 @@ BoundaryConditionManager::BoundaryConditionManager(const Grid& grid, bool enable
             "physical lateral-boundary migration before removing this guard.");
     }
 
-    const bool q1_is_bounded = horizontal.nx > 1 && horizontal.topology.q1 == HorizontalEdgeTopology::Bounded;
-    const bool q2_is_bounded = horizontal.ny > 1 && horizontal.topology.q2 == HorizontalEdgeTopology::Bounded;
+    const bool q1_is_bounded =
+        horizontal.nx > 1 && horizontal.topology.q1 == HorizontalEdgeTopology::Bounded;
+    const bool q2_is_bounded =
+        horizontal.ny > 1 && horizontal.topology.q2 == HorizontalEdgeTopology::Bounded;
     if (q1_is_bounded || q2_is_bounded) {
-        throw std::runtime_error(
-            "Bounded horizontal topology is available for Grid and MPI decomposition tests, but physical lateral boundary conditions "
-            "and elliptic-solver boundary rows are not implemented yet. Only periodic horizontal model runs are currently supported.");
+        throw std::runtime_error("Bounded horizontal topology is available for Grid and MPI "
+                                 "decomposition tests, but physical lateral boundary conditions "
+                                 "and elliptic-solver boundary rows are not implemented yet. Only "
+                                 "periodic horizontal model runs are currently supported.");
     }
 
     // The guard above rejects bounded directions with more than one physical cell.
     // ZeroGradient here therefore only preserves halo filling in a bounded,
     // singleton direction. It is not a physical wall condition for RLL.
     x_bc_type_ = horizontal.topology.q1 == HorizontalEdgeTopology::Periodic
-        ? HorizontalBCType::Periodic : HorizontalBCType::ZeroGradient;
+                     ? HorizontalBCType::Periodic
+                     : HorizontalBCType::ZeroGradient;
     y_bc_type_ = horizontal.topology.q2 == HorizontalEdgeTopology::Periodic
-        ? HorizontalBCType::Periodic : HorizontalBCType::ZeroGradient;
+                     ? HorizontalBCType::Periodic
+                     : HorizontalBCType::ZeroGradient;
 }
 
-template<size_t Dim>
-void BoundaryConditionManager::apply_dirichlet_zero(Field<Dim>& field) const {
+template <size_t Dim>
+void
+BoundaryConditionManager::apply_dirichlet_zero(Field<Dim>& field) const {
     const int h = grid_.get_halo_cells();
-    if (h == 0) return;
+    if (h == 0) {
+        return;
+    }
 
     auto data = field.get_mutable_device_data();
     const int nz = grid_.get_local_total_points_z();
 
     if constexpr (Dim == 1) {
-        Kokkos::parallel_for("bc_dirichlet_0_1d", Kokkos::RangePolicy<>(0, h),
+        Kokkos::parallel_for("bc_dirichlet_0_1d",
+            Kokkos::RangePolicy<>(0, h),
             KOKKOS_LAMBDA(const int k) {
                 // Bottom Halo
                 data(k) = real(0.0);
                 // Top Halo
-                data(nz-1-k) = real(0.0);
-            }
-        );
+                data(nz - 1 - k) = real(0.0);
+            });
     }
     else if constexpr (Dim == 3) {
         const int ny = data.extent(1);
         const int nx = data.extent(2);
-        
-        Kokkos::parallel_for("bc_dirichlet_0_3d", 
+
+        Kokkos::parallel_for("bc_dirichlet_0_3d",
             Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {h, ny, nx}),
             KOKKOS_LAMBDA(int k, int j, int i) {
                 // Bottom Halo
                 data(k, j, i) = real(0.0);
                 // Top Halo
-                data(nz-1-k, j, i) = real(0.0);
-            }
-        );
+                data(nz - 1 - k, j, i) = real(0.0);
+            });
     }
     else if constexpr (Dim == 4) {
         const int N = data.extent(0);
         const int ny = data.extent(2);
         const int nx = data.extent(3);
 
-        Kokkos::parallel_for("bc_dirichlet_0_4d", 
+        Kokkos::parallel_for("bc_dirichlet_0_4d",
             Kokkos::MDRangePolicy<Kokkos::Rank<4>>({0, 0, 0, 0}, {N, h, ny, nx}),
             KOKKOS_LAMBDA(int n, int k, int j, int i) {
                 // Bottom Halo
                 data(n, k, j, i) = real(0.0);
                 // Top Halo
-                data(n, nz-1-k, j, i) = real(0.0);
-            }
-        );
+                data(n, nz - 1 - k, j, i) = real(0.0);
+            });
     }
 }
 
-template<size_t Dim>
-void BoundaryConditionManager::apply_vorticity_bc(Field<Dim>& field) const {
+template <size_t Dim>
+void
+BoundaryConditionManager::apply_vorticity_bc(Field<Dim>& field) const {
     const int h = grid_.get_halo_cells();
-    if (h == 0) return;
+    if (h == 0) {
+        return;
+    }
 
     auto data = field.get_mutable_device_data();
     const int nz = grid_.get_local_total_points_z();
 
     apply_dirichlet_zero(field);
 
-    // NOTE: VVM requires physical top (nz-h-1) to be zero 
+    // NOTE: VVM requires physical top (nz-h-1) to be zero
     if constexpr (Dim == 3) {
         const int ny = data.extent(1);
         const int nx = data.extent(2);
 
-        Kokkos::parallel_for("bc_vorticity_special_3d", 
+        Kokkos::parallel_for("bc_vorticity_special_3d",
             Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
             KOKKOS_LAMBDA(int j, int i) {
-                data(h-1, j, i) = real(0.0);
-                data(nz-h-1, j, i) = real(0.0);
-            }
-        );
+                data(h - 1, j, i) = real(0.0);
+                data(nz - h - 1, j, i) = real(0.0);
+            });
     }
 }
 
-template<size_t Dim>
-void BoundaryConditionManager::apply_zero_gradient(Field<Dim>& field) const {
+template <size_t Dim>
+void
+BoundaryConditionManager::apply_zero_gradient(Field<Dim>& field) const {
     const int h = grid_.get_halo_cells();
-    if (h == 0) return;
+    if (h == 0) {
+        return;
+    }
 
     auto data = field.get_mutable_device_data();
     const int nz = grid_.get_local_total_points_z();
 
     if constexpr (Dim == 1) {
-        Kokkos::parallel_for("bc_zerograd_1d", Kokkos::RangePolicy<>(0, h),
+        Kokkos::parallel_for("bc_zerograd_1d",
+            Kokkos::RangePolicy<>(0, h),
             KOKKOS_LAMBDA(const int k) {
                 // Bottom: copy from h
                 data(k) = data(h);
                 // Top: copy from nz-1-h
-                data(nz-1-k) = data(nz-1-h);
-            }
-        );
+                data(nz - 1 - k) = data(nz - 1 - h);
+            });
     }
     else if constexpr (Dim == 3) {
         const int ny = data.extent(1);
         const int nx = data.extent(2);
-        
-        Kokkos::parallel_for("bc_zerograd_3d", 
+
+        Kokkos::parallel_for("bc_zerograd_3d",
             Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {h, ny, nx}),
             KOKKOS_LAMBDA(int k, int j, int i) {
                 // Bottom
                 data(k, j, i) = data(h, j, i);
                 // Top
-                data(nz-1-k, j, i) = data(nz-1-h, j, i);
-            }
-        );
+                data(nz - 1 - k, j, i) = data(nz - 1 - h, j, i);
+            });
     }
     else if constexpr (Dim == 4) {
         const int N = data.extent(0);
         const int ny = data.extent(2);
         const int nx = data.extent(3);
 
-        Kokkos::parallel_for("bc_zerograd_4d", 
+        Kokkos::parallel_for("bc_zerograd_4d",
             Kokkos::MDRangePolicy<Kokkos::Rank<4>>({0, 0, 0, 0}, {N, h, ny, nx}),
             KOKKOS_LAMBDA(int n, int k, int j, int i) {
                 // Bottom
                 data(n, k, j, i) = data(n, h, j, i);
                 // Top
-                data(n, nz-1-k, j, i) = data(n, nz-1-h, j, i);
-            }
-        );
+                data(n, nz - 1 - k, j, i) = data(n, nz - 1 - h, j, i);
+            });
     }
     // Kokkos::fence();
 }
 
-template<size_t Dim>
-void BoundaryConditionManager::apply_fixed_profile_z(Field<Dim>& field, const Field<1>& profile) const {
+template <size_t Dim>
+void
+BoundaryConditionManager::apply_fixed_profile_z(Field<Dim>& field, const Field<1>& profile) const {
     const int h = grid_.get_halo_cells();
-    if (h == 0) return;
+    if (h == 0) {
+        return;
+    }
 
     auto data = field.get_mutable_device_data();
     auto p_data = profile.get_device_data();
@@ -180,123 +194,130 @@ void BoundaryConditionManager::apply_fixed_profile_z(Field<Dim>& field, const Fi
         const int ny = data.extent(1);
         const int nx = data.extent(2);
 
-        Kokkos::parallel_for("bc_fixed_profile_3d", 
+        Kokkos::parallel_for("bc_fixed_profile_3d",
             Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {h, ny, nx}),
             KOKKOS_LAMBDA(int k, int j, int i) {
                 // Bottom
                 data(k, j, i) = p_data(k);
                 // Top
-                data(nz-1-k, j, i) = p_data(nz-1-k);
-            }
-        );
+                data(nz - 1 - k, j, i) = p_data(nz - 1 - k);
+            });
     }
     // Kokkos::fence();
 }
 
-template<size_t Dim>
-void BoundaryConditionManager::apply_periodic(Field<Dim>& field) const {
+template <size_t Dim>
+void
+BoundaryConditionManager::apply_periodic(Field<Dim>& field) const {
     const int h = grid_.get_halo_cells();
-    if (h == 0) return;
+    if (h == 0) {
+        return;
+    }
 
     auto data = field.get_mutable_device_data();
     const int nz = grid_.get_local_total_points_z();
 
     if constexpr (Dim == 1) {
-        Kokkos::parallel_for("bc_periodic_1d", Kokkos::RangePolicy<>(0, h),
+        Kokkos::parallel_for("bc_periodic_1d",
+            Kokkos::RangePolicy<>(0, h),
             KOKKOS_LAMBDA(const int k) {
                 // Bottom: data(nz - 2h + k)
-                data(k) = data(nz-2*h+k);
+                data(k) = data(nz - 2 * h + k);
                 // Top: data(h + k)
-                data(nz-h+k) = data(h+k);
-            }
-        );
+                data(nz - h + k) = data(h + k);
+            });
     }
     else if constexpr (Dim == 3) {
         const int ny = data.extent(1);
         const int nx = data.extent(2);
 
-        Kokkos::parallel_for("bc_periodic_3d", 
+        Kokkos::parallel_for("bc_periodic_3d",
             Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {h, ny, nx}),
             KOKKOS_LAMBDA(int k, int j, int i) {
                 // Bottom
-                data(k, j, i) = data(nz-2*h + k, j, i);
+                data(k, j, i) = data(nz - 2 * h + k, j, i);
                 // Top
-                data(nz-h+k, j, i) = data(h+k, j, i);
-            }
-        );
+                data(nz - h + k, j, i) = data(h + k, j, i);
+            });
     }
     else if constexpr (Dim == 4) {
         const int N = data.extent(0);
         const int ny = data.extent(2);
         const int nx = data.extent(3);
 
-        Kokkos::parallel_for("bc_periodic_4d", 
+        Kokkos::parallel_for("bc_periodic_4d",
             Kokkos::MDRangePolicy<Kokkos::Rank<4>>({0, 0, 0, 0}, {N, h, ny, nx}),
             KOKKOS_LAMBDA(int n, int k, int j, int i) {
                 // Bottom
-                data(n, k, j, i) = data(n, nz-2*h + k, j, i);
+                data(n, k, j, i) = data(n, nz - 2 * h + k, j, i);
                 // Top
-                data(n, nz-h+k, j, i) = data(n, h+k, j, i);
-            }
-        );
+                data(n, nz - h + k, j, i) = data(n, h + k, j, i);
+            });
     }
     // Kokkos::fence();
 }
 
-template<size_t Dim>
-void BoundaryConditionManager::apply_zero_gradient_bottom_zero_top(Field<Dim>& field) const {
+template <size_t Dim>
+void
+BoundaryConditionManager::apply_zero_gradient_bottom_zero_top(Field<Dim>& field) const {
     const int h = grid_.get_halo_cells();
-    if (h == 0) return;
+    if (h == 0) {
+        return;
+    }
 
     auto data = field.get_mutable_device_data();
     const int nz = grid_.get_local_total_points_z();
 
     if constexpr (Dim == 1) {
-        Kokkos::parallel_for("bc_mixed_bot_grad_top_zero_1d", Kokkos::RangePolicy<>(0, h),
+        Kokkos::parallel_for("bc_mixed_bot_grad_top_zero_1d",
+            Kokkos::RangePolicy<>(0, h),
             KOKKOS_LAMBDA(const int k) {
                 // Bottom: Copy from h (Zero Gradient)
                 data(k) = data(h);
                 // Top: Set to 0 (Zero Value)
                 data(nz - 1 - k) = real(0.0);
-            }
-        );
+            });
     }
     else if constexpr (Dim == 3) {
         const int ny = data.extent(1);
         const int nx = data.extent(2);
-        Kokkos::parallel_for("bc_mixed_bot_grad_top_zero_3d", 
+        Kokkos::parallel_for("bc_mixed_bot_grad_top_zero_3d",
             Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {h, ny, nx}),
             KOKKOS_LAMBDA(int k, int j, int i) {
                 // Bottom: Copy from h (Zero Gradient)
                 data(k, j, i) = data(h, j, i);
                 // Top: Set to 0 (Zero Value)
                 data(nz - 1 - k, j, i) = real(0.0);
-            }
-        );
+            });
     }
     else if constexpr (Dim == 4) {
         const int N = data.extent(0);
         const int ny = data.extent(2);
         const int nx = data.extent(3);
-        Kokkos::parallel_for("bc_mixed_bot_grad_top_zero_4d", 
+        Kokkos::parallel_for("bc_mixed_bot_grad_top_zero_4d",
             Kokkos::MDRangePolicy<Kokkos::Rank<4>>({0, 0, 0, 0}, {N, h, ny, nx}),
             KOKKOS_LAMBDA(int n, int k, int j, int i) {
                 // Bottom
                 data(n, k, j, i) = data(n, h, j, i);
                 // Top
-                data(n, nz-1-k, j, i) = real(0.0);
-            }
-        );
+                data(n, nz - 1 - k, j, i) = real(0.0);
+            });
     }
     // Kokkos::fence();
 }
 
-void BoundaryConditionManager::initialize_bc_types(const std::string& x_bc, const std::string& y_bc) {
+void
+BoundaryConditionManager::initialize_bc_types(const std::string& x_bc, const std::string& y_bc) {
     const auto parse = [](const std::string& value) {
-        if (value == "periodic") return HorizontalBCType::Periodic;
-        if (value == "zero_gradient") return HorizontalBCType::ZeroGradient;
+        if (value == "periodic") {
+            return HorizontalBCType::Periodic;
+        }
+        if (value == "zero_gradient") {
+            return HorizontalBCType::ZeroGradient;
+        }
 
-        throw std::invalid_argument("Unknown horizontal boundary condition '" + value + "'. Expected 'periodic' or 'zero_gradient'.");
+        throw std::invalid_argument("Unknown horizontal boundary condition '" + value +
+                                    "'. Expected 'periodic' or 'zero_gradient'.");
     };
 
     const HorizontalBCType requested_x = parse(x_bc);
@@ -307,17 +328,22 @@ void BoundaryConditionManager::initialize_bc_types(const std::string& x_bc, cons
     if (requested_x != x_bc_type_ || requested_y != y_bc_type_) {
         throw std::invalid_argument(
             "Horizontal boundary conditions must match the resolved Grid topology. "
-            "Configure them through GridSpecification instead of overriding BoundaryConditionManager.");
+            "Configure them through GridSpecification instead of overriding "
+            "BoundaryConditionManager.");
     }
 }
 
-template<size_t Dim>
-void BoundaryConditionManager::apply_zero_gradient_x(Field<Dim>& field) const {
+template <size_t Dim>
+void
+BoundaryConditionManager::apply_zero_gradient_x(Field<Dim>& field) const {
     const int h = grid_.get_halo_cells();
-    if (h == 0) return;
+    if (h == 0) {
+        return;
+    }
 
     const bool is_left_boundary = (grid_.get_local_physical_start_x() == 0);
-    const bool is_right_boundary = (grid_.get_local_physical_end_x() == grid_.get_global_points_x() - 1);
+    const bool is_right_boundary =
+        (grid_.get_local_physical_end_x() == grid_.get_global_points_x() - 1);
 
     auto data = field.get_mutable_device_data();
 
@@ -325,34 +351,34 @@ void BoundaryConditionManager::apply_zero_gradient_x(Field<Dim>& field) const {
         const int nz = data.extent(0);
         const int ny = data.extent(1);
         const int nx = data.extent(2);
-        
+
         if (is_left_boundary) {
-            Kokkos::parallel_for("bc_zerograd_left_3d", 
+            Kokkos::parallel_for("bc_zerograd_left_3d",
                 Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, h}),
-                KOKKOS_LAMBDA(int k, int j, int i_h) {
-                    data(k, j, i_h) = data(k, j, h);
-                }
-            );
+                KOKKOS_LAMBDA(int k, int j, int i_h) { data(k, j, i_h) = data(k, j, h); });
         }
 
         if (is_right_boundary) {
-            Kokkos::parallel_for("bc_zerograd_right_3d", 
+            Kokkos::parallel_for("bc_zerograd_right_3d",
                 Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, h}),
                 KOKKOS_LAMBDA(int k, int j, int i_h) {
                     data(k, j, nx - h + i_h) = data(k, j, nx - h - 1);
-                }
-            );
+                });
         }
     }
 }
 
-template<size_t Dim>
-void BoundaryConditionManager::apply_zero_gradient_y(Field<Dim>& field) const {
+template <size_t Dim>
+void
+BoundaryConditionManager::apply_zero_gradient_y(Field<Dim>& field) const {
     const int h = grid_.get_halo_cells();
-    if (h == 0) return;
+    if (h == 0) {
+        return;
+    }
 
     const bool is_bottom_boundary = (grid_.get_local_physical_start_y() == 0);
-    const bool is_top_boundary = (grid_.get_local_physical_end_y() == grid_.get_global_points_y() - 1);
+    const bool is_top_boundary =
+        (grid_.get_local_physical_end_y() == grid_.get_global_points_y() - 1);
 
     auto data = field.get_mutable_device_data();
 
@@ -360,36 +386,36 @@ void BoundaryConditionManager::apply_zero_gradient_y(Field<Dim>& field) const {
         const int nz = data.extent(0);
         const int ny = data.extent(1);
         const int nx = data.extent(2);
-        
+
         if (is_bottom_boundary) {
-            Kokkos::parallel_for("bc_zerograd_bottom_3d", 
+            Kokkos::parallel_for("bc_zerograd_bottom_3d",
                 Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, h, nx}),
-                KOKKOS_LAMBDA(int k, int j_h, int i) {
-                    data(k, j_h, i) = data(k, h, i);
-                }
-            );
+                KOKKOS_LAMBDA(int k, int j_h, int i) { data(k, j_h, i) = data(k, h, i); });
         }
 
         if (is_top_boundary) {
-            Kokkos::parallel_for("bc_zerograd_top_3d", 
+            Kokkos::parallel_for("bc_zerograd_top_3d",
                 Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, h, nx}),
                 KOKKOS_LAMBDA(int k, int j_h, int i) {
                     data(k, ny - h + j_h, i) = data(k, ny - h - 1, i);
-                }
-            );
+                });
         }
     }
 }
 
-template<size_t Dim>
-void BoundaryConditionManager::apply_horizontal_bcs(Field<Dim>& field) const {
+template <size_t Dim>
+void
+BoundaryConditionManager::apply_horizontal_bcs(Field<Dim>& field) const {
     if (rll_channel_) {
         if constexpr (Dim == 3) {
             Boundary::HorizontalBoundaryStencils boundary(grid_);
             const auto name = field.get_name();
-            if (name == "xi" || name == "zeta" || name == "v")
+            if (name == "xi" || name == "zeta" || name == "v") {
                 boundary.fill_positive_face_q2_homogeneous_dirichlet_halos(field);
-            else boundary.fill_centered_q2_neumann_halos(field);
+            }
+            else {
+                boundary.fill_centered_q2_neumann_halos(field);
+            }
         }
         return;
     }
@@ -400,8 +426,6 @@ void BoundaryConditionManager::apply_horizontal_bcs(Field<Dim>& field) const {
         apply_zero_gradient_y(field);
     }
 }
-
-
 
 // Explicit Instantiation
 // Dim = 1

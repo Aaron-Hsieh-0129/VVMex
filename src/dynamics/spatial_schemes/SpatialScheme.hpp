@@ -18,16 +18,20 @@ public:
     // Directionally split schemes retain the existing hooks below. Schemes
     // with a coupled multidimensional limiter override this capability and
     // calculate the complete advection tendency in one evaluation.
-    virtual bool handles_multidimensional_advection() const { return false; }
-
-    // Density-normalized prognostic scalars need this result divided by
-    // rhobar after the spatial flux divergence is evaluated.
-    virtual bool produces_anelastic_scalar_flux_divergence() const {
+    virtual bool
+    handles_multidimensional_advection() const {
         return false;
     }
 
-    virtual void calculate_advection_tendency(
-        const Core::State& state,
+    // Density-normalized prognostic scalars need this result divided by
+    // rhobar after the spatial flux divergence is evaluated.
+    virtual bool
+    produces_anelastic_scalar_flux_divergence() const {
+        return false;
+    }
+
+    virtual void
+    calculate_advection_tendency(const Core::State& state,
         const Core::Field<3>& scalar,
         const Core::Field<3>& mass_flux_x,
         const Core::Field<3>& mass_flux_y,
@@ -45,110 +49,157 @@ public:
     }
 
     // ∇⋅(ρvφ)
-    virtual void calculate_flux_convergence_x(
-        const Core::Field<3>& scalar, const Core::Field<3>& u,
-        const Core::Grid& grid, const Core::Parameters& params, Core::Field<3>& out_tendency, const std::string& var_name) const {
+    virtual void
+    calculate_flux_convergence_x(const Core::Field<3>& scalar,
+        const Core::Field<3>& u,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_tendency,
+        const std::string& var_name) const {
         throw std::runtime_error("Spatial scheme does not implement this operation.");
     }
-    virtual void calculate_flux_convergence_y(
-        const Core::Field<3>& scalar, const Core::Field<3>& v,
-        const Core::Grid& grid, const Core::Parameters& params, Core::Field<3>& out_tendency, const std::string& var_name) const {
+    virtual void
+    calculate_flux_convergence_y(const Core::Field<3>& scalar,
+        const Core::Field<3>& v,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_tendency,
+        const std::string& var_name) const {
         throw std::runtime_error("Spatial scheme does not implement this operation.");
     }
-    virtual void calculate_flux_convergence_z(
-        const Core::Field<3>& scalar, const Core::Field<3>& w,
-        const Core::Grid& grid, const Core::Parameters& params, Core::Field<3>& out_tendency, const std::string& var_name) const {
+    virtual void
+    calculate_flux_convergence_z(const Core::Field<3>& scalar,
+        const Core::Field<3>& w,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_tendency,
+        const std::string& var_name) const {
         throw std::runtime_error("Spatial scheme does not implement this operation.");
     }
 
     // ρω∇⋅(v)
-    virtual void calculate_stretching_tendency_x(
-        const Core::State& state, const Core::Grid& grid,
-        const Core::Parameters& params, Core::Field<3>& out_tendency, const std::string& var_name) const {
+    virtual void
+    calculate_stretching_tendency_x(const Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_tendency,
+        const std::string& var_name) const {
         throw std::runtime_error("Spatial scheme does not implement this operation.");
     }
-    virtual void calculate_stretching_tendency_y(
-        const Core::State& state, const Core::Grid& grid,
-        const Core::Parameters& params, Core::Field<3>& out_tendency, const std::string& var_name) const {
+    virtual void
+    calculate_stretching_tendency_y(const Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_tendency,
+        const std::string& var_name) const {
         throw std::runtime_error("Spatial scheme does not implement this operation.");
     }
-    virtual void calculate_stretching_tendency_z(
-        const Core::State& state, const Core::Grid& grid,
-        const Core::Parameters& params, Core::Field<3>& out_tendency, const std::string& var_name) const {
+    virtual void
+    calculate_stretching_tendency_z(const Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_tendency,
+        const std::string& var_name) const {
         throw std::runtime_error("Spatial scheme does not implement this operation.");
     }
 
     // Twisting Term
     // 0.5ρ(eta*Rzeta + zeta*Reta)
-    virtual void calculate_twisting_tendency_x(
-        const Core::State& state, const Core::Grid& grid,
-        const Core::Parameters& params, Core::Field<3>& out_tendency, const std::string& var_name) const {
+    virtual void
+    calculate_twisting_tendency_x(const Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_tendency,
+        const std::string& var_name) const {
         throw std::runtime_error("Spatial scheme does not implement this operation.");
     }
     // 0.5ρ(xi*Rzeta + zeta*Rxi)
-    virtual void calculate_twisting_tendency_y(
-        const Core::State& state, const Core::Grid& grid,
-        const Core::Parameters& params, Core::Field<3>& out_tendency, const std::string& var_name) const {
+    virtual void
+    calculate_twisting_tendency_y(const Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_tendency,
+        const std::string& var_name) const {
         throw std::runtime_error("Spatial scheme does not implement this operation.");
     }
     // 0.5ρ(xi*Reta + eta*Rxi)
-    virtual void calculate_twisting_tendency_z(
-        const Core::State& state, const Core::Grid& grid,
-        const Core::Parameters& params, Core::Field<3>& out_tendency, const std::string& var_name) const {
+    virtual void
+    calculate_twisting_tendency_z(const Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_tendency,
+        const std::string& var_name) const {
         throw std::runtime_error("Spatial scheme does not implement this operation.");
     }
 
     // Rotation (Diagnostic)
-    virtual void calculate_R_xi(
-        const Core::State& state, const Core::Grid& grid,
-        const Core::Parameters& params, Core::Field<3>& out_R_xi) const {
+    virtual void
+    calculate_R_xi(const Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_R_xi) const {
         throw std::runtime_error("Spatial scheme does not implement this operation.");
     }
-    virtual void calculate_R_eta(
-        const Core::State& state, const Core::Grid& grid,
-        const Core::Parameters& params, Core::Field<3>& out_R_eta) const {
+    virtual void
+    calculate_R_eta(const Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_R_eta) const {
         throw std::runtime_error("Spatial scheme does not implement this operation.");
     }
-    virtual void calculate_R_zeta(
-        const Core::State& state, const Core::Grid& grid,
-        const Core::Parameters& params, Core::Field<3>& out_R_zeta) const {
+    virtual void
+    calculate_R_zeta(const Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_R_zeta) const {
         throw std::runtime_error("Spatial scheme does not implement this operation.");
     }
 
     // Vorticity divergence
-    virtual void calculate_vorticity_divergence(
-        const Core::State& state, const Core::Grid& grid,
-        const Core::Parameters& params, Core::Field<3>& out_field) const {
+    virtual void
+    calculate_vorticity_divergence(const Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_field) const {
         throw std::runtime_error("Spatial scheme does not implement this operation.");
     }
 
     // Buoyancy Term
-    virtual void calculate_buoyancy_tendency_x(
-        const Core::State& state, const Core::Grid& grid,
-        const Core::Parameters& params, Core::Field<3>& out_tendency) const {
+    virtual void
+    calculate_buoyancy_tendency_x(const Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_tendency) const {
         throw std::runtime_error("Spatial scheme does not implement this operation.");
     }
-    virtual void calculate_buoyancy_tendency_y(
-        const Core::State& state, const Core::Grid& grid,
-        const Core::Parameters& params, Core::Field<3>& out_tendency) const {
+    virtual void
+    calculate_buoyancy_tendency_y(const Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_tendency) const {
         throw std::runtime_error("Spatial scheme does not implement this operation.");
     }
-
 
     // Coriolis Term
-    virtual void calculate_coriolis_tendency_x(
-        const Core::State& state, const Core::Grid& grid,
-        const Core::Parameters& params, Core::Field<3>& out_tendency) const {
+    virtual void
+    calculate_coriolis_tendency_x(const Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_tendency) const {
         throw std::runtime_error("Spatial scheme does not implement this operation.");
     }
-    virtual void calculate_coriolis_tendency_y(
-        const Core::State& state, const Core::Grid& grid,
-        const Core::Parameters& params, Core::Field<3>& out_tendency) const {
+    virtual void
+    calculate_coriolis_tendency_y(const Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_tendency) const {
         throw std::runtime_error("Spatial scheme does not implement this operation.");
     }
-    virtual void calculate_coriolis_tendency_z(
-        const Core::State& state, const Core::Grid& grid,
-        const Core::Parameters& params, Core::Field<3>& out_tendency) const {
+    virtual void
+    calculate_coriolis_tendency_z(const Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& out_tendency) const {
         throw std::runtime_error("Spatial scheme does not implement this operation.");
     }
 };

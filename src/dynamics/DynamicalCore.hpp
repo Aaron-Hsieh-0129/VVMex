@@ -28,12 +28,12 @@ struct IntegrationStep {
 
 class DynamicalCore {
 public:
-    DynamicalCore(const Utils::ConfigurationManager& config, 
-                  const Core::Grid& grid, 
-                  const Core::Parameters& params,
-                  Core::State& state, 
-                  Core::HaloExchanger& halo_exchanger,
-                  const Core::BoundaryConditionManager& bc_manager);
+    DynamicalCore(const Utils::ConfigurationManager& config,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::State& state,
+        Core::HaloExchanger& halo_exchanger,
+        const Core::BoundaryConditionManager& bc_manager);
     ~DynamicalCore();
 
     void compute_diagnostic_fields() const;
@@ -49,7 +49,6 @@ public:
     void diagnose_wind_fields(Core::State& state);
     void initialize_restart_history();
 
-
 private:
     const Utils::ConfigurationManager& config_;
     Core::State& state_;
@@ -58,7 +57,7 @@ private:
     const Core::BoundaryConditionManager& bc_manager_;
     std::vector<std::string> thermo_vars_;
     std::vector<std::string> vorticity_vars_;
-    
+
     std::map<std::string, std::unique_ptr<NumericalMethod>> numerical_methods_;
     std::vector<IntegrationStep> integration_procedure_;
 
@@ -91,10 +90,14 @@ private:
 
     Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> tempumn_{"tempumn"};
     Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> tempvmn_{"tempvmn"};
-    Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> mean_u_turb_{"mean_u_turb"};
-    Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> mean_v_turb_{"mean_v_turb"};
-    Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> mean_u_coriolis_{"mean_u_coriolis"};
-    Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> mean_v_coriolis_{"mean_v_coriolis"};
+    Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> mean_u_turb_{
+        "mean_u_turb"};
+    Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> mean_v_turb_{
+        "mean_v_turb"};
+    Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> mean_u_coriolis_{
+        "mean_u_coriolis"};
+    Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> mean_v_coriolis_{
+        "mean_v_coriolis"};
 
     Core::FieldRef<0> utopmn_ref_;
     Core::FieldRef<0> utopmn_m_ref_;
