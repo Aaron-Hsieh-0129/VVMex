@@ -330,12 +330,17 @@ test_invalid_configurations(const std::filesystem::path& directory) {
 
     config = make_structured_rll_config();
 
-    config["grid"]["horizontal"]["geometry"]["longitude_bounds_deg"] = {0.0, 180.0};
+    config["grid"]["horizontal"]["geometry"]["longitude_bounds_deg"] = {-1.0, 1.0};
+    const auto regional = parse_spec(directory, "regional_periodic_longitude.json", config);
+    check(regional.horizontal.topology.q1 == HorizontalEdgeTopology::Periodic,
+        "regional RLL must retain periodic longitude");
+    check(close(regional.horizontal.geometry.dq1,
+              VVM::real(2.)*std::acos(VVM::real(-1.))/VVM::real(180.*400.)),
+        "regional RLL must use its actual angular extent, not 360 degrees");
 
-    expect_invalid(directory,
-        "regional_periodic_longitude.json",
-        config,
-        "regional RLL longitude with periodic topology was accepted");
+    config["grid"]["horizontal"]["geometry"]["longitude_bounds_deg"] = {-181.0, 181.0};
+    expect_invalid(directory, "oversized_longitude.json", config,
+        "RLL longitude spanning more than 360 degrees was accepted");
 
     config = make_structured_rll_config();
 
