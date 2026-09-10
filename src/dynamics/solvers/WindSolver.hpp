@@ -172,6 +172,7 @@ private:
     std::unique_ptr<VerticalEllipticSolver> rll_vertical_solver_;
     std::unique_ptr<Core::Field<1>> rll_spacing_;
     std::unique_ptr<Core::Field<0>> rll_increment_;
+    std::unique_ptr<Core::Field<1>> rll_wall_contributions_;
     VVM::Real rll_south_circulation_ = VVM::real(0.0);
     bool rll_initialized_ = false;
 
