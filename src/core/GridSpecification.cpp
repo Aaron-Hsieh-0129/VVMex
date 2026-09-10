@@ -197,9 +197,9 @@ configure_regular_lat_lon_geometry(HorizontalDomainSpec& horizontal,
 
     const bool longitude_is_global = std::abs(longitude_span - 360.0) <= 1.0e-10;
 
-    if (horizontal.topology.q1 == HorizontalEdgeTopology::Periodic && !longitude_is_global) {
-        configuration_error("periodic RLL q1 topology requires a 360-degree longitude span.");
-    }
+    // RLL metrics depend on latitude only, so a shorter longitudinal sector
+    // can also be identified periodically. This is a repeating regional
+    // channel, not open lateral boundaries or a complete global sphere.
 
     if (horizontal.topology.q1 == HorizontalEdgeTopology::Bounded && longitude_is_global) {
         configuration_error("a 360-degree RLL longitude span requires periodic q1 topology.");
