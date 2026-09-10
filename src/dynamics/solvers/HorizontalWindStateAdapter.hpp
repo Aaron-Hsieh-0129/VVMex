@@ -21,22 +21,38 @@ public:
 
     // Initialization only, outside capture: spacing(k) = dz / flex_up(k).
     // Output must already be allocated; validates all values before writing.
-    static void initialize_spacing(VVM::Real dz, const Core::Field<1>& flex_up, Core::Field<1>& spacing);
+    static void initialize_spacing(
+        VVM::Real dz, const Core::Field<1>& flex_up, Core::Field<1>& spacing);
 
     // Compute xi/eta on interfaces first..last, inclusive, using wind k and k+1.
     // Writes physical horizontal cells only. Does not diagnose vertical zeta.
-    void diagnose_vorticity(const Core::Field<3>& u, const Core::Field<3>& v, const Core::Field<3>& w,
-        const Core::Field<1>& spacing, Core::Field<3>& xi, Core::Field<3>& eta, int first, int last) const;
+    void diagnose_vorticity(const Core::Field<3>& u,
+        const Core::Field<3>& v,
+        const Core::Field<3>& w,
+        const Core::Field<1>& spacing,
+        Core::Field<3>& xi,
+        Core::Field<3>& eta,
+        int first,
+        int last) const;
 
     // Convert the existing covariant potential reconstruction to physical u/v.
     // Writes only level top. No mean subtraction or circulation adjustment.
-    void reconstruct_top(const Core::Field<2>& psi, const Core::Field<2>& chi,
-        Core::Field<3>& u, Core::Field<3>& v, int top) const;
+    void reconstruct_top(const Core::Field<2>& psi,
+        const Core::Field<2>& chi,
+        Core::Field<3>& u,
+        Core::Field<3>& v,
+        int top) const;
 
     // Preserve prescribed physical u/v at top; integrate down through bottom.
     // Can therefore retain a caller-supplied compatible nonzero top circulation.
-    void integrate_from_top(const Core::Field<3>& w, const Core::Field<3>& xi, const Core::Field<3>& eta,
-        const Core::Field<1>& spacing, Core::Field<3>& u, Core::Field<3>& v, int bottom, int top) const;
+    void integrate_from_top(const Core::Field<3>& w,
+        const Core::Field<3>& xi,
+        const Core::Field<3>& eta,
+        const Core::Field<1>& spacing,
+        Core::Field<3>& u,
+        Core::Field<3>& v,
+        int bottom,
+        int top) const;
 
     // All execution methods require valid input halos and positive finite used
     // spacing. Outputs must not overlap each other or inputs. No allocations,

@@ -39,7 +39,7 @@ namespace Operators {
 // All views and geometry must remain valid for queued work and replay.
 // The caller supplies valid halos, extents and positive used densities
 // and spacing. No field is modified by this component.
-template<typename VolumeView, typename ProfileView, typename PlaneView>
+template <typename VolumeView, typename ProfileView, typename PlaneView>
 struct RegularLatLonHorizontalDeformationFields {
     VolumeView u;
     VolumeView v;
@@ -79,34 +79,33 @@ struct RegularLatLonHorizontalDeformationDeviceView {
     VVM::Real dq1 = VVM::real(0.0);
     VVM::Real dq2 = VVM::real(0.0);
 
-    template<typename Fields>
-    KOKKOS_INLINE_FUNCTION
-    VVM::Real u1(const Fields& fields, int k, int j, int i) const noexcept {
+    template <typename Fields>
+    KOKKOS_INLINE_FUNCTION VVM::Real
+    u1(const Fields& fields, int k, int j, int i) const noexcept {
         return fields.u(k, j, i) / h1_at_u(j, i);
     }
 
-    template<typename Fields>
-    KOKKOS_INLINE_FUNCTION
-    VVM::Real u2(const Fields& fields, int k, int j, int i) const noexcept {
+    template <typename Fields>
+    KOKKOS_INLINE_FUNCTION VVM::Real
+    u2(const Fields& fields, int k, int j, int i) const noexcept {
         return fields.v(k, j, i) / h2_at_v(j, i);
     }
 
-    template<typename Fields>
-    KOKKOS_INLINE_FUNCTION
-    VVM::Real omega1_over_rho(const Fields& fields, int k, int j, int i) const noexcept {
+    template <typename Fields>
+    KOKKOS_INLINE_FUNCTION VVM::Real
+    omega1_over_rho(const Fields& fields, int k, int j, int i) const noexcept {
         return fields.xi(k, j, i) / h1_at_v(j, i);
     }
 
-    template<typename Fields>
-    KOKKOS_INLINE_FUNCTION
-    VVM::Real omega2_over_rho(const Fields& fields, int k, int j, int i) const noexcept {
+    template <typename Fields>
+    KOKKOS_INLINE_FUNCTION VVM::Real
+    omega2_over_rho(const Fields& fields, int k, int j, int i) const noexcept {
         return -fields.eta(k, j, i) / h2_at_u(j, i);
     }
 
-    template<typename Fields>
-    KOKKOS_INLINE_FUNCTION
-    HorizontalDeformationTerms calculate_xi_at_v(
-        const Fields& fields, int k, int j, int i) const noexcept {
+    template <typename Fields>
+    KOKKOS_INLINE_FUNCTION HorizontalDeformationTerms
+    calculate_xi_at_v(const Fields& fields, int k, int j, int i) const noexcept {
 
         VVM::Real stretching = VVM::real(0.0);
         VVM::Real cross = VVM::real(0.0);
@@ -115,38 +114,28 @@ struct RegularLatLonHorizontalDeformationDeviceView {
 
         for (int jj = j; jj <= j + 1; ++jj) {
             stretching +=
-                (omega1_over_rho(fields, k, jj, i)
-                 + omega1_over_rho(fields, k, jj - 1, i))
-                * (fields.fn1(k)
-                   * (u1(fields, k + 1, jj, i) - u1(fields, k + 1, jj, i - 1))
-                   + fields.fn2(k)
-                   * (u1(fields, k, jj, i) - u1(fields, k, jj, i - 1)));
+                (omega1_over_rho(fields, k, jj, i) + omega1_over_rho(fields, k, jj - 1, i)) *
+                (fields.fn1(k) * (u1(fields, k + 1, jj, i) - u1(fields, k + 1, jj, i - 1)) +
+                    fields.fn2(k) * (u1(fields, k, jj, i) - u1(fields, k, jj, i - 1)));
         }
 
         for (int ii = i - 1; ii <= i; ++ii) {
-            cross +=
-                (omega2_over_rho(fields, k, j + 1, ii)
-                 + omega2_over_rho(fields, k, j, ii))
-                * (fields.fn2(k)
-                   * (u1(fields, k, j + 1, ii) - u1(fields, k, j, ii))
-                   + fields.fn1(k)
-                   * (u1(fields, k + 1, j + 1, ii) - u1(fields, k + 1, j, ii)));
+            cross += (omega2_over_rho(fields, k, j + 1, ii) + omega2_over_rho(fields, k, j, ii)) *
+                     (fields.fn2(k) * (u1(fields, k, j + 1, ii) - u1(fields, k, j, ii)) +
+                         fields.fn1(k) * (u1(fields, k + 1, j + 1, ii) - u1(fields, k + 1, j, ii)));
 
-            const VVM::Real wind_difference =
-                u1(fields, k + 1, j, ii) - u1(fields, k, j, ii)
-                + u1(fields, k + 1, j + 1, ii) - u1(fields, k, j + 1, ii);
+            const VVM::Real wind_difference = u1(fields, k + 1, j, ii) - u1(fields, k, j, ii) +
+                                              u1(fields, k + 1, j + 1, ii) -
+                                              u1(fields, k, j + 1, ii);
 
-            vertical += wind_difference
-                * (fields.zeta(k, j, ii) + fields.zeta(k + 1, j, ii));
+            vertical += wind_difference * (fields.zeta(k, j, ii) + fields.zeta(k + 1, j, ii));
 
-            planetary += wind_difference
-                * (fields.f_at_z(j, ii) / fields.rho(k)
-                   + fields.f_at_z(j, ii) / fields.rho(k + 1));
+            planetary += wind_difference * (fields.f_at_z(j, ii) / fields.rho(k) +
+                                               fields.f_at_z(j, ii) / fields.rho(k + 1));
         }
 
         const VVM::Real scale = h1_at_v(j, i) * VVM::real(0.125);
-        const VVM::Real vertical_factor =
-            fields.rho_up(k) * fields.inverse_spacing(k);
+        const VVM::Real vertical_factor = fields.rho_up(k) * fields.inverse_spacing(k);
 
         HorizontalDeformationTerms result;
         result.stretching = scale * stretching / dq1;
@@ -155,10 +144,9 @@ struct RegularLatLonHorizontalDeformationDeviceView {
         return result;
     }
 
-    template<typename Fields>
-    KOKKOS_INLINE_FUNCTION
-    HorizontalDeformationTerms calculate_eta_at_u(
-        const Fields& fields, int k, int j, int i) const noexcept {
+    template <typename Fields>
+    KOKKOS_INLINE_FUNCTION HorizontalDeformationTerms
+    calculate_eta_at_u(const Fields& fields, int k, int j, int i) const noexcept {
 
         VVM::Real stretching = VVM::real(0.0);
         VVM::Real cross = VVM::real(0.0);
@@ -167,33 +155,24 @@ struct RegularLatLonHorizontalDeformationDeviceView {
 
         for (int ii = i; ii <= i + 1; ++ii) {
             stretching +=
-                (omega2_over_rho(fields, k, j, ii - 1)
-                 + omega2_over_rho(fields, k, j, ii))
-                * (fields.fn1(k)
-                   * (u2(fields, k + 1, j, ii) - u2(fields, k + 1, j - 1, ii))
-                   + fields.fn2(k)
-                   * (u2(fields, k, j, ii) - u2(fields, k, j - 1, ii)));
+                (omega2_over_rho(fields, k, j, ii - 1) + omega2_over_rho(fields, k, j, ii)) *
+                (fields.fn1(k) * (u2(fields, k + 1, j, ii) - u2(fields, k + 1, j - 1, ii)) +
+                    fields.fn2(k) * (u2(fields, k, j, ii) - u2(fields, k, j - 1, ii)));
         }
 
         for (int jj = j - 1; jj <= j; ++jj) {
-            cross +=
-                (omega1_over_rho(fields, k, jj, i + 1)
-                 + omega1_over_rho(fields, k, jj, i))
-                * (fields.fn2(k)
-                   * (u2(fields, k, jj, i + 1) - u2(fields, k, jj, i))
-                   + fields.fn1(k)
-                   * (u2(fields, k + 1, jj, i + 1) - u2(fields, k + 1, jj, i)));
+            cross += (omega1_over_rho(fields, k, jj, i + 1) + omega1_over_rho(fields, k, jj, i)) *
+                     (fields.fn2(k) * (u2(fields, k, jj, i + 1) - u2(fields, k, jj, i)) +
+                         fields.fn1(k) * (u2(fields, k + 1, jj, i + 1) - u2(fields, k + 1, jj, i)));
 
-            const VVM::Real wind_difference =
-                u2(fields, k + 1, jj, i) - u2(fields, k, jj, i)
-                + u2(fields, k + 1, jj, i + 1) - u2(fields, k, jj, i + 1);
+            const VVM::Real wind_difference = u2(fields, k + 1, jj, i) - u2(fields, k, jj, i) +
+                                              u2(fields, k + 1, jj, i + 1) -
+                                              u2(fields, k, jj, i + 1);
 
-            vertical += wind_difference
-                * (fields.zeta(k, jj, i) + fields.zeta(k + 1, jj, i));
+            vertical += wind_difference * (fields.zeta(k, jj, i) + fields.zeta(k + 1, jj, i));
 
-            planetary += wind_difference
-                * (fields.f_at_z(jj, i) / fields.rho(k)
-                   + fields.f_at_z(jj, i) / fields.rho(k + 1));
+            planetary += wind_difference * (fields.f_at_z(jj, i) / fields.rho(k) +
+                                               fields.f_at_z(jj, i) / fields.rho(k + 1));
         }
 
         // Convert canonical omega2 tendency to legacy-sign physical eta.

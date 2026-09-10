@@ -10,9 +10,9 @@ namespace Dynamics {
 
 class RandomForcing {
 public:
-    RandomForcing(const Utils::ConfigurationManager& config, 
-                  const Core::Grid& grid,
-                  const Core::Parameters& params);
+    RandomForcing(const Utils::ConfigurationManager& config,
+        const Core::Grid& grid,
+        const Core::Parameters& params);
 
     void initialize(Core::State& state);
     void apply(Core::State& state);

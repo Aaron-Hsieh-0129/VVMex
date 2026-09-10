@@ -7,7 +7,8 @@ using namespace VVM::IO::BP5;
 
 namespace {
 int failures = 0;
-void check(bool condition, const char* message) {
+void
+check(bool condition, const char* message) {
     if (!condition) {
         std::fprintf(stderr, "FAIL: %s\n", message);
         ++failures;
@@ -15,13 +16,10 @@ void check(bool condition, const char* message) {
 }
 } // namespace
 
-int main() {
+int
+main() {
     const InclusiveBounds bounds{2, 7, 1, 6, 1, 4};
-    const GridRegion upper_left{
-        10, 8, 6,
-        0, 0, 0,
-        5, 4, 6,
-        2};
+    const GridRegion upper_left{10, 8, 6, 0, 0, 0, 5, 4, 6, 2};
     Bp5FieldSchema schema(bounds, upper_left, 0);
 
     const auto one = schema.selection(1);
@@ -49,11 +47,7 @@ int main() {
     check(four.count == (adios2::Dims{3, 4, 3, 3}), "4-D count");
     check(four.memory_start == (adios2::Dims{0, 3, 3, 4}), "4-D memory start");
 
-    const GridRegion outside{
-        10, 8, 6,
-        8, 7, 0,
-        2, 1, 6,
-        2};
+    const GridRegion outside{10, 8, 6, 8, 7, 0, 2, 1, 6, 2};
     Bp5FieldSchema empty_schema(bounds, outside, 3);
     check(empty_schema.selection(3).empty(), "empty rank intersection");
     check(empty_schema.selection(3).elements() == 0, "empty rank elements");
@@ -72,14 +66,18 @@ int main() {
     try {
         (void)schema.selection(0);
         check(false, "0-D selection accepted");
-    } catch (const std::invalid_argument&) {
+    }
+    catch (const std::invalid_argument&) {
     }
     try {
         (void)schema.selection(4, 0);
         check(false, "zero-component 4-D selection accepted");
-    } catch (const std::invalid_argument&) {
+    }
+    catch (const std::invalid_argument&) {
     }
 
-    if (failures == 0) std::puts("test_bp5_field_schema: PASS");
+    if (failures == 0) {
+        std::puts("test_bp5_field_schema: PASS");
+    }
     return failures == 0 ? 0 : 1;
 }

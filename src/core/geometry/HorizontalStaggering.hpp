@@ -30,40 +30,45 @@ constexpr std::optional<HorizontalLocation>
 try_horizontal_location(const GridStaggering staggering) noexcept {
 
     switch (staggering) {
-        case GridStaggering::Centered:
-        case GridStaggering::StaggeredZ:
-        case GridStaggering::Surface:
-            return HorizontalLocation::T;
+    case GridStaggering::Centered:
+    case GridStaggering::StaggeredZ:
+    case GridStaggering::Surface:
+        return HorizontalLocation::T;
 
-        case GridStaggering::StaggeredX:
-        case GridStaggering::StaggeredXZ:
-            return HorizontalLocation::U;
+    case GridStaggering::StaggeredX:
+    case GridStaggering::StaggeredXZ:
+        return HorizontalLocation::U;
 
-        case GridStaggering::StaggeredY:
-        case GridStaggering::StaggeredYZ:
-            return HorizontalLocation::V;
+    case GridStaggering::StaggeredY:
+    case GridStaggering::StaggeredYZ:
+        return HorizontalLocation::V;
 
-        case GridStaggering::StaggeredXY:
-        case GridStaggering::StaggeredXYZ:
-            return HorizontalLocation::Z;
+    case GridStaggering::StaggeredXY:
+    case GridStaggering::StaggeredXYZ:
+        return HorizontalLocation::Z;
 
-        case GridStaggering::Unspecified:
-        case GridStaggering::NotApplicable:
-            return std::nullopt;
+    case GridStaggering::Unspecified:
+    case GridStaggering::NotApplicable:
+        return std::nullopt;
     }
 
     return std::nullopt;
 }
 
-inline HorizontalLocation horizontal_location_or_throw(const GridStaggering staggering, const std::string& field_name = {}) {
+inline HorizontalLocation
+horizontal_location_or_throw(const GridStaggering staggering, const std::string& field_name = {}) {
     const auto location = try_horizontal_location(staggering);
 
-    if (location.has_value()) return *location;
+    if (location.has_value()) {
+        return *location;
+    }
 
     std::string message = "No horizontal geometry location exists for staggering '" +
                           std::string(grid_staggering_to_string(staggering)) + "'";
 
-    if (!field_name.empty()) message += " on field '" + field_name + "'";
+    if (!field_name.empty()) {
+        message += " on field '" + field_name + "'";
+    }
 
     message += ".";
 

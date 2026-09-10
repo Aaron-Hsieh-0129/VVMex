@@ -41,8 +41,8 @@ struct RegularLatLonEllipticMetrics {
 // Host-side adapter. Call during solver construction, before graph capture.
 // Reject a changed storage layout explicitly instead of silently reading an
 // empty 1-D view if the geometry implementation changes later.
-inline RegularLatLonEllipticMetrics make_regular_lat_lon_elliptic_metrics(
-    const Core::Geometry::HorizontalGeometry& geometry) {
+inline RegularLatLonEllipticMetrics
+make_regular_lat_lon_elliptic_metrics(const Core::Geometry::HorizontalGeometry& geometry) {
 
     using Core::Geometry::GeometryField2D;
     using Core::Geometry::GeometryFieldLayout;
@@ -50,7 +50,8 @@ inline RegularLatLonEllipticMetrics make_regular_lat_lon_elliptic_metrics(
     using Core::Geometry::HorizontalLocation;
 
     if (geometry.kind() != GeometryKind::RegularLatLon) {
-        throw std::invalid_argument("RegularLatLonEllipticMetrics requires regular latitude-longitude geometry.");
+        throw std::invalid_argument(
+            "RegularLatLonEllipticMetrics requires regular latitude-longitude geometry.");
     }
 
     const auto t = geometry.device_view(HorizontalLocation::T);
@@ -61,9 +62,9 @@ inline RegularLatLonEllipticMetrics make_regular_lat_lon_elliptic_metrics(
 
     const auto latitude_view = [ny](const GeometryField2D& field, const char* name) {
         if (field.layout != GeometryFieldLayout::VaryingJ ||
-            field.one_dimensional.extent(0) != ny ||
-            field.one_dimensional.data() == nullptr) {
-            throw std::invalid_argument(std::string("RegularLatLonEllipticMetrics requires a latitude array for ") + name);
+            field.one_dimensional.extent(0) != ny || field.one_dimensional.data() == nullptr) {
+            throw std::invalid_argument(
+                std::string("RegularLatLonEllipticMetrics requires a latitude array for ") + name);
         }
 
         return field.one_dimensional;
@@ -79,10 +80,14 @@ inline RegularLatLonEllipticMetrics make_regular_lat_lon_elliptic_metrics(
     result.inv_sqrt_g_at_u = latitude_view(u.inv_sqrt_g, "inv_sqrt_g_at_u");
     result.inv_sqrt_g_at_v = latitude_view(v.inv_sqrt_g, "inv_sqrt_g_at_v");
 
-    result.sqrt_g_g_contra_11_at_u = latitude_view(u.sqrt_g_g_contra.a11, "sqrt_g_g_contra_11_at_u");
-    result.sqrt_g_g_contra_22_at_u = latitude_view(u.sqrt_g_g_contra.a22, "sqrt_g_g_contra_22_at_u");
-    result.sqrt_g_g_contra_11_at_v = latitude_view(v.sqrt_g_g_contra.a11, "sqrt_g_g_contra_11_at_v");
-    result.sqrt_g_g_contra_22_at_v = latitude_view(v.sqrt_g_g_contra.a22, "sqrt_g_g_contra_22_at_v");
+    result.sqrt_g_g_contra_11_at_u =
+        latitude_view(u.sqrt_g_g_contra.a11, "sqrt_g_g_contra_11_at_u");
+    result.sqrt_g_g_contra_22_at_u =
+        latitude_view(u.sqrt_g_g_contra.a22, "sqrt_g_g_contra_22_at_u");
+    result.sqrt_g_g_contra_11_at_v =
+        latitude_view(v.sqrt_g_g_contra.a11, "sqrt_g_g_contra_11_at_v");
+    result.sqrt_g_g_contra_22_at_v =
+        latitude_view(v.sqrt_g_g_contra.a22, "sqrt_g_g_contra_22_at_v");
 
     result.dq1 = t.dq1;
     result.dq2 = t.dq2;

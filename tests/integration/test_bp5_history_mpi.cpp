@@ -31,34 +31,43 @@ constexpr int kSteps = 3;
 int g_rank = 0;
 int g_failures = 0;
 
-void check(bool condition, const std::string& message) {
-    if (condition) return;
+void
+check(bool condition, const std::string& message) {
+    if (condition) {
+        return;
+    }
     ++g_failures;
     std::fprintf(stderr, "[rank %d] FAIL: %s\n", g_rank, message.c_str());
 }
 
-KOKKOS_INLINE_FUNCTION VVM::Real expected_1d(int step, int k) {
+KOKKOS_INLINE_FUNCTION VVM::Real
+expected_1d(int step, int k) {
     return VVM::real(1000000 * step + k);
 }
 
-KOKKOS_INLINE_FUNCTION VVM::Real expected_2d(int step, int j, int i) {
+KOKKOS_INLINE_FUNCTION VVM::Real
+expected_2d(int step, int j, int i) {
     return VVM::real(1000000 * step + 100 * j + i);
 }
 
-KOKKOS_INLINE_FUNCTION VVM::Real expected_3d(int step, int k, int j, int i) {
+KOKKOS_INLINE_FUNCTION VVM::Real
+expected_3d(int step, int k, int j, int i) {
     return VVM::real(1000000 * step + 10000 * k + 100 * j + i);
 }
 
-KOKKOS_INLINE_FUNCTION VVM::Real expected_4d(int step, int c, int k, int j, int i) {
+KOKKOS_INLINE_FUNCTION VVM::Real
+expected_4d(int step, int c, int k, int j, int i) {
     return VVM::real(10000000 * c) + expected_3d(step, k, j, i);
 }
 
 template <typename View>
-void fill_junk(View view) {
+void
+fill_junk(View view) {
     Kokkos::deep_copy(view, VVM::real(-987654321));
 }
 
-void fill_fields(VVM::Core::State& state, const VVM::Core::Grid& grid, int step) {
+void
+fill_fields(VVM::Core::State& state, const VVM::Core::Grid& grid, int step) {
     const int h = grid.get_halo_cells();
     const int nx = grid.get_local_total_points_x();
     const int ny = grid.get_local_total_points_y();
@@ -75,41 +84,39 @@ void fill_fields(VVM::Core::State& state, const VVM::Core::Grid& grid, int step)
     fill_junk(u);
     fill_junk(four);
 
-    Kokkos::parallel_for(
-        "bp5_test_fill_1d", Kokkos::RangePolicy<>(h, nz - h),
+    Kokkos::parallel_for("bp5_test_fill_1d",
+        Kokkos::RangePolicy<>(h, nz - h),
         KOKKOS_LAMBDA(const int k) { thbar(k) = expected_1d(step, k - h); });
-    Kokkos::parallel_for(
-        "bp5_test_fill_2d",
+    Kokkos::parallel_for("bp5_test_fill_2d",
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
         KOKKOS_LAMBDA(const int j, const int i) {
             topo(j, i) = expected_2d(step, j0 + j - h, i0 + i - h);
         });
-    Kokkos::parallel_for(
-        "bp5_test_fill_3d",
+    Kokkos::parallel_for("bp5_test_fill_3d",
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {nz - h, ny - h, nx - h}),
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
             u(k, j, i) = expected_3d(step, k - h, j0 + j - h, i0 + i - h);
             for (int c = 0; c < 2; ++c) {
-                four(c, k, j, i) =
-                    expected_4d(step, c, k - h, j0 + j - h, i0 + i - h);
+                four(c, k, j, i) = expected_4d(step, c, k - h, j0 + j - h, i0 + i - h);
             }
         });
     Kokkos::fence("bp5_test_fill_complete");
 }
 
-void fill_coordinates(VVM::Core::Parameters& parameters, const VVM::Core::Grid& grid) {
+void
+fill_coordinates(VVM::Core::Parameters& parameters, const VVM::Core::Grid& grid) {
     const int h = grid.get_halo_cells();
     const int nz = grid.get_local_total_points_z();
     auto z = parameters.z_mid.get_mutable_device_data();
     fill_junk(z);
-    Kokkos::parallel_for(
-        "bp5_test_fill_z", Kokkos::RangePolicy<>(h, nz - h),
+    Kokkos::parallel_for("bp5_test_fill_z",
+        Kokkos::RangePolicy<>(h, nz - h),
         KOKKOS_LAMBDA(const int k) { z(k) = VVM::real(50 + 25 * (k - h)); });
     Kokkos::fence("bp5_test_coordinates_complete");
 }
 
-nlohmann::json make_config(
-    const std::filesystem::path& base_config,
+nlohmann::json
+make_config(const std::filesystem::path& base_config,
     const std::filesystem::path& output_dir,
     const std::string& mode,
     bool async_write,
@@ -117,7 +124,9 @@ nlohmann::json make_config(
     bool empty_rank_case,
     int comm_size) {
     std::ifstream stream(base_config);
-    if (!stream) throw std::runtime_error("Cannot read base test configuration.");
+    if (!stream) {
+        throw std::runtime_error("Cannot read base test configuration.");
+    }
     nlohmann::json config;
     stream >> config;
     config["grid"]["nx"] = kNx;
@@ -132,12 +141,13 @@ nlohmann::json make_config(
     config["output"]["precision"] = precision;
     config["output"]["fields_to_output"] =
         nlohmann::json::array({"thbar", "topo", "u", "bp5_test_4d"});
-    config["output"]["output_grid"] = {
-        {"x_start", 0}, {"x_end", empty_rank_case ? 1 : 6},
-        {"y_start", 0}, {"y_end", empty_rank_case ? 1 : 5},
-        {"z_start", 1}, {"z_end", 4}};
-    config["output"]["bp5"] = {
-        {"aggregation_type", "TwoLevelShm"},
+    config["output"]["output_grid"] = {{"x_start", 0},
+        {"x_end", empty_rank_case ? 1 : 6},
+        {"y_start", 0},
+        {"y_end", empty_rank_case ? 1 : 5},
+        {"z_start", 1},
+        {"z_end", 4}};
+    config["output"]["bp5"] = {{"aggregation_type", "TwoLevelShm"},
         {"num_subfiles", std::min(comm_size, 2)},
         {"stats_level", 0},
         {"async_write", async_write},
@@ -147,12 +157,13 @@ nlohmann::json make_config(
 }
 
 template <typename T>
-bool same(const T& a, const T& b) {
+bool
+same(const T& a, const T& b) {
     return a == b;
 }
 
-void check_shape(const adios2::Dims& got, const adios2::Dims& want,
-                 const std::string& name) {
+void
+check_shape(const adios2::Dims& got, const adios2::Dims& want, const std::string& name) {
     check(got == want, name + " global shape");
 }
 
@@ -160,10 +171,8 @@ void check_shape(const adios2::Dims& got, const adios2::Dims& want,
 // necessarily VVM::Real. Coordinates and clocks are deliberately excluded: the
 // writer keeps those at full precision regardless, and this asserts that.
 template <typename Elem>
-void read_and_check(
-    const std::filesystem::path& dataset,
-    int x_end,
-    int y_end) {
+void
+read_and_check(const std::filesystem::path& dataset, int x_end, int y_end) {
     using Other = std::conditional_t<std::is_same_v<Elem, float>, double, float>;
     adios2::ADIOS adios(MPI_COMM_SELF);
     adios2::IO io = adios.DeclareIO("VVM_BP5_TEST_READER");
@@ -187,14 +196,13 @@ void read_and_check(
         check(!io.InquireVariable<Other>("thbar"), "thbar is not the other float type");
         check(!io.InquireVariable<Other>("topo"), "topo is not the other float type");
         check(!io.InquireVariable<Other>("u"), "u is not the other float type");
-        check(!io.InquireVariable<Other>("bp5_test_4d"),
-              "bp5_test_4d is not the other float type");
+        check(!io.InquireVariable<Other>("bp5_test_4d"), "bp5_test_4d is not the other float type");
 
         check(time_var && model_time_var && model_step_var, "clock variables exist");
         check(x_var && y_var && z_var, "coordinate variables exist");
         check(one_var && two_var && three_var && four_var, "all configured fields exist");
-        if (!(time_var && model_time_var && model_step_var && x_var && y_var && z_var &&
-              one_var && two_var && three_var && four_var)) {
+        if (!(time_var && model_time_var && model_step_var && x_var && y_var && z_var && one_var &&
+                two_var && three_var && four_var)) {
             reader.EndStep();
             ++observed_steps;
             continue;
@@ -222,23 +230,27 @@ void read_and_check(
         reader.Get(x_var, x.data(), adios2::Mode::Sync);
         reader.Get(y_var, y.data(), adios2::Mode::Sync);
         reader.Get(z_var, z.data(), adios2::Mode::Sync);
-        for (int i = 0; i < kNx; ++i) check(x[i] == VVM::real(125 * i), "x coordinate value");
-        for (int j = 0; j < kNy; ++j) check(y[j] == VVM::real(250 * j), "y coordinate value");
-        for (int k = 0; k < kNz; ++k) check(z[k] == VVM::real(50 + 25 * k), "z coordinate value");
+        for (int i = 0; i < kNx; ++i) {
+            check(x[i] == VVM::real(125 * i), "x coordinate value");
+        }
+        for (int j = 0; j < kNy; ++j) {
+            check(y[j] == VVM::real(250 * j), "y coordinate value");
+        }
+        for (int k = 0; k < kNz; ++k) {
+            check(z[k] == VVM::real(50 + 25 * k), "z coordinate value");
+        }
 
         constexpr int z_start = 1;
         constexpr int z_count = 4;
         const int x_count = x_end + 1;
         const int y_count = y_end + 1;
         one_var.SetSelection({{z_start}, {z_count}});
-        two_var.SetSelection({{0, 0}, {static_cast<std::size_t>(y_count),
-                                       static_cast<std::size_t>(x_count)}});
+        two_var.SetSelection(
+            {{0, 0}, {static_cast<std::size_t>(y_count), static_cast<std::size_t>(x_count)}});
         three_var.SetSelection({{z_start, 0, 0},
-                                {z_count, static_cast<std::size_t>(y_count),
-                                 static_cast<std::size_t>(x_count)}});
+            {z_count, static_cast<std::size_t>(y_count), static_cast<std::size_t>(x_count)}});
         four_var.SetSelection({{0, z_start, 0, 0},
-                               {2, z_count, static_cast<std::size_t>(y_count),
-                                static_cast<std::size_t>(x_count)}});
+            {2, z_count, static_cast<std::size_t>(y_count), static_cast<std::size_t>(x_count)}});
         std::vector<Elem> one(z_count);
         std::vector<Elem> two(y_count * x_count);
         std::vector<Elem> three(z_count * y_count * x_count);
@@ -250,24 +262,24 @@ void read_and_check(
         // Exact equality against the cast of the model value. Conversion is a
         // plain static_cast, so there is no tolerance to tune even at float32:
         // a different rounding would be a real defect, not noise.
-        for (int k = 0; k < z_count; ++k)
+        for (int k = 0; k < z_count; ++k) {
             check(one[k] == static_cast<Elem>(expected_1d(observed_steps, z_start + k)),
-                  "1-D field value");
+                "1-D field value");
+        }
         for (int j = 0; j < y_count; ++j) {
             for (int i = 0; i < x_count; ++i) {
-                check(two[j * x_count + i] ==
-                          static_cast<Elem>(expected_2d(observed_steps, j, i)),
-                      "2-D field value");
+                check(two[j * x_count + i] == static_cast<Elem>(expected_2d(observed_steps, j, i)),
+                    "2-D field value");
                 for (int k = 0; k < z_count; ++k) {
                     const std::size_t p = (k * y_count + j) * x_count + i;
-                    check(three[p] == static_cast<Elem>(
-                                          expected_3d(observed_steps, z_start + k, j, i)),
-                          "3-D field value");
+                    check(three[p] ==
+                              static_cast<Elem>(expected_3d(observed_steps, z_start + k, j, i)),
+                        "3-D field value");
                     for (int c = 0; c < 2; ++c) {
                         const std::size_t q = ((c * z_count + k) * y_count + j) * x_count + i;
                         check(four[q] == static_cast<Elem>(
                                              expected_4d(observed_steps, c, z_start + k, j, i)),
-                              "4-D field value");
+                            "4-D field value");
                     }
                 }
             }
@@ -281,27 +293,21 @@ void read_and_check(
             const auto schema_version = io.InquireAttribute<std::string>("vvm_schema_version");
             check(units && units.Data().at(0) == "m s-1", "field units metadata");
             check(long_name && long_name.Data().at(0) == "x wind", "field long_name metadata");
-            check(!standard_name,
-                  "empty standard_name is omitted");
+            check(!standard_name, "empty standard_name is omitted");
             check(staggering && staggering.Data().at(0) == "staggered_x",
-                  "field staggering metadata");
-            check(schema_version && schema_version.Data().at(0) == "1",
-                  "dataset schema metadata");
+                "field staggering metadata");
+            check(schema_version && schema_version.Data().at(0) == "1", "dataset schema metadata");
 
             // A reader has to be able to tell a lossless file from a narrowed
             // one without inspecting variable types by hand.
-            const auto field_precision =
-                io.InquireAttribute<std::string>("vvm_field_precision");
-            const auto real_precision =
-                io.InquireAttribute<std::string>("vvm_real_precision");
-            const std::string want_field =
-                std::is_same_v<Elem, float> ? "float32" : "float64";
-            const std::string want_real =
-                sizeof(VVM::Real) == 8 ? "float64" : "float32";
+            const auto field_precision = io.InquireAttribute<std::string>("vvm_field_precision");
+            const auto real_precision = io.InquireAttribute<std::string>("vvm_real_precision");
+            const std::string want_field = std::is_same_v<Elem, float> ? "float32" : "float64";
+            const std::string want_real = sizeof(VVM::Real) == 8 ? "float64" : "float32";
             check(field_precision && field_precision.Data().at(0) == want_field,
-                  "vvm_field_precision records the on-disk field type");
+                "vvm_field_precision records the on-disk field type");
             check(real_precision && real_precision.Data().at(0) == want_real,
-                  "vvm_real_precision still records the model's own precision");
+                "vvm_real_precision still records the model's own precision");
         }
         reader.EndStep();
         ++observed_steps;
@@ -312,7 +318,8 @@ void read_and_check(
 
 } // namespace
 
-int main(int argc, char** argv) {
+int
+main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &g_rank);
     int comm_size = 1;
@@ -320,8 +327,8 @@ int main(int argc, char** argv) {
     if (argc != 6 && argc != 7) {
         if (g_rank == 0) {
             std::fprintf(stderr,
-                         "usage: test_bp5_history_mpi BASE_CONFIG WORK_ROOT direct|pack "
-                         "sync|async EXPECTED_RANKS [native|float32|float64]\n");
+                "usage: test_bp5_history_mpi BASE_CONFIG WORK_ROOT direct|pack "
+                "sync|async EXPECTED_RANKS [native|float32|float64]\n");
         }
         MPI_Finalize();
         return 2;
@@ -330,9 +337,10 @@ int main(int argc, char** argv) {
     if (comm_size != expected_ranks) {
         if (g_rank == 0) {
             std::fprintf(stderr,
-                         "MPI launcher mismatch: expected %d ranks, MPI_COMM_WORLD has %d. "
-                         "Use the mpiexec from the same MPI installation as the compiler.\n",
-                         expected_ranks, comm_size);
+                "MPI launcher mismatch: expected %d ranks, MPI_COMM_WORLD has %d. "
+                "Use the mpiexec from the same MPI installation as the compiler.\n",
+                expected_ranks,
+                comm_size);
         }
         MPI_Finalize();
         return 2;
@@ -344,17 +352,21 @@ int main(int argc, char** argv) {
     // the tests registered before this option existed keep their exact meaning.
     const std::string precision = (argc == 7) ? argv[6] : "native";
     const bool empty_rank_case = comm_size >= 4;
-    const std::string tag = mode + "_" + argv[4] + "_" + precision + "_r" +
-                            std::to_string(comm_size);
-    const std::filesystem::path case_dir =
-        std::filesystem::path(argv[2]) / ("bp5_history_" + tag);
+    const std::string tag =
+        mode + "_" + argv[4] + "_" + precision + "_r" + std::to_string(comm_size);
+    const std::filesystem::path case_dir = std::filesystem::path(argv[2]) / ("bp5_history_" + tag);
     const std::filesystem::path config_path = case_dir.parent_path() / ("bp5_" + tag + ".json");
 
     try {
         if (g_rank == 0) {
             std::filesystem::create_directories(case_dir.parent_path());
-            const auto json = make_config(argv[1], case_dir, mode, async_write,
-                                          precision, empty_rank_case, comm_size);
+            const auto json = make_config(argv[1],
+                case_dir,
+                mode,
+                async_write,
+                precision,
+                empty_rank_case,
+                comm_size);
             std::ofstream output(config_path);
             output << json.dump(2) << '\n';
         }
@@ -368,25 +380,28 @@ int main(int argc, char** argv) {
             fill_coordinates(parameters, grid);
 #if defined(ENABLE_NCCL)
             ncclUniqueId id;
-            if (g_rank == 0) ncclGetUniqueId(&id);
+            if (g_rank == 0) {
+                ncclGetUniqueId(&id);
+            }
             MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
             ncclComm_t nccl_comm;
             ncclCommInitRank(&nccl_comm, comm_size, id, g_rank);
             cudaStream_t stream = Kokkos::Cuda().cuda_stream();
-            VVM::Core::State state(
-                config, parameters, grid, nccl_comm, stream);
+            VVM::Core::State state(config, parameters, grid, nccl_comm, stream);
 #else
             VVM::Core::State state(config, parameters, grid);
 #endif
-            state.add_field<4>(
-                "bp5_test_4d",
-                {2, grid.get_local_total_points_z(), grid.get_local_total_points_y(),
-                 grid.get_local_total_points_x()},
+            state.add_field<4>("bp5_test_4d",
+                {2,
+                    grid.get_local_total_points_z(),
+                    grid.get_local_total_points_y(),
+                    grid.get_local_total_points_x()},
                 VVM::Core::FieldMetadata{VVM::Core::GridStaggering::Centered,
-                                         "test_unit", "BP5 four-dimensional test field",
-                                         "bp5_test_4d", "integration test"});
-            VVM::IO::BP5::Bp5HistoryWriter writer(
-                config, grid, parameters, state, MPI_COMM_WORLD);
+                    "test_unit",
+                    "BP5 four-dimensional test field",
+                    "bp5_test_4d",
+                    "integration test"});
+            VVM::IO::BP5::Bp5HistoryWriter writer(config, grid, parameters, state, MPI_COMM_WORLD);
             for (int step = 0; step < kSteps; ++step) {
                 fill_fields(state, grid, step);
                 writer.write(10 + step, VVM::real(step * 2.5));
@@ -401,7 +416,8 @@ int main(int argc, char** argv) {
                     (precision == "native" && sizeof(VVM::Real) == sizeof(float));
                 if (on_disk_is_float32) {
                     read_and_check<float>(case_dir / "history.bp", x_end, y_end);
-                } else {
+                }
+                else {
                     read_and_check<double>(case_dir / "history.bp", x_end, y_end);
                 }
             }
@@ -411,10 +427,13 @@ int main(int argc, char** argv) {
 #endif
         }
         Kokkos::finalize();
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e) {
         std::fprintf(stderr, "[rank %d] exception: %s\n", g_rank, e.what());
         ++g_failures;
-        if (Kokkos::is_initialized()) Kokkos::finalize();
+        if (Kokkos::is_initialized()) {
+            Kokkos::finalize();
+        }
     }
 
     int global_failures = 0;

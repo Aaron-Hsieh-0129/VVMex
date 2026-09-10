@@ -14,44 +14,54 @@ namespace Geometry {
 class RegularLatLonGeometry final : public HorizontalGeometry {
 public:
     RegularLatLonGeometry(HorizontalDomainLayout layout,
-        VVM::Real dlongitude, VVM::Real dlatitude,
-        VVM::Real longitude_west_edge, VVM::Real latitude_south_edge, VVM::Real radius);
+        VVM::Real dlongitude,
+        VVM::Real dlatitude,
+        VVM::Real longitude_west_edge,
+        VVM::Real latitude_south_edge,
+        VVM::Real radius);
 
-    GeometryKind kind() const noexcept override {
+    GeometryKind
+    kind() const noexcept override {
         return GeometryKind::RegularLatLon;
     }
 
-    const char* name() const noexcept override {
+    const char*
+    name() const noexcept override {
         return "regular_latlon";
     }
 
-    const HorizontalDomainLayout& layout() const noexcept override {
+    const HorizontalDomainLayout&
+    layout() const noexcept override {
         return layout_;
     }
 
-    VVM::Real dq1() const noexcept override {
+    VVM::Real
+    dq1() const noexcept override {
         return dlongitude_;
     }
 
-    VVM::Real dq2() const noexcept override {
+    VVM::Real
+    dq2() const noexcept override {
         return dlatitude_;
     }
 
-    VVM::Real longitude_west_edge() const noexcept {
+    VVM::Real
+    longitude_west_edge() const noexcept {
         return longitude_west_edge_;
     }
 
-    VVM::Real latitude_south_edge() const noexcept {
+    VVM::Real
+    latitude_south_edge() const noexcept {
         return latitude_south_edge_;
     }
 
-    VVM::Real radius() const noexcept {
+    VVM::Real
+    radius() const noexcept {
         return radius_;
     }
 
 protected:
-    HorizontalGeometryDeviceView device_view_impl(
-        HorizontalLocation location) const override;
+    HorizontalGeometryDeviceView device_view_impl(HorizontalLocation location) const override;
 
 private:
     struct MetricStorage {

@@ -39,7 +39,8 @@ struct ErrorNorms {
 int mpi_rank = 0;
 int failures = 0;
 
-void check(const bool condition, const char* message) {
+void
+check(const bool condition, const char* message) {
     if (condition) {
         return;
     }
@@ -48,10 +49,9 @@ void check(const bool condition, const char* message) {
     std::fprintf(stderr, "Rank %d FAIL: %s\n", mpi_rank, message);
 }
 
-void initialize_manufactured_problem(
-    const Grid& grid,
-    Field<2>& exact_solution,
-    Field<2>& right_hand_side) {
+void
+initialize_manufactured_problem(
+    const Grid& grid, Field<2>& exact_solution, Field<2>& right_hand_side) {
 
     const int h = grid.get_halo_cells();
     const int ny = grid.get_local_total_points_y();
@@ -63,46 +63,34 @@ void initialize_manufactured_problem(
     const int global_nx = grid.get_global_points_x();
 
     const VVM::Real pi = VVM::real(std::acos(-1.0));
-    const VVM::Real inverse_dx_squared =
-        VVM::real(1.0) / (grid.get_dx() * grid.get_dx());
-    const VVM::Real inverse_dy_squared =
-        VVM::real(1.0) / (grid.get_dy() * grid.get_dy());
+    const VVM::Real inverse_dx_squared = VVM::real(1.0) / (grid.get_dx() * grid.get_dx());
+    const VVM::Real inverse_dy_squared = VVM::real(1.0) / (grid.get_dy() * grid.get_dy());
 
-    const VVM::Real sin_x =
-        VVM::real(std::sin(std::acos(-1.0) / static_cast<double>(global_nx)));
+    const VVM::Real sin_x = VVM::real(std::sin(std::acos(-1.0) / static_cast<double>(global_nx)));
     const VVM::Real sin_y =
         VVM::real(std::sin(std::acos(-1.0) / (2.0 * static_cast<double>(global_ny))));
 
-    const VVM::Real eigenvalue_x =
-        -VVM::real(4.0) * inverse_dx_squared * sin_x * sin_x;
-    const VVM::Real eigenvalue_y =
-        -VVM::real(4.0) * inverse_dy_squared * sin_y * sin_y;
+    const VVM::Real eigenvalue_x = -VVM::real(4.0) * inverse_dx_squared * sin_x * sin_x;
+    const VVM::Real eigenvalue_y = -VVM::real(4.0) * inverse_dy_squared * sin_y * sin_y;
     const VVM::Real laplacian_eigenvalue = eigenvalue_x + eigenvalue_y;
 
     auto exact = exact_solution.get_mutable_device_data();
     auto rhs = right_hand_side.get_mutable_device_data();
 
-    Kokkos::parallel_for(
-        "InitializeBoundedQ2PoissonProblem",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
-            {h, h},
-            {ny - h, nx - h}),
+    Kokkos::parallel_for("InitializeBoundedQ2PoissonProblem",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
         KOKKOS_LAMBDA(const int j, const int i) {
             const int global_i = local_start_x + i - h;
             const int global_j = local_start_y + j - h;
 
-            const VVM::Real q1_phase =
-                VVM::real(2.0) * pi *
-                (static_cast<VVM::Real>(global_i) + VVM::real(0.5)) /
-                static_cast<VVM::Real>(global_nx);
+            const VVM::Real q1_phase = VVM::real(2.0) * pi *
+                                       (static_cast<VVM::Real>(global_i) + VVM::real(0.5)) /
+                                       static_cast<VVM::Real>(global_nx);
 
-            const VVM::Real q2_phase =
-                pi *
-                (static_cast<VVM::Real>(global_j) + VVM::real(0.5)) /
-                static_cast<VVM::Real>(global_ny);
+            const VVM::Real q2_phase = pi * (static_cast<VVM::Real>(global_j) + VVM::real(0.5)) /
+                                       static_cast<VVM::Real>(global_ny);
 
-            const VVM::Real value =
-                Kokkos::cos(q1_phase) * Kokkos::cos(q2_phase);
+            const VVM::Real value = Kokkos::cos(q1_phase) * Kokkos::cos(q2_phase);
 
             exact(j, i) = value;
             rhs(j, i) = laplacian_eigenvalue * value;
@@ -111,8 +99,8 @@ void initialize_manufactured_problem(
     Kokkos::fence();
 }
 
-ErrorNorms calculate_error_norms(
-    const Grid& grid,
+ErrorNorms
+calculate_error_norms(const Grid& grid,
     const Field<2>& solution,
     const Field<2>& exact_solution,
     const Field<2>& right_hand_side) {
@@ -144,21 +132,14 @@ ErrorNorms calculate_error_norms(
             const double rhs = static_cast<double>(rhs_host(j, i));
 
             const double laplacian =
-                inverse_dx_squared *
-                    (static_cast<double>(solution_host(j, i - 1)) -
-                     2.0 * value +
-                     static_cast<double>(solution_host(j, i + 1))) +
-                inverse_dy_squared *
-                    (static_cast<double>(solution_host(j - 1, i)) -
-                     2.0 * value +
-                     static_cast<double>(solution_host(j + 1, i)));
+                inverse_dx_squared * (static_cast<double>(solution_host(j, i - 1)) - 2.0 * value +
+                                         static_cast<double>(solution_host(j, i + 1))) +
+                inverse_dy_squared * (static_cast<double>(solution_host(j - 1, i)) - 2.0 * value +
+                                         static_cast<double>(solution_host(j + 1, i)));
 
-            local_solution_linf =
-                std::max(local_solution_linf, std::abs(value - exact));
-            local_residual_linf =
-                std::max(local_residual_linf, std::abs(laplacian - rhs));
-            local_rhs_linf =
-                std::max(local_rhs_linf, std::abs(rhs));
+            local_solution_linf = std::max(local_solution_linf, std::abs(value - exact));
+            local_residual_linf = std::max(local_residual_linf, std::abs(laplacian - rhs));
+            local_rhs_linf = std::max(local_rhs_linf, std::abs(rhs));
 
             local_solution_sum += value;
             ++local_point_count;
@@ -176,70 +157,51 @@ ErrorNorms calculate_error_norms(
     long long global_point_count = 0;
     int global_finite = 0;
 
-    MPI_Allreduce(
-        &local_solution_linf,
+    MPI_Allreduce(&local_solution_linf,
         &global_solution_linf,
         1,
         MPI_DOUBLE,
         MPI_MAX,
         MPI_COMM_WORLD);
 
-    MPI_Allreduce(
-        &local_residual_linf,
+    MPI_Allreduce(&local_residual_linf,
         &global_residual_linf,
         1,
         MPI_DOUBLE,
         MPI_MAX,
         MPI_COMM_WORLD);
 
-    MPI_Allreduce(
-        &local_rhs_linf,
-        &global_rhs_linf,
-        1,
-        MPI_DOUBLE,
-        MPI_MAX,
-        MPI_COMM_WORLD);
+    MPI_Allreduce(&local_rhs_linf, &global_rhs_linf, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
 
-    MPI_Allreduce(
-        &local_solution_sum,
+    MPI_Allreduce(&local_solution_sum,
         &global_solution_sum,
         1,
         MPI_DOUBLE,
         MPI_SUM,
         MPI_COMM_WORLD);
 
-    MPI_Allreduce(
-        &local_point_count,
+    MPI_Allreduce(&local_point_count,
         &global_point_count,
         1,
         MPI_LONG_LONG,
         MPI_SUM,
         MPI_COMM_WORLD);
 
-    MPI_Allreduce(
-        &local_finite,
-        &global_finite,
-        1,
-        MPI_INT,
-        MPI_MIN,
-        MPI_COMM_WORLD);
+    MPI_Allreduce(&local_finite, &global_finite, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
 
-    const double residual_scale =
-        std::max(global_rhs_linf, std::numeric_limits<double>::min());
+    const double residual_scale = std::max(global_rhs_linf, std::numeric_limits<double>::min());
 
     ErrorNorms result;
     result.solution_linf = global_solution_linf;
     result.relative_residual_linf = global_residual_linf / residual_scale;
-    result.solution_mean =
-        global_solution_sum / static_cast<double>(global_point_count);
+    result.solution_mean = global_solution_sum / static_cast<double>(global_point_count);
     result.finite = global_finite != 0;
 
     return result;
 }
 
-ErrorNorms solve_manufactured_problem(
-    const Grid& grid,
-    HaloExchanger& halo_exchanger) {
+ErrorNorms
+solve_manufactured_problem(const Grid& grid, HaloExchanger& halo_exchanger) {
 
     const int h = grid.get_halo_cells();
     const int ny = grid.get_local_total_points_y();
@@ -250,10 +212,7 @@ ErrorNorms solve_manufactured_problem(
     Field<2> solution_a("bounded_q2_solution_a", {ny, nx});
     Field<2> solution_b("bounded_q2_solution_b", {ny, nx});
 
-    initialize_manufactured_problem(
-        grid,
-        exact_solution,
-        right_hand_side);
+    initialize_manufactured_problem(grid, exact_solution, right_hand_side);
 
     solution_a.set_to_zero();
     solution_b.set_to_zero();
@@ -267,10 +226,8 @@ ErrorNorms solve_manufactured_problem(
     halo_exchanger.exchange_halos(*current, 1);
     boundary_stencils.fill_constant_q2_halos(*current);
 
-    const VVM::Real inverse_dx_squared =
-        VVM::real(1.0) / (grid.get_dx() * grid.get_dx());
-    const VVM::Real inverse_dy_squared =
-        VVM::real(1.0) / (grid.get_dy() * grid.get_dy());
+    const VVM::Real inverse_dx_squared = VVM::real(1.0) / (grid.get_dx() * grid.get_dx());
+    const VVM::Real inverse_dy_squared = VVM::real(1.0) / (grid.get_dy() * grid.get_dy());
 
     // This is the same stabilized Jacobi equation used by
     // WindSolver::relax_2d_batched(). WRXMU affects the convergence
@@ -278,10 +235,8 @@ ErrorNorms solve_manufactured_problem(
     const VVM::Real relaxation_mass = VVM::real(2.5e-7);
 
     const VVM::Real inverse_diagonal =
-        VVM::real(1.0) /
-        (relaxation_mass +
-         VVM::real(2.0) * inverse_dx_squared +
-         VVM::real(2.0) * inverse_dy_squared);
+        VVM::real(1.0) / (relaxation_mass + VVM::real(2.0) * inverse_dx_squared +
+                             VVM::real(2.0) * inverse_dy_squared);
 
     const auto rhs = right_hand_side.get_device_data();
 
@@ -291,22 +246,14 @@ ErrorNorms solve_manufactured_problem(
         const auto previous = current->get_device_data();
         auto updated = next->get_mutable_device_data();
 
-        Kokkos::parallel_for(
-            "RelaxBoundedQ2Poisson",
-            Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
-                {h, h},
-                {ny - h, nx - h}),
+        Kokkos::parallel_for("RelaxBoundedQ2Poisson",
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
             KOKKOS_LAMBDA(const int j, const int i) {
-                updated(j, i) =
-                    (
-                        relaxation_mass * previous(j, i) +
-                        inverse_dx_squared *
-                            (previous(j, i - 1) + previous(j, i + 1)) +
-                        inverse_dy_squared *
-                            (previous(j - 1, i) + previous(j + 1, i)) -
-                        rhs(j, i)
-                    ) *
-                    inverse_diagonal;
+                updated(j, i) = (relaxation_mass * previous(j, i) +
+                                    inverse_dx_squared * (previous(j, i - 1) + previous(j, i + 1)) +
+                                    inverse_dy_squared * (previous(j - 1, i) + previous(j + 1, i)) -
+                                    rhs(j, i)) *
+                                inverse_diagonal;
             });
 
         std::swap(current, next);
@@ -320,25 +267,18 @@ ErrorNorms solve_manufactured_problem(
 
     Kokkos::fence();
 
-    return calculate_error_norms(
-        grid,
-        *current,
-        exact_solution,
-        right_hand_side);
+    return calculate_error_norms(grid, *current, exact_solution, right_hand_side);
 }
 
-void test_bounded_q2_poisson(
-    const Grid& grid,
-    HaloExchanger& halo_exchanger) {
+void
+test_bounded_q2_poisson(const Grid& grid, HaloExchanger& halo_exchanger) {
 
     const auto& horizontal = grid.horizontal_specification();
 
-    check(
-        horizontal.topology.q1 == HorizontalEdgeTopology::Periodic,
+    check(horizontal.topology.q1 == HorizontalEdgeTopology::Periodic,
         "Manufactured problem requires periodic q1 topology");
 
-    check(
-        horizontal.topology.q2 == HorizontalEdgeTopology::Bounded,
+    check(horizontal.topology.q2 == HorizontalEdgeTopology::Bounded,
         "Manufactured problem requires bounded q2 topology");
 
     if (horizontal.topology.q1 != HorizontalEdgeTopology::Periodic ||
@@ -346,67 +286,53 @@ void test_bounded_q2_poisson(
         return;
     }
 
-    const ErrorNorms norms =
-        solve_manufactured_problem(grid, halo_exchanger);
+    const ErrorNorms norms = solve_manufactured_problem(grid, halo_exchanger);
 
-    const bool double_precision =
-        sizeof(VVM::Real) == sizeof(double);
+    const bool double_precision = sizeof(VVM::Real) == sizeof(double);
 
-    const double solution_tolerance =
-        double_precision ? 1.0e-5 : 5.0e-3;
+    const double solution_tolerance = double_precision ? 1.0e-5 : 5.0e-3;
 
-    const double residual_tolerance =
-        double_precision ? 1.0e-5 : 5.0e-3;
+    const double residual_tolerance = double_precision ? 1.0e-5 : 5.0e-3;
 
-    const double mean_tolerance =
-        double_precision ? 1.0e-10 : 5.0e-5;
+    const double mean_tolerance = double_precision ? 1.0e-10 : 5.0e-5;
 
     if (mpi_rank == 0) {
-        std::fprintf(
-            stdout,
+        std::fprintf(stdout,
             "bounded q2 Poisson: error=%e residual=%e mean=%e\n",
             norms.solution_linf,
             norms.relative_residual_linf,
             norms.solution_mean);
     }
 
-    check(
-        norms.finite,
-        "Poisson relaxation produced NaN or infinity");
+    check(norms.finite, "Poisson relaxation produced NaN or infinity");
 
-    check(
-        norms.solution_linf < solution_tolerance,
+    check(norms.solution_linf < solution_tolerance,
         "Manufactured solution error exceeds tolerance");
 
-    check(
-        norms.relative_residual_linf < residual_tolerance,
+    check(norms.relative_residual_linf < residual_tolerance,
         "Relative Poisson residual exceeds tolerance");
 
-    check(
-        std::abs(norms.solution_mean) < mean_tolerance,
+    check(std::abs(norms.solution_mean) < mean_tolerance,
         "Poisson solution did not retain its zero-mean gauge");
 }
 
 } // namespace
 
-int main(int argc, char* argv[]) {
+int
+main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
 
     if (argc != 2) {
         if (mpi_rank == 0) {
-            std::fprintf(
-                stderr,
-                "usage: %s <config.json>\n",
-                argv[0]);
+            std::fprintf(stderr, "usage: %s <config.json>\n", argv[0]);
         }
 
         MPI_Finalize();
         return 2;
     }
 
-    Kokkos::initialize(
-        Kokkos::InitializationSettings().set_device_id(0));
+    Kokkos::initialize(Kokkos::InitializationSettings().set_device_id(0));
 
     {
         try {
@@ -422,50 +348,29 @@ int main(int argc, char* argv[]) {
                 ncclGetUniqueId(&nccl_id);
             }
 
-            MPI_Bcast(
-                &nccl_id,
-                sizeof(nccl_id),
-                MPI_BYTE,
-                0,
-                MPI_COMM_WORLD);
+            MPI_Bcast(&nccl_id, sizeof(nccl_id), MPI_BYTE, 0, MPI_COMM_WORLD);
 
             ncclComm_t nccl_comm;
-            ncclCommInitRank(
-                &nccl_comm,
-                mpi_size,
-                nccl_id,
-                mpi_rank);
+            ncclCommInitRank(&nccl_comm, mpi_size, nccl_id, mpi_rank);
 
             {
-                cudaStream_t stream =
-                    Kokkos::Cuda().cuda_stream();
+                cudaStream_t stream = Kokkos::Cuda().cuda_stream();
 
-                HaloExchanger halo_exchanger(
-                    config,
-                    grid,
-                    nccl_comm,
-                    stream);
+                HaloExchanger halo_exchanger(config, grid, nccl_comm, stream);
 
-                test_bounded_q2_poisson(
-                    grid,
-                    halo_exchanger);
+                test_bounded_q2_poisson(grid, halo_exchanger);
             }
 
             ncclCommDestroy(nccl_comm);
 #else
             HaloExchanger halo_exchanger(grid);
 
-            test_bounded_q2_poisson(
-                grid,
-                halo_exchanger);
+            test_bounded_q2_poisson(grid, halo_exchanger);
 #endif
-        } catch (const std::exception& error) {
+        }
+        catch (const std::exception& error) {
             ++failures;
-            std::fprintf(
-                stderr,
-                "Rank %d unexpected exception: %s\n",
-                mpi_rank,
-                error.what());
+            std::fprintf(stderr, "Rank %d unexpected exception: %s\n", mpi_rank, error.what());
         }
     }
 
@@ -473,22 +378,14 @@ int main(int argc, char* argv[]) {
 
     int global_failures = 0;
 
-    MPI_Allreduce(
-        &failures,
-        &global_failures,
-        1,
-        MPI_INT,
-        MPI_SUM,
-        MPI_COMM_WORLD);
+    MPI_Allreduce(&failures, &global_failures, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
     if (mpi_rank == 0) {
         if (global_failures == 0) {
-            std::fprintf(
-                stdout,
-                "test_bounded_q2_poisson_relaxation: PASS\n");
-        } else {
-            std::fprintf(
-                stderr,
+            std::fprintf(stdout, "test_bounded_q2_poisson_relaxation: PASS\n");
+        }
+        else {
+            std::fprintf(stderr,
                 "test_bounded_q2_poisson_relaxation: %d failure(s)\n",
                 global_failures);
         }

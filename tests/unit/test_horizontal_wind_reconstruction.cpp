@@ -20,7 +20,8 @@ using VVM::Dynamics::Operators::make_horizontal_wind_reconstruction_device_view;
 
 int failures = 0;
 
-HorizontalDomainLayout make_layout() {
+HorizontalDomainLayout
+make_layout() {
     HorizontalDomainLayout layout;
     layout.global_nx = 12;
     layout.global_ny = 10;
@@ -30,8 +31,11 @@ HorizontalDomainLayout make_layout() {
     return layout;
 }
 
-void test_reconstruction(const HorizontalGeometry& geometry, const bool spherical,
-    const VVM::Real radius, const VVM::Real south_edge) {
+void
+test_reconstruction(const HorizontalGeometry& geometry,
+    const bool spherical,
+    const VVM::Real radius,
+    const VVM::Real south_edge) {
 
     const auto layout = geometry.layout();
     const int nx = layout.local_total_nx();
@@ -43,7 +47,8 @@ void test_reconstruction(const HorizontalGeometry& geometry, const bool spherica
     const VVM::Real radius_squared = radius * radius;
     const VVM::Real amplitude = spherical ? radius_squared * VVM::real(1.0e-5) : VVM::real(1.0);
     const VVM::Real component_scale = spherical ? VVM::real(1.0e-5) : VVM::real(1.0);
-    const VVM::Real tolerance = sizeof(VVM::Real) == sizeof(double) ? VVM::real(2.0e-11) : VVM::real(2.0e-4);
+    const VVM::Real tolerance =
+        sizeof(VVM::Real) == sizeof(double) ? VVM::real(2.0e-11) : VVM::real(2.0e-4);
 
     const auto reconstruction = make_horizontal_wind_reconstruction_device_view(geometry);
 
@@ -65,10 +70,12 @@ void test_reconstruction(const HorizontalGeometry& geometry, const bool spherica
                 const VVM::Real y = static_cast<VVM::Real>(j - h);
 
                 psi_host(j, i) = VVM::real(7.0) * amplitude +
-                    psi_factor * (VVM::real(0.25) * x * x - VVM::real(0.375) * y * y + VVM::real(0.125) * x * y);
+                                 psi_factor * (VVM::real(0.25) * x * x - VVM::real(0.375) * y * y +
+                                                  VVM::real(0.125) * x * y);
 
                 chi_host(j, i) = VVM::real(-3.0) * amplitude +
-                    chi_factor * (-VVM::real(0.125) * x * x + VVM::real(0.25) * y * y - VVM::real(0.0625) * x * y);
+                                 chi_factor * (-VVM::real(0.125) * x * x + VVM::real(0.25) * y * y -
+                                                  VVM::real(0.0625) * x * y);
             }
         }
 
@@ -76,10 +83,11 @@ void test_reconstruction(const HorizontalGeometry& geometry, const bool spherica
         Kokkos::deep_copy(chi, chi_host);
 
         const auto policy = Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h});
-        const auto compact_policy =
-            Kokkos::Experimental::require(policy, Kokkos::Experimental::WorkItemProperty::HintLightWeight);
+        const auto compact_policy = Kokkos::Experimental::require(policy,
+            Kokkos::Experimental::WorkItemProperty::HintLightWeight);
 
-        Kokkos::parallel_for("TestHorizontalWindReconstruction", compact_policy,
+        Kokkos::parallel_for("TestHorizontalWindReconstruction",
+            compact_policy,
             KOKKOS_LAMBDA(const int j, const int i) {
                 q1(j, i) = reconstruction.calculate_contravariant_q1_at_u(psi, chi, j, i);
                 q2(j, i) = reconstruction.calculate_contravariant_q2_at_v(psi, chi, j, i);
@@ -99,16 +107,28 @@ void test_reconstruction(const HorizontalGeometry& geometry, const bool spherica
 
                 // Exact polynomial differences for the required staggering.
                 const VVM::Real psi_q2_backward =
-                    psi_factor * (-VVM::real(0.375) * (VVM::real(2.0) * y - VVM::real(1.0)) + VVM::real(0.125) * x) / dq2;
+                    psi_factor *
+                    (-VVM::real(0.375) * (VVM::real(2.0) * y - VVM::real(1.0)) +
+                        VVM::real(0.125) * x) /
+                    dq2;
 
                 const VVM::Real psi_q1_backward =
-                    psi_factor * (VVM::real(0.25) * (VVM::real(2.0) * x - VVM::real(1.0)) + VVM::real(0.125) * y) / dq1;
+                    psi_factor *
+                    (VVM::real(0.25) * (VVM::real(2.0) * x - VVM::real(1.0)) +
+                        VVM::real(0.125) * y) /
+                    dq1;
 
                 const VVM::Real chi_q1_forward =
-                    chi_factor * (-VVM::real(0.125) * (VVM::real(2.0) * x + VVM::real(1.0)) - VVM::real(0.0625) * y) / dq1;
+                    chi_factor *
+                    (-VVM::real(0.125) * (VVM::real(2.0) * x + VVM::real(1.0)) -
+                        VVM::real(0.0625) * y) /
+                    dq1;
 
                 const VVM::Real chi_q2_forward =
-                    chi_factor * (VVM::real(0.25) * (VVM::real(2.0) * y + VVM::real(1.0)) - VVM::real(0.0625) * x) / dq2;
+                    chi_factor *
+                    (VVM::real(0.25) * (VVM::real(2.0) * y + VVM::real(1.0)) -
+                        VVM::real(0.0625) * x) /
+                    dq2;
 
                 VVM::Real jacobian_u = VVM::real(1.0);
                 VVM::Real jacobian_v = VVM::real(1.0);
@@ -128,7 +148,8 @@ void test_reconstruction(const HorizontalGeometry& geometry, const bool spherica
                     g22_v = VVM::real(1.0) / radius_squared;
                 }
 
-                const VVM::Real expected_q1 = -psi_q2_backward / jacobian_u + g11_u * chi_q1_forward;
+                const VVM::Real expected_q1 =
+                    -psi_q2_backward / jacobian_u + g11_u * chi_q1_forward;
                 const VVM::Real expected_q2 = psi_q1_backward / jacobian_v + g22_v * chi_q2_forward;
 
                 if (!std::isfinite(q1_host(j, i)) || !std::isfinite(q2_host(j, i))) {
@@ -139,12 +160,13 @@ void test_reconstruction(const HorizontalGeometry& geometry, const bool spherica
                 const VVM::Real scale_q1 = std::max(component_scale, std::abs(expected_q1));
                 const VVM::Real scale_q2 = std::max(component_scale, std::abs(expected_q2));
 
-                maximum_normalized_error = std::max(
-                    maximum_normalized_error, std::abs(q1_host(j, i) - expected_q1) / scale_q1);
-                maximum_normalized_error = std::max(
-                    maximum_normalized_error, std::abs(q2_host(j, i) - expected_q2) / scale_q2);
+                maximum_normalized_error = std::max(maximum_normalized_error,
+                    std::abs(q1_host(j, i) - expected_q1) / scale_q1);
+                maximum_normalized_error = std::max(maximum_normalized_error,
+                    std::abs(q2_host(j, i) - expected_q2) / scale_q2);
 
-                if (mode == 0 && (q1_host(j, i) != VVM::real(0.0) || q2_host(j, i) != VVM::real(0.0))) {
+                if (mode == 0 &&
+                    (q1_host(j, i) != VVM::real(0.0) || q2_host(j, i) != VVM::real(0.0))) {
                     constant_is_zero = false;
                 }
             }
@@ -153,7 +175,10 @@ void test_reconstruction(const HorizontalGeometry& geometry, const bool spherica
         const bool passed = finite && constant_is_zero && maximum_normalized_error <= tolerance;
 
         std::printf("%s mode=%d normalized_error=%.17e %s\n",
-            geometry.name(), mode, static_cast<double>(maximum_normalized_error), passed ? "PASS" : "FAIL");
+            geometry.name(),
+            mode,
+            static_cast<double>(maximum_normalized_error),
+            passed ? "PASS" : "FAIL");
 
         if (!passed) {
             ++failures;
@@ -163,7 +188,8 @@ void test_reconstruction(const HorizontalGeometry& geometry, const bool spherica
 
 } // namespace
 
-int main(int argc, char** argv) {
+int
+main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
     Kokkos::initialize(argc, argv);
 
@@ -177,11 +203,16 @@ int main(int argc, char** argv) {
             const VVM::Real radius = VVM::real(6371220.0);
             const VVM::Real south_edge = VVM::real(-0.3);
 
-            const RegularLatLonGeometry rll(layout, VVM::real(0.08), VVM::real(0.04),
-                VVM::real(0.0), south_edge, radius);
+            const RegularLatLonGeometry rll(layout,
+                VVM::real(0.08),
+                VVM::real(0.04),
+                VVM::real(0.0),
+                south_edge,
+                radius);
 
             test_reconstruction(rll, true, radius, south_edge);
-        } catch (const std::exception& error) {
+        }
+        catch (const std::exception& error) {
             ++failures;
             std::fprintf(stderr, "Unexpected exception: %s\n", error.what());
         }

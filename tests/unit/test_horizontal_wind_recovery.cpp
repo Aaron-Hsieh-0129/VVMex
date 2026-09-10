@@ -36,30 +36,30 @@ using VVM::Dynamics::HorizontalEllipticSolver;
 using VVM::Dynamics::Operators::make_horizontal_wind_reconstruction_device_view;
 using VVM::Utils::ConfigurationManager;
 
-enum class TestMode {
-    Rotational,
-    Divergent,
-    Mixed,
-    Zero
-};
+enum class TestMode { Rotational, Divergent, Mixed, Zero };
 
-const char* mode_name(const TestMode mode) {
+const char*
+mode_name(const TestMode mode) {
     switch (mode) {
-        case TestMode::Rotational:
-            return "rotational";
-        case TestMode::Divergent:
-            return "divergent";
-        case TestMode::Mixed:
-            return "mixed";
-        case TestMode::Zero:
-            return "zero";
+    case TestMode::Rotational:
+        return "rotational";
+    case TestMode::Divergent:
+        return "divergent";
+    case TestMode::Mixed:
+        return "mixed";
+    case TestMode::Zero:
+        return "zero";
     }
 
     return "unknown";
 }
 
-int run_case(const Grid& grid, HorizontalEllipticSolver& paired_solver,
-    HorizontalEllipticSolver& reference_solver, const TestMode mode, const int iterations) {
+int
+run_case(const Grid& grid,
+    HorizontalEllipticSolver& paired_solver,
+    HorizontalEllipticSolver& reference_solver,
+    const TestMode mode,
+    const int iterations) {
 
     const int h = grid.get_halo_cells();
     const int ny = grid.get_local_total_points_y();
@@ -102,9 +102,14 @@ int run_case(const Grid& grid, HorizontalEllipticSolver& paired_solver,
 
             if (use_psi) {
                 zeta(j, i) = real(1.0e-10) * Kokkos::sin(angle_z);
-                psi_current(j, i) = amplitude * (Kokkos::sin(angle_z) * Kokkos::cos(real(0.11) * global_j) + real(0.3));
-                psi_previous(j, i) = amplitude * (real(0.8) * Kokkos::cos(angle_z) * Kokkos::cos(real(0.07) * global_j) - real(0.2));
-            } else {
+                psi_current(j, i) =
+                    amplitude *
+                    (Kokkos::sin(angle_z) * Kokkos::cos(real(0.11) * global_j) + real(0.3));
+                psi_previous(j, i) = amplitude * (real(0.8) * Kokkos::cos(angle_z) *
+                                                         Kokkos::cos(real(0.07) * global_j) -
+                                                     real(0.2));
+            }
+            else {
                 zeta(j, i) = real(0.0);
                 psi_current(j, i) = real(0.0);
                 psi_previous(j, i) = real(0.0);
@@ -112,9 +117,14 @@ int run_case(const Grid& grid, HorizontalEllipticSolver& paired_solver,
 
             if (use_chi) {
                 divergence_source(j, i) = real(-6.0e-11) * Kokkos::cos(real(2.0) * angle_t);
-                chi_current(j, i) = amplitude * (real(-0.6) * Kokkos::cos(angle_t) * Kokkos::sin(real(0.13) * global_j) + real(0.2));
-                chi_previous(j, i) = amplitude * (real(0.4) * Kokkos::sin(angle_t) * Kokkos::cos(real(0.09) * global_j) - real(0.1));
-            } else {
+                chi_current(j, i) = amplitude * (real(-0.6) * Kokkos::cos(angle_t) *
+                                                        Kokkos::sin(real(0.13) * global_j) +
+                                                    real(0.2));
+                chi_previous(j, i) = amplitude * (real(0.4) * Kokkos::sin(angle_t) *
+                                                         Kokkos::cos(real(0.09) * global_j) -
+                                                     real(0.1));
+            }
+            else {
                 divergence_source(j, i) = real(0.0);
                 chi_current(j, i) = real(0.0);
                 chi_previous(j, i) = real(0.0);
@@ -123,11 +133,8 @@ int run_case(const Grid& grid, HorizontalEllipticSolver& paired_solver,
 
     // Independent snapshots detect input modification on CPU as well as GPU.
     // create_mirror_view could alias host-accessible input storage.
-    const std::array<const Field<2>*, 6> input_fields = {
-        &rhs_psi, &rhs_chi,
-        &current_psi, &previous_psi,
-        &current_chi, &previous_chi
-    };
+    const std::array<const Field<2>*, 6> input_fields =
+        {&rhs_psi, &rhs_chi, &current_psi, &previous_psi, &current_chi, &previous_chi};
 
     std::array<Field<2>::HostMirrorType, 6> input_snapshots;
 
@@ -155,8 +162,10 @@ int run_case(const Grid& grid, HorizontalEllipticSolver& paired_solver,
     Kokkos::View<Real**> physical_q2("recovery_physical_q2", ny, nx);
 
     const auto reconstruction = make_horizontal_wind_reconstruction_device_view(grid.geometry());
-    const auto physical_scale_q1 = grid.geometry().device_view(HorizontalLocation::U).contravariant_to_physical.a11;
-    const auto physical_scale_q2 = grid.geometry().device_view(HorizontalLocation::V).contravariant_to_physical.a22;
+    const auto physical_scale_q1 =
+        grid.geometry().device_view(HorizontalLocation::U).contravariant_to_physical.a11;
+    const auto physical_scale_q2 =
+        grid.geometry().device_view(HorizontalLocation::V).contravariant_to_physical.a22;
 
     const auto psi = solved_psi.get_device_data();
     const auto chi = solved_chi.get_device_data();
@@ -190,8 +199,10 @@ int run_case(const Grid& grid, HorizontalEllipticSolver& paired_solver,
 
     const auto q1_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), q1);
     const auto q2_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), q2);
-    const auto physical_q1_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), physical_q1);
-    const auto physical_q2_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), physical_q2);
+    const auto physical_q1_host =
+        Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), physical_q1);
+    const auto physical_q2_host =
+        Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), physical_q2);
 
     bool inputs_unchanged = true;
 
@@ -225,10 +236,18 @@ int run_case(const Grid& grid, HorizontalEllipticSolver& paired_solver,
 
     for (int j = h; j < ny - h; ++j) {
         for (int i = h; i < nx - h; ++i) {
-            const double dpsi_dq1 = (static_cast<double>(reference_psi_host(j, i)) - static_cast<double>(reference_psi_host(j, i - 1))) / dq1;
-            const double dpsi_dq2 = (static_cast<double>(reference_psi_host(j, i)) - static_cast<double>(reference_psi_host(j - 1, i))) / dq2;
-            const double dchi_dq1 = (static_cast<double>(reference_chi_host(j, i + 1)) - static_cast<double>(reference_chi_host(j, i))) / dq1;
-            const double dchi_dq2 = (static_cast<double>(reference_chi_host(j + 1, i)) - static_cast<double>(reference_chi_host(j, i))) / dq2;
+            const double dpsi_dq1 = (static_cast<double>(reference_psi_host(j, i)) -
+                                        static_cast<double>(reference_psi_host(j, i - 1))) /
+                                    dq1;
+            const double dpsi_dq2 = (static_cast<double>(reference_psi_host(j, i)) -
+                                        static_cast<double>(reference_psi_host(j - 1, i))) /
+                                    dq2;
+            const double dchi_dq1 = (static_cast<double>(reference_chi_host(j, i + 1)) -
+                                        static_cast<double>(reference_chi_host(j, i))) /
+                                    dq1;
+            const double dchi_dq2 = (static_cast<double>(reference_chi_host(j + 1, i)) -
+                                        static_cast<double>(reference_chi_host(j, i))) /
+                                    dq2;
 
             double expected_q1 = -dpsi_dq2 + dchi_dq1;
             double expected_q2 = dpsi_dq1 + dchi_dq2;
@@ -243,35 +262,35 @@ int run_case(const Grid& grid, HorizontalEllipticSolver& paired_solver,
                 const double cos_v = std::cos(latitude_v);
                 const double radius_squared = radius * radius;
 
-                expected_q1 = -dpsi_dq2 / (radius_squared * cos_u) + dchi_dq1 / (radius_squared * cos_u * cos_u);
+                expected_q1 = -dpsi_dq2 / (radius_squared * cos_u) +
+                              dchi_dq1 / (radius_squared * cos_u * cos_u);
                 expected_q2 = dpsi_dq1 / (radius_squared * cos_v) + dchi_dq2 / radius_squared;
 
                 expected_physical_q1 = -dpsi_dq2 / radius + dchi_dq1 / (radius * cos_u);
                 expected_physical_q2 = dpsi_dq1 / (radius * cos_v) + dchi_dq2 / radius;
             }
 
-            const std::array<double, 6> expected = {
-                static_cast<double>(reference_psi_host(j, i)),
+            const std::array<double, 6> expected = {static_cast<double>(reference_psi_host(j, i)),
                 static_cast<double>(reference_chi_host(j, i)),
                 expected_q1,
                 expected_q2,
                 expected_physical_q1,
-                expected_physical_q2
-            };
+                expected_physical_q2};
 
-            const std::array<double, 6> actual = {
-                static_cast<double>(solved_psi_host(j, i)),
+            const std::array<double, 6> actual = {static_cast<double>(solved_psi_host(j, i)),
                 static_cast<double>(solved_chi_host(j, i)),
                 static_cast<double>(q1_host(j, i)),
                 static_cast<double>(q2_host(j, i)),
                 static_cast<double>(physical_q1_host(j, i)),
-                static_cast<double>(physical_q2_host(j, i))
-            };
+                static_cast<double>(physical_q2_host(j, i))};
 
             for (std::size_t component = 0; component < expected.size(); ++component) {
-                finite = finite && std::isfinite(actual[component]) && std::isfinite(expected[component]);
-                maximum_errors[component] = std::max(maximum_errors[component], std::abs(actual[component] - expected[component]));
-                reference_scales[component] = std::max(reference_scales[component], std::abs(expected[component]));
+                finite = finite && std::isfinite(actual[component]) &&
+                         std::isfinite(expected[component]);
+                maximum_errors[component] = std::max(maximum_errors[component],
+                    std::abs(actual[component] - expected[component]));
+                reference_scales[component] =
+                    std::max(reference_scales[component], std::abs(expected[component]));
             }
         }
     }
@@ -284,24 +303,31 @@ int run_case(const Grid& grid, HorizontalEllipticSolver& paired_solver,
         passed = passed && maximum_errors[component] <= tolerance;
     }
 
-    std::printf("%s mode=%s iterations=%d psi=%.3e chi=%.3e q1=%.3e q2=%.3e physical_q1=%.3e physical_q2=%.3e inputs_unchanged=%d %s\n",
-        grid.geometry().name(), mode_name(mode), iterations,
-        maximum_errors[0], maximum_errors[1], maximum_errors[2],
-        maximum_errors[3], maximum_errors[4], maximum_errors[5],
-        inputs_unchanged ? 1 : 0, passed ? "PASS" : "FAIL");
+    std::printf("%s mode=%s iterations=%d psi=%.3e chi=%.3e q1=%.3e q2=%.3e physical_q1=%.3e "
+                "physical_q2=%.3e inputs_unchanged=%d %s\n",
+        grid.geometry().name(),
+        mode_name(mode),
+        iterations,
+        maximum_errors[0],
+        maximum_errors[1],
+        maximum_errors[2],
+        maximum_errors[3],
+        maximum_errors[4],
+        maximum_errors[5],
+        inputs_unchanged ? 1 : 0,
+        passed ? "PASS" : "FAIL");
 
     return passed ? 0 : 1;
 }
 
-int run_tests(const Grid& grid, HaloExchanger& halo_exchanger) {
+int
+run_tests(const Grid& grid, HaloExchanger& halo_exchanger) {
     HorizontalEllipticSolver paired_solver(grid, halo_exchanger);
     HorizontalEllipticSolver reference_solver(grid, halo_exchanger);
 
-    const std::array<TestMode, 3> modes = {
-        TestMode::Rotational,
+    const std::array<TestMode, 3> modes = {TestMode::Rotational,
         TestMode::Divergent,
-        TestMode::Mixed
-    };
+        TestMode::Mixed};
 
     // Exercise odd/even scratch-buffer paths without a convergence criterion.
     const std::array<int, 2> iteration_counts = {1, 4};
@@ -322,7 +348,8 @@ int run_tests(const Grid& grid, HaloExchanger& halo_exchanger) {
 }
 
 #if defined(ENABLE_NCCL)
-void require_nccl(const ncclResult_t status, const char* operation) {
+void
+require_nccl(const ncclResult_t status, const char* operation) {
     if (status != ncclSuccess) {
         throw std::runtime_error(std::string(operation) + ": " + ncclGetErrorString(status));
     }
@@ -331,7 +358,8 @@ void require_nccl(const ncclResult_t status, const char* operation) {
 
 } // namespace
 
-int main(int argc, char* argv[]) {
+int
+main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);
     Kokkos::initialize(argc, argv);
 
@@ -346,7 +374,8 @@ int main(int argc, char* argv[]) {
         }
 
         if (argc < 2) {
-            throw std::invalid_argument("Usage: test_horizontal_wind_recovery <configuration.json>");
+            throw std::invalid_argument(
+                "Usage: test_horizontal_wind_recovery <configuration.json>");
         }
 
         const ConfigurationManager config(argv[1]);
@@ -363,7 +392,8 @@ int main(int argc, char* argv[]) {
             const cudaStream_t stream = Kokkos::Cuda().cuda_stream();
             HaloExchanger halo_exchanger(config, grid, nccl_comm, stream);
             failures = run_tests(grid, halo_exchanger);
-        } catch (...) {
+        }
+        catch (...) {
             ncclCommAbort(nccl_comm);
             throw;
         }
@@ -373,7 +403,8 @@ int main(int argc, char* argv[]) {
         HaloExchanger halo_exchanger(grid);
         failures = run_tests(grid, halo_exchanger);
 #endif
-    } catch (const std::exception& error) {
+    }
+    catch (const std::exception& error) {
         std::fprintf(stderr, "test_horizontal_wind_recovery: %s\n", error.what());
         failures = 1;
     }

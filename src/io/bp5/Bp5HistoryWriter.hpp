@@ -26,8 +26,7 @@ namespace VVM::IO::BP5 {
 
 class Bp5HistoryWriter final : public HistoryWriter {
 public:
-    Bp5HistoryWriter(
-        const Utils::ConfigurationManager& config,
+    Bp5HistoryWriter(const Utils::ConfigurationManager& config,
         const Core::Grid& grid,
         const Core::Parameters& parameters,
         Core::State& state,
@@ -40,7 +39,8 @@ public:
     void write(std::size_t step, VVM::Real time) override;
     void close() override;
 
-    const std::filesystem::path& dataset_path() const noexcept {
+    const std::filesystem::path&
+    dataset_path() const noexcept {
         return dataset_path_;
     }
 
@@ -97,7 +97,8 @@ private:
     void define_field(const std::string& field_name);
     void define_metadata(const std::string& field_name, const Core::FieldMetadata& metadata);
     void skip_field(const std::string& field_name, const char* reason) const;
-    static std::string describe_field(const std::string& field_name, const Core::FieldMetadata& metadata);
+    static std::string describe_field(const std::string& field_name,
+        const Core::FieldMetadata& metadata);
     void write_grads_ctl_file(const Utils::ConfigurationManager& config);
     void prepare_coordinates();
     void validate_coverage();

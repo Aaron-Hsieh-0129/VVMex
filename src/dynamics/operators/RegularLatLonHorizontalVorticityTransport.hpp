@@ -51,20 +51,20 @@ struct RegularLatLonHorizontalVorticityTransportDeviceView {
 
     TakacsFaceFluxDeviceView face_flux;
 
-    template<bool Xi, typename Fields>
-    KOKKOS_INLINE_FUNCTION
-    VVM::Real scalar(const Fields& fields, int k, int j, int i) const noexcept {
+    template <bool Xi, typename Fields>
+    KOKKOS_INLINE_FUNCTION VVM::Real
+    scalar(const Fields& fields, int k, int j, int i) const noexcept {
         if constexpr (Xi) {
             return components.omega1_over_rho(fields, k, j, i);
-        } else {
+        }
+        else {
             return components.omega2_over_rho(fields, k, j, i);
         }
     }
 
-    template<bool Xi, typename Fields>
-    KOKKOS_INLINE_FUNCTION
-    VVM::Real horizontal_mass_flux(
-        const Fields& fields, int k, int j, int i, int direction) const noexcept {
+    template <bool Xi, typename Fields>
+    KOKKOS_INLINE_FUNCTION VVM::Real
+    horizontal_mass_flux(const Fields& fields, int k, int j, int i, int direction) const noexcept {
 
         const int next_j = Xi ? j + 1 : j;
         const int next_i = Xi ? i : i + 1;
@@ -73,47 +73,44 @@ struct RegularLatLonHorizontalVorticityTransportDeviceView {
         VVM::Real jacobian;
 
         if (direction == 0) {
-            lower = components.u1(fields, k, j, i)
-                + components.u1(fields, k, next_j, next_i);
-            upper = components.u1(fields, k + 1, j, i)
-                + components.u1(fields, k + 1, next_j, next_i);
+            lower = components.u1(fields, k, j, i) + components.u1(fields, k, next_j, next_i);
+            upper =
+                components.u1(fields, k + 1, j, i) + components.u1(fields, k + 1, next_j, next_i);
 
             if constexpr (Xi) {
                 jacobian = jacobian_z(j, i);
-            } else {
+            }
+            else {
                 jacobian = jacobian_t(j, i + 1);
             }
-        } else {
-            lower = components.u2(fields, k, j, i)
-                + components.u2(fields, k, next_j, next_i);
-            upper = components.u2(fields, k + 1, j, i)
-                + components.u2(fields, k + 1, next_j, next_i);
+        }
+        else {
+            lower = components.u2(fields, k, j, i) + components.u2(fields, k, next_j, next_i);
+            upper =
+                components.u2(fields, k + 1, j, i) + components.u2(fields, k + 1, next_j, next_i);
 
             if constexpr (Xi) {
                 jacobian = jacobian_t(j + 1, i);
-            } else {
+            }
+            else {
                 jacobian = jacobian_z(j, i);
             }
         }
 
         // CVVM reconstructs with this Jacobian-weighted transport velocity.
-        return VVM::real(0.25)
-            * (fields.fn1(k) * upper + fields.fn2(k) * lower)
-            * jacobian;
+        return VVM::real(0.25) * (fields.fn1(k) * upper + fields.fn2(k) * lower) * jacobian;
     }
 
-    template<bool Xi, typename Fields>
-    KOKKOS_INLINE_FUNCTION
-    VVM::Real horizontal_face(
-        const Fields& fields, int k, int j, int i, int direction) const noexcept {
+    template <bool Xi, typename Fields>
+    KOKKOS_INLINE_FUNCTION VVM::Real
+    horizontal_face(const Fields& fields, int k, int j, int i, int direction) const noexcept {
 
         const int di = direction == 0 ? 1 : 0;
         const int dj = direction == 1 ? 1 : 0;
 
         // Reuse the arithmetic helper with CVVM's weighted face velocities.
         // This does not change the existing scalar-transport convention.
-        return face_flux.calculate(
-            horizontal_mass_flux<Xi>(fields, k, j - dj, i - di, direction),
+        return face_flux.calculate(horizontal_mass_flux<Xi>(fields, k, j - dj, i - di, direction),
             horizontal_mass_flux<Xi>(fields, k, j, i, direction),
             horizontal_mass_flux<Xi>(fields, k, j + dj, i + di, direction),
             scalar<Xi>(fields, k, j - dj, i - di),
@@ -122,30 +119,25 @@ struct RegularLatLonHorizontalVorticityTransportDeviceView {
             scalar<Xi>(fields, k, j + 2 * dj, i + 2 * di));
     }
 
-    template<bool Xi, typename Fields, typename WView>
-    KOKKOS_INLINE_FUNCTION
-    VVM::Real vertical_mass_flux(
-        const Fields& fields, const WView& w, int k, int j, int i) const noexcept {
+    template <bool Xi, typename Fields, typename WView>
+    KOKKOS_INLINE_FUNCTION VVM::Real
+    vertical_mass_flux(const Fields& fields, const WView& w, int k, int j, int i) const noexcept {
 
         const int next_j = Xi ? j + 1 : j;
         const int next_i = Xi ? i : i + 1;
 
-        return VVM::real(0.25)
-            * (fields.rho_up(k)
-               * (w(k, j, i) + w(k, next_j, next_i))
-               + fields.rho_up(k + 1)
-               * (w(k + 1, j, i) + w(k + 1, next_j, next_i)));
+        return VVM::real(0.25) *
+               (fields.rho_up(k) * (w(k, j, i) + w(k, next_j, next_i)) +
+                   fields.rho_up(k + 1) * (w(k + 1, j, i) + w(k + 1, next_j, next_i)));
     }
 
-    template<bool Xi, typename Fields, typename WView>
-    KOKKOS_INLINE_FUNCTION
-    VVM::Real vertical_face(
-        const Fields& fields, const WView& w, int k, int j, int i,
-        int k_begin, int k_end) const noexcept {
+    template <bool Xi, typename Fields, typename WView>
+    KOKKOS_INLINE_FUNCTION VVM::Real
+    vertical_face(const Fields& fields, const WView& w, int k, int j, int i, int k_begin, int k_end)
+        const noexcept {
 
         if (k == k_begin - 1) {
-            return face_flux.calculate_at_lower_boundary(
-                vertical_mass_flux<Xi>(fields, w, k, j, i),
+            return face_flux.calculate_at_lower_boundary(vertical_mass_flux<Xi>(fields, w, k, j, i),
                 vertical_mass_flux<Xi>(fields, w, k + 1, j, i),
                 scalar<Xi>(fields, k, j, i),
                 scalar<Xi>(fields, k + 1, j, i),
@@ -161,8 +153,7 @@ struct RegularLatLonHorizontalVorticityTransportDeviceView {
                 scalar<Xi>(fields, k + 1, j, i));
         }
 
-        return face_flux.calculate(
-            vertical_mass_flux<Xi>(fields, w, k - 1, j, i),
+        return face_flux.calculate(vertical_mass_flux<Xi>(fields, w, k - 1, j, i),
             vertical_mass_flux<Xi>(fields, w, k, j, i),
             vertical_mass_flux<Xi>(fields, w, k + 1, j, i),
             scalar<Xi>(fields, k - 1, j, i),
@@ -171,45 +162,43 @@ struct RegularLatLonHorizontalVorticityTransportDeviceView {
             scalar<Xi>(fields, k + 2, j, i));
     }
 
-    template<bool Xi, typename Fields, typename WView>
-    KOKKOS_INLINE_FUNCTION
-    HorizontalVorticityTransportTerms calculate(
-        const Fields& fields, const WView& w, int k, int j, int i,
-        int k_begin, int k_end) const noexcept {
+    template <bool Xi, typename Fields, typename WView>
+    KOKKOS_INLINE_FUNCTION HorizontalVorticityTransportTerms
+    calculate(const Fields& fields, const WView& w, int k, int j, int i, int k_begin, int k_end)
+        const noexcept {
 
         const VVM::Real jacobian = Xi ? jacobian_v(j, i) : jacobian_u(j, i);
-        const VVM::Real physical_scale =
-            Xi ? components.h1_at_v(j, i) : -components.h2_at_u(j, i);
+        const VVM::Real physical_scale = Xi ? components.h1_at_v(j, i) : -components.h2_at_u(j, i);
 
         HorizontalVorticityTransportTerms result;
-        result.q1 = -physical_scale
-            * (horizontal_face<Xi>(fields, k, j, i, 0)
-               - horizontal_face<Xi>(fields, k, j, i - 1, 0))
-            / (jacobian * components.dq1);
-        result.q2 = -physical_scale
-            * (horizontal_face<Xi>(fields, k, j, i, 1)
-               - horizontal_face<Xi>(fields, k, j - 1, i, 1))
-            / (jacobian * components.dq2);
-        result.vertical = -physical_scale * fields.inverse_spacing(k)
-            * (vertical_face<Xi>(fields, w, k, j, i, k_begin, k_end)
-               - vertical_face<Xi>(fields, w, k - 1, j, i, k_begin, k_end));
+        result.q1 = -physical_scale *
+                    (horizontal_face<Xi>(fields, k, j, i, 0) -
+                        horizontal_face<Xi>(fields, k, j, i - 1, 0)) /
+                    (jacobian * components.dq1);
+        result.q2 = -physical_scale *
+                    (horizontal_face<Xi>(fields, k, j, i, 1) -
+                        horizontal_face<Xi>(fields, k, j - 1, i, 1)) /
+                    (jacobian * components.dq2);
+        result.vertical = -physical_scale * fields.inverse_spacing(k) *
+                          (vertical_face<Xi>(fields, w, k, j, i, k_begin, k_end) -
+                              vertical_face<Xi>(fields, w, k - 1, j, i, k_begin, k_end));
         return result;
     }
 
-    template<typename Fields, typename WView>
-    KOKKOS_INLINE_FUNCTION
-    HorizontalVorticityTransportTerms calculate_xi_at_v(
-        const Fields& fields, const WView& w, int k, int j, int i,
-        int k_begin, int k_end) const noexcept {
+    template <typename Fields, typename WView>
+    KOKKOS_INLINE_FUNCTION HorizontalVorticityTransportTerms
+    calculate_xi_at_v(
+        const Fields& fields, const WView& w, int k, int j, int i, int k_begin, int k_end)
+        const noexcept {
 
         return calculate<true>(fields, w, k, j, i, k_begin, k_end);
     }
 
-    template<typename Fields, typename WView>
-    KOKKOS_INLINE_FUNCTION
-    HorizontalVorticityTransportTerms calculate_eta_at_u(
-        const Fields& fields, const WView& w, int k, int j, int i,
-        int k_begin, int k_end) const noexcept {
+    template <typename Fields, typename WView>
+    KOKKOS_INLINE_FUNCTION HorizontalVorticityTransportTerms
+    calculate_eta_at_u(
+        const Fields& fields, const WView& w, int k, int j, int i, int k_begin, int k_end)
+        const noexcept {
 
         return calculate<false>(fields, w, k, j, i, k_begin, k_end);
     }
@@ -217,8 +206,7 @@ struct RegularLatLonHorizontalVorticityTransportDeviceView {
 
 inline RegularLatLonHorizontalVorticityTransportDeviceView
 make_regular_lat_lon_horizontal_vorticity_transport_device_view(
-    const Core::Geometry::HorizontalGeometry& geometry,
-    VVM::Real alpha = VVM::real(1.0)) {
+    const Core::Geometry::HorizontalGeometry& geometry, VVM::Real alpha = VVM::real(1.0)) {
 
     using Core::Geometry::HorizontalLocation;
 
@@ -226,8 +214,8 @@ make_regular_lat_lon_horizontal_vorticity_transport_device_view(
     result.components = make_regular_lat_lon_horizontal_deformation_device_view(geometry);
 
     if (geometry.layout().halo < 2) {
-        throw std::invalid_argument(
-            "RegularLatLonHorizontalVorticityTransport requires at least two horizontal halo cells.");
+        throw std::invalid_argument("RegularLatLonHorizontalVorticityTransport requires at least "
+                                    "two horizontal halo cells.");
     }
 
     result.jacobian_t = geometry.device_view(HorizontalLocation::T).sqrt_g;

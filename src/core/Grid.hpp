@@ -20,8 +20,8 @@ namespace Core {
 
 // Define a structure to hold grid dimensions and related information
 struct GridDimension {
-    int global_size;    // Global grid size (total number of grid points)
-    VVM::Real d_coord;     // Grid spacing
+    int global_size;   // Global grid size (total number of grid points)
+    VVM::Real d_coord; // Grid spacing
 
     // MPI-related local fields
     int local_physical_start_idx; // Local physical region start index in global
@@ -46,74 +46,158 @@ public:
 
     // Getters for grid information.
     // These are now regular host functions that access dims_host_mirror_.
-    int get_local_total_points_z() const { return dims_host_mirror_(0).local_physical_size + 2 * dims_host_mirror_(0).num_halo_cells; }
-    int get_local_total_points_y() const { return dims_host_mirror_(1).local_physical_size + 2 * dims_host_mirror_(1).num_halo_cells; }
-    int get_local_total_points_x() const { return dims_host_mirror_(2).local_physical_size + 2 * dims_host_mirror_(2).num_halo_cells; }
+    int
+    get_local_total_points_z() const {
+        return dims_host_mirror_(0).local_physical_size + 2 * dims_host_mirror_(0).num_halo_cells;
+    }
+    int
+    get_local_total_points_y() const {
+        return dims_host_mirror_(1).local_physical_size + 2 * dims_host_mirror_(1).num_halo_cells;
+    }
+    int
+    get_local_total_points_x() const {
+        return dims_host_mirror_(2).local_physical_size + 2 * dims_host_mirror_(2).num_halo_cells;
+    }
 
-    int get_local_physical_points_z() const { return dims_host_mirror_(0).local_physical_size; }
-    int get_local_physical_points_y() const { return dims_host_mirror_(1).local_physical_size; }
-    int get_local_physical_points_x() const { return dims_host_mirror_(2).local_physical_size; }
+    int
+    get_local_physical_points_z() const {
+        return dims_host_mirror_(0).local_physical_size;
+    }
+    int
+    get_local_physical_points_y() const {
+        return dims_host_mirror_(1).local_physical_size;
+    }
+    int
+    get_local_physical_points_x() const {
+        return dims_host_mirror_(2).local_physical_size;
+    }
 
-    int get_global_points_z() const { return dims_host_mirror_(0).global_size; }
-    int get_global_points_y() const { return dims_host_mirror_(1).global_size; }
-    int get_global_points_x() const { return dims_host_mirror_(2).global_size; }
+    int
+    get_global_points_z() const {
+        return dims_host_mirror_(0).global_size;
+    }
+    int
+    get_global_points_y() const {
+        return dims_host_mirror_(1).global_size;
+    }
+    int
+    get_global_points_x() const {
+        return dims_host_mirror_(2).global_size;
+    }
 
-    bool is_singleton_y() const { return get_global_points_y() == 1; }
-    bool is_singleton_x() const { return get_global_points_x() == 1; }
+    bool
+    is_singleton_y() const {
+        return get_global_points_y() == 1;
+    }
+    bool
+    is_singleton_x() const {
+        return get_global_points_x() == 1;
+    }
 
-    VVM::Real get_dz() const { return dims_host_mirror_(0).d_coord; }
-    VVM::Real get_dy() const { return dims_host_mirror_(1).d_coord; }
-    VVM::Real get_dx() const { return dims_host_mirror_(2).d_coord; }
-    VVM::Real get_dz1() const { return grid_specification_.vertical.dz1; }
+    VVM::Real
+    get_dz() const {
+        return dims_host_mirror_(0).d_coord;
+    }
+    VVM::Real
+    get_dy() const {
+        return dims_host_mirror_(1).d_coord;
+    }
+    VVM::Real
+    get_dx() const {
+        return dims_host_mirror_(2).d_coord;
+    }
+    VVM::Real
+    get_dz1() const {
+        return grid_specification_.vertical.dz1;
+    }
 
-    int get_local_physical_start_z() const { return dims_host_mirror_(0).local_physical_start_idx; }
-    int get_local_physical_end_z() const { return dims_host_mirror_(0).local_physical_end_idx; }
-    int get_local_physical_start_y() const { return dims_host_mirror_(1).local_physical_start_idx; }
-    int get_local_physical_end_y() const { return dims_host_mirror_(1).local_physical_end_idx; }
-    int get_local_physical_start_x() const { return dims_host_mirror_(2).local_physical_start_idx; }
-    int get_local_physical_end_x() const { return dims_host_mirror_(2).local_physical_end_idx; }
+    int
+    get_local_physical_start_z() const {
+        return dims_host_mirror_(0).local_physical_start_idx;
+    }
+    int
+    get_local_physical_end_z() const {
+        return dims_host_mirror_(0).local_physical_end_idx;
+    }
+    int
+    get_local_physical_start_y() const {
+        return dims_host_mirror_(1).local_physical_start_idx;
+    }
+    int
+    get_local_physical_end_y() const {
+        return dims_host_mirror_(1).local_physical_end_idx;
+    }
+    int
+    get_local_physical_start_x() const {
+        return dims_host_mirror_(2).local_physical_start_idx;
+    }
+    int
+    get_local_physical_end_x() const {
+        return dims_host_mirror_(2).local_physical_end_idx;
+    }
 
-    int get_halo_cells() const { return dims_host_mirror_(0).num_halo_cells; }
+    int
+    get_halo_cells() const {
+        return dims_host_mirror_(0).num_halo_cells;
+    }
 
     // MPI info
-    int get_mpi_rank() const { return mpi_rank_; }
-    int get_mpi_size() const { return mpi_size_; }
+    int
+    get_mpi_rank() const {
+        return mpi_rank_;
+    }
+    int
+    get_mpi_size() const {
+        return mpi_size_;
+    }
 
     KOKKOS_INLINE_FUNCTION
-    MPI_Comm get_cart_comm() const { return cart_comm_; }
+    MPI_Comm
+    get_cart_comm() const {
+        return cart_comm_;
+    }
 
-    MPI_Comm get_comm() const { return comm_; }
+    MPI_Comm
+    get_comm() const {
+        return comm_;
+    }
 
-    const GridSpecification& specification() const noexcept {
+    const GridSpecification&
+    specification() const noexcept {
         return grid_specification_;
     }
 
-    const HorizontalDomainSpec& horizontal_specification() const noexcept {
+    const HorizontalDomainSpec&
+    horizontal_specification() const noexcept {
         return grid_specification_.horizontal;
     }
 
-    const VerticalGridSpec& vertical_specification() const noexcept {
+    const VerticalGridSpec&
+    vertical_specification() const noexcept {
         return grid_specification_.vertical;
     }
 
-    const Geometry::HorizontalGeometry& geometry() const noexcept {
+    const Geometry::HorizontalGeometry&
+    geometry() const noexcept {
         return *geometry_;
     }
 
 private:
     // Changed from std::vector to Kokkos::View to store grid dimensions.
     // This allows device access for KOKKOS_INLINE_FUNCTION getters.
-    Kokkos::View<GridDimension*, Kokkos::DefaultExecutionSpace> dims_device_view_; // Stores dimensions for each axis (Z, Y, X)
+    Kokkos::View<GridDimension*, Kokkos::DefaultExecutionSpace>
+        dims_device_view_; // Stores dimensions for each axis (Z, Y, X)
     Kokkos::View<GridDimension*, Kokkos::HostSpace> dims_host_mirror_;
 
     GridSpecification grid_specification_;
 
-    int mpi_rank_;                      // Rank of the current MPI process
-    int mpi_size_;                      // Total number of processes in MPI communicator
-    int cart_rank_ = MPI_PROC_NULL;     // Rank in cart_comm_ (may differ when MPI reorders)
+    int mpi_rank_;                  // Rank of the current MPI process
+    int mpi_size_;                  // Total number of processes in MPI communicator
+    int cart_rank_ = MPI_PROC_NULL; // Rank in cart_comm_ (may differ when MPI reorders)
     MPI_Comm comm_;
-    MPI_Comm cart_comm_;                // MPI Cartesian communicator for halo exchange
-    bool radiation_enabled_ = false;    // Radiation needs an even column split; see the check in the .cpp
+    MPI_Comm cart_comm_; // MPI Cartesian communicator for halo exchange
+    bool radiation_enabled_ =
+        false; // Radiation needs an even column split; see the check in the .cpp
 
     std::unique_ptr<Geometry::HorizontalGeometry> geometry_;
 
@@ -124,6 +208,5 @@ private:
 
 }
 }
-
 
 #endif // VVM_CORE_GRID_HPP

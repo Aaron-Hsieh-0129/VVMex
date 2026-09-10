@@ -15,7 +15,8 @@ namespace {
 int failures = 0;
 int mpi_rank = 0;
 
-void check(const bool condition, const char* message) {
+void
+check(const bool condition, const char* message) {
     if (condition) {
         return;
     }
@@ -26,7 +27,8 @@ void check(const bool condition, const char* message) {
 
 } // namespace
 
-int main(int argc, char** argv) {
+int
+main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
 
@@ -42,16 +44,13 @@ int main(int argc, char** argv) {
             const VVM::Core::Grid grid(config, MPI_COMM_WORLD);
             const auto& horizontal = grid.horizontal_specification();
 
-            check(
-                grid.geometry().kind() == VVM::Core::Geometry::GeometryKind::RegularLatLon,
+            check(grid.geometry().kind() == VVM::Core::Geometry::GeometryKind::RegularLatLon,
                 "Grid must construct regular latitude-longitude geometry");
 
-            check(
-                horizontal.topology.q1 == VVM::Core::HorizontalEdgeTopology::Periodic,
+            check(horizontal.topology.q1 == VVM::Core::HorizontalEdgeTopology::Periodic,
                 "RLL q1 topology must be periodic");
 
-            check(
-                horizontal.topology.q2 == VVM::Core::HorizontalEdgeTopology::Bounded,
+            check(horizontal.topology.q2 == VVM::Core::HorizontalEdgeTopology::Bounded,
                 "RLL q2 topology must be bounded");
 
             bool model_guard_threw = false;
@@ -59,16 +58,17 @@ int main(int argc, char** argv) {
             try {
                 const VVM::Core::BoundaryConditionManager boundary_conditions(grid);
                 (void)boundary_conditions;
-            } catch (const std::runtime_error& error) {
+            }
+            catch (const std::runtime_error& error) {
                 model_guard_threw =
-                    std::string(error.what()).find(
-                        "full model execution is not enabled yet") != std::string::npos;
+                    std::string(error.what()).find("full model execution is not enabled yet") !=
+                    std::string::npos;
             }
 
-            check(
-                model_guard_threw,
+            check(model_guard_threw,
                 "BoundaryConditionManager must prevent incomplete RLL full-model execution");
-        } catch (const std::exception& error) {
+        }
+        catch (const std::exception& error) {
             ++failures;
             std::fprintf(stderr, "Rank %d unexpected exception: %s\n", mpi_rank, error.what());
         }

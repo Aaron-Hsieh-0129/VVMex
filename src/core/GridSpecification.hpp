@@ -14,16 +14,9 @@ class ConfigurationManager;
 
 namespace Core {
 
-enum class HorizontalEdgeTopology : std::uint8_t {
-    Periodic,
-    Bounded
-};
+enum class HorizontalEdgeTopology : std::uint8_t { Periodic, Bounded };
 
-enum class VerticalCoordinateType : std::uint8_t {
-    Default,
-    TaiwanVVM,
-    RCEMIP
-};
+enum class VerticalCoordinateType : std::uint8_t { Default, TaiwanVVM, RCEMIP };
 
 const char* horizontal_edge_topology_to_string(HorizontalEdgeTopology topology) noexcept;
 const char* vertical_coordinate_type_to_string(VerticalCoordinateType type) noexcept;
@@ -52,15 +45,18 @@ struct VerticalGridSpec {
     VerticalCoordinateType type = VerticalCoordinateType::Default;
     std::string rcemip_grid_data_path;
 
-    bool spacing_parameters_are_equal() const noexcept {
+    bool
+    spacing_parameters_are_equal() const noexcept {
         return dz == dz1;
     }
 
-    bool uses_uniform_analytic_coordinate() const noexcept {
+    bool
+    uses_uniform_analytic_coordinate() const noexcept {
         return type == VerticalCoordinateType::Default && spacing_parameters_are_equal();
     }
 
-    bool uses_default_stretching() const noexcept {
+    bool
+    uses_default_stretching() const noexcept {
         return type == VerticalCoordinateType::Default && !spacing_parameters_are_equal();
     }
 };

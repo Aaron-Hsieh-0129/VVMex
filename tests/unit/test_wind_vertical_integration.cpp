@@ -41,10 +41,13 @@ struct Communication {
     }
 
     ~Communication() {
-        if (comm) ncclCommDestroy(comm);
+        if (comm) {
+            ncclCommDestroy(comm);
+        }
     }
 
-    static void require(ncclResult_t status, const char* operation) {
+    static void
+    require(ncclResult_t status, const char* operation) {
         if (status != ncclSuccess) {
             throw std::runtime_error(std::string(operation) + ": " + ncclGetErrorString(status));
         }
@@ -52,15 +55,18 @@ struct Communication {
 #endif
 };
 
-Real gradient_x(int mode, int k) {
+Real
+gradient_x(int mode, int k) {
     return (mode & 2) ? real(1e-4) * (real(1.0) + real(0.125) * k) : real(0.0);
 }
 
-Real gradient_y(int mode, int k) {
+Real
+gradient_y(int mode, int k) {
     return (mode & 2) ? real(-2e-4) * (real(1.0) + real(0.0625) * k) : real(0.0);
 }
 
-std::vector<Real> snapshot_field(const VVM::Core::Field<3>& field) {
+std::vector<Real>
+snapshot_field(const VVM::Core::Field<3>& field) {
     const auto host = field.get_host_data();
     std::vector<Real> values;
     values.reserve(host.size());
@@ -76,7 +82,8 @@ std::vector<Real> snapshot_field(const VVM::Core::Field<3>& field) {
     return values;
 }
 
-void run_tests(const ConfigurationManager& config, const Communication& communication) {
+void
+run_tests(const ConfigurationManager& config, const Communication& communication) {
     const Grid grid(config);
     Parameters parameters(config, grid);
 
@@ -129,8 +136,8 @@ void run_tests(const ConfigurationManager& config, const Communication& communic
 
         for (int k = 0; k < nz; ++k) {
             flex_host(k) = stretched
-                ? (k % 3 == 0 ? real(0.8) : (k % 3 == 1 ? real(1.1) : real(1.4)))
-                : real(1.0);
+                               ? (k % 3 == 0 ? real(0.8) : (k % 3 == 1 ? real(1.1) : real(1.4)))
+                               : real(1.0);
         }
 
         for (int k = 0; k < nz - 1; ++k) {
@@ -164,7 +171,8 @@ void run_tests(const ConfigurationManager& config, const Communication& communic
                         xi_host(k, j, i) = b - shear_v;
                         eta_host(k, j, i) = a - shear_u;
 
-                        const bool top_physical = k == top && j >= h && j < ny - h && i >= h && i < nx - h;
+                        const bool top_physical =
+                            k == top && j >= h && j < ny - h && i >= h && i < nx - h;
                         u_host(k, j, i) = top_physical ? real(12.0) + shear_u * z[k] : sentinel;
                         v_host(k, j, i) = top_physical ? real(-8.0) + shear_v * z[k] : sentinel;
                     }
@@ -184,21 +192,28 @@ void run_tests(const ConfigurationManager& config, const Communication& communic
 
             // Literal reference arithmetic from solve_uv before extraction.
             Kokkos::parallel_for("OriginalWindVerticalIntegrationReference",
-                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny-h, nx-h}),
+                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
                 KOKKOS_LAMBDA(const int j, const int i) {
-                    for (int k = nz-h-2; k >= h-1; --k) {
-                        reference_u(k,j,i) = reference_u(k+1,j,i)
-                            - ((w(k,j,i+1) - w(k,j,i))*rdx() - eta(k,j,i)) * dz() / flex(k);
-                        reference_v(k,j,i) = reference_v(k+1,j,i)
-                            - ((w(k,j+1,i) - w(k,j,i))*rdy() - xi(k,j,i)) * dz() / flex(k);
+                    for (int k = nz - h - 2; k >= h - 1; --k) {
+                        reference_u(k, j, i) =
+                            reference_u(k + 1, j, i) -
+                            ((w(k, j, i + 1) - w(k, j, i)) * rdx() - eta(k, j, i)) * dz() / flex(k);
+                        reference_v(k, j, i) =
+                            reference_v(k + 1, j, i) -
+                            ((w(k, j + 1, i) - w(k, j, i)) * rdy() - xi(k, j, i)) * dz() / flex(k);
                     }
 
-                    reference_u(nz-h,j,i) = reference_u(nz-h-1,j,i)
-                        + ((w(nz-h-1,j,i+1) - w(nz-h-1,j,i))*rdx() - eta(nz-h-1,j,i)) * dz() / flex(nz-h-1);
-                    reference_v(nz-h,j,i) = reference_v(nz-h-1,j,i)
-                        + ((w(nz-h-1,j+1,i) - w(nz-h-1,j,i))*rdy() - xi(nz-h-1,j,i)) * dz() / flex(nz-h-1);
-                }
-            );
+                    reference_u(nz - h, j, i) =
+                        reference_u(nz - h - 1, j, i) +
+                        ((w(nz - h - 1, j, i + 1) - w(nz - h - 1, j, i)) * rdx() -
+                            eta(nz - h - 1, j, i)) *
+                            dz() / flex(nz - h - 1);
+                    reference_v(nz - h, j, i) =
+                        reference_v(nz - h - 1, j, i) +
+                        ((w(nz - h - 1, j + 1, i) - w(nz - h - 1, j, i)) * rdy() -
+                            xi(nz - h - 1, j, i)) *
+                            dz() / flex(nz - h - 1);
+                });
 
             solver.integrate_uv_from_top();
             Kokkos::fence();
@@ -208,8 +223,10 @@ void run_tests(const ConfigurationManager& config, const Communication& communic
             const auto actual_w = state.get_field<3>("w").get_host_data();
             const auto actual_xi = state.get_field<3>("xi_topo").get_host_data();
             const auto actual_eta = state.get_field<3>("eta_topo").get_host_data();
-            const auto expected_u = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), reference_u);
-            const auto expected_v = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), reference_v);
+            const auto expected_u =
+                Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), reference_u);
+            const auto expected_v =
+                Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), reference_v);
 
             bool exact_reference = true;
             bool untouched_correct = true;
@@ -227,57 +244,70 @@ void run_tests(const ConfigurationManager& config, const Communication& communic
                     for (int i = 0; i < nx; ++i) {
                         const Real x = static_cast<Real>(i - h) * dx_value;
 
-                        exact_reference = exact_reference
-                            && actual_u(k, j, i) == expected_u(k, j, i)
-                            && actual_v(k, j, i) == expected_v(k, j, i);
+                        exact_reference = exact_reference &&
+                                          actual_u(k, j, i) == expected_u(k, j, i) &&
+                                          actual_v(k, j, i) == expected_v(k, j, i);
 
                         const std::size_t index = (static_cast<std::size_t>(k) * ny + j) * nx + i;
 
-                        inputs_unchanged = inputs_unchanged
-                            && actual_w(k, j, i) == original_w[index]
-                            && actual_xi(k, j, i) == original_xi[index]
-                            && actual_eta(k, j, i) == original_eta[index];
+                        inputs_unchanged = inputs_unchanged &&
+                                           actual_w(k, j, i) == original_w[index] &&
+                                           actual_xi(k, j, i) == original_xi[index] &&
+                                           actual_eta(k, j, i) == original_eta[index];
 
-                        const bool integrated_region = j >= h && j < ny - h
-                            && i >= h && i < nx - h && k >= h - 1 && k <= nz - h;
+                        const bool integrated_region = j >= h && j < ny - h && i >= h &&
+                                                       i < nx - h && k >= h - 1 && k <= nz - h;
 
                         if (integrated_region) {
                             const Real analytic_u = real(12.0) + shear_u * z[k];
                             const Real analytic_v = real(-8.0) + shear_v * z[k];
 
-                            if (!std::isfinite(actual_u(k, j, i)) || !std::isfinite(actual_v(k, j, i))) {
+                            if (!std::isfinite(actual_u(k, j, i)) ||
+                                !std::isfinite(actual_v(k, j, i))) {
                                 finite = false;
-                            } else {
-                                analytic_error = std::max(analytic_error,
-                                    std::abs(actual_u(k, j, i) - analytic_u) / std::max(real(1.0), std::abs(analytic_u)));
-                                analytic_error = std::max(analytic_error,
-                                    std::abs(actual_v(k, j, i) - analytic_v) / std::max(real(1.0), std::abs(analytic_v)));
                             }
-                        } else {
-                            untouched_correct = untouched_correct
-                                && actual_u(k, j, i) == sentinel
-                                && actual_v(k, j, i) == sentinel;
+                            else {
+                                analytic_error = std::max(analytic_error,
+                                    std::abs(actual_u(k, j, i) - analytic_u) /
+                                        std::max(real(1.0), std::abs(analytic_u)));
+                                analytic_error = std::max(analytic_error,
+                                    std::abs(actual_v(k, j, i) - analytic_v) /
+                                        std::max(real(1.0), std::abs(analytic_v)));
+                            }
+                        }
+                        else {
+                            untouched_correct = untouched_correct &&
+                                                actual_u(k, j, i) == sentinel &&
+                                                actual_v(k, j, i) == sentinel;
                         }
                     }
                 }
             }
 
-            const bool passed = exact_reference && untouched_correct && inputs_unchanged
-                && finite && analytic_error <= tolerance;
+            const bool passed = exact_reference && untouched_correct && inputs_unchanged &&
+                                finite && analytic_error <= tolerance;
 
-            std::printf("stretched=%d mode=%d exact_reference=%d untouched=%d inputs=%d analytic_error=%.3e %s\n",
-                static_cast<int>(stretched), mode, static_cast<int>(exact_reference),
-                static_cast<int>(untouched_correct), static_cast<int>(inputs_unchanged),
-                static_cast<double>(analytic_error), passed ? "PASS" : "FAIL");
+            std::printf("stretched=%d mode=%d exact_reference=%d untouched=%d inputs=%d "
+                        "analytic_error=%.3e %s\n",
+                static_cast<int>(stretched),
+                mode,
+                static_cast<int>(exact_reference),
+                static_cast<int>(untouched_correct),
+                static_cast<int>(inputs_unchanged),
+                static_cast<double>(analytic_error),
+                passed ? "PASS" : "FAIL");
 
-            if (!passed) ++failures;
+            if (!passed) {
+                ++failures;
+            }
         }
     }
 }
 
 } // namespace
 
-int main(int argc, char* argv[]) {
+int
+main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);
     Kokkos::initialize(argc, argv);
 
@@ -285,13 +315,18 @@ int main(int argc, char* argv[]) {
         int size = 0;
         MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-        if (size != 1) throw std::runtime_error("This test requires one MPI rank.");
-        if (argc != 2) throw std::runtime_error("Usage: test_wind_vertical_integration <configuration.json>");
+        if (size != 1) {
+            throw std::runtime_error("This test requires one MPI rank.");
+        }
+        if (argc != 2) {
+            throw std::runtime_error("Usage: test_wind_vertical_integration <configuration.json>");
+        }
 
         Communication communication;
         const ConfigurationManager config(argv[1]);
         run_tests(config, communication);
-    } catch (const std::exception& error) {
+    }
+    catch (const std::exception& error) {
         ++failures;
         std::fprintf(stderr, "test_wind_vertical_integration: %s\n", error.what());
     }
@@ -299,7 +334,9 @@ int main(int argc, char* argv[]) {
     int global_failures = 0;
     MPI_Allreduce(&failures, &global_failures, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
-    if (global_failures == 0) std::puts("test_wind_vertical_integration: PASS");
+    if (global_failures == 0) {
+        std::puts("test_wind_vertical_integration: PASS");
+    }
 
     Kokkos::finalize();
     MPI_Finalize();

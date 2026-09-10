@@ -18,7 +18,8 @@ struct RestartVariables {
     std::vector<std::string> vars_2d;
     std::vector<std::string> vars_3d;
 
-    bool empty() const {
+    bool
+    empty() const {
         return vars_1d.empty() && vars_2d.empty() && vars_3d.empty();
     }
 };
@@ -27,16 +28,10 @@ struct RestartVariables {
 // inferred from the prognostic variables, the tracers, and u/v/w, restricted to
 // what the run actually writes. `tag` names the caller in log lines.
 RestartVariables select_restart_variables(
-    const Utils::ConfigurationManager& config,
-    const Core::State& state,
-    int rank,
-    const char* tag);
+    const Utils::ConfigurationManager& config, const Core::State& state, int rank, const char* tag);
 
 void print_restart_variables(
-    const RestartVariables& variables,
-    const std::string& source,
-    int rank,
-    const char* tag);
+    const RestartVariables& variables, const std::string& source, int rank, const char* tag);
 
 } // namespace IO
 } // namespace VVM

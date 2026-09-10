@@ -22,15 +22,16 @@ using VVM::real;
 using VVM::Core::Field;
 using VVM::Core::Grid;
 using VVM::Core::HaloExchanger;
-using VVM::Dynamics::WindSolver;
 using VVM::Dynamics::HorizontalEllipticSolver;
+using VVM::Dynamics::WindSolver;
 
 constexpr int nz = 6;
 constexpr int top = 4;
 constexpr int bottom = 1;
 const Real sentinel = real(-12345.0);
 
-[[noreturn]] void fatal(const char* message) {
+[[noreturn]] void
+fatal(const char* message) {
     int rank = 0;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
@@ -41,29 +42,41 @@ const Real sentinel = real(-12345.0);
     std::abort();
 }
 
-template<std::size_t D>
-void append(std::vector<Real>& out, const Field<D>& field) {
+template <std::size_t D>
+void
+append(std::vector<Real>& out, const Field<D>& field) {
     const auto d = field.get_host_data();
 
     if constexpr (D == 0) {
         out.push_back(d());
-    } else if constexpr (D == 1) {
-        for (std::size_t i = 0; i < d.extent(0); ++i) out.push_back(d(i));
-    } else if constexpr (D == 2) {
-        for (std::size_t j = 0; j < d.extent(0); ++j) {
-            for (std::size_t i = 0; i < d.extent(1); ++i) out.push_back(d(j, i));
+    }
+    else if constexpr (D == 1) {
+        for (std::size_t i = 0; i < d.extent(0); ++i) {
+            out.push_back(d(i));
         }
-    } else if constexpr (D == 3) {
+    }
+    else if constexpr (D == 2) {
+        for (std::size_t j = 0; j < d.extent(0); ++j) {
+            for (std::size_t i = 0; i < d.extent(1); ++i) {
+                out.push_back(d(j, i));
+            }
+        }
+    }
+    else if constexpr (D == 3) {
         for (std::size_t k = 0; k < d.extent(0); ++k) {
             for (std::size_t j = 0; j < d.extent(1); ++j) {
-                for (std::size_t i = 0; i < d.extent(2); ++i) out.push_back(d(k, j, i));
+                for (std::size_t i = 0; i < d.extent(2); ++i) {
+                    out.push_back(d(k, j, i));
+                }
             }
         }
     }
 }
 
-bool same(const std::vector<Real>& a, const std::vector<Real>& b) {
-    return a.size() == b.size() && (a.empty() || std::memcmp(a.data(), b.data(), a.size() * sizeof(Real)) == 0);
+bool
+same(const std::vector<Real>& a, const std::vector<Real>& b) {
+    return a.size() == b.size() &&
+           (a.empty() || std::memcmp(a.data(), b.data(), a.size() * sizeof(Real)) == 0);
 }
 
 struct Sources {
@@ -72,10 +85,12 @@ struct Sources {
     Field<0> increment;
 
     Sources(int ny, int nx)
-        : zeta("zeta", {nz, ny, nx}), w("w", {nz, ny, nx}), xi("xi", {nz, ny, nx}), eta("eta", {nz, ny, nx}),
-          rho("rho", {nz}), rho_up("rho_up", {nz}), flex("flex", {nz}), spacing("spacing", {nz - 1}), increment("increment", {}) {}
+        : zeta("zeta", {nz, ny, nx}), w("w", {nz, ny, nx}), xi("xi", {nz, ny, nx}),
+          eta("eta", {nz, ny, nx}), rho("rho", {nz}), rho_up("rho_up", {nz}), flex("flex", {nz}),
+          spacing("spacing", {nz - 1}), increment("increment", {}) {}
 
-    void initialize(const Grid& grid, int step) {
+    void
+    initialize(const Grid& grid, int step) {
         const Real factor = step == 3 ? real(0.0) : static_cast<Real>(step + 1);
 
         auto zh = zeta.get_host_data();
@@ -86,11 +101,16 @@ struct Sources {
 
         for (int j = 0; j < grid.get_local_total_points_y(); ++j) {
             for (int i = 0; i < grid.get_local_total_points_x(); ++i) {
-                const Real x = pi2 * (grid.get_local_physical_start_x() + i - grid.get_halo_cells() + real(0.5)) / grid.get_global_points_x();
+                const Real x =
+                    pi2 *
+                    (grid.get_local_physical_start_x() + i - grid.get_halo_cells() + real(0.5)) /
+                    grid.get_global_points_x();
 
                 for (int k = 0; k < nz; ++k) {
                     zh(k, j, i) = factor * real(1e-10) * std::sin(x);
-                    wh(k, j, i) = k == top ? real(0.0) : factor * real(1e-5) * std::cos(x) * static_cast<Real>(k + 1);
+                    wh(k, j, i) =
+                        k == top ? real(0.0)
+                                 : factor * real(1e-5) * std::cos(x) * static_cast<Real>(k + 1);
                     xh(k, j, i) = factor * real(1e-4) * std::sin(x);
                     eh(k, j, i) = factor * real(-2e-4) * std::cos(x);
                 }
@@ -114,17 +134,23 @@ struct Sources {
 
         Real radius = real(1.0);
         if (grid.geometry().kind() == VVM::Core::Geometry::GeometryKind::RegularLatLon) {
-            radius = static_cast<const VVM::Core::Geometry::RegularLatLonGeometry&>(grid.geometry()).radius();
+            radius = static_cast<const VVM::Core::Geometry::RegularLatLonGeometry&>(grid.geometry())
+                         .radius();
         }
 
         Kokkos::deep_copy(increment.get_mutable_device_data(), factor * radius * real(30.0));
     }
 
-    std::vector<Real> values() const {
+    std::vector<Real>
+    values() const {
         std::vector<Real> result;
 
-        for (const auto* f : {&zeta, &w, &xi, &eta}) append(result, *f);
-        for (const auto* f : {&rho, &rho_up, &flex, &spacing}) append(result, *f);
+        for (const auto* f : {&zeta, &w, &xi, &eta}) {
+            append(result, *f);
+        }
+        for (const auto* f : {&rho, &rho_up, &flex, &spacing}) {
+            append(result, *f);
+        }
         append(result, increment);
 
         return result;
@@ -137,47 +163,69 @@ struct StateFields {
     Field<2> rhs_psi, rhs_chi, solution_psi, solution_chi;
 
     StateFields(int ny, int nx)
-        : psi("psi", {ny, nx}), previous_psi("previous_psi", {ny, nx}),
-          chi("chi", {ny, nx}), previous_chi("previous_chi", {ny, nx}),
-          u("u", {nz, ny, nx}), v("v", {nz, ny, nx}),
+        : psi("psi", {ny, nx}), previous_psi("previous_psi", {ny, nx}), chi("chi", {ny, nx}),
+          previous_chi("previous_chi", {ny, nx}), u("u", {nz, ny, nx}), v("v", {nz, ny, nx}),
           rhs_psi("rhs_psi", {ny, nx}), rhs_chi("rhs_chi", {ny, nx}),
           solution_psi("solution_psi", {ny, nx}), solution_chi("solution_chi", {ny, nx}) {}
 
-    void reset_history() {
+    void
+    reset_history() {
         Kokkos::deep_copy(psi.get_mutable_device_data(), real(3.0));
         Kokkos::deep_copy(previous_psi.get_mutable_device_data(), real(1.0));
         Kokkos::deep_copy(chi.get_mutable_device_data(), real(-2.0));
         Kokkos::deep_copy(previous_chi.get_mutable_device_data(), real(-1.0));
     }
 
-    void reset_outputs() {
+    void
+    reset_outputs() {
         Kokkos::deep_copy(u.get_mutable_device_data(), sentinel);
         Kokkos::deep_copy(v.get_mutable_device_data(), sentinel);
     }
 
-    WindSolver::HorizontalDiagnosticFields bind(const Sources& s) {
-        return {
-            psi, previous_psi, chi, previous_chi,
-            s.zeta, s.w, s.xi, s.eta, u, v,
-            s.rho, s.rho_up, s.flex, s.spacing, s.increment
-        };
+    WindSolver::HorizontalDiagnosticFields
+    bind(const Sources& s) {
+        return {psi,
+            previous_psi,
+            chi,
+            previous_chi,
+            s.zeta,
+            s.w,
+            s.xi,
+            s.eta,
+            u,
+            v,
+            s.rho,
+            s.rho_up,
+            s.flex,
+            s.spacing,
+            s.increment};
     }
 
-    WindSolver::HorizontalDiagnosticWorkspace workspace() {
+    WindSolver::HorizontalDiagnosticWorkspace
+    workspace() {
         return {rhs_psi, rhs_chi, solution_psi, solution_chi};
     }
 
-    std::vector<Real> history() const {
+    std::vector<Real>
+    history() const {
         std::vector<Real> result;
         append(result, psi);
         append(result, chi);
         return result;
     }
 
-    std::vector<Real> values() const {
+    std::vector<Real>
+    values() const {
         std::vector<Real> result;
 
-        for (const auto* f : {&psi, &previous_psi, &chi, &previous_chi, &rhs_psi, &rhs_chi, &solution_psi, &solution_chi}) {
+        for (const auto* f : {&psi,
+                 &previous_psi,
+                 &chi,
+                 &previous_chi,
+                 &rhs_psi,
+                 &rhs_chi,
+                 &solution_psi,
+                 &solution_chi}) {
             append(result, *f);
         }
 
@@ -187,7 +235,11 @@ struct StateFields {
     }
 };
 
-bool check(const Grid& grid, const Sources& source, const StateFields& state, const std::vector<Real>& old) {
+bool
+check(const Grid& grid,
+    const Sources& source,
+    const StateFields& state,
+    const std::vector<Real>& old) {
     const auto p = state.psi.get_host_data();
     const auto pp = state.previous_psi.get_host_data();
     const auto c = state.chi.get_host_data();
@@ -203,8 +255,11 @@ bool check(const Grid& grid, const Sources& source, const StateFields& state, co
     const auto v = state.v.get_host_data();
     const double increment = source.increment.get_host_data()();
 
-    const bool spherical = grid.geometry().kind() == VVM::Core::Geometry::GeometryKind::RegularLatLon;
-    const auto* rll = spherical ? &static_cast<const VVM::Core::Geometry::RegularLatLonGeometry&>(grid.geometry()) : nullptr;
+    const bool spherical =
+        grid.geometry().kind() == VVM::Core::Geometry::GeometryKind::RegularLatLon;
+    const auto* rll =
+        spherical ? &static_cast<const VVM::Core::Geometry::RegularLatLonGeometry&>(grid.geometry())
+                  : nullptr;
     const double radius = spherical ? rll->radius() : 1.0;
     const double dq1 = grid.geometry().dq1();
     const double dq2 = grid.geometry().dq2();
@@ -232,20 +287,27 @@ bool check(const Grid& grid, const Sources& source, const StateFields& state, co
             const bool physical = j >= h && j < ny - h && i >= h && i < nx - h;
 
             valid = valid && rp(j, i) == zeta(top, j, i);
-            compare(0, rc(j, i), 1.25 * static_cast<double>(real(0.9)) * w(top - 1, j, i) * static_cast<double>(real(0.01)));
+            compare(0,
+                rc(j, i),
+                1.25 * static_cast<double>(real(0.9)) * w(top - 1, j, i) *
+                    static_cast<double>(real(0.01)));
 
             if (physical) {
                 const std::size_t index = static_cast<std::size_t>(j) * nx + i;
                 valid = valid && pp(j, i) == old[index] && cp(j, i) == old[cells + index];
 
-                double eu = (-(p(j, i) - p(j - 1, i)) * cu / dq2 + (c(j, i + 1) - c(j, i)) / dq1 + increment) / (radius * cu);
-                double ev = ((p(j, i) - p(j, i - 1)) / (cv * dq1) + (c(j + 1, i) - c(j, i)) / dq2) / radius;
+                double eu = (-(p(j, i) - p(j - 1, i)) * cu / dq2 + (c(j, i + 1) - c(j, i)) / dq1 +
+                                increment) /
+                            (radius * cu);
+                double ev =
+                    ((p(j, i) - p(j, i - 1)) / (cv * dq1) + (c(j + 1, i) - c(j, i)) / dq2) / radius;
 
                 compare(1, u(top, j, i), eu);
                 compare(2, v(top, j, i), ev);
 
                 for (int k = top - 1; k >= bottom; --k) {
-                    eu -= ((w(k, j, i + 1) - w(k, j, i)) / (dq1 * radius * cu) - eta(k, j, i)) * ds(k);
+                    eu -= ((w(k, j, i + 1) - w(k, j, i)) / (dq1 * radius * cu) - eta(k, j, i)) *
+                          ds(k);
                     ev -= ((w(k, j + 1, i) - w(k, j, i)) / (dq2 * radius) - xi(k, j, i)) * ds(k);
 
                     compare(1, u(k, j, i), eu);
@@ -270,12 +332,18 @@ bool check(const Grid& grid, const Sources& source, const StateFields& state, co
 
 #if defined(ENABLE_NCCL)
 
-void cuda_check(cudaError_t result) {
-    if (result != cudaSuccess) fatal(cudaGetErrorString(result));
+void
+cuda_check(cudaError_t result) {
+    if (result != cudaSuccess) {
+        fatal(cudaGetErrorString(result));
+    }
 }
 
-void nccl_check(ncclResult_t result) {
-    if (result != ncclSuccess) fatal(ncclGetErrorString(result));
+void
+nccl_check(ncclResult_t result) {
+    if (result != ncclSuccess) {
+        fatal(ncclGetErrorString(result));
+    }
 }
 
 struct Graph {
@@ -283,14 +351,19 @@ struct Graph {
     cudaGraphExec_t executable = nullptr;
 
     ~Graph() {
-        if (executable) cudaGraphExecDestroy(executable);
-        if (graph) cudaGraphDestroy(graph);
+        if (executable) {
+            cudaGraphExecDestroy(executable);
+        }
+        if (graph) {
+            cudaGraphDestroy(graph);
+        }
     }
 };
 
 #endif
 
-int run_case(const Grid& grid, HaloExchanger& halo, int iterations) {
+int
+run_case(const Grid& grid, HaloExchanger& halo, int iterations) {
     Sources source(grid.get_local_total_points_y(), grid.get_local_total_points_x());
     StateFields direct(grid.get_local_total_points_y(), grid.get_local_total_points_x());
     StateFields replayed(grid.get_local_total_points_y(), grid.get_local_total_points_x());
@@ -311,9 +384,15 @@ int run_case(const Grid& grid, HaloExchanger& halo, int iterations) {
 
     try {
         const auto execute = [&](HorizontalEllipticSolver& solver, StateFields& state) {
-            WindSolver::diagnose_horizontal_wind(
-                grid, halo, solver, state.bind(source), state.workspace(),
-                options, real(0.01), bottom, top);
+            WindSolver::diagnose_horizontal_wind(grid,
+                halo,
+                solver,
+                state.bind(source),
+                state.workspace(),
+                options,
+                real(0.01),
+                bottom,
+                top);
         };
 
         source.initialize(grid, 0);
@@ -339,7 +418,9 @@ int run_case(const Grid& grid, HaloExchanger& halo, int iterations) {
         execute(second, replayed);
         cuda_check(cudaStreamEndCapture(stream, &graph.graph));
 
-        if (!graph.graph) fatal("Capture returned no graph.");
+        if (!graph.graph) {
+            fatal("Capture returned no graph.");
+        }
 
         cuda_check(cudaGraphInstantiate(&graph.executable, graph.graph, nullptr, nullptr, 0));
 #endif
@@ -379,12 +460,13 @@ int run_case(const Grid& grid, HaloExchanger& halo, int iterations) {
             const auto a = direct.values();
             const auto b = replayed.values();
 
-            std::array<int, 4> local = {
-                same(a, b),
+            std::array<int, 4> local = {same(a, b),
                 preserved,
-                check(grid, source, direct, old_direct) && check(grid, source, replayed, old_replayed),
-                std::all_of(b.begin(), b.end(), [](Real value) { return std::isfinite(value); })
-            };
+                check(grid, source, direct, old_direct) &&
+                    check(grid, source, replayed, old_replayed),
+                std::all_of(b.begin(), b.end(), [](Real value) {
+                return std::isfinite(value);
+            })};
 
             std::array<int, 4> global = {};
             MPI_Allreduce(local.data(), global.data(), 4, MPI_INT, MPI_MIN, grid.get_comm());
@@ -396,21 +478,31 @@ int run_case(const Grid& grid, HaloExchanger& halo, int iterations) {
             failures += !pass;
 
             if (grid.get_mpi_rank() == 0) {
-                std::printf("ranks=%d execution=%s iterations=%d step=%d exact=%d sources=%d rhs_history_wind=%d finite=%d %s\n",
-                    grid.get_mpi_size(), execution, iterations, step,
-                    global[0], global[1], global[2], global[3], pass ? "PASS" : "FAIL");
+                std::printf("ranks=%d execution=%s iterations=%d step=%d exact=%d sources=%d "
+                            "rhs_history_wind=%d finite=%d %s\n",
+                    grid.get_mpi_size(),
+                    execution,
+                    iterations,
+                    step,
+                    global[0],
+                    global[1],
+                    global[2],
+                    global[3],
+                    pass ? "PASS" : "FAIL");
             }
         }
 
         Kokkos::fence();
         MPI_Barrier(grid.get_comm());
         return failures;
-    } catch (const std::exception& error) {
+    }
+    catch (const std::exception& error) {
         fatal(error.what());
     }
 }
 
-int run(const Grid& grid, HaloExchanger& halo) {
+int
+run(const Grid& grid, HaloExchanger& halo) {
     int failures = 0;
 
     for (int iterations : {1, 4}) {
@@ -422,7 +514,8 @@ int run(const Grid& grid, HaloExchanger& halo) {
 
 } // namespace
 
-int main(int argc, char** argv) {
+int
+main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
 
     int rank = 0;
@@ -445,7 +538,9 @@ int main(int argc, char** argv) {
 
 #if defined(ENABLE_NCCL)
             ncclUniqueId id;
-            if (rank == 0) nccl_check(ncclGetUniqueId(&id));
+            if (rank == 0) {
+                nccl_check(ncclGetUniqueId(&id));
+            }
 
             MPI_Bcast(&id, static_cast<int>(sizeof(id)), MPI_BYTE, 0, grid.get_comm());
 
@@ -457,7 +552,8 @@ int main(int argc, char** argv) {
 
                 try {
                     failures = run(grid, halo);
-                } catch (const std::exception& error) {
+                }
+                catch (const std::exception& error) {
                     fatal(error.what());
                 }
 
@@ -472,7 +568,8 @@ int main(int argc, char** argv) {
         }
 
         Kokkos::finalize();
-    } catch (const std::exception& error) {
+    }
+    catch (const std::exception& error) {
         fatal(error.what());
     }
 

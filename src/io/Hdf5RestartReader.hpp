@@ -19,10 +19,10 @@ namespace IO {
 class Hdf5RestartReader : public Reader {
 public:
     Hdf5RestartReader(const std::string& filepath,
-                      const Core::Grid& grid,
-                      const Core::Parameters& params,
-                      const Utils::ConfigurationManager& config,
-                      Core::HaloExchanger& halo_exchanger);
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        const Utils::ConfigurationManager& config,
+        Core::HaloExchanger& halo_exchanger);
 
     void read_and_initialize(Core::State& state) override;
 
@@ -31,10 +31,8 @@ public:
     VVM::Utils::RestartFileMetadata read_restart_metadata() override;
 
 private:
-    template<size_t Dim>
-    void read_field(hid_t file_id,
-                    const std::string& var_name,
-                    Core::Field<Dim>& field) const;
+    template <size_t Dim>
+    void read_field(hid_t file_id, const std::string& var_name, Core::Field<Dim>& field) const;
 
     std::string source_file_;
     const Core::Grid& grid_;

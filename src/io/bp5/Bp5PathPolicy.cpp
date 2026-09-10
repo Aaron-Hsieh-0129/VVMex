@@ -5,24 +5,21 @@
 
 namespace VVM::IO::BP5 {
 
-std::filesystem::path prepare_bp5_dataset_path(
-    const std::string& output_dir,
-    const std::string& prefix,
-    ExistingDatasetPolicy policy) {
+std::filesystem::path
+prepare_bp5_dataset_path(
+    const std::string& output_dir, const std::string& prefix, ExistingDatasetPolicy policy) {
     if (output_dir.empty()) {
         throw std::invalid_argument("output.output_dir must not be empty for BP5.");
     }
     const std::filesystem::path prefix_path(prefix);
-    if (prefix.empty() || prefix == "." || prefix == ".." ||
-        prefix_path.has_parent_path() || prefix_path.filename() != prefix_path) {
+    if (prefix.empty() || prefix == "." || prefix == ".." || prefix_path.has_parent_path() ||
+        prefix_path.filename() != prefix_path) {
         throw std::invalid_argument(
             "output.output_filename_prefix must be a simple non-empty filename for BP5.");
     }
 
-    const std::string dataset_name =
-        prefix_path.extension() == ".bp" ? prefix : prefix + ".bp";
-    const std::filesystem::path dataset_path =
-        std::filesystem::path(output_dir) / dataset_name;
+    const std::string dataset_name = prefix_path.extension() == ".bp" ? prefix : prefix + ".bp";
+    const std::filesystem::path dataset_path = std::filesystem::path(output_dir) / dataset_name;
     if (dataset_path.extension() != ".bp" || dataset_path.filename() == ".bp") {
         throw std::invalid_argument("refusing unsafe BP5 dataset target");
     }
@@ -33,7 +30,9 @@ std::filesystem::path prepare_bp5_dataset_path(
         throw std::runtime_error("cannot create output directory: " + ec.message());
     }
     const auto status = std::filesystem::symlink_status(dataset_path, ec);
-    if (ec == std::errc::no_such_file_or_directory) ec.clear();
+    if (ec == std::errc::no_such_file_or_directory) {
+        ec.clear();
+    }
     if (ec) {
         throw std::runtime_error("cannot inspect dataset path: " + ec.message());
     }
@@ -58,7 +57,8 @@ std::filesystem::path prepare_bp5_dataset_path(
                 throw std::runtime_error("cannot remove existing BP5 dataset: " + ec.message());
             }
         }
-    } else if (policy == ExistingDatasetPolicy::Append) {
+    }
+    else if (policy == ExistingDatasetPolicy::Append) {
         throw std::runtime_error("BP5 append target does not exist");
     }
     return dataset_path;

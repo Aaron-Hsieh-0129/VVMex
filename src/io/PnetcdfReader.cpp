@@ -10,25 +10,32 @@ namespace VVM {
 namespace IO {
 
 namespace {
-std::string join_variable_names(const std::vector<std::string>& names) {
-    if (names.empty()) return "(none)";
+std::string
+join_variable_names(const std::vector<std::string>& names) {
+    if (names.empty()) {
+        return "(none)";
+    }
 
     std::ostringstream oss;
     for (size_t i = 0; i < names.size(); ++i) {
-        if (i > 0) oss << ", ";
+        if (i > 0) {
+            oss << ", ";
+        }
         oss << names[i];
     }
     return oss.str();
 }
 
-void append_unique(std::vector<std::string>& names, const std::string& name) {
+void
+append_unique(std::vector<std::string>& names, const std::string& name) {
     if (std::find(names.begin(), names.end(), name) == names.end()) {
         names.push_back(name);
     }
 }
 } // namespace
 
-void PnetcdfReader::check_ncmpi_error(int status, const std::string& msg) const {
+void
+PnetcdfReader::check_ncmpi_error(int status, const std::string& msg) const {
     if (status != NC_NOERR) {
         std::string err_msg = msg + ": " + ncmpi_strerror(status);
         if (rank_ == 0) {
@@ -39,24 +46,19 @@ void PnetcdfReader::check_ncmpi_error(int status, const std::string& msg) const 
     }
 }
 
-PnetcdfReader::PnetcdfReader(const std::string& filepath, 
-                             const VVM::Core::Grid& grid, 
-                             const VVM::Core::Parameters& params, 
-                             const VVM::Utils::ConfigurationManager& config, 
-                             Core::HaloExchanger& halo_exchanger,
-                             const std::string& config_prefix) 
-    : source_file_(filepath), 
-      grid_(grid), 
-      params_(params), 
-      config_(config),
+PnetcdfReader::PnetcdfReader(const std::string& filepath,
+    const VVM::Core::Grid& grid,
+    const VVM::Core::Parameters& params,
+    const VVM::Utils::ConfigurationManager& config,
+    Core::HaloExchanger& halo_exchanger,
+    const std::string& config_prefix)
+    : source_file_(filepath), grid_(grid), params_(params), config_(config),
       config_prefix_(config_prefix),
       strict_missing_variables_(
           config_prefix == "restart" ||
           (config_prefix == "netcdf_reader" &&
-           config.get_value<std::string>("simulation.idealized_test", "none") == "none")),
-      comm_(grid.get_cart_comm()),
-      ncid_(-1), 
-      halo_exchanger_(halo_exchanger) {
+              config.get_value<std::string>("simulation.idealized_test", "none") == "none")),
+      comm_(grid.get_cart_comm()), ncid_(-1), halo_exchanger_(halo_exchanger) {
     MPI_Comm_rank(comm_, &rank_);
 }
 
@@ -66,7 +68,8 @@ PnetcdfReader::~PnetcdfReader() {
     }
 }
 
-std::map<std::string, MPI_Offset> PnetcdfReader::get_file_dimensions(int ncid) const {
+std::map<std::string, MPI_Offset>
+PnetcdfReader::get_file_dimensions(int ncid) const {
     std::map<std::string, MPI_Offset> dims;
     int num_dims;
     check_ncmpi_error(ncmpi_inq_ndims(ncid, &num_dims), "Failed to get number of dimensions");
@@ -74,20 +77,24 @@ std::map<std::string, MPI_Offset> PnetcdfReader::get_file_dimensions(int ncid) c
     for (int dimid = 0; dimid < num_dims; ++dimid) {
         char dim_name[NC_MAX_NAME + 1];
         MPI_Offset dim_len;
-        check_ncmpi_error(ncmpi_inq_dim(ncid, dimid, dim_name, &dim_len), "Failed to inquire dimension");
+        check_ncmpi_error(ncmpi_inq_dim(ncid, dimid, dim_name, &dim_len),
+            "Failed to inquire dimension");
         dims[std::string(dim_name)] = dim_len;
     }
     return dims;
 }
 
-void PnetcdfReader::validate_dimensions(const std::map<std::string, MPI_Offset>& file_dims) const {
+void
+PnetcdfReader::validate_dimensions(const std::map<std::string, MPI_Offset>& file_dims) const {
     const auto& it_z = file_dims.find("nz");
     if (it_z == file_dims.end()) {
         throw std::runtime_error("NetCDF file '" + source_file_ + "' is missing 'nz' dimension.");
     }
     if (it_z->second != grid_.get_global_points_z()) {
-        throw std::runtime_error("NetCDF file '" + source_file_ + "' 'nz' dimension (" + std::to_string(it_z->second) +
-                               ") does not match grid configuration (" + std::to_string(grid_.get_global_points_z()) + ").");
+        throw std::runtime_error("NetCDF file '" + source_file_ + "' 'nz' dimension (" +
+                                 std::to_string(it_z->second) +
+                                 ") does not match grid configuration (" +
+                                 std::to_string(grid_.get_global_points_z()) + ").");
     }
 
     const auto& it_y = file_dims.find("ny");
@@ -95,8 +102,10 @@ void PnetcdfReader::validate_dimensions(const std::map<std::string, MPI_Offset>&
         throw std::runtime_error("NetCDF file '" + source_file_ + "' is missing 'ny' dimension.");
     }
     if (it_y->second != grid_.get_global_points_y()) {
-        throw std::runtime_error("NetCDF file '" + source_file_ + "' 'ny' dimension (" + std::to_string(it_y->second) +
-                               ") does not match grid configuration (" + std::to_string(grid_.get_global_points_y()) + ").");
+        throw std::runtime_error("NetCDF file '" + source_file_ + "' 'ny' dimension (" +
+                                 std::to_string(it_y->second) +
+                                 ") does not match grid configuration (" +
+                                 std::to_string(grid_.get_global_points_y()) + ").");
     }
 
     const auto& it_x = file_dims.find("nx");
@@ -104,13 +113,17 @@ void PnetcdfReader::validate_dimensions(const std::map<std::string, MPI_Offset>&
         throw std::runtime_error("NetCDF file '" + source_file_ + "' is missing 'nx' dimension.");
     }
     if (it_x->second != grid_.get_global_points_x()) {
-        throw std::runtime_error("NetCDF file '" + source_file_ + "' 'nx' dimension (" + std::to_string(it_x->second) +
-                               ") does not match grid configuration (" + std::to_string(grid_.get_global_points_x()) + ").");
+        throw std::runtime_error("NetCDF file '" + source_file_ + "' 'nx' dimension (" +
+                                 std::to_string(it_x->second) +
+                                 ") does not match grid configuration (" +
+                                 std::to_string(grid_.get_global_points_x()) + ").");
     }
 }
 
-void PnetcdfReader::validate_variable_dimensions(
-    int ncid, int varid, const std::string& variable,
+void
+PnetcdfReader::validate_variable_dimensions(int ncid,
+    int varid,
+    const std::string& variable,
     const std::vector<std::string>& expected_names,
     const std::vector<MPI_Offset>& expected_sizes) const {
     if (expected_names.size() != expected_sizes.size()) {
@@ -118,86 +131,111 @@ void PnetcdfReader::validate_variable_dimensions(
     }
     int ndims = 0;
     check_ncmpi_error(ncmpi_inq_varndims(ncid, varid, &ndims),
-                      "Failed to inspect variable '" + variable + "' in '" + source_file_ + "'");
+        "Failed to inspect variable '" + variable + "' in '" + source_file_ + "'");
     if (static_cast<size_t>(ndims) != expected_names.size()) {
         std::ostringstream message;
-        message << "NetCDF file '" << source_file_ << "' variable '" << variable
-                << "' has " << ndims << " dimensions; expected " << expected_names.size() << ".";
+        message << "NetCDF file '" << source_file_ << "' variable '" << variable << "' has "
+                << ndims << " dimensions; expected " << expected_names.size() << ".";
         throw std::runtime_error(message.str());
     }
     std::vector<int> dimids(ndims);
     check_ncmpi_error(ncmpi_inq_vardimid(ncid, varid, dimids.data()),
-                      "Failed to inspect dimensions for '" + variable + "' in '" + source_file_ + "'");
+        "Failed to inspect dimensions for '" + variable + "' in '" + source_file_ + "'");
     for (int index = 0; index < ndims; ++index) {
         char name[NC_MAX_NAME + 1];
         MPI_Offset size = 0;
         check_ncmpi_error(ncmpi_inq_dim(ncid, dimids[index], name, &size),
-                          "Failed to inspect dimension for '" + variable + "'");
+            "Failed to inspect dimension for '" + variable + "'");
         if (name != expected_names[index] || size != expected_sizes[index]) {
             std::ostringstream message;
             message << "NetCDF file '" << source_file_ << "' variable '" << variable
                     << "' dimension " << index << " must be '" << expected_names[index]
-                    << "' of size " << expected_sizes[index] << "; found '" << name
-                    << "' of size " << size << ".";
+                    << "' of size " << expected_sizes[index] << "; found '" << name << "' of size "
+                    << size << ".";
             throw std::runtime_error(message.str());
         }
     }
 }
 
-template<size_t Dim>
-void PnetcdfReader::read_variable_1d(int ncid, const std::string& var_name, VVM::Core::Field<Dim>& field) {
+template <size_t Dim>
+void
+PnetcdfReader::read_variable_1d(
+    int ncid, const std::string& var_name, VVM::Core::Field<Dim>& field) {
     static_assert(Dim == 1, "read_variable_1d only works for 1D fields");
 
     int varid;
     int status = ncmpi_inq_varid(ncid, var_name.c_str(), &varid);
     if (status != NC_NOERR) {
-        std::string msg = "Cannot find 1D variable '" + var_name + "' in NetCDF file '" + source_file_ + "'.";
-        if (strict_missing_variables_) throw std::runtime_error(msg);
-        if (rank_ == 0) std::cerr << "Warning: " << msg << " Skipping." << std::endl;
+        std::string msg =
+            "Cannot find 1D variable '" + var_name + "' in NetCDF file '" + source_file_ + "'.";
+        if (strict_missing_variables_) {
+            throw std::runtime_error(msg);
+        }
+        if (rank_ == 0) {
+            std::cerr << "Warning: " << msg << " Skipping." << std::endl;
+        }
         return;
     }
 
-    validate_variable_dimensions(ncid, varid, var_name, {"nz"}, {static_cast<MPI_Offset>(grid_.get_global_points_z())});
+    validate_variable_dimensions(ncid,
+        varid,
+        var_name,
+        {"nz"},
+        {static_cast<MPI_Offset>(grid_.get_global_points_z())});
 
     MPI_Offset start[1] = {0};
-    MPI_Offset count[1] = { static_cast<MPI_Offset>(grid_.get_global_points_z()) };
+    MPI_Offset count[1] = {static_cast<MPI_Offset>(grid_.get_global_points_z())};
 
     // Create buffers for halo
     std::vector<VVM::Real> host_buffer(count[0]);
 
     // Every rank get complete 1D array
 #ifdef VVM_USE_DOUBLE_PRECISION
-    check_ncmpi_error(ncmpi_get_vara_double_all(ncid, varid, start, count, host_buffer.data()), "Failed to read 1D variable");
+    check_ncmpi_error(ncmpi_get_vara_double_all(ncid, varid, start, count, host_buffer.data()),
+        "Failed to read 1D variable");
 #else
-    check_ncmpi_error(ncmpi_get_vara_float_all(ncid, varid, start, count, host_buffer.data()), "Failed to read 1D variable");
+    check_ncmpi_error(ncmpi_get_vara_float_all(ncid, varid, start, count, host_buffer.data()),
+        "Failed to read 1D variable");
 #endif
 
     // Copy to State Field
     auto field_view_dev = field.get_mutable_device_data();
     auto field_view_host = Kokkos::create_mirror_view(field_view_dev);
-    
+
     const int h = grid_.get_halo_cells();
     for (size_t k = 0; k < count[0]; ++k) {
         field_view_host(k + h) = host_buffer[k];
     }
-    
+
     Kokkos::deep_copy(field_view_dev, field_view_host);
 }
 
-template<size_t Dim>
-void PnetcdfReader::read_variable_2d(int ncid, const std::string& var_name, VVM::Core::Field<Dim>& field) {
+template <size_t Dim>
+void
+PnetcdfReader::read_variable_2d(
+    int ncid, const std::string& var_name, VVM::Core::Field<Dim>& field) {
     static_assert(Dim == 2, "read_variable_2d only works for 2D fields");
 
     int varid;
     int status = ncmpi_inq_varid(ncid, var_name.c_str(), &varid);
     if (status != NC_NOERR) {
-        std::string msg = "Cannot find 2D variable '" + var_name + "' in NetCDF file '" + source_file_ + "'.";
-        if (strict_missing_variables_) throw std::runtime_error(msg);
-        if (rank_ == 0) std::cerr << "Warning: " << msg << " Skipping." << std::endl;
+        std::string msg =
+            "Cannot find 2D variable '" + var_name + "' in NetCDF file '" + source_file_ + "'.";
+        if (strict_missing_variables_) {
+            throw std::runtime_error(msg);
+        }
+        if (rank_ == 0) {
+            std::cerr << "Warning: " << msg << " Skipping." << std::endl;
+        }
         return;
     }
 
-    validate_variable_dimensions(ncid, varid, var_name, {"ny", "nx"}, {static_cast<MPI_Offset>(grid_.get_global_points_y()), static_cast<MPI_Offset>(grid_.get_global_points_x())});
+    validate_variable_dimensions(ncid,
+        varid,
+        var_name,
+        {"ny", "nx"},
+        {static_cast<MPI_Offset>(grid_.get_global_points_y()),
+            static_cast<MPI_Offset>(grid_.get_global_points_x())});
 
     MPI_Offset start[2];
     MPI_Offset count[2];
@@ -212,9 +250,11 @@ void PnetcdfReader::read_variable_2d(int ncid, const std::string& var_name, VVM:
     std::vector<VVM::Real> host_buffer(local_read_size);
 
 #ifdef VVM_USE_DOUBLE_PRECISION
-    check_ncmpi_error(ncmpi_get_vara_double_all(ncid, varid, start, count, host_buffer.data()), "Failed to read 2D variable");
+    check_ncmpi_error(ncmpi_get_vara_double_all(ncid, varid, start, count, host_buffer.data()),
+        "Failed to read 2D variable");
 #else
-    check_ncmpi_error(ncmpi_get_vara_float_all(ncid, varid, start, count, host_buffer.data()), "Failed to read 2D variable");
+    check_ncmpi_error(ncmpi_get_vara_float_all(ncid, varid, start, count, host_buffer.data()),
+        "Failed to read 2D variable");
 #endif
 
     auto field_view_dev = field.get_mutable_device_data();
@@ -229,18 +269,17 @@ void PnetcdfReader::read_variable_2d(int ncid, const std::string& var_name, VVM:
     Kokkos::parallel_for("Init_Host_Buffer_2D",
         Kokkos::MDRangePolicy<HostExec, Kokkos::Rank<2>>({0, 0}, {ny_in, nx_in}),
         [=](const int j, const int i) {
-            size_t flat_idx = static_cast<size_t>(j) * nx_in + static_cast<size_t>(i);
-            field_view_host(j + h, i + h) = host_buffer[flat_idx];
-        }
-    );
+        size_t flat_idx = static_cast<size_t>(j) * nx_in + static_cast<size_t>(i);
+        field_view_host(j + h, i + h) = host_buffer[flat_idx];
+    });
 
     Kokkos::deep_copy(field_view_dev, field_view_host);
 }
 
-
-template<size_t Dim>
-void PnetcdfReader::read_variable_3d(int ncid, const std::string& var_name,
-                                    VVM::Core::Field<Dim>& field, bool required_tracer) {
+template <size_t Dim>
+void
+PnetcdfReader::read_variable_3d(
+    int ncid, const std::string& var_name, VVM::Core::Field<Dim>& field, bool required_tracer) {
     static_assert(Dim == 3, "read_variable_3d only works for 3D fields");
 
     int varid;
@@ -251,22 +290,33 @@ void PnetcdfReader::read_variable_3d(int ncid, const std::string& var_name,
                 "Enabled tracer '" + var_name + "' is missing from initial NetCDF file '" +
                 source_file_ + "'. Regenerate the initial file with tools/generate_init_nc.py.");
         }
-        std::string msg = "Cannot find 3D variable '" + var_name + "' in NetCDF file '" + source_file_ + "'.";
-        if (strict_missing_variables_) throw std::runtime_error(msg);
-        if (rank_ == 0) std::cerr << "Warning: " << msg << " Skipping." << std::endl;
+        std::string msg =
+            "Cannot find 3D variable '" + var_name + "' in NetCDF file '" + source_file_ + "'.";
+        if (strict_missing_variables_) {
+            throw std::runtime_error(msg);
+        }
+        if (rank_ == 0) {
+            std::cerr << "Warning: " << msg << " Skipping." << std::endl;
+        }
         return;
     }
 
-    validate_variable_dimensions(ncid, varid, var_name, {"nz", "ny", "nx"}, {static_cast<MPI_Offset>(grid_.get_global_points_z()), static_cast<MPI_Offset>(grid_.get_global_points_y()), static_cast<MPI_Offset>(grid_.get_global_points_x())});
+    validate_variable_dimensions(ncid,
+        varid,
+        var_name,
+        {"nz", "ny", "nx"},
+        {static_cast<MPI_Offset>(grid_.get_global_points_z()),
+            static_cast<MPI_Offset>(grid_.get_global_points_y()),
+            static_cast<MPI_Offset>(grid_.get_global_points_x())});
 
     if (required_tracer) {
         int ndims = 0;
         status = ncmpi_inq_varndims(ncid, varid, &ndims);
         if (status != NC_NOERR || ndims != 3) {
-            throw std::runtime_error(
-                "Enabled tracer '" + var_name + "' in initial NetCDF file '" + source_file_ +
-                "' must be three-dimensional with dimensions (nz, ny, nx). "
-                "Regenerate the initial file with tools/generate_init_nc.py.");
+            throw std::runtime_error("Enabled tracer '" + var_name + "' in initial NetCDF file '" +
+                                     source_file_ +
+                                     "' must be three-dimensional with dimensions (nz, ny, nx). "
+                                     "Regenerate the initial file with tools/generate_init_nc.py.");
         }
 
         int dimids[3];
@@ -277,11 +327,9 @@ void PnetcdfReader::read_variable_3d(int ncid, const std::string& var_name,
         }
 
         const char* expected_names[3] = {"nz", "ny", "nx"};
-        const MPI_Offset expected_sizes[3] = {
-            static_cast<MPI_Offset>(grid_.get_global_points_z()),
+        const MPI_Offset expected_sizes[3] = {static_cast<MPI_Offset>(grid_.get_global_points_z()),
             static_cast<MPI_Offset>(grid_.get_global_points_y()),
-            static_cast<MPI_Offset>(grid_.get_global_points_x())
-        };
+            static_cast<MPI_Offset>(grid_.get_global_points_x())};
         for (int d = 0; d < 3; ++d) {
             char dim_name[NC_MAX_NAME + 1];
             MPI_Offset dim_size = 0;
@@ -290,13 +338,14 @@ void PnetcdfReader::read_variable_3d(int ncid, const std::string& var_name,
                 dim_size != expected_sizes[d]) {
                 throw std::runtime_error(
                     "Enabled tracer '" + var_name + "' in initial NetCDF file '" + source_file_ +
-                    "' has incompatible dimensions; expected (nz, ny, nx) matching the configured grid. "
+                    "' has incompatible dimensions; expected (nz, ny, nx) matching the configured "
+                    "grid. "
                     "Regenerate the initial file with tools/generate_init_nc.py.");
             }
         }
     }
 
-    // (nz, ny, nx) input 
+    // (nz, ny, nx) input
     MPI_Offset start[3];
     MPI_Offset count[3];
 
@@ -313,44 +362,45 @@ void PnetcdfReader::read_variable_3d(int ncid, const std::string& var_name,
     std::vector<VVM::Real> host_buffer(local_read_size);
 
 #ifdef VVM_USE_DOUBLE_PRECISION
-    check_ncmpi_error(ncmpi_get_vara_double_all(ncid, varid, start, count, host_buffer.data()), "Failed to read 3D variable");
+    check_ncmpi_error(ncmpi_get_vara_double_all(ncid, varid, start, count, host_buffer.data()),
+        "Failed to read 3D variable");
 #else
-    check_ncmpi_error(ncmpi_get_vara_float_all(ncid, varid, start, count, host_buffer.data()), "Failed to read 3D variable");
+    check_ncmpi_error(ncmpi_get_vara_float_all(ncid, varid, start, count, host_buffer.data()),
+        "Failed to read 3D variable");
 #endif
 
     auto field_view_dev = field.get_mutable_device_data();
     auto field_view_host = Kokkos::create_mirror_view(field_view_dev);
-    
+
     const int h = grid_.get_halo_cells();
     const int nz_in = static_cast<int>(count[0]);
     const int ny_in = static_cast<int>(count[1]);
     const int nx_in = static_cast<int>(count[2]);
     using HostExec = Kokkos::DefaultHostExecutionSpace;
 
-
     Kokkos::parallel_for("Init_Host_Buffer_3D",
         Kokkos::MDRangePolicy<HostExec, Kokkos::Rank<3>>({0, 0, 0}, {nz_in, ny_in, nx_in}),
         [=](const int k, const int j, const int i) {
-            size_t flat_idx = static_cast<size_t>(k) * ny_in * nx_in + 
-                              static_cast<size_t>(j) * nx_in + 
-                              static_cast<size_t>(i);
-            
-            field_view_host(k + h, j + h, i + h) = host_buffer[flat_idx];
-        }
-    );
+        size_t flat_idx = static_cast<size_t>(k) * ny_in * nx_in + static_cast<size_t>(j) * nx_in +
+                          static_cast<size_t>(i);
+
+        field_view_host(k + h, j + h, i + h) = host_buffer[flat_idx];
+    });
 
     Kokkos::deep_copy(field_view_dev, field_view_host);
 }
 
-VVM::Utils::RestartFileMetadata PnetcdfReader::read_restart_metadata() {
+VVM::Utils::RestartFileMetadata
+PnetcdfReader::read_restart_metadata() {
     int ncid = -1;
     check_ncmpi_error(ncmpi_open(comm_, source_file_.c_str(), NC_NOWRITE, MPI_INFO_NULL, &ncid),
-                      "Failed to open NetCDF file for restart metadata: " + source_file_);
+        "Failed to open NetCDF file for restart metadata: " + source_file_);
 
     VVM::Utils::RestartFileMetadata metadata;
     try {
         metadata = read_pnetcdf_restart_metadata(ncid);
-    } catch (...) {
+    }
+    catch (...) {
         ncmpi_close(ncid);
         throw;
     }
@@ -360,20 +410,28 @@ VVM::Utils::RestartFileMetadata PnetcdfReader::read_restart_metadata() {
         if (!metadata.has_time && !metadata.has_step) {
             std::cout << "  [PnetcdfReader] No restart clock stored in " << source_file_
                       << " (looked for model_time_s / model_step variables or global "
-                         "attributes, and a 'time' variable in seconds)." << std::endl;
-        } else {
+                         "attributes, and a 'time' variable in seconds)."
+                      << std::endl;
+        }
+        else {
             std::cout << "  [PnetcdfReader] Restart clock read from " << source_file_ << ":";
-            if (metadata.has_time) std::cout << " time=" << metadata.time_s << " s";
-            if (metadata.has_step) std::cout << " step=" << metadata.step;
+            if (metadata.has_time) {
+                std::cout << " time=" << metadata.time_s << " s";
+            }
+            if (metadata.has_step) {
+                std::cout << " step=" << metadata.step;
+            }
             std::cout << std::endl;
         }
     }
     return metadata;
 }
 
-void PnetcdfReader::read_and_initialize(VVM::Core::State& state) {
+void
+PnetcdfReader::read_and_initialize(VVM::Core::State& state) {
     if (rank_ == 0) {
-        std::cout << "PnetcdfReader: Initializing state from NetCDF file: " << source_file_ << std::endl;
+        std::cout << "PnetcdfReader: Initializing state from NetCDF file: " << source_file_
+                  << std::endl;
     }
 
     int status = ncmpi_open(comm_, source_file_.c_str(), NC_NOWRITE, MPI_INFO_NULL, &ncid_);
@@ -382,11 +440,11 @@ void PnetcdfReader::read_and_initialize(VVM::Core::State& state) {
     try {
         auto file_dims = get_file_dimensions(ncid_);
         validate_dimensions(file_dims);
-    } 
+    }
     catch (const std::exception& e) {
         ncmpi_close(ncid_);
         ncid_ = -1;
-        throw; 
+        throw;
     }
 
     std::vector<std::string> vars_1d;
@@ -406,19 +464,21 @@ void PnetcdfReader::read_and_initialize(VVM::Core::State& state) {
     const bool has_explicit_3d_list = config_.has_key(key_3d);
     if (has_explicit_3d_list) {
         vars_3d = config_.get_value<std::vector<std::string>>(key_3d);
-    } else if (config_prefix_ == "restart") {
+    }
+    else if (config_prefix_ == "restart") {
         auto prognostic_config = config_.get_value<nlohmann::json>("dynamics.prognostic_variables");
         for (const auto& item : prognostic_config.items()) {
             const std::string& var_name = item.key();
-            if (state.has_field(var_name)) append_unique(vars_3d, var_name);
+            if (state.has_field(var_name)) {
+                append_unique(vars_3d, var_name);
+            }
         }
     }
 
     // Initial-condition reads always include enabled tracers. Restart reads add
     // them only when the restart variable list is inferred, preserving an
     // explicitly configured restart list exactly.
-    if (config_prefix_ == "netcdf_reader" ||
-        (strict_missing_variables_ && !has_explicit_3d_list)) {
+    if (config_prefix_ == "netcdf_reader" || (strict_missing_variables_ && !has_explicit_3d_list)) {
         for (const auto& tracer_name : state.get_tracer_names()) {
             append_unique(vars_3d, tracer_name);
         }
@@ -430,7 +490,8 @@ void PnetcdfReader::read_and_initialize(VVM::Core::State& state) {
     }
 
     if (strict_missing_variables_ && rank_ == 0) {
-        std::cout << "  [PnetcdfReader] Required variables to read from " << source_file_ << ":" << std::endl;
+        std::cout << "  [PnetcdfReader] Required variables to read from " << source_file_ << ":"
+                  << std::endl;
         std::cout << "    1D: " << join_variable_names(vars_1d) << std::endl;
         std::cout << "    2D: " << join_variable_names(vars_2d) << std::endl;
         std::cout << "    3D: " << join_variable_names(vars_3d) << std::endl;
@@ -442,76 +503,121 @@ void PnetcdfReader::read_and_initialize(VVM::Core::State& state) {
     // Skip those regardless of strictness, so strict mode keeps catching what it
     // is for -- variables genuinely missing from the NetCDF file.
     auto skip_unowned = [&](const char* dim, const std::string& var_name) {
-        if (state.has_field(var_name)) return false;
+        if (state.has_field(var_name)) {
+            return false;
+        }
         if (rank_ == 0) {
             std::cerr << "    - Skipping " << dim << " var '" << var_name
-                      << "': no such field in State (owning component not enabled)."
-                      << std::endl;
+                      << "': no such field in State (owning component not enabled)." << std::endl;
         }
         return true;
     };
 
     if (!vars_1d.empty()) {
-        if (rank_ == 0 && !strict_missing_variables_) std::cout << "  - Attempting to load 1D variables from config key '" << key_1d << "'..." << std::endl;
+        if (rank_ == 0 && !strict_missing_variables_) {
+            std::cout << "  - Attempting to load 1D variables from config key '" << key_1d << "'..."
+                      << std::endl;
+        }
         for (const auto& var_name : vars_1d) {
-            if (skip_unowned("1D", var_name)) continue;
+            if (skip_unowned("1D", var_name)) {
+                continue;
+            }
             try {
                 read_variable_1d(ncid_, var_name, state.get_field<1>(var_name));
-                if (rank_ == 0) std::cout << "    - Loaded 1D variable: " << var_name << std::endl;
-            } 
+                if (rank_ == 0) {
+                    std::cout << "    - Loaded 1D variable: " << var_name << std::endl;
+                }
+            }
             catch (const std::runtime_error& e) {
-                if (strict_missing_variables_) throw;
-                if (rank_ == 0) std::cerr << "    - Warning for 1D var '" << var_name << "': " << e.what() << std::endl;
+                if (strict_missing_variables_) {
+                    throw;
+                }
+                if (rank_ == 0) {
+                    std::cerr << "    - Warning for 1D var '" << var_name << "': " << e.what()
+                              << std::endl;
+                }
             }
         }
-    } 
+    }
     else if (!strict_missing_variables_) {
-        if (rank_ == 0) std::cerr << "Warning: Config key '" << key_1d << "' not found. No 1D variables will be read by PnetcdfReader." << std::endl;
+        if (rank_ == 0) {
+            std::cerr << "Warning: Config key '" << key_1d
+                      << "' not found. No 1D variables will be read by PnetcdfReader." << std::endl;
+        }
     }
 
     if (!vars_2d.empty()) {
-        if (rank_ == 0 && !strict_missing_variables_) std::cout << "  - Attempting to load 2D variables from config key '" << key_2d << "'..." << std::endl;
+        if (rank_ == 0 && !strict_missing_variables_) {
+            std::cout << "  - Attempting to load 2D variables from config key '" << key_2d << "'..."
+                      << std::endl;
+        }
         for (const auto& var_name : vars_2d) {
-            if (skip_unowned("2D", var_name)) continue;
+            if (skip_unowned("2D", var_name)) {
+                continue;
+            }
             try {
                 read_variable_2d(ncid_, var_name, state.get_field<2>(var_name));
-                if (rank_ == 0) std::cout << "    - Loaded 2D variable: " << var_name << std::endl;
-            } 
+                if (rank_ == 0) {
+                    std::cout << "    - Loaded 2D variable: " << var_name << std::endl;
+                }
+            }
             catch (const std::runtime_error& e) {
-                if (strict_missing_variables_) throw;
-                if (rank_ == 0) std::cerr << "    - Warning for 2D var '" << var_name << "': " << e.what() << std::endl;
+                if (strict_missing_variables_) {
+                    throw;
+                }
+                if (rank_ == 0) {
+                    std::cerr << "    - Warning for 2D var '" << var_name << "': " << e.what()
+                              << std::endl;
+                }
             }
         }
-    } 
+    }
     else if (!strict_missing_variables_) {
-        if (rank_ == 0) std::cerr << "Warning: Config key '" << key_2d << "' not found. No 2D variables will be read by PnetcdfReader." << std::endl;
+        if (rank_ == 0) {
+            std::cerr << "Warning: Config key '" << key_2d
+                      << "' not found. No 2D variables will be read by PnetcdfReader." << std::endl;
+        }
     }
 
     if (!vars_3d.empty()) {
-        if (rank_ == 0 && !strict_missing_variables_) std::cout << "  - Attempting to load 3D variables from config key '" << key_3d << "'..." << std::endl;
+        if (rank_ == 0 && !strict_missing_variables_) {
+            std::cout << "  - Attempting to load 3D variables from config key '" << key_3d << "'..."
+                      << std::endl;
+        }
         for (const auto& var_name : vars_3d) {
-            if (skip_unowned("3D", var_name)) continue;
+            if (skip_unowned("3D", var_name)) {
+                continue;
+            }
             const bool required_tracer =
                 config_prefix_ == "netcdf_reader" &&
                 (state.is_tracer(var_name) || state.is_tracer_source(var_name));
             try {
                 read_variable_3d(ncid_, var_name, state.get_field<3>(var_name), required_tracer);
-                if (rank_ == 0) std::cout << "    - Loaded 3D variable: " << var_name << std::endl;
-            } 
+                if (rank_ == 0) {
+                    std::cout << "    - Loaded 3D variable: " << var_name << std::endl;
+                }
+            }
             catch (const std::runtime_error& e) {
-                if (strict_missing_variables_ || required_tracer) throw;
-                if (rank_ == 0) std::cerr << "    - Warning for 3D var '" << var_name << "': " << e.what() << std::endl;
+                if (strict_missing_variables_ || required_tracer) {
+                    throw;
+                }
+                if (rank_ == 0) {
+                    std::cerr << "    - Warning for 3D var '" << var_name << "': " << e.what()
+                              << std::endl;
+                }
             }
         }
-    } 
+    }
     else if (!strict_missing_variables_) {
-         if (rank_ == 0) std::cerr << "Warning: Config key '" << key_3d << "' not found. No 3D variables will be read by PnetcdfReader." << std::endl;
+        if (rank_ == 0) {
+            std::cerr << "Warning: Config key '" << key_3d
+                      << "' not found. No 3D variables will be read by PnetcdfReader." << std::endl;
+        }
     }
     else if (config_prefix_ == "restart") {
         throw std::runtime_error("Restart mode did not find any 3D prognostic variables to read.");
     }
 
-    
     check_ncmpi_error(ncmpi_close(ncid_), "Failed to close NetCDF file");
     ncid_ = -1;
 
@@ -522,13 +628,19 @@ void PnetcdfReader::read_and_initialize(VVM::Core::State& state) {
     // The State& overload calls exchange_halos_impl inside cudaStreamBeginCapture,
     // which bakes stale NCCL buffer addresses into graphs for all graph-enabled fields.
     for (const auto& var_name : vars_1d) {
-        if (state.has_field(var_name)) halo_exchanger_.exchange_halos(state.get_field<1>(var_name));
+        if (state.has_field(var_name)) {
+            halo_exchanger_.exchange_halos(state.get_field<1>(var_name));
+        }
     }
     for (const auto& var_name : vars_2d) {
-        if (state.has_field(var_name)) halo_exchanger_.exchange_halos(state.get_field<2>(var_name));
+        if (state.has_field(var_name)) {
+            halo_exchanger_.exchange_halos(state.get_field<2>(var_name));
+        }
     }
     for (const auto& var_name : vars_3d) {
-        if (state.has_field(var_name)) halo_exchanger_.exchange_halos(state.get_field<3>(var_name));
+        if (state.has_field(var_name)) {
+            halo_exchanger_.exchange_halos(state.get_field<3>(var_name));
+        }
     }
 }
 

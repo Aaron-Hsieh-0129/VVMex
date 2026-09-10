@@ -9,19 +9,24 @@ namespace VVM {
 namespace IO {
 
 namespace {
-std::string join_variable_names(const std::vector<std::string>& names) {
-    if (names.empty()) return "(none)";
+std::string
+join_variable_names(const std::vector<std::string>& names) {
+    if (names.empty()) {
+        return "(none)";
+    }
 
     std::ostringstream oss;
     for (size_t i = 0; i < names.size(); ++i) {
-        if (i > 0) oss << ", ";
+        if (i > 0) {
+            oss << ", ";
+        }
         oss << names[i];
     }
     return oss.str();
 }
 
-std::vector<std::string> infer_3d_variables(
-    const Utils::ConfigurationManager& config,
+std::vector<std::string>
+infer_3d_variables(const Utils::ConfigurationManager& config,
     const Core::State& state,
     int rank,
     const char* tag) {
@@ -30,7 +35,8 @@ std::vector<std::string> infer_3d_variables(
     std::vector<std::string> skipped_output_fields;
 
     if (config.has_key("output.fields_to_output")) {
-        for (const auto& name : config.get_value<std::vector<std::string>>("output.fields_to_output")) {
+        for (const auto& name :
+            config.get_value<std::vector<std::string>>("output.fields_to_output")) {
             output_fields.insert(name);
         }
     }
@@ -38,7 +44,9 @@ std::vector<std::string> infer_3d_variables(
     auto prognostic_config = config.get_value<nlohmann::json>("dynamics.prognostic_variables");
     for (const auto& item : prognostic_config.items()) {
         const std::string& var_name = item.key();
-        if (!state.has_field(var_name)) continue;
+        if (!state.has_field(var_name)) {
+            continue;
+        }
         if (!output_fields.empty() && output_fields.count(var_name) == 0) {
             skipped_output_fields.push_back(var_name);
             continue;
@@ -59,7 +67,9 @@ std::vector<std::string> infer_3d_variables(
     // a physically consistent restart. They are written to the restart/output
     // file, so include them explicitly.
     for (const auto& var_name : {"u", "v", "w"}) {
-        if (!state.has_field(var_name)) continue;
+        if (!state.has_field(var_name)) {
+            continue;
+        }
         if (!output_fields.empty() && output_fields.count(var_name) == 0) {
             skipped_output_fields.push_back(var_name);
             continue;
@@ -70,7 +80,8 @@ std::vector<std::string> infer_3d_variables(
     }
 
     if (rank == 0 && !skipped_output_fields.empty()) {
-        std::cout << "  [" << tag << "] Skipping restart variables not listed in "
+        std::cout << "  [" << tag
+                  << "] Skipping restart variables not listed in "
                      "output.fields_to_output: "
                   << join_variable_names(skipped_output_fields) << std::endl;
     }
@@ -78,8 +89,8 @@ std::vector<std::string> infer_3d_variables(
 }
 } // namespace
 
-RestartVariables select_restart_variables(
-    const Utils::ConfigurationManager& config,
+RestartVariables
+select_restart_variables(const Utils::ConfigurationManager& config,
     const Core::State& state,
     int rank,
     const char* tag) {
@@ -96,19 +107,20 @@ RestartVariables select_restart_variables(
     if (config.has_key("restart.variables_to_read.3d")) {
         variables.vars_3d =
             config.get_value<std::vector<std::string>>("restart.variables_to_read.3d");
-    } else {
+    }
+    else {
         variables.vars_3d = infer_3d_variables(config, state, rank, tag);
     }
 
     return variables;
 }
 
-void print_restart_variables(
-    const RestartVariables& variables,
-    const std::string& source,
-    int rank,
-    const char* tag) {
-    if (rank != 0) return;
+void
+print_restart_variables(
+    const RestartVariables& variables, const std::string& source, int rank, const char* tag) {
+    if (rank != 0) {
+        return;
+    }
 
     std::cout << "  [" << tag << "] Restart variables to read from " << source << ":" << std::endl;
     std::cout << "    1D: " << join_variable_names(variables.vars_1d) << std::endl;

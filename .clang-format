@@ -1,0 +1,58 @@
+---
+Language: Cpp
+BasedOnStyle: LLVM
+
+# Match DynamicalCore.cpp; retain long lines and existing include order.
+IndentWidth: 4
+ContinuationIndentWidth: 4
+AccessModifierOffset: -4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+SortIncludes: Never
+IncludeBlocks: Preserve
+NamespaceIndentation: None
+FixNamespaceComments: false
+ReflowComments: Never
+MaxEmptyLinesToKeep: 1
+KeepEmptyLinesAtTheStartOfBlocks: true
+AlwaysBreakTemplateDeclarations: true
+
+
+DerivePointerAlignment: false
+PointerAlignment: Left
+ReferenceAlignment: Left
+SpaceBeforeParens: ControlStatements
+
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterCaseLabel: false
+  AfterClass: false
+  AfterControlStatement: Never
+  AfterEnum: false
+  AfterFunction: false
+  AfterNamespace: false
+  AfterStruct: false
+  AfterUnion: false
+  BeforeCatch: true
+  BeforeElse: true
+  BeforeLambdaBody: false
+  BeforeWhile: false
+  IndentBraces: false
+
+InsertBraces: true
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortBlocksOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortLambdasOnASingleLine: None
+AlwaysBreakAfterDefinitionReturnType: All
+
+AlignAfterOpenBracket: DontAlign
+BinPackArguments: false
+AllowAllArgumentsOnNextLine: false
+BinPackParameters: OnePerLine
+LambdaBodyIndentation: OuterScope
+Cpp11BracedListStyle: true
+
+...

@@ -3,7 +3,7 @@
 namespace VVM {
 namespace Utils {
 
-ConfigurationManager::ConfigurationManager(const std::string &config_file_path) {
+ConfigurationManager::ConfigurationManager(const std::string& config_file_path) {
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     std::ifstream file(config_file_path);
@@ -12,14 +12,19 @@ ConfigurationManager::ConfigurationManager(const std::string &config_file_path) 
     }
     try {
         file >> m_config_data;
-        if (rank == 0) std::cout << "Configuration loaded from: " << config_file_path << std::endl;
-    } catch (const nlohmann::json::exception& e) {
-        throw std::runtime_error("Failed to parse configuration file '" + config_file_path + "': " + e.what());
+        if (rank == 0) {
+            std::cout << "Configuration loaded from: " << config_file_path << std::endl;
+        }
+    }
+    catch (const nlohmann::json::exception& e) {
+        throw std::runtime_error(
+            "Failed to parse configuration file '" + config_file_path + "': " + e.what());
     }
 }
 
 // Helper function: Find JSON node by key_path (e.g. "grid.nx")
-const nlohmann::json* ConfigurationManager::find_node(const std::string &key_path) const {
+const nlohmann::json*
+ConfigurationManager::find_node(const std::string& key_path) const {
     const nlohmann::json* current_node = &m_config_data;
     size_t start = 0;
     size_t end = key_path.find('.');
@@ -41,11 +46,13 @@ const nlohmann::json* ConfigurationManager::find_node(const std::string &key_pat
     return &((*current_node)[last_key]);
 }
 
-bool ConfigurationManager::has_key(const std::string& key_path) const {
+bool
+ConfigurationManager::has_key(const std::string& key_path) const {
     return find_node(key_path) != nullptr;
 }
 
-void ConfigurationManager::print_config() const {
+void
+ConfigurationManager::print_config() const {
     std::cout << "--- Loaded Configuration ---" << std::endl;
     std::cout << m_config_data.dump(4) << std::endl;
     std::cout << "----------------------------" << std::endl;

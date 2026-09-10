@@ -16,13 +16,16 @@
 #include <nccl.h>
 #endif
 
-int main(int argc, char* argv[]) {
+int
+main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);
     int rank = 0;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
     if (argc != 2) {
-        if (rank == 0) std::fprintf(stderr, "usage: %s <config.json>\n", argv[0]);
+        if (rank == 0) {
+            std::fprintf(stderr, "usage: %s <config.json>\n", argv[0]);
+        }
         MPI_Finalize();
         return 2;
     }
@@ -36,7 +39,9 @@ int main(int argc, char* argv[]) {
 
 #if defined(ENABLE_NCCL)
         ncclUniqueId id;
-        if (rank == 0) ncclGetUniqueId(&id);
+        if (rank == 0) {
+            ncclGetUniqueId(&id);
+        }
         MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
         ncclComm_t nccl_comm;
         ncclCommInitRank(&nccl_comm, 1, id, rank);
@@ -50,13 +55,16 @@ int main(int argc, char* argv[]) {
 
         VVM::Core::BoundaryConditionManager boundary_conditions(grid);
         boundary_conditions.initialize_bc_types("periodic", "periodic");
-        VVM::Dynamics::DynamicalCore dynamical_core(
-            config, grid, parameters, state, halo, boundary_conditions);
+        VVM::Dynamics::DynamicalCore dynamical_core(config,
+            grid,
+            parameters,
+            state,
+            halo,
+            boundary_conditions);
 
         if (!state.has_field("th_m") || !state.has_field("qv_m")) {
             if (rank == 0) {
-                std::fprintf(stderr,
-                             "P3 with MUSCL/SSPRK2 did not allocate th_m and qv_m\n");
+                std::fprintf(stderr, "P3 with MUSCL/SSPRK2 did not allocate th_m and qv_m\n");
             }
             exit_code = 1;
         }
@@ -65,9 +73,9 @@ int main(int argc, char* argv[]) {
             parameters.max_topo_idx = grid.get_halo_cells();
 
             auto fill_state_field = [&](const char* name, VVM::Real value) {
-                Kokkos::deep_copy(
-                    Kokkos::DefaultExecutionSpace(),
-                    state.get_field<3>(name).get_mutable_device_data(), value);
+                Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+                    state.get_field<3>(name).get_mutable_device_data(),
+                    value);
             };
             fill_state_field("th", VVM::real(300.0));
             fill_state_field("u", VVM::real(0.0));
@@ -76,40 +84,32 @@ int main(int argc, char* argv[]) {
             fill_state_field("ITYPEU", VVM::real(1.0));
             fill_state_field("ITYPEV", VVM::real(1.0));
             fill_state_field("ITYPEW", VVM::real(1.0));
-            Kokkos::deep_copy(
-                Kokkos::DefaultExecutionSpace(),
+            Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
                 state.get_field<1>("rhobar").get_mutable_device_data(),
                 VVM::real(1.0));
-            Kokkos::deep_copy(
-                Kokkos::DefaultExecutionSpace(),
+            Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
                 state.get_field<1>("rhobar_up").get_mutable_device_data(),
                 VVM::real(1.0));
 
             auto check_qv_history = [&](VVM::Real pre_advection) {
-                Kokkos::deep_copy(
-                    Kokkos::DefaultExecutionSpace(),
+                Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
                     state.get_field<3>("qv").get_mutable_device_data(),
                     pre_advection);
                 dynamical_core.update_thermodynamics(VVM::real(1.0));
 
-                const auto history = Kokkos::create_mirror_view_and_copy(
-                    Kokkos::HostSpace(),
+                const auto history = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),
                     state.get_field<3>("qv_m").get_device_data());
-                const auto current = Kokkos::create_mirror_view_and_copy(
-                    Kokkos::HostSpace(),
+                const auto current = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),
                     state.get_field<3>("qv").get_device_data());
                 const int h = grid.get_halo_cells();
-                return history(h, h, h) == pre_advection &&
-                       current(h, h, h) == pre_advection;
+                return history(h, h, h) == pre_advection && current(h, h, h) == pre_advection;
             };
 
             const VVM::Real first = VVM::real(0.01);
             const VVM::Real second = VVM::real(0.02);
             if (!check_qv_history(first) || !check_qv_history(second)) {
                 if (rank == 0) {
-                    std::fprintf(
-                        stderr,
-                        "SSPRK2 did not refresh qv_m from pre-advection qv\n");
+                    std::fprintf(stderr, "SSPRK2 did not refresh qv_m from pre-advection qv\n");
                 }
                 exit_code = 1;
             }

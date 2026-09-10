@@ -15,11 +15,11 @@
 namespace {
 
 using VVM::Core::Grid;
+using VVM::Core::HorizontalEdgeTopology;
 using VVM::Core::Geometry::GeometryKind;
 using VVM::Core::Geometry::HorizontalGeometryFactory;
 using VVM::Core::Geometry::HorizontalGridSpec;
 using VVM::Core::Geometry::HorizontalLocation;
-using VVM::Core::HorizontalEdgeTopology;
 
 int failures = 0;
 int mpi_rank = 0;
@@ -27,7 +27,8 @@ int mpi_rank = 0;
 constexpr VVM::Real relative_tolerance =
     sizeof(VVM::Real) == sizeof(double) ? VVM::real(1.0e-12) : VVM::real(5.0e-5);
 
-void check(const bool condition, const char* message) {
+void
+check(const bool condition, const char* message) {
     if (condition) {
         return;
     }
@@ -36,51 +37,62 @@ void check(const bool condition, const char* message) {
     std::fprintf(stderr, "Rank %d FAIL: %s\n", mpi_rank, message);
 }
 
-bool close(const VVM::Real actual, const VVM::Real expected) {
+bool
+close(const VVM::Real actual, const VVM::Real expected) {
     const VVM::Real scale = std::max(VVM::real(1.0), std::abs(expected));
     return std::abs(actual - expected) <= relative_tolerance * scale;
 }
 
-void test_host_metadata(const Grid& grid) {
+void
+test_host_metadata(const Grid& grid) {
     const auto& specification = grid.specification();
     const auto& geometry = grid.geometry();
     const auto& layout = geometry.layout();
 
     check(geometry.kind() == GeometryKind::Cartesian, "Grid must construct Cartesian geometry");
-    check(std::strcmp(geometry.name(), "cartesian") == 0, "Grid geometry must report the Cartesian name");
+    check(std::strcmp(geometry.name(), "cartesian") == 0,
+        "Grid geometry must report the Cartesian name");
     check(close(geometry.dq1(), grid.get_dx()), "Geometry dq1 must equal Grid dx");
     check(close(geometry.dq2(), grid.get_dy()), "Geometry dq2 must equal Grid dy");
 
-    check(specification.horizontal.nx == grid.get_global_points_x(), "Resolved horizontal nx must match Grid");
-    check(specification.horizontal.ny == grid.get_global_points_y(), "Resolved horizontal ny must match Grid");
-    check(specification.horizontal.n_halo_cells == grid.get_halo_cells(), "Resolved halo width must match Grid");
-    check(specification.vertical.nz == grid.get_global_points_z(), "Resolved vertical nz must match Grid");
+    check(specification.horizontal.nx == grid.get_global_points_x(),
+        "Resolved horizontal nx must match Grid");
+    check(specification.horizontal.ny == grid.get_global_points_y(),
+        "Resolved horizontal ny must match Grid");
+    check(specification.horizontal.n_halo_cells == grid.get_halo_cells(),
+        "Resolved halo width must match Grid");
+    check(specification.vertical.nz == grid.get_global_points_z(),
+        "Resolved vertical nz must match Grid");
     check(close(specification.vertical.dz, grid.get_dz()), "Resolved vertical dz must match Grid");
-    check(close(specification.vertical.dz1, grid.get_dz1()), "Resolved vertical dz1 must match Grid");
+    check(close(specification.vertical.dz1, grid.get_dz1()),
+        "Resolved vertical dz1 must match Grid");
 
     check(layout.global_nx == grid.get_global_points_x(), "Geometry global_nx must match Grid");
     check(layout.global_ny == grid.get_global_points_y(), "Geometry global_ny must match Grid");
-    check(layout.local_physical_nx == grid.get_local_physical_points_x(), "Geometry local_physical_nx must match Grid");
-    check(layout.local_physical_ny == grid.get_local_physical_points_y(), "Geometry local_physical_ny must match Grid");
-    check(layout.global_start_i == grid.get_local_physical_start_x(), "Geometry global_start_i must match Grid");
-    check(layout.global_start_j == grid.get_local_physical_start_y(), "Geometry global_start_j must match Grid");
+    check(layout.local_physical_nx == grid.get_local_physical_points_x(),
+        "Geometry local_physical_nx must match Grid");
+    check(layout.local_physical_ny == grid.get_local_physical_points_y(),
+        "Geometry local_physical_ny must match Grid");
+    check(layout.global_start_i == grid.get_local_physical_start_x(),
+        "Geometry global_start_i must match Grid");
+    check(layout.global_start_j == grid.get_local_physical_start_y(),
+        "Geometry global_start_j must match Grid");
     check(layout.halo == grid.get_halo_cells(), "Geometry halo must match Grid");
     check(layout.panel_id == -1, "Cartesian geometry must use panel_id == -1");
-    check(layout.local_total_nx() == grid.get_local_total_points_x(), "Geometry local_total_nx must match Grid");
-    check(layout.local_total_ny() == grid.get_local_total_points_y(), "Geometry local_total_ny must match Grid");
+    check(layout.local_total_nx() == grid.get_local_total_points_x(),
+        "Geometry local_total_nx must match Grid");
+    check(layout.local_total_ny() == grid.get_local_total_points_y(),
+        "Geometry local_total_ny must match Grid");
 }
 
-void test_horizontal_topology(const Grid& grid) {
+void
+test_horizontal_topology(const Grid& grid) {
     int process_dimensions[2] = {0, 0};
     int periods[2] = {0, 0};
     int coordinates[2] = {0, 0};
 
-    const int get_status = MPI_Cart_get(
-        grid.get_cart_comm(),
-        2,
-        process_dimensions,
-        periods,
-        coordinates);
+    const int get_status =
+        MPI_Cart_get(grid.get_cart_comm(), 2, process_dimensions, periods, coordinates);
 
     check(get_status == MPI_SUCCESS, "MPI_Cart_get must succeed");
     if (get_status != MPI_SUCCESS) {
@@ -91,65 +103,54 @@ void test_horizontal_topology(const Grid& grid) {
     const auto& topology = horizontal.topology;
 
     const int expected_q1_period =
-        horizontal.nx > 1 &&
-        topology.q1 == HorizontalEdgeTopology::Periodic ? 1 : 0;
+        horizontal.nx > 1 && topology.q1 == HorizontalEdgeTopology::Periodic ? 1 : 0;
 
     const int expected_q2_period =
-        horizontal.ny > 1 &&
-        topology.q2 == HorizontalEdgeTopology::Periodic ? 1 : 0;
+        horizontal.ny > 1 && topology.q2 == HorizontalEdgeTopology::Periodic ? 1 : 0;
 
-    check(periods[1] == expected_q1_period,
-          "MPI X period must match resolved q1 topology");
-    check(periods[0] == expected_q2_period,
-          "MPI Y period must match resolved q2 topology");
+    check(periods[1] == expected_q1_period, "MPI X period must match resolved q1 topology");
+    check(periods[0] == expected_q2_period, "MPI Y period must match resolved q2 topology");
 
     int left = MPI_PROC_NULL;
     int right = MPI_PROC_NULL;
     int bottom = MPI_PROC_NULL;
     int top = MPI_PROC_NULL;
 
-    const int q1_status = MPI_Cart_shift(
-        grid.get_cart_comm(), 1, 1, &left, &right);
-    const int q2_status = MPI_Cart_shift(
-        grid.get_cart_comm(), 0, 1, &bottom, &top);
+    const int q1_status = MPI_Cart_shift(grid.get_cart_comm(), 1, 1, &left, &right);
+    const int q2_status = MPI_Cart_shift(grid.get_cart_comm(), 0, 1, &bottom, &top);
 
     check(q1_status == MPI_SUCCESS, "MPI q1 neighbor lookup must succeed");
     check(q2_status == MPI_SUCCESS, "MPI q2 neighbor lookup must succeed");
 
     if (expected_q1_period != 0) {
-        check(left != MPI_PROC_NULL,
-              "Periodic q1 topology must have a left neighbor");
-        check(right != MPI_PROC_NULL,
-              "Periodic q1 topology must have a right neighbor");
-    } else {
+        check(left != MPI_PROC_NULL, "Periodic q1 topology must have a left neighbor");
+        check(right != MPI_PROC_NULL, "Periodic q1 topology must have a right neighbor");
+    }
+    else {
         if (coordinates[1] == 0) {
-            check(left == MPI_PROC_NULL,
-                  "Bounded q1 west edge must have no left neighbor");
+            check(left == MPI_PROC_NULL, "Bounded q1 west edge must have no left neighbor");
         }
         if (coordinates[1] == process_dimensions[1] - 1) {
-            check(right == MPI_PROC_NULL,
-                  "Bounded q1 east edge must have no right neighbor");
+            check(right == MPI_PROC_NULL, "Bounded q1 east edge must have no right neighbor");
         }
     }
 
     if (expected_q2_period != 0) {
-        check(bottom != MPI_PROC_NULL,
-              "Periodic q2 topology must have a bottom neighbor");
-        check(top != MPI_PROC_NULL,
-              "Periodic q2 topology must have a top neighbor");
-    } else {
+        check(bottom != MPI_PROC_NULL, "Periodic q2 topology must have a bottom neighbor");
+        check(top != MPI_PROC_NULL, "Periodic q2 topology must have a top neighbor");
+    }
+    else {
         if (coordinates[0] == 0) {
-            check(bottom == MPI_PROC_NULL,
-                  "Bounded q2 south edge must have no bottom neighbor");
+            check(bottom == MPI_PROC_NULL, "Bounded q2 south edge must have no bottom neighbor");
         }
         if (coordinates[0] == process_dimensions[0] - 1) {
-            check(top == MPI_PROC_NULL,
-                  "Bounded q2 north edge must have no top neighbor");
+            check(top == MPI_PROC_NULL, "Bounded q2 north edge must have no top neighbor");
         }
     }
 }
 
-void test_cartesian_device_values(const Grid& grid) {
+void
+test_cartesian_device_values(const Grid& grid) {
     const auto& geometry = grid.geometry();
 
     const auto t = geometry.device_view(HorizontalLocation::T);
@@ -161,8 +162,7 @@ void test_cartesian_device_values(const Grid& grid) {
 
     const int h = grid.get_halo_cells();
 
-    Kokkos::parallel_for(
-        "EvaluateGridGeometry",
+    Kokkos::parallel_for("EvaluateGridGeometry",
         Kokkos::RangePolicy<>(0, 1),
         KOKKOS_LAMBDA(const int) {
             results(0) = t.q1(h, h);
@@ -198,12 +198,16 @@ void test_cartesian_device_values(const Grid& grid) {
 
     check(close(host_results(0), start_i * dx), "T q1 must match the local global x coordinate");
     check(close(host_results(1), start_j * dy), "T q2 must match the local global y coordinate");
-    check(close(host_results(2), (start_i + VVM::real(0.5)) * dx), "U q1 must have a half-cell x offset");
+    check(close(host_results(2), (start_i + VVM::real(0.5)) * dx),
+        "U q1 must have a half-cell x offset");
     check(close(host_results(3), start_j * dy), "U q2 must not have a y offset");
     check(close(host_results(4), start_i * dx), "V q1 must not have an x offset");
-    check(close(host_results(5), (start_j + VVM::real(0.5)) * dy), "V q2 must have a half-cell y offset");
-    check(close(host_results(6), (start_i + VVM::real(0.5)) * dx), "Z q1 must have a half-cell x offset");
-    check(close(host_results(7), (start_j + VVM::real(0.5)) * dy), "Z q2 must have a half-cell y offset");
+    check(close(host_results(5), (start_j + VVM::real(0.5)) * dy),
+        "V q2 must have a half-cell y offset");
+    check(close(host_results(6), (start_i + VVM::real(0.5)) * dx),
+        "Z q1 must have a half-cell x offset");
+    check(close(host_results(7), (start_j + VVM::real(0.5)) * dy),
+        "Z q2 must have a half-cell y offset");
 
     check(close(host_results(8), VVM::real(1.0)), "Cartesian sqrt_g must equal one");
     check(close(host_results(9), VVM::real(1.0)), "Cartesian inv_sqrt_g must equal one");
@@ -220,7 +224,8 @@ void test_cartesian_device_values(const Grid& grid) {
     check(close(host_results(19), dy), "Device geometry dq2 must equal Grid dy");
 }
 
-HorizontalGridSpec make_regular_lat_lon_spec(const Grid& grid) {
+HorizontalGridSpec
+make_regular_lat_lon_spec(const Grid& grid) {
     const VVM::Real pi = std::acos(VVM::real(-1.0));
 
     HorizontalGridSpec spec;
@@ -234,13 +239,16 @@ HorizontalGridSpec make_regular_lat_lon_spec(const Grid& grid) {
     return spec;
 }
 
-void test_regular_lat_lon_factory(const Grid& grid) {
+void
+test_regular_lat_lon_factory(const Grid& grid) {
     const HorizontalGridSpec spec = make_regular_lat_lon_spec(grid);
     const auto geometry = HorizontalGeometryFactory::create(spec, grid.geometry().layout());
 
     check(geometry != nullptr, "Factory must return a regular latitude-longitude geometry");
-    check(geometry->kind() == GeometryKind::RegularLatLon, "Factory geometry must report RegularLatLon");
-    check(std::strcmp(geometry->name(), "regular_latlon") == 0, "Factory geometry must report the RLL name");
+    check(geometry->kind() == GeometryKind::RegularLatLon,
+        "Factory geometry must report RegularLatLon");
+    check(std::strcmp(geometry->name(), "regular_latlon") == 0,
+        "Factory geometry must report the RLL name");
     check(close(geometry->dq1(), spec.dq1), "Factory must forward the longitude increment");
     check(close(geometry->dq2(), spec.dq2), "Factory must forward the latitude increment");
 
@@ -252,8 +260,7 @@ void test_regular_lat_lon_factory(const Grid& grid) {
 
     const int h = grid.get_halo_cells();
 
-    Kokkos::parallel_for(
-        "EvaluateRegularLatLonFactoryGeometry",
+    Kokkos::parallel_for("EvaluateRegularLatLonFactoryGeometry",
         Kokkos::RangePolicy<>(0, 1),
         KOKKOS_LAMBDA(const int) {
             results(0) = t.longitude(h, h);
@@ -278,35 +285,37 @@ void test_regular_lat_lon_factory(const Grid& grid) {
         spec.regular_lat_lon.latitude_south_edge + (start_j + VVM::real(1.0)) * spec.dq2;
     const VVM::Real radius_squared = spec.regular_lat_lon.radius * spec.regular_lat_lon.radius;
 
-    check(close(host_results(0), expected_t_longitude), "Factory RLL T longitude must use the rank's global start");
-    check(close(host_results(1), expected_t_latitude), "Factory RLL T latitude must use the rank's global start");
-    check(close(host_results(2), expected_u_longitude), "Factory RLL U longitude must use edge staggering");
-    check(close(host_results(3), expected_v_latitude), "Factory RLL V latitude must use edge staggering");
-    check(
-        close(host_results(4), radius_squared * std::cos(expected_t_latitude)),
+    check(close(host_results(0), expected_t_longitude),
+        "Factory RLL T longitude must use the rank's global start");
+    check(close(host_results(1), expected_t_latitude),
+        "Factory RLL T latitude must use the rank's global start");
+    check(close(host_results(2), expected_u_longitude),
+        "Factory RLL U longitude must use edge staggering");
+    check(close(host_results(3), expected_v_latitude),
+        "Factory RLL V latitude must use edge staggering");
+    check(close(host_results(4), radius_squared * std::cos(expected_t_latitude)),
         "Factory must forward the Earth radius into the RLL Jacobian");
     check(close(host_results(5), radius_squared), "Factory must forward the Earth radius into g22");
 }
 
-void expect_factory_failure(
-    const HorizontalGridSpec& spec,
-    const Grid& grid,
-    const char* message) {
+void
+expect_factory_failure(const HorizontalGridSpec& spec, const Grid& grid, const char* message) {
 
     try {
         auto unused = HorizontalGeometryFactory::create(spec, grid.geometry().layout());
         (void)unused;
         check(false, message);
-    } catch (const std::invalid_argument&) {
+    }
+    catch (const std::invalid_argument&) {
     }
 }
 
-void test_factory_rejections(const Grid& grid) {
+void
+test_factory_rejections(const Grid& grid) {
     HorizontalGridSpec incomplete_regular_lat_lon = make_regular_lat_lon_spec(grid);
     incomplete_regular_lat_lon.regular_lat_lon.radius = VVM::real(0.0);
 
-    expect_factory_failure(
-        incomplete_regular_lat_lon,
+    expect_factory_failure(incomplete_regular_lat_lon,
         grid,
         "Factory must reject regular latitude-longitude geometry without a positive radius");
 
@@ -315,15 +324,15 @@ void test_factory_rejections(const Grid& grid) {
     cubed_sphere.dq1 = grid.get_dx();
     cubed_sphere.dq2 = grid.get_dy();
 
-    expect_factory_failure(
-        cubed_sphere,
+    expect_factory_failure(cubed_sphere,
         grid,
         "Factory must reject cubed sphere until it is implemented");
 }
 
 } // namespace
 
-int main(int argc, char* argv[]) {
+int
+main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
 
@@ -348,7 +357,8 @@ int main(int argc, char* argv[]) {
             test_cartesian_device_values(grid);
             test_regular_lat_lon_factory(grid);
             test_factory_rejections(grid);
-        } catch (const std::exception& error) {
+        }
+        catch (const std::exception& error) {
             ++failures;
             std::fprintf(stderr, "Rank %d unexpected exception: %s\n", mpi_rank, error.what());
         }
@@ -362,7 +372,8 @@ int main(int argc, char* argv[]) {
     if (mpi_rank == 0) {
         if (global_failures == 0) {
             std::fprintf(stdout, "test_grid_geometry: PASS\n");
-        } else {
+        }
+        else {
             std::fprintf(stderr, "test_grid_geometry: %d failure(s)\n", global_failures);
         }
     }

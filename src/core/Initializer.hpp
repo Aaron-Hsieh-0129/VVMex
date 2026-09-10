@@ -15,10 +15,10 @@ namespace Core {
 class Initializer {
 public:
     Initializer(const Utils::ConfigurationManager& config,
-                const Grid& grid,
-                Parameters& parameters,
-                State &state,
-                HaloExchanger& halo_exchanger);
+        const Grid& grid,
+        Parameters& parameters,
+        State& state,
+        HaloExchanger& halo_exchanger);
 
     void initialize_state() const;
     void initialize_jung2019() const;

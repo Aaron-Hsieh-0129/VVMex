@@ -22,8 +22,7 @@ enum class OutputPrecision { Native, Float32, Float64 };
 enum class OutputElementType { Float32, Float64 };
 
 // The float width VVM::Real is not, which is what a converting run writes.
-using ConvertedReal =
-    std::conditional_t<sizeof(VVM::Real) == sizeof(float), double, float>;
+using ConvertedReal = std::conditional_t<sizeof(VVM::Real) == sizeof(float), double, float>;
 
 const char* output_precision_name(OutputPrecision precision) noexcept;
 const char* output_element_type_name(OutputElementType type) noexcept;

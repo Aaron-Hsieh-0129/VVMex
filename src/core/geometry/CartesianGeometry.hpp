@@ -15,11 +15,13 @@ class CartesianGeometry final : public HorizontalGeometry {
 public:
     CartesianGeometry(HorizontalDomainLayout layout, VVM::Real dx, VVM::Real dy);
 
-    GeometryKind kind() const noexcept override {
+    GeometryKind
+    kind() const noexcept override {
         return GeometryKind::Cartesian;
     }
 
-    const char* name() const noexcept override {
+    const char*
+    name() const noexcept override {
         return "cartesian";
     }
 
@@ -28,11 +30,13 @@ public:
         return layout_;
     }
 
-    VVM::Real dq1() const noexcept override {
+    VVM::Real
+    dq1() const noexcept override {
         return dx_;
     }
 
-    VVM::Real dq2() const noexcept override {
+    VVM::Real
+    dq2() const noexcept override {
         return dy_;
     }
 
@@ -51,8 +55,7 @@ private:
 
     void validate() const;
 
-    void initialize_location(
-        HorizontalLocation location);
+    void initialize_location(HorizontalLocation location);
 
     HorizontalDomainLayout layout_;
 

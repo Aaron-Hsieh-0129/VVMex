@@ -15,8 +15,13 @@ public:
     enum class Term { Transport, Stretching, Twisting, Planetary };
     explicit RegularLatLonVorticityTendency(const Core::Geometry::HorizontalGeometry& geometry);
     static void prepare_execution();
-    void add(const Core::State& state, const Core::Grid& grid, const Core::Parameters& params,
-             Core::Field<3>& output, const std::string& variable, Term term) const;
+    void add(const Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& output,
+        const std::string& variable,
+        Term term) const;
+
 private:
     Kokkos::View<RegularLatLonTopTransportDeviceView> transport_;
     Kokkos::View<RegularLatLonTopDeformationDeviceView> deformation_;

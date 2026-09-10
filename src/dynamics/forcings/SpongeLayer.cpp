@@ -5,13 +5,12 @@
 namespace VVM {
 namespace Dynamics {
 
-SpongeLayer::SpongeLayer(const Utils::ConfigurationManager& config, 
-                         const Core::Grid& grid, 
-                         const Core::Parameters& params,
-                         Core::HaloExchanger& halo_exchanger,
-                         Core::State& state)
-    : config_(config), grid_(grid), params_(params), halo_exchanger_(halo_exchanger)
-{
+SpongeLayer::SpongeLayer(const Utils::ConfigurationManager& config,
+    const Core::Grid& grid,
+    const Core::Parameters& params,
+    Core::HaloExchanger& halo_exchanger,
+    Core::State& state)
+    : config_(config), grid_(grid), params_(params), halo_exchanger_(halo_exchanger) {
     dynamics_vars_ = {"xi", "eta", "zeta"};
     thermodynamics_vars_ = {"th", "qv"};
 
@@ -24,7 +23,8 @@ SpongeLayer::SpongeLayer(const Utils::ConfigurationManager& config,
     damp_vort_ = config.get_value<bool>("dynamics.forcings.sponge_layer.damp_vort", true);
 }
 
-void SpongeLayer::initialize(Core::State& state) {
+void
+SpongeLayer::initialize(Core::State& state) {
     int nz = grid_.get_local_total_points_z();
     int ny = grid_.get_local_total_points_y();
     int nx = grid_.get_local_total_points_x();
@@ -43,67 +43,81 @@ void SpongeLayer::initialize(Core::State& state) {
     for (const auto& var_name : dynamics_vars_) {
         std::string fe_tendency_name = "fe_tendency_" + var_name;
         if (!state.has_field(fe_tendency_name)) {
-            if (var_name == "zeta") state.add_field<2>(fe_tendency_name, {ny, nx});
-            else state.add_field<3>(fe_tendency_name, dims);
+            if (var_name == "zeta") {
+                state.add_field<2>(fe_tendency_name, {ny, nx});
+            }
+            else {
+                state.add_field<3>(fe_tendency_name, dims);
+            }
         }
     }
-    if (!state.has_field("CGR_thermo")) state.add_field<1>("CGR_thermo", {nz});
-    if (!state.has_field("CGR_vort")) state.add_field<1>("CGR_vort", {nz});
+    if (!state.has_field("CGR_thermo")) {
+        state.add_field<1>("CGR_thermo", {nz});
+    }
+    if (!state.has_field("CGR_vort")) {
+        state.add_field<1>("CGR_vort", {nz});
+    }
 
     auto& CRAD = CRAD_;
-    CRAD = real(1.) / config_.get_value<VVM::Real>("dynamics.forcings.sponge_layer.inv_CRAD", real(-1.));
-    VVM::Real sponge_layer_base = config_.get_value<VVM::Real>("dynamics.forcings.sponge_layer.sponge_layer_base", -1);
+    CRAD = real(1.) /
+           config_.get_value<VVM::Real>("dynamics.forcings.sponge_layer.inv_CRAD", real(-1.));
+    VVM::Real sponge_layer_base =
+        config_.get_value<VVM::Real>("dynamics.forcings.sponge_layer.sponge_layer_base", -1);
 
     auto& k_start_thermo = k_start_thermo_;
-    for (int k = nz-h; k > h; k--) {
+    for (int k = nz - h; k > h; k--) {
         if (z_mid_host(k) < sponge_layer_base) {
-            k_start_thermo = k+1;
+            k_start_thermo = k + 1;
             break;
         }
     }
 
     auto& k_start_vort = k_start_vort_;
-    for (int k = nz-h; k > h; k--) {
+    for (int k = nz - h; k > h; k--) {
         if (z_up_host(k) < sponge_layer_base) {
-            k_start_vort = k+1;
+            k_start_vort = k + 1;
             break;
         }
     }
 
     std::cout << "--- Initializing Sponge Layer --- " << std::endl;
-    std::cout << "The sponge layer for thermo variables will start at k (physical grid) = " << k_start_thermo - h << ", z = " << z_mid_host(k_start_thermo) << std::endl;
-    std::cout << "The sponge layer for vort variables will start at k (physical grid) = " << k_start_vort - h << ", z = " << z_up_host(k_start_vort) << std::endl;
+    std::cout << "The sponge layer for thermo variables will start at k (physical grid) = "
+              << k_start_thermo - h << ", z = " << z_mid_host(k_start_thermo) << std::endl;
+    std::cout << "The sponge layer for vort variables will start at k (physical grid) = "
+              << k_start_vort - h << ", z = " << z_up_host(k_start_vort) << std::endl;
 
     auto& z_mid = params_.z_mid.get_device_data();
     auto& z_up = params_.z_up.get_device_data();
     auto& CGR_thermo = CGR_thermo_ref_.get(state, "CGR_thermo").get_mutable_device_data();
-    Kokkos::parallel_for("assign_coefficient", Kokkos::RangePolicy<>(k_start_thermo, nz-h),
+    Kokkos::parallel_for("assign_coefficient",
+        Kokkos::RangePolicy<>(k_start_thermo, nz - h),
         KOKKOS_LAMBDA(const int k) {
-            CGR_thermo(k) = CRAD*(z_mid(k)-z_mid(k_start_thermo-1))/(z_mid(nz-h-1)-z_mid(k_start_thermo-1));
-        }
-    );
-    
+            CGR_thermo(k) = CRAD * (z_mid(k) - z_mid(k_start_thermo - 1)) /
+                            (z_mid(nz - h - 1) - z_mid(k_start_thermo - 1));
+        });
+
     auto& CGR_vort = CGR_vort_ref_.get(state, "CGR_vort").get_mutable_device_data();
-    Kokkos::parallel_for("assign_coefficient", Kokkos::RangePolicy<>(k_start_vort, nz-h),
+    Kokkos::parallel_for("assign_coefficient",
+        Kokkos::RangePolicy<>(k_start_vort, nz - h),
         KOKKOS_LAMBDA(const int k) {
             // CGR_vort(k) = CRAD*(z_up(k)-z_mid(k_start_vort-1))/(z_mid(nz-h-1)-z_mid(k_start_vort-1));
             // FIXME: This follows original VVM now, but I think the ratio should be considered carefully.
-            CGR_vort(k) = CRAD*(z_up(k)-z_mid(k_start_thermo-1))/(z_mid(nz-h-1)-z_mid(k_start_thermo-1));
-        }
-    );
+            CGR_vort(k) = CRAD * (z_up(k) - z_mid(k_start_thermo - 1)) /
+                          (z_mid(nz - h - 1) - z_mid(k_start_thermo - 1));
+        });
 }
 
-template<size_t Dim>
-void SpongeLayer::calculate_tendencies(Core::State& state, 
-                                       const std::string& var_name, 
-                                       Core::Field<Dim>& out_tendency) 
-{
-    if (damp_vort_ == false && 
+template <size_t Dim>
+void
+SpongeLayer::calculate_tendencies(
+    Core::State& state, const std::string& var_name, Core::Field<Dim>& out_tendency) {
+    if (damp_vort_ == false &&
         std::find(dynamics_vars_.begin(), dynamics_vars_.end(), var_name) != dynamics_vars_.end()) {
         return;
     }
-    if (damp_thermo_ == false && 
-        std::find(thermodynamics_vars_.begin(), thermodynamics_vars_.end(), var_name) != thermodynamics_vars_.end()) {
+    if (damp_thermo_ == false &&
+        std::find(thermodynamics_vars_.begin(), thermodynamics_vars_.end(), var_name) !=
+            thermodynamics_vars_.end()) {
         return;
     }
 
@@ -111,7 +125,7 @@ void SpongeLayer::calculate_tendencies(Core::State& state,
     const auto& CGR_vort = CGR_vort_ref_.get(state, "CGR_vort").get_device_data();
     const auto& var = state.get_field<3>(var_name).get_device_data();
     auto& tend = out_tendency.get_mutable_device_data();
-    
+
     int nz = grid_.get_local_total_points_z();
     int ny = grid_.get_local_total_points_y();
     int nx = grid_.get_local_total_points_x();
@@ -120,56 +134,57 @@ void SpongeLayer::calculate_tendencies(Core::State& state,
     auto& ref_profile = ref_profile_;
     if (var_name == "th") {
         ref_profile = thbar_ref_.get(state, "thbar").get_device_data();
-    } 
+    }
     else if (var_name == "qv") {
         ref_profile = qvbar_ref_.get(state, "qvbar").get_device_data();
     }
 
     const auto& k_start_thermo = k_start_thermo_;
     const auto& k_start_vort = k_start_vort_;
-    int k_end = nz-h;
-    if (var_name == "xi" || var_name == "eta") k_end = nz-h-1;
+    int k_end = nz - h;
+    if (var_name == "xi" || var_name == "eta") {
+        k_end = nz - h - 1;
+    }
 
     if constexpr (Dim == 3) {
         if (var_name == "xi" || var_name == "eta") {
             Kokkos::parallel_for("Sponge_Tendency_" + var_name,
-                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{k_start_vort, h, h}}, {{k_end, ny-h, nx-h}}),
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{k_start_vort, h, h}},
+                    {{k_end, ny - h, nx - h}}),
                 KOKKOS_LAMBDA(const int k, const int j, const int i) {
                     tend(k, j, i) += -CGR_vort(k) * (var(k, j, i));
-                }
-            );
+                });
         }
         else if (var_name == "th" || var_name == "qv") {
             Kokkos::parallel_for("Sponge_Tendency_" + var_name,
-                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{k_start_thermo, h, h}}, {{k_end, ny-h, nx-h}}),
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{k_start_thermo, h, h}},
+                    {{k_end, ny - h, nx - h}}),
                 KOKKOS_LAMBDA(const int k, const int j, const int i) {
                     tend(k, j, i) += -CGR_thermo(k) * (var(k, j, i) - ref_profile(k));
-                }
-            );
+                });
         }
         else {
             Kokkos::parallel_for("Sponge_Tendency_" + var_name,
-                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{k_start_thermo, h, h}}, {{k_end, ny-h, nx-h}}),
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{k_start_thermo, h, h}},
+                    {{k_end, ny - h, nx - h}}),
                 KOKKOS_LAMBDA(const int k, const int j, const int i) {
                     tend(k, j, i) += -CGR_thermo(k) * var(k, j, i);
-                }
-            );
+                });
         }
-    } 
+    }
     else if constexpr (Dim == 2) {
-        int NK2 = nz-h-1;
+        int NK2 = nz - h - 1;
         const auto& CRAD = CRAD_;
         Kokkos::parallel_for("Sponge_Tendency_" + var_name,
-            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny-h, nx-h}}),
-            KOKKOS_LAMBDA(const int j, const int i) {
-                tend(j, i) += -CRAD * (var(NK2, j, i));
-            }
-        );
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny - h, nx - h}}),
+            KOKKOS_LAMBDA(const int j, const int i) { tend(j, i) += -CRAD * (var(NK2, j, i)); });
     }
 }
 
-template void SpongeLayer::calculate_tendencies(Core::State& state, const std::string& var_name, Core::Field<2ul>& out_tendency);
-template void SpongeLayer::calculate_tendencies(Core::State& state, const std::string& var_name, Core::Field<3ul>& out_tendency);
+template void SpongeLayer::calculate_tendencies(
+    Core::State& state, const std::string& var_name, Core::Field<2ul>& out_tendency);
+template void SpongeLayer::calculate_tendencies(
+    Core::State& state, const std::string& var_name, Core::Field<3ul>& out_tendency);
 
 } // namespace Dynamics
 } // namespace VVM

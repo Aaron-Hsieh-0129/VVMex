@@ -36,8 +36,7 @@ namespace Operators {
 // synchronization, and output initialization.
 class RegularLatLonScalarTransport {
 public:
-    explicit RegularLatLonScalarTransport(
-        const Core::Geometry::HorizontalGeometry& geometry,
+    explicit RegularLatLonScalarTransport(const Core::Geometry::HorizontalGeometry& geometry,
         VVM::Real alpha = VVM::real(1.0));
 
     // Prepare this compilation unit before manual CUDA graph capture.
@@ -52,8 +51,7 @@ public:
     //
     // All used vertical_cell_spacing entries must be positive and finite.
     // Input and output storage must not overlap.
-    void add_flux_convergence(
-        const Core::Field<3>& scalar_q,
+    void add_flux_convergence(const Core::Field<3>& scalar_q,
         const Core::Field<3>& physical_mass_flux_q1,
         const Core::Field<3>& physical_mass_flux_q2,
         const Core::Field<3>& vertical_mass_flux,
@@ -63,10 +61,7 @@ public:
         int k_end) const;
 
 private:
-    void validate_volume(
-        const Core::Field<3>& field,
-        int nz,
-        const char* role) const;
+    void validate_volume(const Core::Field<3>& field, int nz, const char* role) const;
 
     Core::Geometry::HorizontalDomainLayout layout_;
     TakacsScalarTransportDeviceView transport_;
@@ -76,10 +71,8 @@ private:
     // Keep the large immutable operator payload out of CUDA kernel arguments.
     // Manual graph capture cannot allocate Kokkos's global scratch functor.
     Kokkos::View<TakacsScalarTransportDeviceView> device_transport_;
-    Kokkos::View<Core::Geometry::GeometryField2D>
-        device_physical_to_contravariant_q1_;
-    Kokkos::View<Core::Geometry::GeometryField2D>
-        device_physical_to_contravariant_q2_;
+    Kokkos::View<Core::Geometry::GeometryField2D> device_physical_to_contravariant_q1_;
+    Kokkos::View<Core::Geometry::GeometryField2D> device_physical_to_contravariant_q2_;
 };
 
 } // namespace Operators

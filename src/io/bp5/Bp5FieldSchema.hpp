@@ -21,9 +21,18 @@ struct InclusiveBounds {
     std::size_t z_start = 0;
     std::size_t z_end = 0;
 
-    std::size_t nx() const noexcept { return x_end - x_start + 1; }
-    std::size_t ny() const noexcept { return y_end - y_start + 1; }
-    std::size_t nz() const noexcept { return z_end - z_start + 1; }
+    std::size_t
+    nx() const noexcept {
+        return x_end - x_start + 1;
+    }
+    std::size_t
+    ny() const noexcept {
+        return y_end - y_start + 1;
+    }
+    std::size_t
+    nz() const noexcept {
+        return z_end - z_start + 1;
+    }
 };
 
 struct GridRegion {
@@ -56,18 +65,20 @@ public:
     Bp5FieldSchema(InclusiveBounds bounds, GridRegion grid, int rank);
 
     static InclusiveBounds parse_bounds(
-        const Utils::ConfigurationManager& config,
-        std::size_t nx,
-        std::size_t ny,
-        std::size_t nz);
+        const Utils::ConfigurationManager& config, std::size_t nx, std::size_t ny, std::size_t nz);
 
     static GridRegion from_grid(const Core::Grid& grid);
 
-    FieldSelection selection(std::size_t dimensions,
-                             std::size_t components = 1) const;
+    FieldSelection selection(std::size_t dimensions, std::size_t components = 1) const;
 
-    const InclusiveBounds& bounds() const noexcept { return bounds_; }
-    const GridRegion& grid() const noexcept { return grid_; }
+    const InclusiveBounds&
+    bounds() const noexcept {
+        return bounds_;
+    }
+    const GridRegion&
+    grid() const noexcept {
+        return grid_;
+    }
 
 private:
     InclusiveBounds bounds_;

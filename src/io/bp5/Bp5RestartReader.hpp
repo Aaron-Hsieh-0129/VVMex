@@ -20,10 +20,10 @@ namespace VVM::IO::BP5 {
 class Bp5RestartReader : public VVM::IO::Reader {
 public:
     Bp5RestartReader(const std::string& dataset_path,
-                     const Core::Grid& grid,
-                     const Core::Parameters& params,
-                     const Utils::ConfigurationManager& config,
-                     Core::HaloExchanger& halo_exchanger);
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        const Utils::ConfigurationManager& config,
+        Core::HaloExchanger& halo_exchanger);
 
     void read_and_initialize(Core::State& state) override;
 
@@ -35,14 +35,12 @@ private:
     std::size_t resolve_step(std::size_t available_steps) const;
 
     template <std::size_t Dim>
-    void read_field(OpenDataset& dataset,
-                    const std::string& var_name,
-                    Core::Field<Dim>& field) const;
+    void read_field(
+        OpenDataset& dataset, const std::string& var_name, Core::Field<Dim>& field) const;
 
     template <typename Stored, std::size_t Dim>
-    void read_typed_field(OpenDataset& dataset,
-                          const std::string& var_name,
-                          Core::Field<Dim>& field) const;
+    void read_typed_field(
+        OpenDataset& dataset, const std::string& var_name, Core::Field<Dim>& field) const;
 
     std::string dataset_path_;
     const Core::Grid& grid_;

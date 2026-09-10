@@ -42,10 +42,16 @@ public:
     // Before manual CUDA capture, call prepare_execution() outside capture.
     // No halo exchange, mean correction, or vertical ghost policy is applied.
     // The caller owns synchronization; this method does not fence.
-    void recover(const Core::Field<2>& psi, const Core::Field<2>& chi,
-        const Core::Field<3>& w, const Core::Field<3>& omega1, const Core::Field<3>& omega2,
-        const Core::Field<1>& spacing, Core::Field<3>& output1, Core::Field<3>& output2,
-        int bottom_level, int top_level) const;
+    void recover(const Core::Field<2>& psi,
+        const Core::Field<2>& chi,
+        const Core::Field<3>& w,
+        const Core::Field<3>& omega1,
+        const Core::Field<3>& omega2,
+        const Core::Field<1>& spacing,
+        Core::Field<3>& output1,
+        Core::Field<3>& output2,
+        int bottom_level,
+        int top_level) const;
 
 private:
     void validate_horizontal_field(const Core::Field<2>& field, const char* role) const;

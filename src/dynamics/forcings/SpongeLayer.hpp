@@ -18,21 +18,26 @@ namespace Dynamics {
 
 class SpongeLayer {
 public:
-    SpongeLayer(const Utils::ConfigurationManager& config, 
-                const Core::Grid& grid, 
-                const Core::Parameters& params,
-                Core::HaloExchanger& halo_exchanger,
-                Core::State& state);
+    SpongeLayer(const Utils::ConfigurationManager& config,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::HaloExchanger& halo_exchanger,
+        Core::State& state);
 
-    template<size_t Dim>
-    void calculate_tendencies(Core::State& state, 
-                              const std::string& var_name, 
-                              Core::Field<Dim>& out_tendency);
+    template <size_t Dim>
+    void calculate_tendencies(
+        Core::State& state, const std::string& var_name, Core::Field<Dim>& out_tendency);
 
     void initialize(Core::State& state);
 
-    const std::vector<std::string>& get_thermodynamics_vars() const { return thermodynamics_vars_; }
-    const std::vector<std::string>& get_dynamics_vars() const { return dynamics_vars_; }
+    const std::vector<std::string>&
+    get_thermodynamics_vars() const {
+        return thermodynamics_vars_;
+    }
+    const std::vector<std::string>&
+    get_dynamics_vars() const {
+        return dynamics_vars_;
+    }
 
 private:
     const Utils::ConfigurationManager& config_;

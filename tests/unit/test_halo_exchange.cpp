@@ -41,30 +41,38 @@ namespace {
 int g_rank = 0;
 int g_failures = 0;
 
-void report(const char* name, int bad_cells) {
-    if (bad_cells != 0) ++g_failures;
+void
+report(const char* name, int bad_cells) {
+    if (bad_cells != 0) {
+        ++g_failures;
+    }
     if (g_rank == 0) {
-        std::fprintf(stdout, "[%s] %-52s bad cells=%d\n",
-                     bad_cells == 0 ? "PASS" : "FAIL", name, bad_cells);
+        std::fprintf(stdout,
+            "[%s] %-52s bad cells=%d\n",
+            bad_cells == 0 ? "PASS" : "FAIL",
+            name,
+            bad_cells);
     }
 }
 
 // Unique per global cell, and cheap to recompute inside a kernel.
 KOKKOS_INLINE_FUNCTION
-VVM::Real expected_value(int k, int gj, int gi) {
-    return VVM::real(k) * VVM::real(1000000.0) +
-           VVM::real(gj) * VVM::real(1000.0) +
-           VVM::real(gi);
+VVM::Real
+expected_value(int k, int gj, int gi) {
+    return VVM::real(k) * VVM::real(1000000.0) + VVM::real(gj) * VVM::real(1000.0) + VVM::real(gi);
 }
 
 } // namespace
 
-int main(int argc, char* argv[]) {
+int
+main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &g_rank);
 
     if (argc < 2) {
-        if (g_rank == 0) std::fprintf(stderr, "usage: %s <config.json>\n", argv[0]);
+        if (g_rank == 0) {
+            std::fprintf(stderr, "usage: %s <config.json>\n", argv[0]);
+        }
         MPI_Finalize();
         return 2;
     }
@@ -80,7 +88,9 @@ int main(int argc, char* argv[]) {
         int size = 1;
         MPI_Comm_size(MPI_COMM_WORLD, &size);
         ncclUniqueId id;
-        if (g_rank == 0) ncclGetUniqueId(&id);
+        if (g_rank == 0) {
+            ncclGetUniqueId(&id);
+        }
         MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
         ncclComm_t nccl_comm;
         ncclCommInitRank(&nccl_comm, size, id, g_rank);
@@ -131,8 +141,12 @@ int main(int argc, char* argv[]) {
         MPI_Comm_size(MPI_COMM_WORLD, &mpi_size);
         if (g_rank == 0) {
             std::fprintf(stdout,
-                         "halo-exchange test: backend=%s ranks=%d grid=%dx%d halo=%d\n",
-                         backend, mpi_size, gnx, gny, h);
+                "halo-exchange test: backend=%s ranks=%d grid=%dx%d halo=%d\n",
+                backend,
+                mpi_size,
+                gnx,
+                gny,
+                h);
         }
 
         auto& field = state.get_field<3>("th");
@@ -145,9 +159,8 @@ int main(int argc, char* argv[]) {
                 Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
                 KOKKOS_LAMBDA(const int k, const int j, const int i) {
                     const bool physical = (j >= h && j < ny - h && i >= h && i < nx - h);
-                    view(k, j, i) = physical
-                        ? expected_value(k, j0 + (j - h), i0 + (i - h))
-                        : unfilled;
+                    view(k, j, i) =
+                        physical ? expected_value(k, j0 + (j - h), i0 + (i - h)) : unfilled;
                 });
             Kokkos::fence();
         };
@@ -158,13 +171,24 @@ int main(int argc, char* argv[]) {
             Kokkos::parallel_reduce("check",
                 Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, 0, 0}, {nz - h, ny, nx}),
                 KOKKOS_LAMBDA(const int k, const int j, const int i, int& acc) {
-                    const bool inner = (j >= h - depth && j < ny - h + depth &&
-                                        i >= h - depth && i < nx - h + depth);
-                    if (!inner) return;  // outside the exchanged depth
-                    int gj = (j0 + (j - h)) % gny; if (gj < 0) gj += gny;
-                    int gi = (i0 + (i - h)) % gnx; if (gi < 0) gi += gnx;
-                    if (view(k, j, i) != expected_value(k, gj, gi)) ++acc;
-                }, bad);
+                    const bool inner = (j >= h - depth && j < ny - h + depth && i >= h - depth &&
+                                        i < nx - h + depth);
+                    if (!inner) {
+                        return; // outside the exchanged depth
+                    }
+                    int gj = (j0 + (j - h)) % gny;
+                    if (gj < 0) {
+                        gj += gny;
+                    }
+                    int gi = (i0 + (i - h)) % gnx;
+                    if (gi < 0) {
+                        gi += gnx;
+                    }
+                    if (view(k, j, i) != expected_value(k, gj, gi)) {
+                        ++acc;
+                    }
+                },
+                bad);
             Kokkos::fence();
             return bad;
         };
@@ -181,13 +205,24 @@ int main(int argc, char* argv[]) {
             Kokkos::parallel_reduce("check_outer",
                 Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, 0, 0}, {nz - h, ny, nx}),
                 KOKKOS_LAMBDA(const int k, const int j, const int i, int& acc) {
-                    const bool outer_layer = (j < h - 1 || j >= ny - h + 1 ||
-                                              i < h - 1 || i >= nx - h + 1);
-                    if (!outer_layer) return;
-                    int gj = (j0 + (j - h)) % gny; if (gj < 0) gj += gny;
-                    int gi = (i0 + (i - h)) % gnx; if (gi < 0) gi += gnx;
-                    if (view(k, j, i) != expected_value(k, gj, gi)) ++acc;
-                }, bad_outer);
+                    const bool outer_layer =
+                        (j < h - 1 || j >= ny - h + 1 || i < h - 1 || i >= nx - h + 1);
+                    if (!outer_layer) {
+                        return;
+                    }
+                    int gj = (j0 + (j - h)) % gny;
+                    if (gj < 0) {
+                        gj += gny;
+                    }
+                    int gi = (i0 + (i - h)) % gnx;
+                    if (gi < 0) {
+                        gi += gnx;
+                    }
+                    if (view(k, j, i) != expected_value(k, gj, gi)) {
+                        ++acc;
+                    }
+                },
+                bad_outer);
             Kokkos::fence();
             report("default exchange fills the outer halo layer", bad_outer);
         }
@@ -202,10 +237,13 @@ int main(int argc, char* argv[]) {
             Kokkos::parallel_reduce("check_outer_untouched",
                 Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, 0, 0}, {nz - h, ny, nx}),
                 KOKKOS_LAMBDA(const int k, const int j, const int i, int& acc) {
-                    const bool outer_layer = (j < h - 1 || j >= ny - h + 1 ||
-                                              i < h - 1 || i >= nx - h + 1);
-                    if (outer_layer && view(k, j, i) != unfilled) ++acc;
-                }, touched_outer);
+                    const bool outer_layer =
+                        (j < h - 1 || j >= ny - h + 1 || i < h - 1 || i >= nx - h + 1);
+                    if (outer_layer && view(k, j, i) != unfilled) {
+                        ++acc;
+                    }
+                },
+                touched_outer);
             Kokkos::fence();
             report("depth-1 exchange leaves the outer layer alone", touched_outer);
         }
@@ -226,16 +264,18 @@ int main(int argc, char* argv[]) {
             halo.exchange_halos_slice(field, k_layer);
 
             int bad_slice = 0;
-            Kokkos::parallel_reduce(
-                "check_slice",
+            Kokkos::parallel_reduce("check_slice",
                 Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
                 KOKKOS_LAMBDA(const int j, const int i, int& acc) {
                     int gj = (j0 + (j - h)) % gny;
-                    if (gj < 0) gj += gny;
+                    if (gj < 0) {
+                        gj += gny;
+                    }
                     int gi = (i0 + (i - h)) % gnx;
-                    if (gi < 0) gi += gnx;
-                    if (view(k_layer, j, i) !=
-                        expected_value(k_layer, gj, gi)) {
+                    if (gi < 0) {
+                        gi += gnx;
+                    }
+                    if (view(k_layer, j, i) != expected_value(k_layer, gj, gi)) {
                         ++acc;
                     }
                 },
@@ -254,9 +294,8 @@ int main(int argc, char* argv[]) {
                     Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
                     KOKKOS_LAMBDA(const int j, const int i) {
                         const bool physical = (j >= h && j < ny - h && i >= h && i < nx - h);
-                        view2d(j, i) = physical
-                            ? expected_value(0, j0 + (j - h), i0 + (i - h))
-                            : unfilled;
+                        view2d(j, i) =
+                            physical ? expected_value(0, j0 + (j - h), i0 + (i - h)) : unfilled;
                     });
                 Kokkos::fence();
             };
@@ -267,11 +306,22 @@ int main(int argc, char* argv[]) {
                     KOKKOS_LAMBDA(const int j, const int i, int& acc) {
                         const bool inner = (j >= h - depth && j < ny - h + depth &&
                                             i >= h - depth && i < nx - h + depth);
-                        if (!inner) return;
-                        int gj = (j0 + (j - h)) % gny; if (gj < 0) gj += gny;
-                        int gi = (i0 + (i - h)) % gnx; if (gi < 0) gi += gnx;
-                        if (view2d(j, i) != expected_value(0, gj, gi)) ++acc;
-                    }, bad);
+                        if (!inner) {
+                            return;
+                        }
+                        int gj = (j0 + (j - h)) % gny;
+                        if (gj < 0) {
+                            gj += gny;
+                        }
+                        int gi = (i0 + (i - h)) % gnx;
+                        if (gi < 0) {
+                            gi += gnx;
+                        }
+                        if (view2d(j, i) != expected_value(0, gj, gi)) {
+                            ++acc;
+                        }
+                    },
+                    bad);
                 Kokkos::fence();
                 return bad;
             };
@@ -291,8 +341,10 @@ int main(int argc, char* argv[]) {
         MPI_Allreduce(&g_failures, &global_failures, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
         exit_code = global_failures == 0 ? 0 : 1;
         if (g_rank == 0) {
-            std::fprintf(stdout, "%s: %d failure(s)\n",
-                         global_failures == 0 ? "OK" : "FAILED", global_failures);
+            std::fprintf(stdout,
+                "%s: %d failure(s)\n",
+                global_failures == 0 ? "OK" : "FAILED",
+                global_failures);
         }
 
 #if defined(ENABLE_NCCL)

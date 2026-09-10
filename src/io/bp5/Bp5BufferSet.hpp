@@ -14,8 +14,8 @@ namespace VVM::IO::BP5 {
 class Bp5BufferSet {
 public:
     template <typename T>
-    std::vector<T>& require(const std::string& field_name,
-                            std::size_t elements) {
+    std::vector<T>&
+    require(const std::string& field_name, std::size_t elements) {
         auto& buffers = select<T>();
         auto [it, inserted] = buffers.try_emplace(field_name, elements);
         if (!inserted && it->second.size() != elements) {
@@ -25,7 +25,8 @@ public:
         return it->second;
     }
 
-    std::size_t bytes() const noexcept {
+    std::size_t
+    bytes() const noexcept {
         std::size_t total = 0;
         for (const auto& item : float_buffers_) {
             total += item.second.size() * sizeof(float);

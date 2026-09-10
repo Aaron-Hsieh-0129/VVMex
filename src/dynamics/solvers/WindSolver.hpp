@@ -21,10 +21,7 @@
 namespace VVM {
 namespace Dynamics {
 
-enum class WSolverMethod {
-    TRIDIAGONAL,
-    JACOBI
-};
+enum class WSolverMethod { TRIDIAGONAL, JACOBI };
 
 class VerticalEllipticSolver;
 
@@ -35,7 +32,11 @@ public:
         RegularLatLonFreeSlipChannel
     };
 
-    WindSolver(const Core::Grid& grid, const Utils::ConfigurationManager& config, const Core::Parameters& params, VVM::Core::HaloExchanger& halo_exchanger, VVM::Core::State& state);
+    WindSolver(const Core::Grid& grid,
+        const Utils::ConfigurationManager& config,
+        const Core::Parameters& params,
+        VVM::Core::HaloExchanger& halo_exchanger,
+        VVM::Core::State& state);
     ~WindSolver();
 
     WindSolver(const WindSolver&) = delete;
@@ -80,10 +81,15 @@ public:
 
     static void prepare_horizontal_diagnostic_execution();
 
-    static void diagnose_horizontal_wind(const Core::Grid& grid, Core::HaloExchanger& halo,
-        HorizontalEllipticSolver& solver, const HorizontalDiagnosticFields& fields,
-        const HorizontalDiagnosticWorkspace& workspace, const HorizontalEllipticSolver::Options& options,
-        VVM::Real inverse_dz, int bottom, int top,
+    static void diagnose_horizontal_wind(const Core::Grid& grid,
+        Core::HaloExchanger& halo,
+        HorizontalEllipticSolver& solver,
+        const HorizontalDiagnosticFields& fields,
+        const HorizontalDiagnosticWorkspace& workspace,
+        const HorizontalEllipticSolver::Options& options,
+        VVM::Real inverse_dz,
+        int bottom,
+        int top,
         HorizontalDiagnosticBoundaryPolicy boundary_policy =
             HorizontalDiagnosticBoundaryPolicy::CvvmMode2Reference);
 
@@ -123,9 +129,12 @@ public:
 
     // This remains a guarded diagnostic component. It does not enable complete
     // RLL time stepping or select/evolve the prescribed channel circulation.
-    static void diagnose_regular_latlon_wind(const Core::Grid& grid, Core::HaloExchanger& halo,
-        VerticalEllipticSolver& vertical_solver, HorizontalEllipticSolver& horizontal_solver,
-        const RegularLatLonDiagnosticFields& fields, const HorizontalDiagnosticWorkspace& workspace,
+    static void diagnose_regular_latlon_wind(const Core::Grid& grid,
+        Core::HaloExchanger& halo,
+        VerticalEllipticSolver& vertical_solver,
+        HorizontalEllipticSolver& horizontal_solver,
+        const RegularLatLonDiagnosticFields& fields,
+        const HorizontalDiagnosticWorkspace& workspace,
         const RegularLatLonDiagnosticOptions& options);
 
 private:

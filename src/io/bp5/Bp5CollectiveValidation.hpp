@@ -8,9 +8,7 @@
 namespace VVM::IO::BP5 {
 
 void require_collective_match(
-    const std::string& local_value,
-    MPI_Comm comm,
-    const std::string& description);
+    const std::string& local_value, MPI_Comm comm, const std::string& description);
 
 } // namespace VVM::IO::BP5
 

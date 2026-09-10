@@ -6,8 +6,7 @@
 namespace VVM {
 namespace Dynamics {
 
-NumericalMethod::NumericalMethod(
-    std::string variable_name,
+NumericalMethod::NumericalMethod(std::string variable_name,
     std::vector<ConfiguredTendency> tendencies,
     std::unique_ptr<TemporalScheme> multistage_scheme,
     bool has_external_forward_euler)
@@ -21,8 +20,7 @@ NumericalMethod::NumericalMethod(
     for (auto& configured : tendencies) {
         if (!configured.term) {
             throw std::runtime_error(
-                "Numerical method for '" + variable_name_ +
-                "' received an empty tendency term.");
+                "Numerical method for '" + variable_name_ + "' received an empty tendency term.");
         }
 
         switch (configured.temporal_scheme) {
@@ -41,40 +39,38 @@ NumericalMethod::NumericalMethod(
         }
     }
 
-    if (has_multistage_terms &&
-        (has_ab2_terms_ || has_forward_euler_terms_)) {
-        throw std::runtime_error(
-            "Advected variable '" + variable_name_ +
-            "' cannot combine a multistage temporal scheme with "
-            "AdamsBashforth2 or ForwardEuler.");
+    if (has_multistage_terms && (has_ab2_terms_ || has_forward_euler_terms_)) {
+        throw std::runtime_error("Advected variable '" + variable_name_ +
+                                 "' cannot combine a multistage temporal scheme with "
+                                 "AdamsBashforth2 or ForwardEuler.");
     }
 
-    tendency_calculator_ = std::make_unique<TendencyCalculator>(
-        variable_name_, std::move(ab2_terms),
-        std::move(forward_euler_terms), std::move(multistage_terms));
+    tendency_calculator_ = std::make_unique<TendencyCalculator>(variable_name_,
+        std::move(ab2_terms),
+        std::move(forward_euler_terms),
+        std::move(multistage_terms));
 
     if (has_multistage_terms != static_cast<bool>(multistage_scheme)) {
-        throw std::runtime_error(
-            "Numerical method for '" + variable_name_ +
-            "' has inconsistent multistage tendency and temporal "
-            "scheme configuration.");
+        throw std::runtime_error("Numerical method for '" + variable_name_ +
+                                 "' has inconsistent multistage tendency and temporal "
+                                 "scheme configuration.");
     }
-    integrator_ = std::make_unique<TimeIntegrator>(
-        variable_name_, has_ab2_terms_, has_forward_euler_terms_,
+    integrator_ = std::make_unique<TimeIntegrator>(variable_name_,
+        has_ab2_terms_,
+        has_forward_euler_terms_,
         std::move(multistage_scheme));
 }
 
 NumericalMethod::~NumericalMethod() = default;
 
-void NumericalMethod::calculate_tendencies(
-    Core::State& state,
-    const Core::Grid& grid,
-    const Core::Parameters& params) {
+void
+NumericalMethod::calculate_tendencies(
+    Core::State& state, const Core::Grid& grid, const Core::Parameters& params) {
     tendency_calculator_->calculate_tendencies(state, grid, params);
 }
 
-void NumericalMethod::advance(
-    Core::State& state,
+void
+NumericalMethod::advance(Core::State& state,
     const Core::Grid& grid,
     const Core::Parameters& params,
     VVM::Real dt,
@@ -85,13 +81,10 @@ void NumericalMethod::advance(
     }
 
     auto evaluate_tendency = [&](VVM::Real stage_dt) -> Core::Field<3>& {
-        return tendency_calculator_->calculate_multistage_tendency(
-            state, grid, params, stage_dt);
+        return tendency_calculator_->calculate_multistage_tendency(state, grid, params, stage_dt);
     };
-    integrator_->step(
-        state, grid, params, dt, evaluate_tendency, process_stage);
+    integrator_->step(state, grid, params, dt, evaluate_tendency, process_stage);
 }
 
 } // namespace Dynamics
 } // namespace VVM
-
