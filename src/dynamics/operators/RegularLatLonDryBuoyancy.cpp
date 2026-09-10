@@ -30,6 +30,14 @@ struct DryBuoyancyFunctor {
     ProfileView thbar;
     ScalarView gravity;
     VolumeView output;
+    VolumeView qv, qp, face_mask;
+    bool moist = false;
+    int max_topo_idx = -1;
+
+    KOKKOS_INLINE_FUNCTION
+    VVM::Real moisture(const int k, const int j, const int i) const noexcept {
+        return VVM::real(0.608)*qv(k,j,i) - qp(k,j,i);
+    }
 
     bool xi_component = true;
     bool preparation_only = false;
@@ -52,6 +60,18 @@ struct DryBuoyancyFunctor {
         stencil.northwest = th(k, j + 1, i - 1) * inverse_thbar;
         stencil.northeast = th(k, j + 1, i + 1) * inverse_thbar;
 
+        if (moist) {
+            stencil.center += moisture(k,j,i);
+            stencil.west += moisture(k,j,i-1);
+            stencil.east += moisture(k,j,i+1);
+            stencil.south += moisture(k,j-1,i);
+            stencil.north += moisture(k,j+1,i);
+            stencil.southwest += moisture(k,j-1,i-1);
+            stencil.southeast += moisture(k,j-1,i+1);
+            stencil.northwest += moisture(k,j+1,i-1);
+            stencil.northeast += moisture(k,j+1,i+1);
+        }
+
         return stencil;
     }
 
@@ -71,6 +91,9 @@ struct DryBuoyancyFunctor {
         }
         else {
             output(k, j, i) += operator_view.calculate_eta_at_u(j, i, lower, upper, gravity());
+        }
+        if (moist && k <= max_topo_idx && face_mask(k,j,i) == VVM::real(0.)) {
+            output(k,j,i) = VVM::real(0.);
         }
     }
 };
@@ -215,7 +238,11 @@ RegularLatLonDryBuoyancy::add_tendency(const Core::Field<3>& th,
     Core::Field<3>& out_tendency,
     const int k_begin,
     const int k_end,
-    const bool xi_component) const {
+    const bool xi_component,
+    const Core::Field<3>* qv,
+    const Core::Field<3>* qp,
+    const Core::Field<3>* face_mask,
+    const int max_topo_idx) const {
 
     const int nz = static_cast<int>(th.get_device_data().extent(0));
 
@@ -264,6 +291,19 @@ RegularLatLonDryBuoyancy::add_tendency(const Core::Field<3>& th,
     functor.output = output_data;
     functor.xi_component = xi_component;
     functor.preparation_only = false;
+    if (qv != nullptr) {
+        for (const auto* field : {qv, qp, face_mask}) {
+            validate_volume(*field, nz, "moist buoyancy input");
+            if (field->get_device_data().data() == output_data.data()) {
+                throw std::invalid_argument("Moist buoyancy requires distinct input/output storage.");
+            }
+        }
+        functor.qv = qv->get_device_data();
+        functor.qp = qp->get_device_data();
+        functor.face_mask = face_mask->get_device_data();
+        functor.moist = true;
+        functor.max_topo_idx = max_topo_idx;
+    }
 
     const int h = layout_.halo;
     const int ny = layout_.local_total_ny();
@@ -277,6 +317,15 @@ RegularLatLonDryBuoyancy::add_tendency(const Core::Field<3>& th,
                                       : "RegularLatLonDryBuoyancyEta",
         policy,
         functor);
+}
+
+void RegularLatLonDryBuoyancy::add_moist_tendency(const Core::Field<3>& th,
+    const Core::Field<1>& thbar, const Kokkos::View<VVM::Real>& gravity,
+    const Core::Field<3>& qv, const Core::Field<3>& qp,
+    const Core::Field<3>& face_mask, Core::Field<3>& output,
+    int k_begin, int k_end, int max_topo_idx, bool xi_component) const {
+    add_tendency(th, thbar, gravity, output, k_begin, k_end, xi_component,
+        &qv, &qp, &face_mask, max_topo_idx);
 }
 
 } // namespace Operators

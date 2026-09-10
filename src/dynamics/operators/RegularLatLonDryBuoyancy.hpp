@@ -102,6 +102,19 @@ public:
         int k_begin,
         int k_end) const;
 
+    // Physical (not density-weighted) mixing ratios. qp is total condensate
+    // from the existing physics owner; do not sum P3 categories here.
+    // face_mask is ITYPEV for xi or ITYPEU for eta. As in Cartesian Takacs,
+    // masked cells at/below max_topo_idx reset the accumulated tendency.
+    void add_moist_tendency(const Core::Field<3>& th,
+        const Core::Field<1>& thbar,
+        const Kokkos::View<VVM::Real>& gravity,
+        const Core::Field<3>& qv,
+        const Core::Field<3>& qp,
+        const Core::Field<3>& face_mask,
+        Core::Field<3>& output,
+        int k_begin, int k_end, int max_topo_idx, bool xi_component) const;
+
 private:
     void add_tendency(const Core::Field<3>& th,
         const Core::Field<1>& thbar,
@@ -109,7 +122,11 @@ private:
         Core::Field<3>& out_tendency,
         int k_begin,
         int k_end,
-        bool xi_component) const;
+        bool xi_component,
+        const Core::Field<3>* qv = nullptr,
+        const Core::Field<3>* qp = nullptr,
+        const Core::Field<3>* face_mask = nullptr,
+        int max_topo_idx = -1) const;
 
     void validate_volume(const Core::Field<3>& field, int nz, const char* role) const;
 
