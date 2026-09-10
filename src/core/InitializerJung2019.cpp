@@ -32,9 +32,25 @@ void Initializer::initialize_jung2019() const {
     const Real dlambda = geometry.dq1;
     const Real south = geometry.regular_lat_lon.latitude_south_edge;
     const Real west = geometry.regular_lat_lon.longitude_west_edge;
+    Real jet_shift = real(0.);
+    if (is_rll_mountain(config_) && config_.has_key("initial_conditions.rll_mountain.jet_center_latitude_deg")) {
+        const Real original_center = experiment == 1 ? real(0.) : pi/real(32.);
+        const Real center = config_.get_value<Real>("initial_conditions.rll_mountain.jet_center_latitude_deg",
+            original_center*real(180.)/pi)*pi/real(180.);
+        jet_shift = center-original_center;
+        const Real jet_south = (experiment == 1 ? -pi/real(8.) : -pi/real(16.))+jet_shift;
+        const Real jet_north = pi/real(8.)+jet_shift;
+        if (!std::isfinite(center) || jet_south < south || jet_north > south+grid_.get_global_points_y()*dphi)
+            throw std::runtime_error("RLL mountain jet must have a finite center and fit inside the latitude walls.");
+    }
+    // Shift only the wind profile. Spherical metric factors retain physical
+    // latitude; derive both its discrete curl and channel streamfunction anew.
+    const auto prescribed_jet = [&](Real latitude) {
+        return jet(jet_shift == real(0.) ? latitude : latitude-jet_shift, experiment, jet_scale);
+    };
     std::vector<Real> psi_prefix(grid_.get_global_points_y() + 1, real(0.0));
     for (int j = 0; j < grid_.get_global_points_y(); ++j)
-        psi_prefix[j+1] = psi_prefix[j] - radius * dphi * jet(south + (real(j)+real(.5))*dphi, experiment, jet_scale);
+        psi_prefix[j+1] = psi_prefix[j] - radius * dphi * prescribed_jet(south + (real(j)+real(.5))*dphi);
     state_.add_field<0>("rll_psi_north", {}, {GridStaggering::StaggeredXY, "m2 s-1", "prescribed northern streamfunction wall value"});
     Kokkos::deep_copy(state_.get_field<0>("rll_psi_north").get_mutable_device_data(), psi_prefix.back());
     auto psi = state_.get_field<2>("psi").get_host_data();
@@ -64,8 +80,8 @@ void Initializer::initialize_jung2019() const {
         const int gj = grid_.get_local_physical_start_y() + j - h;
         const Real phi_u = south + (real(gj) + real(0.5)) * dphi;
         const Real phi_z = south + (real(gj) + real(1.0)) * dphi;
-        const Real initial_u = jet(phi_u, experiment, jet_scale);
-        const Real curl = -(std::cos(phi_u + dphi) * jet(phi_u + dphi, experiment, jet_scale)
+        const Real initial_u = prescribed_jet(phi_u);
+        const Real curl = -(std::cos(phi_u + dphi) * prescribed_jet(phi_u + dphi)
             - std::cos(phi_u) * initial_u) / (radius * std::cos(phi_z) * dphi);
         for (int i = 0; i < nx; ++i) {
             const int gi = grid_.get_local_physical_start_x() + i - h;
