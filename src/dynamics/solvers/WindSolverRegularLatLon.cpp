@@ -84,6 +84,8 @@ WindSolver::solve_regular_latlon() {
         rll_spacing_ = std::make_unique<Core::Field<1>>("RLL wind spacing", std::array<int, 1>{nz});
         rll_increment_ =
             std::make_unique<Core::Field<0>>("RLL harmonic increment", std::array<int, 0>{});
+        rll_wall_contributions_ = std::make_unique<Core::Field<1>>(
+            "RLL wall circulation contributions", std::array<int, 1>{grid_.get_global_points_x()});
         // The admitted Section 4.2 configuration has uniform physical levels.
         Kokkos::deep_copy(rll_spacing_->get_mutable_device_data(),
             params_.get_value_host(params_.dz));
@@ -174,24 +176,35 @@ WindSolver::solve_regular_latlon() {
     const auto h1 = grid_.geometry()
                         .device_view(Core::Geometry::HorizontalLocation::U)
                         .contravariant_to_physical.a11;
-    const auto row = psi_tmp_field_.get_mutable_device_data();
+    const auto row = rll_wall_contributions_->get_mutable_device_data();
+    Kokkos::deep_copy(row, real(0.));
     const auto zeta = fields.zeta.get_device_data();
     const auto top_snapshot = state_.get_field<2>("rll_zeta_top").get_mutable_device_data();
     const bool owns_south = grid_.get_local_physical_start_y() == 0;
-    const Real rows = static_cast<Real>(grid_.get_global_points_y());
+    const int start_i = grid_.get_local_physical_start_x();
     Kokkos::parallel_for("RLLSouthWallCirculation",
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
         KOKKOS_LAMBDA(int j, int i) {
-            row(j, i) = owns_south && j == h ? rows * h1(j, i) * u(top, j, i) : real(0.0);
+            if (owns_south && j == h) {
+                row(start_i + i - h) = h1(j, i) * u(top, j, i);
+            }
             // Optional compact history uses the shared State/output machinery;
             // the prognostic three-dimensional zeta field is unchanged.
             top_snapshot(j, i) = zeta(top, j, i);
         });
-    // This existing reduction synchronizes and runs outside solver capture.
-    const auto mean = state_.get_field<0>("utop_mean_tmp").get_mutable_device_data();
-    state_.calculate_horizontal_mean(psi_tmp_field_, mean);
-    Real current;
-    Kokkos::deep_copy(current, mean);
+    // Each longitude has exactly one owner. Reduce disjoint contributions
+    // (only additions to zero), then sum in the same global order on all ranks.
+    // An ordinary parallel mean has rank-dependent rounding that seeds a
+    // different harmonic wind correction every step. This synchronization
+    // remains outside capture, as did the original horizontal mean.
+    auto wall = rll_wall_contributions_->get_host_data();
+    MPI_Allreduce(MPI_IN_PLACE, wall.data(), grid_.get_global_points_x(),
+        VVM_MPI_REAL, MPI_SUM, grid_.get_comm());
+    Real current = real(0.);
+    for (int i = 0; i < grid_.get_global_points_x(); ++i) {
+        current += wall(i);
+    }
+    current /= static_cast<Real>(grid_.get_global_points_x());
     if (initial) {
         rll_south_circulation_ = current;
     }
