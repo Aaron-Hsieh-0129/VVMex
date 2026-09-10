@@ -340,8 +340,13 @@ void Bp5HistoryWriter::define_schema() {
     io_.DefineAttribute<std::string>("long_name", "elapsed simulation time", "model_time_s");
     io_.DefineAttribute<std::string>("units", "1", "model_step");
     io_.DefineAttribute<std::string>("long_name", "integration step count", "model_step");
-    io_.DefineAttribute<std::string>("units", "meter", "coordinates/x");
-    io_.DefineAttribute<std::string>("units", "meter", "coordinates/y");
+    const bool rll = grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon;
+    io_.DefineAttribute<std::string>("units", rll ? "degrees_east" : "meter", "coordinates/x");
+    io_.DefineAttribute<std::string>("units", rll ? "degrees_north" : "meter", "coordinates/y");
+    if (rll) {
+        io_.DefineAttribute<std::string>("horizontal_geometry", "regular_latlon");
+        io_.DefineAttribute<VVM::Real>("earth_radius_m", grid_.horizontal_specification().geometry.regular_lat_lon.radius);
+    }
     io_.DefineAttribute<std::string>("units", "meter", "coordinates/z_mid");
 
     io_.DefineAttribute<std::string>("vvm_schema_version", "1");
@@ -459,6 +464,16 @@ void Bp5HistoryWriter::prepare_coordinates() {
     }
     for (std::size_t j = 0; j < region.global_ny; ++j) {
         y_coordinates_[j] = static_cast<VVM::Real>(j) * grid_.get_dy();
+    }
+    if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+        const auto& geometry = grid_.horizontal_specification().geometry;
+        const VVM::Real degrees = real(180.)/std::acos(real(-1.));
+        for (std::size_t i = 0; i < region.global_nx; ++i)
+            x_coordinates_[i] = (geometry.regular_lat_lon.longitude_west_edge
+                + (static_cast<VVM::Real>(i)+real(.5))*geometry.dq1)*degrees;
+        for (std::size_t j = 0; j < region.global_ny; ++j)
+            y_coordinates_[j] = (geometry.regular_lat_lon.latitude_south_edge
+                + (static_cast<VVM::Real>(j)+real(.5))*geometry.dq2)*degrees;
     }
     const auto z_host = parameters_.z_mid.get_host_data();
     for (std::size_t k = 0; k < region.global_nz; ++k) {

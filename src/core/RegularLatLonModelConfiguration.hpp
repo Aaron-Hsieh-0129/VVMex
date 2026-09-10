@@ -49,7 +49,8 @@ inline void validate_jung2019_rll(const Utils::ConfigurationManager& config, con
         if (config.get_value<bool>(key, false)) throw std::runtime_error(std::string("Unsupported RLL option: ") + key);
     if (config.has_key("netcdf_reader.source_file") || config.has_key("initial_conditions.source_file") || config.has_key("dynamics.tracers"))
         throw std::runtime_error("Jung RLL uses analytic initial conditions; external input and tracers are not enabled.");
-    if (config.get_value<std::string>("output.engine", "HDF5") != "HDF5" || h.fix_lonlat)
+    const auto engine = config.get_value<std::string>("output.engine", "HDF5");
+    if ((engine != "HDF5" && !(is_rll_mountain(config) && engine == "BP5")) || h.fix_lonlat)
         throw std::runtime_error("Jung RLL currently requires HDF5 output and geometry-derived geographic coordinates.");
     const int experiment = config.get_value<int>("initial_conditions.jung2019.case");
     if (experiment != 1 && experiment != 2) throw std::runtime_error("Jung 2019 case must be 1 or 2.");

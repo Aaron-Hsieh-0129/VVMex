@@ -1876,6 +1876,16 @@ add_test(NAME test_rll_mountain_shared_model
 set_tests_properties(test_rll_mountain_shared_model PROPERTIES
     WORKING_DIRECTORY "${VVM_TEST_WORKDIR}" LABELS "integration" RESOURCE_LOCK gpu TIMEOUT 600)
 _vvm_set_test_resources(test_rll_mountain_shared_model 1)
+
+if(VVM_TEST_BP5)
+    add_test(NAME test_rll_bp5_history
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/scripts/check_rll_bp5.py
+            $<TARGET_FILE:vvm> ${CMAKE_BINARY_DIR}/rll_bp5_tests
+            --wrapper "${GPU_WRAP}" --launcher ${MPIEXEC_EXECUTABLE})
+    set_tests_properties(test_rll_bp5_history PROPERTIES
+        WORKING_DIRECTORY "${VVM_TEST_WORKDIR}" LABELS "integration;bp5" RESOURCE_LOCK gpu TIMEOUT 600)
+    _vvm_set_test_resources(test_rll_bp5_history 1)
+endif()
 set_tests_properties(test_regular_latlon_top_transport PROPERTIES LABELS unit TIMEOUT 60)
 _vvm_set_test_resources(test_regular_latlon_top_transport 1)
 
