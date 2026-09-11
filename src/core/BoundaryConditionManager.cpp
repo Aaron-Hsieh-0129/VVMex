@@ -410,7 +410,7 @@ BoundaryConditionManager::apply_horizontal_bcs(Field<Dim>& field) const {
         if constexpr (Dim == 3) {
             Boundary::HorizontalBoundaryStencils boundary(grid_);
             const auto name = field.get_name();
-            if (name == "xi" || name == "zeta" || name == "v") {
+            if (name == "xi" || name == "zeta" || name == "v" || name == "v_mean") {
                 boundary.fill_positive_face_q2_homogeneous_dirichlet_halos(field);
             }
             else {

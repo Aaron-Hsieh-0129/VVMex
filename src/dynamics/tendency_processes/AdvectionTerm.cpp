@@ -207,6 +207,23 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
                 });
             });
     }
+    else if (grid.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+        const auto mu = state.get_field<3>("ITYPEU").get_device_data();
+        const auto mv = state.get_field<3>("ITYPEV").get_device_data();
+        const auto mw = state.get_field<3>("ITYPEW").get_device_data();
+        // Physical mass fluxes; the RLL transport operator supplies metric
+        // factors and this term divides by rho exactly once after convergence.
+        // Keep this multi-view functor out of Kokkos's constant-memory launch
+        // path, whose event synchronization is forbidden during graph capture.
+        const auto policy = Kokkos::Experimental::require(
+            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, h, h}, {nz - h, ny - h, nx - h}),
+            Kokkos::Experimental::WorkItemProperty::HintLightWeight);
+        Kokkos::parallel_for("RLLScalarMaskedMassFlux", policy, KOKKOS_LAMBDA(int k, int j, int i) {
+            u_mean_data(k, j, i) = mu(k, j, i) == real(1.) ? rhobar(k) * u(k, j, i) : real(0.);
+            v_mean_data(k, j, i) = mv(k, j, i) == real(1.) ? rhobar(k) * v(k, j, i) : real(0.);
+            w_mean_data(k, j, i) = mw(k, j, i) == real(1.) ? rhobar_up(k) * w(k, j, i) : real(0.);
+        });
+    }
     else {
         Kokkos::parallel_for("calculate_mean_wind_scalar_team",
             TeamPolicy(league_size, Kokkos::AUTO),

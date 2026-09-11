@@ -10,20 +10,30 @@ namespace VVM {
 namespace Dynamics {
 
 // Guarded Takacs implementation for ordinary density-normalized scalars
-// and explicitly selected dry horizontal-vorticity buoyancy on regular
+// and explicitly selected horizontal-vorticity buoyancy on regular
 // latitude-longitude geometry.
 //
 // xi is physical eastward vorticity at V. eta is negative physical
 // northward vorticity at U, preserving the existing State convention.
 //
 // Flat RLL vorticity transport and deformation use the shared CVVM operators.
-// Moisture and terrain remain unsupported. Full-model execution remains guarded.
+// Moist scalar and P3 buoyancy interfaces are available for controlled tests.
+// Full moist-model execution remains guarded pending the other physics paths.
 class RegularLatLonTakacs final : public SpatialScheme {
 public:
-    // Enabling dry buoyancy declares that the caller supplies a dry State.
+    // Dry mode requires a dry State; moist mode requires physical qv, qp and
+    // initialized native terrain masks. The factory derives this from P3,
+    // not a new user-facing dry/moist configuration key.
     // Construction and backend preparation must occur before graph capture.
     explicit RegularLatLonTakacs(const Core::Geometry::HorizontalGeometry& geometry,
-        bool enable_dry_buoyancy = false);
+        bool enable_dry_buoyancy = false,
+        bool enable_moist_buoyancy = false);
+
+    static bool
+    is_moist_scalar(const std::string& name) {
+        return name == "qv" || name == "qc" || name == "qr" || name == "qi" || name == "qm" ||
+               name == "nc" || name == "nr" || name == "ni" || name == "bm";
+    }
 
     bool
     handles_multidimensional_advection() const override {
@@ -134,6 +144,7 @@ private:
     Operators::RegularLatLonDryBuoyancy dry_buoyancy_;
     Operators::RegularLatLonVorticityTendency vorticity_;
     bool enable_dry_buoyancy_;
+    bool enable_moist_buoyancy_;
 };
 
 } // namespace Dynamics
