@@ -1997,6 +1997,56 @@ _vvm_set_test_resources(
     1
 )
 
+# Regular latitude-longitude surface physics:
+# physical-wind exchange, latitude independence,
+# momentum-flux orientation, and surface tendency coupling.
+add_executable(
+    test_regular_latlon_surface
+    ${TEST_DIR}/unit/test_regular_latlon_surface.cpp
+)
+
+target_include_directories(
+    test_regular_latlon_surface
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(
+    test_regular_latlon_surface
+    PRIVATE
+        vvm_surface
+        vvm_core
+        vvm_utils
+        Kokkos::kokkos
+        MPI::MPI_CXX
+)
+
+add_test(
+    NAME test_regular_latlon_surface
+    COMMAND
+        ${MPIEXEC_EXECUTABLE}
+        ${MPIEXEC_NUMPROC_FLAG}
+        1
+        ${VVM_MPI_BIND_ARGS}
+        ${MPIEXEC_PREFLAGS}
+        ${GPU_WRAP}
+        $<TARGET_FILE:test_regular_latlon_surface>
+        ${MPIEXEC_POSTFLAGS}
+)
+
+set_tests_properties(
+    test_regular_latlon_surface
+    PROPERTIES
+        WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+        LABELS "unit"
+        TIMEOUT 120
+)
+
+_vvm_set_test_resources(
+    test_regular_latlon_surface
+    1
+)
+
 # --- physics tier: GPU only, ~80 s. P3, RRTMGP and the Noah land model -----
 # Forced OFF on a CPU build by the backend guard above: tests/references_cpu/
 # has no digests for these cases, so they would fail for the wrong reason.
