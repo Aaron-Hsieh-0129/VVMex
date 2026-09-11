@@ -62,7 +62,7 @@ def main():
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     args.work.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="run-", dir=args.work.resolve()))
-    base = json.loads((ROOT/"experiments/topography/configs/mountain.json").read_text())
+    base = json.loads((ROOT/"tests/configs/rll_mountain.json").read_text())
     base["grid"]["horizontal"].update(nx=80, ny=20)
     base["grid"]["vertical"]["nz"] = 12
     base["simulation"].update(dt_s=10, total_time_s=120, output_interval_s=60)
