@@ -48,7 +48,8 @@ Initializer::initialize_jung2019() const {
         throw std::runtime_error("RLL mountain u0_m_s must be finite.");
     }
     Real jet_shift = real(0.);
-    if (!zonal_mountain && is_rll_mountain(config_) &&
+    const bool rll_mountain = is_rll_mountain(config_);
+    if (!zonal_mountain && rll_mountain &&
         config_.has_key("initial_conditions.rll_mountain.jet_center_latitude_deg")) {
         const Real original_center = experiment == 1 ? real(0.) : pi / real(32.);
         const Real center =
@@ -99,6 +100,9 @@ Initializer::initialize_jung2019() const {
         Kokkos::deep_copy(state_.get_field<3>(name).get_mutable_device_data(), real(1.0));
     }
     parameters_.max_topo_idx = h;
+    if (!rll_mountain) {
+        initialize_topo();
+    }
     initialize_zeta_factor_for_twisting();
 
     state_.add_field<2>("rll_background_u",

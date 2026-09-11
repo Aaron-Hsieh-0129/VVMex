@@ -63,7 +63,6 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
                                  "rll_mountain; Jung reproduction remains flat.");
     }
     for (const char* key : {"physics.p3.enable_p3",
-             "physics.turbulence.enable_turbulence",
              "physics.rrtmgp.enable_rrtmgp",
              "physics.surface_process.enable",
              "dynamics.forcings.sponge_layer.enable",

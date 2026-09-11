@@ -1968,6 +1968,35 @@ _vvm_set_test_resources(
     1
 )
 
+# Full-model RLL + Shutts-Gray turbulence smoke test.
+#
+# Independent of the existing Jung and field-level turbulence tests:
+# this test generates its own RLL configuration and verifies that the
+# production Model path can initialize and advance with turbulence enabled.
+add_test(
+    NAME test_rll_turbulence_model
+    COMMAND
+        ${Python3_EXECUTABLE}
+        ${TEST_DIR}/scripts/check_rll_turbulence_model.py
+        $<TARGET_FILE:vvm>
+        ${CMAKE_BINARY_DIR}/rll_turbulence_model_tests
+        --wrapper "${GPU_WRAP}"
+        --launcher ${MPIEXEC_EXECUTABLE}
+)
+
+set_tests_properties(
+    test_rll_turbulence_model
+    PROPERTIES
+        WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+        LABELS "integration"
+        TIMEOUT 240
+)
+
+_vvm_set_test_resources(
+    test_rll_turbulence_model
+    1
+)
+
 # --- physics tier: GPU only, ~80 s. P3, RRTMGP and the Noah land model -----
 # Forced OFF on a CPU build by the backend guard above: tests/references_cpu/
 # has no digests for these cases, so they would fail for the wrong reason.
