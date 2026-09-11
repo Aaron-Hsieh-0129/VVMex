@@ -1098,6 +1098,24 @@ Initializer::initialize_perturbation() const {
 
 void
 Initializer::initialize_geographic_coordinates() const {
+    if (grid_.geometry().kind() == Geometry::GeometryKind::RegularLatLon) {
+        // Geometry is authoritative on RLL, including local halos. Spatial
+        // input and the Cartesian fixed-location override must not replace it.
+        const auto geometry = grid_.geometry().device_view(GridStaggering::Centered);
+        const auto longitude = geometry.longitude;
+        const auto latitude = geometry.latitude;
+        auto lon = state_.get_field<2>("lon").get_mutable_device_data();
+        auto lat = state_.get_field<2>("lat").get_mutable_device_data();
+        const Real degrees = real(180.) / std::acos(real(-1.));
+        Kokkos::parallel_for("InitializeRLLGeographicCoordinates",
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0},
+                {grid_.get_local_total_points_y(), grid_.get_local_total_points_x()}),
+            KOKKOS_LAMBDA(int j, int i) {
+                lon(j, i) = longitude(j, i) * degrees;
+                lat(j, i) = latitude(j, i) * degrees;
+            });
+        return;
+    }
     // Without the fixed-location override, preserve coordinates supplied by
     // the existing spatial initial-condition reader.
     if (!grid_.horizontal_specification().fix_lonlat) {

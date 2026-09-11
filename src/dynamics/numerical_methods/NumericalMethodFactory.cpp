@@ -59,8 +59,9 @@ NumericalMethodFactory::create_spatial_scheme(const std::string& variable_name,
 
         if (geometry_kind == Core::Geometry::GeometryKind::RegularLatLon) {
 
-            const bool scalar_advection =
-                term_name == "advection" && (variable_name == "th" || is_tracer);
+            const bool scalar_advection = term_name == "advection" &&
+                                          (variable_name == "th" || is_tracer ||
+                                              RegularLatLonTakacs::is_moist_scalar(variable_name));
             const bool horizontal_buoyancy = term_name == "buoyancy" && !is_tracer &&
                                              (variable_name == "xi" || variable_name == "eta");
             const bool vorticity_term =
@@ -72,15 +73,16 @@ NumericalMethodFactory::create_spatial_scheme(const std::string& variable_name,
             if (!scalar_advection && !horizontal_buoyancy && !vorticity_term) {
                 throw std::runtime_error(
                     "Regular latitude-longitude Takacs currently supports "
-                    "only potential-temperature or passive-tracer advection "
-                    "and dry vorticity transport, deformation and xi/eta buoyancy; field '" +
+                    "only potential-temperature, moisture or passive-tracer advection "
+                    "and vorticity transport, deformation and xi/eta buoyancy; field '" +
                     variable_name + "', tendency term '" + term_name + "' is not enabled yet.");
             }
 
             if (horizontal_buoyancy) {
                 if (config_.get_value<bool>("physics.p3.enable_p3", false)) {
-                    throw std::runtime_error(
-                        "Regular latitude-longitude dry buoyancy does not support P3.");
+                    // P3 owns qp (total condensate). Full-model capability
+                    // remains separately guarded until all coupled paths pass.
+                    return std::make_unique<RegularLatLonTakacs>(grid_.geometry(), false, true);
                 }
 
                 // P3 being disabled does not establish a dry configuration:

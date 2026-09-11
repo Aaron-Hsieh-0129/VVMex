@@ -1902,6 +1902,16 @@ set_tests_properties(test_regular_latlon_dry_buoyancy
                      PROPERTIES LABELS unit TIMEOUT 60)
 _vvm_set_test_resources(test_regular_latlon_dry_buoyancy 1)
 
+# Shared RLL moist interfaces; full-model capability remains guarded.
+add_executable(test_regular_latlon_moist_interfaces
+               ${TEST_DIR}/unit/test_regular_latlon_moist_interfaces.cpp)
+target_link_libraries(test_regular_latlon_moist_interfaces PRIVATE vvm_dynamics vvm_core vvm_io)
+add_test(NAME test_regular_latlon_moist_interfaces
+         COMMAND ${MPIEXEC_EXECUTABLE} ${VVM_MPI_BIND_ARGS} -n 1 ${GPU_WRAP}
+                 $<TARGET_FILE:test_regular_latlon_moist_interfaces>)
+set_tests_properties(test_regular_latlon_moist_interfaces PROPERTIES LABELS integration TIMEOUT 120)
+_vvm_set_test_resources(test_regular_latlon_moist_interfaces 1)
+
 # --- physics tier: GPU only, ~80 s. P3, RRTMGP and the Noah land model -----
 # Forced OFF on a CPU build by the backend guard above: tests/references_cpu/
 # has no digests for these cases, so they would fail for the wrong reason.
