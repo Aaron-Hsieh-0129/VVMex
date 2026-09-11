@@ -1918,6 +1918,56 @@ add_test(NAME test_regular_latlon_moist_interfaces
 set_tests_properties(test_regular_latlon_moist_interfaces PROPERTIES LABELS integration TIMEOUT 120)
 _vvm_set_test_resources(test_regular_latlon_moist_interfaces 1)
 
+# Regular latitude-longitude Shutts-Gray turbulence:
+# metric-aware deformation, Km/Kh, scalar diffusion,
+# horizontal-vorticity diffusion, and top-zeta diffusion.
+add_executable(
+    test_regular_latlon_turbulence
+    ${TEST_DIR}/unit/test_regular_latlon_turbulence.cpp
+)
+
+target_include_directories(
+    test_regular_latlon_turbulence
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(
+    test_regular_latlon_turbulence
+    PRIVATE
+        vvm_turbulence
+        vvm_core
+        vvm_utils
+        Kokkos::kokkos
+        MPI::MPI_CXX
+)
+
+add_test(
+    NAME test_regular_latlon_turbulence
+    COMMAND
+        ${MPIEXEC_EXECUTABLE}
+        ${MPIEXEC_NUMPROC_FLAG}
+        1
+        ${VVM_MPI_BIND_ARGS}
+        ${MPIEXEC_PREFLAGS}
+        ${GPU_WRAP}
+        $<TARGET_FILE:test_regular_latlon_turbulence>
+        ${MPIEXEC_POSTFLAGS}
+)
+
+set_tests_properties(
+    test_regular_latlon_turbulence
+    PROPERTIES
+        WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+        LABELS "unit"
+        TIMEOUT 120
+)
+
+_vvm_set_test_resources(
+    test_regular_latlon_turbulence
+    1
+)
+
 # --- physics tier: GPU only, ~80 s. P3, RRTMGP and the Noah land model -----
 # Forced OFF on a CPU build by the backend guard above: tests/references_cpu/
 # has no digests for these cases, so they would fail for the wrong reason.

@@ -110,6 +110,15 @@ public:
         return dynamics_vars_;
     }
 
+    void compute_rll_deformation(Core::State& state);
+    void compute_rll_coefficients(Core::State& state, VVM::Real dt);
+
+    void calculate_rll_xi_tendency(Core::State& state, Core::Field<3>& out_tendency);
+    void calculate_rll_eta_tendency(Core::State& state, Core::Field<3>& out_tendency);
+    void calculate_rll_zeta_tendency(Core::State& state, Core::Field<2>& out_tendency);
+    void calculate_rll_scalar_tendency(
+        Core::State& state, const std::string& var_name, Core::Field<3>& out_tendency);
+
 private:
     const Utils::ConfigurationManager& config_;
     const Core::Grid& grid_;
