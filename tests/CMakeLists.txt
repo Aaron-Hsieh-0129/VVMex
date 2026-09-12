@@ -2104,6 +2104,34 @@ _vvm_set_test_resources(
     1
 )
 
+# Initialization-only P3 smoke test on regular latitude-longitude geometry.
+#
+# No model timestep is executed. This isolates P3 construction and
+# initialization from the subsequent microphysics integration work.
+add_test(
+    NAME test_rll_p3_initialization
+    COMMAND
+        ${Python3_EXECUTABLE}
+        ${TEST_DIR}/scripts/check_rll_p3_initialization.py
+        $<TARGET_FILE:vvm>
+        ${CMAKE_BINARY_DIR}/rll_p3_initialization_tests
+        --wrapper "${GPU_WRAP}"
+        --launcher ${MPIEXEC_EXECUTABLE}
+)
+
+set_tests_properties(
+    test_rll_p3_initialization
+    PROPERTIES
+        WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+        LABELS "integration"
+        TIMEOUT 300
+)
+
+_vvm_set_test_resources(
+    test_rll_p3_initialization
+    1
+)
+
 # --- physics tier: GPU only, ~80 s. P3, RRTMGP and the Noah land model -----
 # Forced OFF on a CPU build by the backend guard above: tests/references_cpu/
 # has no digests for these cases, so they would fail for the wrong reason.
