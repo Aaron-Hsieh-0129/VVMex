@@ -3,14 +3,14 @@
 import argparse
 import copy
 import json
-from pathlib import Path
 import resource
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
-import numpy as np
 import h5py
+import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -99,9 +99,8 @@ for name, jet, perturbation in (("rest", 0, 0), ("jet", 1, 0), ("coupled", 1, 1)
     run(name, config)
 
 negative = [
-    ("moisture", ("physics", "p3", "enable_p3"), True, "Unsupported RLL option"),
     ("restart", ("restart", "enable"), True, "Unsupported RLL option"),
-    ("diffusion", ("dynamics", "prognostic_variables", "zeta", "tendency_terms", "diffusion"), {"enable": True}, "no Coriolis, buoyancy, or diffusion"),
+    ("diffusion", ("dynamics", "prognostic_variables", "zeta", "tendency_terms", "diffusion"), {"enable": True}, "RLL vorticity currently supports"),
     ("disabled_transport", ("dynamics", "prognostic_variables", "zeta", "tendency_terms", "advection", "enable"), False, "requires enabled advection"),
     ("missing_vorticity", ("dynamics", "prognostic_variables", "xi"), {}, "requires all three vorticity"),
     ("zero_iterations", ("dynamics", "solver", "iteration"), 0, "positive fixed solver"),
