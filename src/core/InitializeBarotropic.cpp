@@ -87,15 +87,6 @@ Initializer::initialize_jung2019() const {
         psi_prefix.back());
     auto psi = state_.get_field<2>("psi").get_host_data();
 
-    for (const char* name : {"ITYPEU", "ITYPEV", "ITYPEW"}) {
-        Kokkos::deep_copy(state_.get_field<3>(name).get_mutable_device_data(), real(1.0));
-    }
-    parameters_.max_topo_idx = h;
-    if (!rll_mountain) {
-        initialize_topo();
-    }
-    initialize_zeta_factor_for_twisting();
-
     state_.add_field<2>("rll_background_u",
         {ny, nx},
         {GridStaggering::StaggeredX, "m s-1", "prescribed Jung background eastward wind"});
