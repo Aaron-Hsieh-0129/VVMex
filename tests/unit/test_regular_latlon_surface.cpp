@@ -501,7 +501,7 @@ run_wind_case(SurfaceProcess& surface,
 
     SurfaceSnapshot snapshot;
 
-    for (int j = h + 1; j < ny - h; ++j) {
+    for (int j = h + 1; j < ny - h - 1; ++j) {
 
         for (int i = h; i < nx - h; ++i) {
 
