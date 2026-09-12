@@ -2,12 +2,14 @@
 #define VVM_CORE_INITIALIZER_HPP
 
 #include <memory>
-#include "Grid.hpp"
-#include "Parameters.hpp"
-#include "State.hpp"
+#include "core/Grid.hpp"
+#include "core/Parameters.hpp"
+#include "core/State.hpp"
+#include "core/haloexchange/HaloExchanger.hpp"
+#include "core/RegularLatLonModelConfiguration.hpp"
+#include "core/boundary/HorizontalBoundaryStencils.hpp"
 #include "utils/ConfigurationManager.hpp"
 #include "io/Reader.hpp"
-#include "haloexchange/HaloExchanger.hpp"
 
 namespace VVM {
 namespace Core {
@@ -26,6 +28,11 @@ public:
     void initialize_topo() const;
     void initialize_poisson() const;
     void assign_vars() const;
+    void initialize_background_state() const;
+    void initialize_case_terrain() const;
+    void finalize_rll_terrain_masks() const;
+    void initialize_prognostic_state() const;
+    void initialize_surface_temperature() const;
     void initialize_geographic_coordinates() const;
     void initialize_perturbation() const;
     void initialize_zeta_factor_for_twisting() const;
