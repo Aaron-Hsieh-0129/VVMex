@@ -126,32 +126,41 @@ void
 Initializer::initialize_state() const {
     initialize_background_state();
 
-    if (is_rll_idealized(config_)) {
-        initialize_jung2019();
-        return;
-    }
+    // Construct case-specific topography first. For flat cases this is a no-op.
+    initialize_case_terrain();
 
-    if (is_rll_idealized(config_) && config_.get_value<std::string>("simulation.idealized_test",
-                                         "none") == "gaussian_mountain") {
-        initialize_case_terrain();
-    }
-
-    // Do topo mask from constructed topo
+    // Common topology/mask construction for Cartesian and RLL geometries.
     initialize_topo();
 
+    // RLL mountain face masks need a decomposition-independent correction after
+    // the common ITYPE fields have been constructed.
+    finalize_rll_terrain_masks();
+
+    // Cartesian cases use assign_vars(); Jung/RLL cases use the analytic state.
     initialize_prognostic_state();
 
+    // Tg requires both topography and the thermodynamic state to exist.
     initialize_surface_temperature();
+
+    // Preserve the optional spatial-IC reapplication semantics. The initial
+    // NetCDF read happens in initialize_background_state(); this optional second
+    // read reapplies spatial fields after the generic prognostic initialization.
+    if (pnetcdf_reader_ &&
+        config_.get_value<bool>("initial_conditions.reapply_spatial_initial_conditions", false)) {
+        pnetcdf_reader_->read_and_initialize(state_);
+    }
 
     if (restart_reader_) {
         load_restart();
     }
-    else {
+    else if (!is_rll_idealized(config_)) {
+        // Jung already contains its analytic perturbation.
         initialize_perturbation();
     }
+
     apply_tracer_boundary_conditions();
-    // init poisson should be placed after assign variables
-    // because the density would affect height factors.
+
+    // Poisson factors depend on the initialized reference density/state.
     initialize_poisson();
     initialize_zeta_factor_for_twisting();
 }
@@ -159,19 +168,21 @@ Initializer::initialize_state() const {
 void
 Initializer::initialize_background_state() const {
     if (!is_rll_idealized(config_)) {
+        // Preserve the ordinary VVMex reader order exactly: first the vertical
+        // profile, then the spatial NetCDF state when one is configured.
         if (reader_) {
             reader_->read_and_initialize(state_);
         }
 
-        if (pnetcdf_reader_ &&
-            config_.get_value<bool>("initial_conditions.reapply_spatial_initial_conditions",
-                false)) {
+        if (pnetcdf_reader_) {
             pnetcdf_reader_->read_and_initialize(state_);
         }
 
         return;
     }
 
+    // RLL uses a deliberately simple constant reference atmosphere:
+    // rho = 1 kg m-3, Pi = 1, theta = T = Tv = 300 K, qv = 0.
     auto& rhobar = state_.get_field<1>("rhobar").get_mutable_device_data();
     auto& rhobar_up = state_.get_field<1>("rhobar_up").get_mutable_device_data();
 
@@ -200,6 +211,11 @@ Initializer::initialize_background_state() const {
     Kokkos::deep_copy(pibar, real(1.0));
     Kokkos::deep_copy(pibar_up, real(1.0));
 
+    // Pi = 1 corresponds to the standard 1000-hPa reference pressure.
+    constexpr double reference_pressure_pa = 100000.0;
+    Kokkos::deep_copy(pbar, real(reference_pressure_pa));
+    Kokkos::deep_copy(pbar_up, real(reference_pressure_pa));
+
     Kokkos::deep_copy(thbar, real(300.0));
     Kokkos::deep_copy(Tbar, real(300.0));
     Kokkos::deep_copy(Tvbar, real(300.0));
@@ -209,6 +225,8 @@ Initializer::initialize_background_state() const {
     Kokkos::deep_copy(th, real(300.0));
     Kokkos::deep_copy(qv, real(0.0));
 
+    // Jung supplies u and zeta analytically later. These fields have generic
+    // zero initial values until initialize_jung2019() overwrites what it owns.
     Kokkos::deep_copy(v, real(0.0));
     Kokkos::deep_copy(w, real(0.0));
     Kokkos::deep_copy(xi, real(0.0));
@@ -217,6 +235,106 @@ Initializer::initialize_background_state() const {
 
 void
 Initializer::initialize_case_terrain() const {
+    // RLL Jung terrain is generated analytically here. Flat Jung cases leave
+    // topo untouched and are handled by the common initialize_topo() call.
+    if (is_rll_idealized(config_)) {
+        if (!is_rll_mountain(config_)) {
+            return;
+        }
+
+        const int h = grid_.get_halo_cells();
+        const int nz = grid_.get_local_total_points_z();
+        const int ny = grid_.get_local_total_points_y();
+        const int nx = grid_.get_local_total_points_x();
+
+        const auto& geometry = grid_.horizontal_specification().geometry;
+        const Real radius = geometry.regular_lat_lon.radius;
+        const Real dlambda = geometry.dq1;
+        const Real dphi = geometry.dq2;
+        const Real pi = std::acos(real(-1.0));
+        const Real south = geometry.regular_lat_lon.latitude_south_edge;
+        const Real west = geometry.regular_lat_lon.longitude_west_edge;
+
+        Boundary::HorizontalBoundaryStencils boundary(grid_);
+
+        // Preserve the existing RLL-mountain Coriolis initialization.
+        const Real omega = config_.get_value<Real>("constants.OMEGA", real(0.));
+        auto f = state_.get_field<2>("f_2d").get_host_data();
+        for (int j = 0; j < ny; ++j) {
+            const Real phi_z =
+                south + (grid_.get_local_physical_start_y() + j - h + real(1.)) * dphi;
+            for (int i = 0; i < nx; ++i) {
+                f(j, i) = real(2.) * omega * std::sin(phi_z);
+            }
+        }
+        Kokkos::deep_copy(state_.get_field<2>("f_2d").get_mutable_device_data(), f);
+
+        const Real peak = config_.get_value<Real>("initial_conditions.rll_mountain.height_m");
+        const Real width = config_.get_value<Real>("initial_conditions.rll_mountain.half_width_m");
+        const Real center_lambda =
+            config_.has_key("initial_conditions.rll_mountain.center_longitude_deg")
+                ? config_.get_value<Real>("initial_conditions.rll_mountain.center_longitude_deg") *
+                      pi / real(180.)
+                : west + real(.5) * grid_.get_global_points_x() * dlambda;
+        if (!std::isfinite(center_lambda)) {
+            throw std::runtime_error("RLL mountain longitude must be finite.");
+        }
+
+        const Real center_phi =
+            config_.get_value<Real>("initial_conditions.rll_mountain.center_latitude_deg",
+                (south + real(.5) * grid_.get_global_points_y() * dphi) * real(180.) / pi) *
+            pi / real(180.);
+
+        state_.add_field<2>("rll_terrain_height",
+            {ny, nx},
+            {GridStaggering::Centered, "m", "discretized centered spherical mountain height"});
+        auto elevation = state_.get_field<2>("rll_terrain_height").get_host_data();
+        auto terrain = state_.get_field<2>("topo").get_host_data();
+        const auto z = parameters_.z_up.get_host_data();
+
+        for (int j = h; j < ny - h; ++j) {
+            const Real phi = south + (grid_.get_local_physical_start_y() + j - h + real(.5)) * dphi;
+            for (int i = h; i < nx - h; ++i) {
+                const Real lambda =
+                    west + (grid_.get_local_physical_start_x() + i - h + real(.5)) * dlambda;
+                const Real cosine =
+                    std::sin(phi) * std::sin(center_phi) +
+                    std::cos(phi) * std::cos(center_phi) * std::cos(lambda - center_lambda);
+                const Real distance =
+                    radius * std::acos(std::max(real(-1.), std::min(real(1.), cosine)));
+                const Real height = distance < real(3.) * width
+                                        ? peak * std::exp(-distance * distance / (width * width))
+                                        : real(0.);
+
+                int level = h - 1;
+                for (int k = h; k < nz - 2 * h - 2; ++k) {
+                    if (std::abs(z(k) - height) < std::abs(z(level) - height)) {
+                        level = k;
+                    }
+                }
+
+                terrain(j, i) = level == h - 1 ? real(0.) : static_cast<Real>(level);
+                elevation(j, i) = z(level);
+            }
+        }
+
+        Kokkos::deep_copy(state_.get_field<2>("topo").get_mutable_device_data(), terrain);
+        Kokkos::deep_copy(state_.get_field<2>("rll_terrain_height").get_mutable_device_data(),
+            elevation);
+        halo_exchanger_.exchange_halos(state_.get_field<2>("topo"));
+        boundary.fill_centered_q2_neumann_halos(state_.get_field<2>("topo"));
+        return;
+    }
+
+    // The only Cartesian terrain generated analytically by Initializer is the
+    // existing Gaussian-mountain test. Other Cartesian cases use topo already
+    // supplied by their readers.
+    const std::string test_mode =
+        config_.get_value<std::string>("simulation.idealized_test", "none");
+    if (test_mode != "gaussian_mountain") {
+        return;
+    }
+
     const int h = grid_.get_halo_cells();
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
@@ -230,19 +348,22 @@ Initializer::initialize_case_terrain() const {
     const Real center = config_.get_value<Real>("initial_conditions.gaussian_mountain.center_x_m",
         length / real(2.));
     const auto z = parameters_.z_up.get_host_data();
+
     if (grid_.geometry().kind() != Geometry::GeometryKind::Cartesian || !reader_ ||
         pnetcdf_reader_ || restart_reader_ || nz - 2 * h < 4 || !std::isfinite(height) ||
         height <= real(0.) || height > z(nz - h - 3) || !std::isfinite(width) ||
         width <= real(0.) || !std::isfinite(center)) {
         throw std::runtime_error(
             "gaussian_mountain requires Cartesian geometry, a text profile, no spatial "
-            "input/restart, "
-            "positive finite height/width, and at least two atmospheric levels above terrain.");
+            "input/restart, positive finite height/width, and at least two atmospheric levels "
+            "above terrain.");
     }
+
     state_.add_field<2>("terrain_height", {ny, nx});
     auto& terrain = state_.get_field<2>("topo");
     auto topo = terrain.get_host_data();
     auto elevation = state_.get_field<2>("terrain_height").get_host_data();
+
     for (int j = h; j < ny - h; ++j) {
         for (int i = h; i < nx - h; ++i) {
             const int global_i = grid_.get_local_physical_start_x() + i - h;
@@ -260,11 +381,11 @@ Initializer::initialize_case_terrain() const {
             elevation(j, i) = z(level);
         }
     }
+
     Kokkos::deep_copy(terrain.get_mutable_device_data(), topo);
     Kokkos::deep_copy(state_.get_field<2>("terrain_height").get_mutable_device_data(), elevation);
     halo_exchanger_.exchange_halos(terrain);
     halo_exchanger_.exchange_halos(state_.get_field<2>("terrain_height"));
-    return;
 }
 
 void
@@ -334,104 +455,38 @@ Initializer::initialize_surface_temperature() const {
 
 void
 Initializer::finalize_rll_terrain_masks() const {
+    if (!is_rll_idealized(config_) || !is_rll_mountain(config_)) {
+        return;
+    }
+
     const int h = grid_.get_halo_cells();
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
 
-    const auto& geometry = grid_.horizontal_specification().geometry;
-    const Real radius = geometry.regular_lat_lon.radius;
-    const Real dlambda = geometry.dq1;
-    const Real dphi = geometry.dq2;
-    const Real pi = std::acos(real(-1.0));
-    const Real south = geometry.regular_lat_lon.latitude_south_edge;
-    const Real west = geometry.regular_lat_lon.longitude_west_edge;
-
     Boundary::HorizontalBoundaryStencils boundary(grid_);
 
-    if (!is_rll_idealized(config_)) {
-        return;
-    }
-
-    if (!is_rll_mountain(config_)) {
-        return;
-    }
-
-    const Real omega = config_.get_value<Real>("constants.OMEGA", real(0.));
-    auto f = state_.get_field<2>("f_2d").get_host_data();
-    for (int j = 0; j < ny; ++j) {
-        const Real phi_z = south + (grid_.get_local_physical_start_y() + j - h + real(1.)) * dphi;
-        for (int i = 0; i < nx; ++i) {
-            f(j, i) = real(2.) * omega * std::sin(phi_z);
-        }
-    }
-    Kokkos::deep_copy(state_.get_field<2>("f_2d").get_mutable_device_data(), f);
-    const Real peak = config_.get_value<Real>("initial_conditions.rll_mountain.height_m");
-    const Real width = config_.get_value<Real>("initial_conditions.rll_mountain.half_width_m");
-    const Real center_lambda =
-        config_.has_key("initial_conditions.rll_mountain.center_longitude_deg")
-            ? config_.get_value<Real>("initial_conditions.rll_mountain.center_longitude_deg") * pi /
-                  real(180.)
-            : west + real(.5) * grid_.get_global_points_x() * dlambda;
-    if (!std::isfinite(center_lambda)) {
-        throw std::runtime_error("RLL mountain longitude must be finite.");
-    }
-    const Real center_phi =
-        config_.get_value<Real>("initial_conditions.rll_mountain.center_latitude_deg",
-            (south + real(.5) * grid_.get_global_points_y() * dphi) * real(180.) / pi) *
-        pi / real(180.);
-    state_.add_field<2>("rll_terrain_height",
-        {ny, nx},
-        {GridStaggering::Centered, "m", "discretized centered spherical mountain height"});
-    auto elevation = state_.get_field<2>("rll_terrain_height").get_host_data();
-    auto terrain = state_.get_field<2>("topo").get_host_data();
-    const auto z = parameters_.z_up.get_host_data();
-    for (int j = h; j < ny - h; ++j) {
-        const Real phi = south + (grid_.get_local_physical_start_y() + j - h + real(.5)) * dphi;
-        for (int i = h; i < nx - h; ++i) {
-            const Real lambda =
-                west + (grid_.get_local_physical_start_x() + i - h + real(.5)) * dlambda;
-            const Real cosine =
-                std::sin(phi) * std::sin(center_phi) +
-                std::cos(phi) * std::cos(center_phi) * std::cos(lambda - center_lambda);
-            const Real distance =
-                radius * std::acos(std::max(real(-1.), std::min(real(1.), cosine)));
-            const Real height = distance < real(3.) * width
-                                    ? peak * std::exp(-distance * distance / (width * width))
-                                    : real(0.);
-            int level = h - 1;
-            for (int k = h; k < nz - 2 * h - 2; ++k) {
-                if (std::abs(z(k) - height) < std::abs(z(level) - height)) {
-                    level = k;
-                }
-            }
-            terrain(j, i) = level == h - 1 ? real(0.) : static_cast<Real>(level);
-            elevation(j, i) = z(level);
-        }
-    }
-    Kokkos::deep_copy(state_.get_field<2>("topo").get_mutable_device_data(), terrain);
-    Kokkos::deep_copy(state_.get_field<2>("rll_terrain_height").get_mutable_device_data(),
-        elevation);
-    halo_exchanger_.exchange_halos(state_.get_field<2>("topo"));
-    boundary.fill_centered_q2_neumann_halos(state_.get_field<2>("topo"));
-    initialize_topo();
     // Gather neighboring W masks at each owned positive face. The legacy
     // scatter into i-1/j-1 can target a halo on a decomposition boundary;
     // exchanging that halo does not transfer the write to its owner.
     auto& mask_w_field = state_.get_field<3>("ITYPEW");
     halo_exchanger_.exchange_halos(mask_w_field);
     boundary.fill_centered_q2_neumann_halos(mask_w_field);
+
     const auto mask_w = mask_w_field.get_device_data();
     const auto mask_u = state_.get_field<3>("ITYPEU").get_mutable_device_data();
     const auto mask_v = state_.get_field<3>("ITYPEV").get_mutable_device_data();
+
     Kokkos::parallel_for("RLLTerrainOwnedFaceMasks",
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
         KOKKOS_LAMBDA(int k, int j, int i) {
             mask_u(k, j, i) = mask_w(k, j, i) * mask_w(k, j, i + 1);
             mask_v(k, j, i) = mask_w(k, j, i) * mask_w(k, j + 1, i);
         });
+
     halo_exchanger_.exchange_halos(state_.get_field<2>("topo"));
     boundary.fill_centered_q2_neumann_halos(state_.get_field<2>("topo"));
+
     for (const char* name : {"ITYPEU", "ITYPEV", "ITYPEW"}) {
         halo_exchanger_.exchange_halos(state_.get_field<3>(name));
         boundary.fill_centered_q2_neumann_halos(state_.get_field<3>(name));
