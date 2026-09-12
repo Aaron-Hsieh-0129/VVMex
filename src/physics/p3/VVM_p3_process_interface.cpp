@@ -1,5 +1,6 @@
 #include "p3_functions.hpp"
 #include "physics/p3/VVM_p3_process_interface.hpp"
+#include "core/BoundaryConditionManager.hpp"
 
 #include <ekat_assert.hpp>
 #include <ekat_units.hpp>
@@ -991,8 +992,27 @@ void VVM_P3_Interface::postprocessing_and_unpacking(VVM::Core::State& state) {
         }
     }
     halo_exchanger_.exchange_multiple_halos(m_p3_update_fields);
+    if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+        Core::BoundaryConditionManager boundary(grid_, true);
+        for (auto* field : m_p3_update_fields) {
+            boundary.apply_horizontal_bcs(*field);
+        }
+    }
 }
 
+
+void VVM_P3_Interface::refresh_total_condensate(VVM::Core::State& state) {
+    const auto qc = state.get_field<3>("qc").get_device_data();
+    const auto qr = state.get_field<3>("qr").get_device_data();
+    const auto qi = state.get_field<3>("qi").get_device_data();
+    auto qp = state.get_field<3>("qp").get_mutable_device_data();
+    Kokkos::parallel_for("RefreshTotalCondensate",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0,0,0},
+            {grid_.get_local_total_points_z(),grid_.get_local_total_points_y(),grid_.get_local_total_points_x()}),
+        KOKKOS_LAMBDA(int k, int j, int i) {
+            qp(k,j,i) = qc(k,j,i)+qr(k,j,i)+qi(k,j,i);
+        });
+}
 
 void VVM_P3_Interface::run(VVM::Core::State &state, const VVM::Real dt) {
     if (m_need_reset_precip) {

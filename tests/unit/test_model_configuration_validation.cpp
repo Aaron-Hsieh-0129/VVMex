@@ -263,6 +263,68 @@ run_tests() {
         1,
         false,
         "Non-Cartesian full-model execution");
+
+    // These are admission checks only: no input files or physics are executed.
+    Json moist = rll;
+    moist["grid"]["vertical"]["dz1"] = 50.;
+    moist["simulation"]["idealized_test"] = "rll_mountain";
+    moist["initial_conditions"] = {
+        {"format", "txt"}, {"source_file", "profile.txt"},
+        {"jung2019", {{"case", 1}, {"jet_scale", 0.}, {"perturbation_scale", 0.}}},
+        {"rll_mountain", {{"height_m", 500.}, {"half_width_m", 1000.},
+            {"center_latitude_deg", 0.}, {"zonal_flow", true}, {"u0_m_s", 20.}}}};
+    moist["physics"] = {{"p3", {{"enable_p3", true}}},
+        {"rrtmgp", {{"enable_rrtmgp", true}}},
+        {"turbulence", {{"enable_turbulence", true}}},
+        {"surface_process", {{"enable", true}}}};
+    moist["output"]["engine"] = "BP5";
+    moist["dynamics"]["solver"] = {{"w_solver_method", "tridiagonal"},
+        {"iteration", 40}, {"initial_iterations", 100}, {"vertical_iterations", 10}, {"WRXMU", 100.}};
+    moist["dynamics"]["forcings"]["sponge_layer"] =
+        {{"enable", true}, {"sponge_layer_base", 1000.}, {"inv_CRAD", 3600.}};
+    const Json enabled = {{"enable", true}, {"spatial_scheme", "Takacs"},
+        {"temporal_scheme", "AdamsBashforth2"}};
+    for (const char* name : {"xi", "eta", "zeta", "th", "qv"}) {
+        auto& terms = moist["dynamics"]["prognostic_variables"][name]["tendency_terms"];
+        terms["advection"] = enabled;
+        if (std::string(name) == "xi" || std::string(name) == "eta" || std::string(name) == "zeta") {
+            terms["stretching"] = enabled;
+            terms["twisting"] = enabled;
+            if (std::string(name) != "zeta") terms["buoyancy"] = enabled;
+        }
+    }
+    check_validation(directory, "rll_profile_physics", moist, 1, true);
+    Json bad = moist;
+    bad["initial_conditions"].erase("source_file");
+    check_validation(directory, "rll_radiation_needs_profile", bad, 1, false, "profile-backed");
+    bad = moist;
+    bad["physics"]["p3"]["enable_p3"] = false;
+    check_validation(directory, "rll_profile_needs_p3", bad, 1, false, "profile-backed");
+    bad = moist;
+    bad["dynamics"]["prognostic_variables"].erase("qv");
+    check_validation(directory, "rll_profile_needs_transport", bad, 1, false, "th and qv");
+    for (const char* name : {"topo", "lon", "lat"}) {
+        bad = moist;
+        bad["netcdf_reader"]["variables_to_read"]["2d"] = Json::array({name});
+        check_validation(directory, std::string("rll_reject_input_")+name, bad, 1, false, "analytic");
+    }
+    bad = moist;
+    bad["netcdf_reader"]["variables_to_read"]["2d"] = Json::array({"vegtype", "soiltype", "Tg"});
+    check_validation(directory, "rll_accept_surface_properties", bad, 1, true);
+    bad = moist;
+    bad["netcdf_reader"]["variables_to_read"]["3d"] = Json::array({"th"});
+    check_validation(directory, "rll_reject_volume_input", bad, 1, false, "surface fields only");
+    for (const double base : {-1., 50., 29000.}) {
+        bad = moist;
+        bad["dynamics"]["forcings"]["sponge_layer"]["sponge_layer_base"] = base;
+        check_validation(directory, "rll_bad_sponge_base", bad, 1, false, "inside the atmosphere");
+    }
+    bad = moist;
+    bad["dynamics"]["forcings"]["sponge_layer"]["inv_CRAD"] = 0.;
+    check_validation(directory, "rll_bad_sponge_time", bad, 1, false, "positive timescale");
+    bad = moist;
+    bad["restart"]["enable"] = true;
+    check_validation(directory, "rll_restart_still_guarded", bad, 1, false, "restart.enable");
 }
 
 } // namespace

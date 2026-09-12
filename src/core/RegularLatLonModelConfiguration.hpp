@@ -23,9 +23,9 @@ is_rll_idealized(const Utils::ConfigurationManager& config) {
     return is_jung2019_rll(config) || is_rll_mountain(config);
 }
 
-// Deliberately limited scientific configuration. This does not enable general
-// dry RLL, moist physics, restart or Cartesian metre-based forcing. Terrain is
-// admitted only by the separate rll_mountain experiment and its masked-curl path.
+// Limited channel configurations. A profile-backed moist rll_mountain may
+// couple radiation/surface/turbulence/P3; general input terrain, restart and
+// horizontal Cartesian forcing remain unsupported.
 inline void
 validate_jung2019_rll(const Utils::ConfigurationManager& config,
     const GridSpecification& specification) {
@@ -62,9 +62,24 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
         throw std::runtime_error("Mountain terrain requires simulation.idealized_test = "
                                  "rll_mountain; Jung reproduction remains flat.");
     }
-    for (const char* key : {"physics.rrtmgp.enable_rrtmgp",
-             "dynamics.forcings.sponge_layer.enable",
-             "dynamics.forcings.areamn.enable",
+    const bool profile_atmosphere = is_rll_mountain(config) &&
+        config.has_key("initial_conditions.source_file") &&
+        config.get_value<std::string>("initial_conditions.format", "") == "txt" &&
+        config.get_value<bool>("physics.p3.enable_p3", false);
+    if (!profile_atmosphere &&
+        (config.get_value<bool>("physics.rrtmgp.enable_rrtmgp", false) ||
+         config.get_value<bool>("dynamics.forcings.sponge_layer.enable", false))) {
+        throw std::runtime_error("RLL radiation and sponge require a profile-backed moist mountain atmosphere.");
+    }
+    if (config.get_value<bool>("dynamics.forcings.sponge_layer.enable", false)) {
+        const double base = config.get_value<double>("dynamics.forcings.sponge_layer.sponge_layer_base", -1.);
+        const double timescale = config.get_value<double>("dynamics.forcings.sponge_layer.inv_CRAD", -1.);
+        if (!std::isfinite(base) || base <= v.dz || base >= (v.nz - 1.5) * v.dz ||
+            !std::isfinite(timescale) || timescale <= 0.) {
+            throw std::runtime_error("RLL sponge requires a positive timescale and a base inside the atmosphere.");
+        }
+    }
+    for (const char* key : {"dynamics.forcings.areamn.enable",
              "dynamics.forcings.random_perturbation.enable",
              "dynamics.forcings.lateral_boundary_nudging.enable",
              "restart.enable"}) {
@@ -72,10 +87,23 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
             throw std::runtime_error(std::string("Unsupported RLL option: ") + key);
         }
     }
-    if (config.has_key("netcdf_reader.source_file") ||
-        config.has_key("initial_conditions.source_file") || config.has_key("dynamics.tracers")) {
+    if ((!profile_atmosphere && (config.has_key("netcdf_reader.source_file") ||
+        config.has_key("initial_conditions.source_file"))) || config.has_key("dynamics.tracers")) {
         throw std::runtime_error("Jung RLL uses analytic initial conditions; external input and "
                                  "tracers are not enabled.");
+    }
+    if (profile_atmosphere && config.has_key("netcdf_reader.variables_to_read")) {
+        const auto input = config.get_value<nlohmann::json>("netcdf_reader.variables_to_read");
+        for (const auto& group : input.items()) {
+            if (group.key() != "2d") {
+                throw std::runtime_error("RLL spatial input currently supports surface fields only.");
+            }
+            for (const auto& name : group.value()) {
+                if (name == "topo" || name == "lon" || name == "lat") {
+                    throw std::runtime_error("RLL mountain terrain and coordinates must remain analytic; exclude topo/lon/lat from spatial input.");
+                }
+            }
+        }
     }
     const auto engine = config.get_value<std::string>("output.engine", "HDF5");
     if ((engine != "HDF5" && !(is_rll_mountain(config) && engine == "BP5")) || h.fix_lonlat) {
@@ -102,6 +130,16 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
                                  "original vertical line solver.");
     }
     const auto variables = config.get_value<nlohmann::json>("dynamics.prognostic_variables");
+    if (profile_atmosphere) {
+        for (const char* scalar : {"th", "qv"}) {
+            if (!variables.contains(scalar) ||
+                !variables.at(scalar).contains("tendency_terms") ||
+                !variables.at(scalar).at("tendency_terms").contains("advection") ||
+                !variables.at(scalar).at("tendency_terms").at("advection").value("enable", true)) {
+                throw std::runtime_error("A profile-backed RLL atmosphere requires th and qv advection.");
+            }
+        }
+    }
     if (is_rll_mountain(config)) {
         const double omega = config.get_value<double>("constants.OMEGA", 0.);
         if (!std::isfinite(omega)) {
@@ -200,7 +238,8 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
 
             if (term.key() != "advection" && term.key() != "stretching" &&
                 term.key() != "twisting" &&
-                !(is_rll_mountain(config) && term.key() == "coriolis")) {
+                !(is_rll_mountain(config) && term.key() == "coriolis") &&
+                !(profile_atmosphere && (name == "xi" || name == "eta") && term.key() == "buoyancy")) {
 
                 throw std::runtime_error("RLL vorticity currently supports "
                                          "advection, stretching and twisting"

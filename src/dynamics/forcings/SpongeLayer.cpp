@@ -175,6 +175,15 @@ SpongeLayer::calculate_tendencies(
     else if constexpr (Dim == 2) {
         int NK2 = nz - h - 1;
         const auto& CRAD = CRAD_;
+        if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+            const auto background = state.get_field<2>("rll_background_zeta").get_device_data();
+            Kokkos::parallel_for("RLLSpongeRelativeToBackground",
+                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h,h}, {ny-h,nx-h}),
+                KOKKOS_LAMBDA(int j, int i) {
+                    tend(j,i) += -CRAD * (var(NK2,j,i)-background(j,i));
+                });
+            return;
+        }
         Kokkos::parallel_for("Sponge_Tendency_" + var_name,
             Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny - h, nx - h}}),
             KOKKOS_LAMBDA(const int j, const int i) { tend(j, i) += -CRAD * (var(NK2, j, i)); });

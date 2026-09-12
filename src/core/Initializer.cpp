@@ -231,6 +231,37 @@ Initializer::initialize_background_state() const {
     Kokkos::deep_copy(w, real(0.0));
     Kokkos::deep_copy(xi, real(0.0));
     Kokkos::deep_copy(eta, real(0.0));
+
+    if (reader_) {
+        // Preserve the existing sounding reader and reference thermodynamics.
+        // The channel initializer still owns the prescribed wind/circulation.
+        reader_->read_and_initialize(state_);
+        if (pnetcdf_reader_) {
+            pnetcdf_reader_->read_and_initialize(state_);
+        }
+        const int nz = grid_.get_local_total_points_z();
+        const int ny = grid_.get_local_total_points_y();
+        const int nx = grid_.get_local_total_points_x();
+        const auto theta_profile = state_.get_field<1>("thbar").get_device_data();
+        const auto vapor_profile = state_.get_field<1>("qvbar").get_device_data();
+        const auto pressure = state_.get_field<1>("pbar").get_device_data();
+        auto pressure_up = state_.get_field<1>("pbar_up").get_mutable_device_data();
+        auto pressure_depth = state_.get_field<1>("dpbar_mid").get_mutable_device_data();
+        Kokkos::parallel_for("RLLSoundingPrognostics",
+            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0,0,0}, {nz,ny,nx}),
+            KOKKOS_LAMBDA(int k, int j, int i) {
+                th(k,j,i) = theta_profile(k);
+                qv(k,j,i) = vapor_profile(k);
+            });
+        Kokkos::parallel_for("RLLSoundingInterfacePressure",
+            Kokkos::RangePolicy<>(0,nz), KOKKOS_LAMBDA(int k) {
+                pressure_up(k) = k+1 < nz ? real(.5)*(pressure(k)+pressure(k+1)) : pressure(k);
+            });
+        Kokkos::parallel_for("RLLSoundingPressureDepth",
+            Kokkos::RangePolicy<>(1,nz), KOKKOS_LAMBDA(int k) {
+                pressure_depth(k) = pressure_up(k-1)-pressure_up(k);
+            });
+    }
 }
 
 void

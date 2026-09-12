@@ -424,6 +424,9 @@ Model::run_step(VVM::Real dt) {
         VVM::Utils::Timer timer("halo_exchange");
         halo_exchanger_.exchange_multiple_halos(thermo_boundary_fields_);
         for (const auto& target : thermo_boundary_targets_) {
+            if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+                bc_manager_.apply_horizontal_bcs(*target.field);
+            }
             if (target.zero_gradient_top) {
                 bc_manager_.apply_zero_gradient(*target.field);
             }
@@ -431,6 +434,11 @@ Model::run_step(VVM::Real dt) {
                 bc_manager_.apply_zero_gradient_bottom_zero_top(*target.field);
             }
         }
+    }
+
+    if (microphysics_ && grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+        // Buoyancy must see condensate after diffusion/sponge, not P3's earlier snapshot.
+        microphysics_->refresh_total_condensate(state_);
     }
 
     // Calculate buoyancy based on thermodynamics variables at t+1

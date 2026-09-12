@@ -212,14 +212,15 @@ void RRTMGPRadiation::initialize(VVM::Core::State& state) {
     m_lon = Kokkos::View<Real*>("m_lon", m_ncol);
     auto m_lat_view = m_lat; 
     auto m_lon_view = m_lon;
+    const bool rll = m_grid.geometry().kind() == VVM::Core::Geometry::GeometryKind::RegularLatLon;
 
     Kokkos::parallel_for("init_latlon_2d", Kokkos::RangePolicy<>(0, m_ncol),
         KOKKOS_LAMBDA(const int k) {
             int ix = k % nx;
             int iy = k / nx;
 
-            m_lon_view(k) = lon(0, ix + h);
-            m_lat_view(k) = lat(iy + h, 0);
+            m_lon_view(k) = lon(rll ? iy + h : 0, ix + h);
+            m_lat_view(k) = lat(iy + h, rll ? ix + h : 0);
         }
     );
 
