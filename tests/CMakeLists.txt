@@ -2047,6 +2047,34 @@ _vvm_set_test_resources(
     1
 )
 
+# Full-model RLL + surface-process smoke test.
+#
+# This exercises the production Model scheduler and verifies that the
+# existing SurfaceProcess integrates with regular latitude-longitude dynamics.
+add_test(
+    NAME test_rll_surface_model
+    COMMAND
+        ${Python3_EXECUTABLE}
+        ${TEST_DIR}/scripts/check_rll_surface_model.py
+        $<TARGET_FILE:vvm>
+        ${CMAKE_BINARY_DIR}/rll_surface_model_tests
+        --wrapper "${GPU_WRAP}"
+        --launcher ${MPIEXEC_EXECUTABLE}
+)
+
+set_tests_properties(
+    test_rll_surface_model
+    PROPERTIES
+        WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+        LABELS "integration"
+        TIMEOUT 300
+)
+
+_vvm_set_test_resources(
+    test_rll_surface_model
+    1
+)
+
 # --- physics tier: GPU only, ~80 s. P3, RRTMGP and the Noah land model -----
 # Forced OFF on a CPU build by the backend guard above: tests/references_cpu/
 # has no digests for these cases, so they would fail for the wrong reason.
