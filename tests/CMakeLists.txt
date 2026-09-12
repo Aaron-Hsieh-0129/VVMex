@@ -2075,6 +2075,35 @@ _vvm_set_test_resources(
     1
 )
 
+# Full-model RLL + Shutts-Gray turbulence + surface-process smoke test.
+#
+# Exercises the production shared-tendency path:
+# turbulence writes the FE tendencies first and surface physics adds to them
+# before the combined forward update.
+add_test(
+    NAME test_rll_turbulence_surface_model
+    COMMAND
+        ${Python3_EXECUTABLE}
+        ${TEST_DIR}/scripts/check_rll_turbulence_surface_model.py
+        $<TARGET_FILE:vvm>
+        ${CMAKE_BINARY_DIR}/rll_turbulence_surface_model_tests
+        --wrapper "${GPU_WRAP}"
+        --launcher ${MPIEXEC_EXECUTABLE}
+)
+
+set_tests_properties(
+    test_rll_turbulence_surface_model
+    PROPERTIES
+        WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+        LABELS "integration"
+        TIMEOUT 300
+)
+
+_vvm_set_test_resources(
+    test_rll_turbulence_surface_model
+    1
+)
+
 # --- physics tier: GPU only, ~80 s. P3, RRTMGP and the Noah land model -----
 # Forced OFF on a CPU build by the backend guard above: tests/references_cpu/
 # has no digests for these cases, so they would fail for the wrong reason.
