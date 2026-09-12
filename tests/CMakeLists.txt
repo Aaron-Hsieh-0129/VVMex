@@ -2160,6 +2160,35 @@ _vvm_set_test_resources(
     1
 )
 
+# Full-model P3 integration with the nonuniform Jung RLL flow.
+#
+# This is intentionally still dry. It verifies coupling between the
+# generalized-coordinate dynamics, RLL scalar transport and P3 before
+# introducing a moist perturbation.
+add_test(
+    NAME test_rll_p3_model
+    COMMAND
+        ${Python3_EXECUTABLE}
+        ${TEST_DIR}/scripts/check_rll_p3_model.py
+        $<TARGET_FILE:vvm>
+        ${CMAKE_BINARY_DIR}/rll_p3_model_tests
+        --wrapper "${GPU_WRAP}"
+        --launcher ${MPIEXEC_EXECUTABLE}
+)
+
+set_tests_properties(
+    test_rll_p3_model
+    PROPERTIES
+        WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+        LABELS "integration;physics"
+        TIMEOUT 420
+)
+
+_vvm_set_test_resources(
+    test_rll_p3_model
+    1
+)
+
 # --- physics tier: GPU only, ~80 s. P3, RRTMGP and the Noah land model -----
 # Forced OFF on a CPU build by the backend guard above: tests/references_cpu/
 # has no digests for these cases, so they would fail for the wrong reason.
