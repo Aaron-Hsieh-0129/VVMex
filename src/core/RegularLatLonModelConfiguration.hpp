@@ -131,24 +131,87 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
             }
         }
     }
+
+    const bool p3_enabled = config.get_value<bool>("physics.p3.enable_p3", false);
+
+    const auto is_vorticity_variable = [](const std::string& name) {
+        return name == "xi" || name == "eta" || name == "zeta";
+    };
+
+    const auto is_p3_thermodynamic_variable = [](const std::string& name) {
+        return name == "th" || name == "qv" || name == "qc" || name == "qr" || name == "qi" ||
+               name == "qm" || name == "nc" || name == "nr" || name == "ni" || name == "bm";
+    };
+
     for (const auto& variable : variables.items()) {
-        if (variable.key() != "xi" && variable.key() != "eta" && variable.key() != "zeta") {
-            throw std::runtime_error("Section 4.2 enables only xi, eta and zeta tendencies.");
+        const std::string& name = variable.key();
+
+        const bool is_vorticity = is_vorticity_variable(name);
+
+        const bool is_p3_scalar = p3_enabled && is_p3_thermodynamic_variable(name);
+
+        if (!is_vorticity && !is_p3_scalar) {
+            throw std::runtime_error("Unsupported RLL prognostic variable: " + name);
         }
-        for (const auto& term : variable.value().at("tendency_terms").items()) {
+
+        if (!variable.value().contains("tendency_terms")) {
+            throw std::runtime_error(
+                "RLL prognostic variable '" + name + "' requires tendency_terms.");
+        }
+
+        const auto& terms = variable.value().at("tendency_terms");
+
+        // ---------------------------------------------------------------------
+        // P3 thermodynamic variables
+        //
+        // RLL currently supports these as transported scalars. Keep this
+        // deliberately narrow: advection only, using the validated RLL Takacs
+        // scalar operator and the existing AB2 temporal integration.
+        // ---------------------------------------------------------------------
+        if (is_p3_scalar) {
+            for (const auto& term : terms.items()) {
+                if (!term.value().value("enable", true)) {
+                    continue;
+                }
+
+                if (term.key() != "advection") {
+                    throw std::runtime_error("RLL P3 thermodynamic variable '" + name +
+                                             "' currently supports advection only.");
+                }
+
+                if (term.value().value("spatial_scheme", std::string("")) != "Takacs" ||
+                    term.value().value("temporal_scheme", std::string("")) != "AdamsBashforth2") {
+
+                    throw std::runtime_error("RLL P3 scalar transport requires "
+                                             "Takacs spatial transport and AdamsBashforth2.");
+                }
+            }
+
+            continue;
+        }
+
+        // ---------------------------------------------------------------------
+        // Existing Jung/RLL vorticity validation
+        // ---------------------------------------------------------------------
+        for (const auto& term : terms.items()) {
             if (!term.value().value("enable", true)) {
                 continue;
             }
+
             if (term.key() != "advection" && term.key() != "stretching" &&
                 term.key() != "twisting" &&
                 !(is_rll_mountain(config) && term.key() == "coriolis")) {
-                throw std::runtime_error(
-                    "Section 4.2 has no Coriolis, buoyancy, or diffusion tendency.");
+
+                throw std::runtime_error("RLL vorticity currently supports "
+                                         "advection, stretching and twisting"
+                                         " (plus Coriolis for the RLL mountain case).");
             }
+
             if (term.value().value("spatial_scheme", std::string("")) != "Takacs" ||
                 term.value().value("temporal_scheme", std::string("")) != "AdamsBashforth2") {
-                throw std::runtime_error(
-                    "Section 4.2 requires Takacs transport and AdamsBashforth2.");
+
+                throw std::runtime_error("RLL vorticity requires Takacs transport "
+                                         "and AdamsBashforth2.");
             }
         }
     }

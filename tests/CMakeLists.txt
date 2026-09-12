@@ -2132,6 +2132,34 @@ _vvm_set_test_resources(
     1
 )
 
+# One-step P3 execution test on a horizontally uniform dry RLL state.
+#
+# Unlike test_rll_p3_initialization, this reaches P3::run(), including
+# preprocessing/packing, p3_main(), and postprocessing/unpacking.
+add_test(
+    NAME test_rll_p3_uniform_model
+    COMMAND
+        ${Python3_EXECUTABLE}
+        ${TEST_DIR}/scripts/check_rll_p3_uniform_model.py
+        $<TARGET_FILE:vvm>
+        ${CMAKE_BINARY_DIR}/rll_p3_uniform_model_tests
+        --wrapper "${GPU_WRAP}"
+        --launcher ${MPIEXEC_EXECUTABLE}
+)
+
+set_tests_properties(
+    test_rll_p3_uniform_model
+    PROPERTIES
+        WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+        LABELS "integration;physics"
+        TIMEOUT 360
+)
+
+_vvm_set_test_resources(
+    test_rll_p3_uniform_model
+    1
+)
+
 # --- physics tier: GPU only, ~80 s. P3, RRTMGP and the Noah land model -----
 # Forced OFF on a CPU build by the backend guard above: tests/references_cpu/
 # has no digests for these cases, so they would fail for the wrong reason.
