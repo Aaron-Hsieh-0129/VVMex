@@ -124,77 +124,25 @@ Initializer::Initializer(const Utils::ConfigurationManager& config,
 
 void
 Initializer::initialize_state() const {
+    initialize_background_state();
+
     if (is_rll_idealized(config_)) {
         initialize_jung2019();
         return;
     }
-    if (reader_) {
-        reader_->read_and_initialize(state_);
+
+    if (is_rll_idealized(config_) && config_.get_value<std::string>("simulation.idealized_test",
+                                         "none") == "gaussian_mountain") {
+        initialize_case_terrain();
     }
-    if (pnetcdf_reader_) {
-        pnetcdf_reader_->read_and_initialize(state_);
-    }
-    if (config_.get_value<std::string>("simulation.idealized_test", "none") ==
-        "gaussian_mountain") {
-        // Analytic terrain only; the existing text reader supplies the dry
-        // background sounding and wind. Reuse the ordinary terrain masks.
-        const int h = grid_.get_halo_cells();
-        const int nz = grid_.get_local_total_points_z();
-        const int ny = grid_.get_local_total_points_y();
-        const int nx = grid_.get_local_total_points_x();
-        const Real dx = parameters_.get_value_host(parameters_.dx);
-        const Real length = grid_.get_global_points_x() * dx;
-        const Real height =
-            config_.get_value<Real>("initial_conditions.gaussian_mountain.height_m", real(800.));
-        const Real width =
-            config_.get_value<Real>("initial_conditions.gaussian_mountain.half_width_m",
-                real(2000.));
-        const Real center =
-            config_.get_value<Real>("initial_conditions.gaussian_mountain.center_x_m",
-                length / real(2.));
-        const auto z = parameters_.z_up.get_host_data();
-        if (grid_.geometry().kind() != Geometry::GeometryKind::Cartesian || !reader_ ||
-            pnetcdf_reader_ || restart_reader_ || nz - 2 * h < 4 || !std::isfinite(height) ||
-            height <= real(0.) || height > z(nz - h - 3) || !std::isfinite(width) ||
-            width <= real(0.) || !std::isfinite(center)) {
-            throw std::runtime_error(
-                "gaussian_mountain requires Cartesian geometry, a text profile, no spatial "
-                "input/restart, "
-                "positive finite height/width, and at least two atmospheric levels above terrain.");
-        }
-        state_.add_field<2>("terrain_height", {ny, nx});
-        auto& terrain = state_.get_field<2>("topo");
-        auto topo = terrain.get_host_data();
-        auto elevation = state_.get_field<2>("terrain_height").get_host_data();
-        for (int j = h; j < ny - h; ++j) {
-            for (int i = h; i < nx - h; ++i) {
-                const int global_i = grid_.get_local_physical_start_x() + i - h;
-                const Real distance = std::remainder((global_i + real(.5)) * dx - center, length);
-                const Real requested = height * std::exp(-distance * distance / (width * width));
-                int level = h - 1;
-                for (int k = h; k <= nz - h - 3; ++k) {
-                    if (std::abs(z(k) - requested) < std::abs(z(level) - requested)) {
-                        level = k;
-                    }
-                }
-                // Input convention: zero denotes flat ground, otherwise an
-                // absolute local vertical index (including the lower halo).
-                topo(j, i) = level == h - 1 ? real(0.) : static_cast<Real>(level);
-                elevation(j, i) = z(level);
-            }
-        }
-        Kokkos::deep_copy(terrain.get_mutable_device_data(), topo);
-        Kokkos::deep_copy(state_.get_field<2>("terrain_height").get_mutable_device_data(),
-            elevation);
-        halo_exchanger_.exchange_halos(terrain);
-        halo_exchanger_.exchange_halos(state_.get_field<2>("terrain_height"));
-    }
+
+    // Do topo mask from constructed topo
     initialize_topo();
-    assign_vars();
-    if (pnetcdf_reader_ &&
-        config_.get_value<bool>("initial_conditions.reapply_spatial_initial_conditions", false)) {
-        pnetcdf_reader_->read_and_initialize(state_);
-    }
+
+    initialize_prognostic_state();
+
+    initialize_surface_temperature();
+
     if (restart_reader_) {
         load_restart();
     }
@@ -206,6 +154,288 @@ Initializer::initialize_state() const {
     // because the density would affect height factors.
     initialize_poisson();
     initialize_zeta_factor_for_twisting();
+}
+
+void
+Initializer::initialize_background_state() const {
+    if (!is_rll_idealized(config_)) {
+        if (reader_) {
+            reader_->read_and_initialize(state_);
+        }
+
+        if (pnetcdf_reader_ &&
+            config_.get_value<bool>("initial_conditions.reapply_spatial_initial_conditions",
+                false)) {
+            pnetcdf_reader_->read_and_initialize(state_);
+        }
+
+        return;
+    }
+
+    auto& rhobar = state_.get_field<1>("rhobar").get_mutable_device_data();
+    auto& rhobar_up = state_.get_field<1>("rhobar_up").get_mutable_device_data();
+
+    auto& pibar = state_.get_field<1>("pibar").get_mutable_device_data();
+    auto& pibar_up = state_.get_field<1>("pibar_up").get_mutable_device_data();
+
+    auto& pbar = state_.get_field<1>("pbar").get_mutable_device_data();
+    auto& pbar_up = state_.get_field<1>("pbar_up").get_mutable_device_data();
+
+    auto& thbar = state_.get_field<1>("thbar").get_mutable_device_data();
+    auto& Tbar = state_.get_field<1>("Tbar").get_mutable_device_data();
+    auto& Tvbar = state_.get_field<1>("Tvbar").get_mutable_device_data();
+    auto& qvbar = state_.get_field<1>("qvbar").get_mutable_device_data();
+
+    auto& th = state_.get_field<3>("th").get_mutable_device_data();
+    auto& qv = state_.get_field<3>("qv").get_mutable_device_data();
+
+    auto& v = state_.get_field<3>("v").get_mutable_device_data();
+    auto& w = state_.get_field<3>("w").get_mutable_device_data();
+    auto& xi = state_.get_field<3>("xi").get_mutable_device_data();
+    auto& eta = state_.get_field<3>("eta").get_mutable_device_data();
+
+    Kokkos::deep_copy(rhobar, real(1.0));
+    Kokkos::deep_copy(rhobar_up, real(1.0));
+
+    Kokkos::deep_copy(pibar, real(1.0));
+    Kokkos::deep_copy(pibar_up, real(1.0));
+
+    Kokkos::deep_copy(thbar, real(300.0));
+    Kokkos::deep_copy(Tbar, real(300.0));
+    Kokkos::deep_copy(Tvbar, real(300.0));
+
+    Kokkos::deep_copy(qvbar, real(0.0));
+
+    Kokkos::deep_copy(th, real(300.0));
+    Kokkos::deep_copy(qv, real(0.0));
+
+    Kokkos::deep_copy(v, real(0.0));
+    Kokkos::deep_copy(w, real(0.0));
+    Kokkos::deep_copy(xi, real(0.0));
+    Kokkos::deep_copy(eta, real(0.0));
+}
+
+void
+Initializer::initialize_case_terrain() const {
+    const int h = grid_.get_halo_cells();
+    const int nz = grid_.get_local_total_points_z();
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
+    const Real dx = parameters_.get_value_host(parameters_.dx);
+    const Real length = grid_.get_global_points_x() * dx;
+    const Real height =
+        config_.get_value<Real>("initial_conditions.gaussian_mountain.height_m", real(800.));
+    const Real width =
+        config_.get_value<Real>("initial_conditions.gaussian_mountain.half_width_m", real(2000.));
+    const Real center = config_.get_value<Real>("initial_conditions.gaussian_mountain.center_x_m",
+        length / real(2.));
+    const auto z = parameters_.z_up.get_host_data();
+    if (grid_.geometry().kind() != Geometry::GeometryKind::Cartesian || !reader_ ||
+        pnetcdf_reader_ || restart_reader_ || nz - 2 * h < 4 || !std::isfinite(height) ||
+        height <= real(0.) || height > z(nz - h - 3) || !std::isfinite(width) ||
+        width <= real(0.) || !std::isfinite(center)) {
+        throw std::runtime_error(
+            "gaussian_mountain requires Cartesian geometry, a text profile, no spatial "
+            "input/restart, "
+            "positive finite height/width, and at least two atmospheric levels above terrain.");
+    }
+    state_.add_field<2>("terrain_height", {ny, nx});
+    auto& terrain = state_.get_field<2>("topo");
+    auto topo = terrain.get_host_data();
+    auto elevation = state_.get_field<2>("terrain_height").get_host_data();
+    for (int j = h; j < ny - h; ++j) {
+        for (int i = h; i < nx - h; ++i) {
+            const int global_i = grid_.get_local_physical_start_x() + i - h;
+            const Real distance = std::remainder((global_i + real(.5)) * dx - center, length);
+            const Real requested = height * std::exp(-distance * distance / (width * width));
+            int level = h - 1;
+            for (int k = h; k <= nz - h - 3; ++k) {
+                if (std::abs(z(k) - requested) < std::abs(z(level) - requested)) {
+                    level = k;
+                }
+            }
+            // Input convention: zero denotes flat ground, otherwise an
+            // absolute local vertical index (including the lower halo).
+            topo(j, i) = level == h - 1 ? real(0.) : static_cast<Real>(level);
+            elevation(j, i) = z(level);
+        }
+    }
+    Kokkos::deep_copy(terrain.get_mutable_device_data(), topo);
+    Kokkos::deep_copy(state_.get_field<2>("terrain_height").get_mutable_device_data(), elevation);
+    halo_exchanger_.exchange_halos(terrain);
+    halo_exchanger_.exchange_halos(state_.get_field<2>("terrain_height"));
+    return;
+}
+
+void
+Initializer::initialize_prognostic_state() const {
+    if (is_rll_idealized(config_)) {
+        initialize_jung2019();
+    }
+    else {
+        assign_vars();
+    }
+}
+
+void
+Initializer::initialize_surface_temperature() const {
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
+
+    const auto& topo = state_.get_field<2>("topo").get_device_data();
+    const auto& pibar = state_.get_field<1>("pibar").get_device_data();
+    const auto& th = state_.get_field<3>("th").get_device_data();
+
+    auto& Tg = state_.get_field<2>("Tg").get_mutable_device_data();
+
+    const std::string Tg_source =
+        config_.get_value<std::string>("netcdf_reader.Tg_source", "atmosphere");
+
+    if (Tg_source == "atmosphere") {
+        Kokkos::parallel_for("Init_Tg",
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
+            KOKKOS_LAMBDA(const int j, const int i) {
+                // NOTE: Fortran VVM uses hx rather than hxp here.
+                const int hx = static_cast<int>(topo(j, i));
+
+                Tg(j, i) = th(hx, j, i) * pibar(hx);
+            });
+
+        // Keep the current behavior during the refactor.
+        halo_exchanger_.exchange_halos(state_.get_field<2>("Tg"));
+
+        const int rank = grid_.get_mpi_rank();
+        if (rank == 0) {
+            std::cout << " [Initializer] Initialized Tg from the "
+                         "lowest atmosphere level."
+                      << std::endl;
+        }
+    }
+    else if (Tg_source == "netcdf") {
+        const int rank = grid_.get_mpi_rank();
+
+        if (rank == 0) {
+            std::cout << " [Initializer] Skipped Tg initialization "
+                         "(using values read from NetCDF)."
+                      << std::endl;
+        }
+    }
+    else {
+        const int rank = grid_.get_mpi_rank();
+
+        if (rank == 0) {
+            std::cerr << " [Initializer] Warning: Unknown Tg_source '" << Tg_source
+                      << "'. Keeping existing Tg values." << std::endl;
+        }
+    }
+
+    halo_exchanger_.exchange_halos(state_.get_field<2>("Tg"));
+}
+
+void
+Initializer::finalize_rll_terrain_masks() const {
+    const int h = grid_.get_halo_cells();
+    const int nz = grid_.get_local_total_points_z();
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
+
+    const auto& geometry = grid_.horizontal_specification().geometry;
+    const Real radius = geometry.regular_lat_lon.radius;
+    const Real dlambda = geometry.dq1;
+    const Real dphi = geometry.dq2;
+    const Real pi = std::acos(real(-1.0));
+    const Real south = geometry.regular_lat_lon.latitude_south_edge;
+    const Real west = geometry.regular_lat_lon.longitude_west_edge;
+
+    Boundary::HorizontalBoundaryStencils boundary(grid_);
+
+    if (!is_rll_idealized(config_)) {
+        return;
+    }
+
+    if (!is_rll_mountain(config_)) {
+        return;
+    }
+
+    const Real omega = config_.get_value<Real>("constants.OMEGA", real(0.));
+    auto f = state_.get_field<2>("f_2d").get_host_data();
+    for (int j = 0; j < ny; ++j) {
+        const Real phi_z = south + (grid_.get_local_physical_start_y() + j - h + real(1.)) * dphi;
+        for (int i = 0; i < nx; ++i) {
+            f(j, i) = real(2.) * omega * std::sin(phi_z);
+        }
+    }
+    Kokkos::deep_copy(state_.get_field<2>("f_2d").get_mutable_device_data(), f);
+    const Real peak = config_.get_value<Real>("initial_conditions.rll_mountain.height_m");
+    const Real width = config_.get_value<Real>("initial_conditions.rll_mountain.half_width_m");
+    const Real center_lambda =
+        config_.has_key("initial_conditions.rll_mountain.center_longitude_deg")
+            ? config_.get_value<Real>("initial_conditions.rll_mountain.center_longitude_deg") * pi /
+                  real(180.)
+            : west + real(.5) * grid_.get_global_points_x() * dlambda;
+    if (!std::isfinite(center_lambda)) {
+        throw std::runtime_error("RLL mountain longitude must be finite.");
+    }
+    const Real center_phi =
+        config_.get_value<Real>("initial_conditions.rll_mountain.center_latitude_deg",
+            (south + real(.5) * grid_.get_global_points_y() * dphi) * real(180.) / pi) *
+        pi / real(180.);
+    state_.add_field<2>("rll_terrain_height",
+        {ny, nx},
+        {GridStaggering::Centered, "m", "discretized centered spherical mountain height"});
+    auto elevation = state_.get_field<2>("rll_terrain_height").get_host_data();
+    auto terrain = state_.get_field<2>("topo").get_host_data();
+    const auto z = parameters_.z_up.get_host_data();
+    for (int j = h; j < ny - h; ++j) {
+        const Real phi = south + (grid_.get_local_physical_start_y() + j - h + real(.5)) * dphi;
+        for (int i = h; i < nx - h; ++i) {
+            const Real lambda =
+                west + (grid_.get_local_physical_start_x() + i - h + real(.5)) * dlambda;
+            const Real cosine =
+                std::sin(phi) * std::sin(center_phi) +
+                std::cos(phi) * std::cos(center_phi) * std::cos(lambda - center_lambda);
+            const Real distance =
+                radius * std::acos(std::max(real(-1.), std::min(real(1.), cosine)));
+            const Real height = distance < real(3.) * width
+                                    ? peak * std::exp(-distance * distance / (width * width))
+                                    : real(0.);
+            int level = h - 1;
+            for (int k = h; k < nz - 2 * h - 2; ++k) {
+                if (std::abs(z(k) - height) < std::abs(z(level) - height)) {
+                    level = k;
+                }
+            }
+            terrain(j, i) = level == h - 1 ? real(0.) : static_cast<Real>(level);
+            elevation(j, i) = z(level);
+        }
+    }
+    Kokkos::deep_copy(state_.get_field<2>("topo").get_mutable_device_data(), terrain);
+    Kokkos::deep_copy(state_.get_field<2>("rll_terrain_height").get_mutable_device_data(),
+        elevation);
+    halo_exchanger_.exchange_halos(state_.get_field<2>("topo"));
+    boundary.fill_centered_q2_neumann_halos(state_.get_field<2>("topo"));
+    initialize_topo();
+    // Gather neighboring W masks at each owned positive face. The legacy
+    // scatter into i-1/j-1 can target a halo on a decomposition boundary;
+    // exchanging that halo does not transfer the write to its owner.
+    auto& mask_w_field = state_.get_field<3>("ITYPEW");
+    halo_exchanger_.exchange_halos(mask_w_field);
+    boundary.fill_centered_q2_neumann_halos(mask_w_field);
+    const auto mask_w = mask_w_field.get_device_data();
+    const auto mask_u = state_.get_field<3>("ITYPEU").get_mutable_device_data();
+    const auto mask_v = state_.get_field<3>("ITYPEV").get_mutable_device_data();
+    Kokkos::parallel_for("RLLTerrainOwnedFaceMasks",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
+        KOKKOS_LAMBDA(int k, int j, int i) {
+            mask_u(k, j, i) = mask_w(k, j, i) * mask_w(k, j, i + 1);
+            mask_v(k, j, i) = mask_w(k, j, i) * mask_w(k, j + 1, i);
+        });
+    halo_exchanger_.exchange_halos(state_.get_field<2>("topo"));
+    boundary.fill_centered_q2_neumann_halos(state_.get_field<2>("topo"));
+    for (const char* name : {"ITYPEU", "ITYPEV", "ITYPEW"}) {
+        halo_exchanger_.exchange_halos(state_.get_field<3>(name));
+        boundary.fill_centered_q2_neumann_halos(state_.get_field<3>(name));
+    }
 }
 
 void
@@ -874,49 +1104,6 @@ Initializer::assign_vars() const {
         });
     halo_exchanger_.exchange_halos(state_.get_field<2>("f_2d"));
 
-    // Assign Tg
-    const auto& topo = state_.get_field<2>("topo").get_device_data();
-    const auto& pibar = state_.get_field<1>("pibar").get_device_data();
-    auto& Tg = state_.get_field<2>("Tg").get_mutable_device_data();
-
-    std::string Tg_source = config_.get_value<std::string>("netcdf_reader.Tg_source", "atmosphere");
-
-    if (Tg_source == "atmosphere") {
-        const auto& topo = state_.get_field<2>("topo").get_device_data();
-        const auto& pibar = state_.get_field<1>("pibar").get_device_data();
-        auto& Tg = state_.get_field<2>("Tg").get_mutable_device_data();
-
-        Kokkos::parallel_for("Init_Tg",
-            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
-            KOKKOS_LAMBDA(const int j, const int i) {
-                // NOTE: Fortran VVM uses hx rather than hxp here
-                int hx = topo(j, i);
-                Tg(j, i) = th(hx, j, i) * pibar(hx);
-            });
-        halo_exchanger_.exchange_halos(state_.get_field<2>("Tg"));
-
-        int rank = grid_.get_mpi_rank();
-        if (rank == 0) {
-            std::cout << "  [Initializer] Initialized Tg from the lowest atmosphere level."
-                      << std::endl;
-        }
-    }
-    else if (Tg_source == "netcdf") {
-        int rank = grid_.get_mpi_rank();
-        if (rank == 0) {
-            std::cout
-                << "  [Initializer] Skipped Tg initialization (using values read from NetCDF)."
-                << std::endl;
-        }
-    }
-    else {
-        int rank = grid_.get_mpi_rank();
-        if (rank == 0) {
-            std::cerr << "  [Initializer] Warning: Unknown Tg_source '" << Tg_source
-                      << "'. Keeping existing Tg values." << std::endl;
-        }
-    }
-    halo_exchanger_.exchange_halos(state_.get_field<2>("Tg"));
     return;
 }
 

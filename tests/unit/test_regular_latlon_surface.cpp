@@ -45,8 +45,6 @@ using Json = nlohmann::json;
 // Test constants
 // ============================================================================
 
-constexpr int NZ = 6;
-
 constexpr Real DZ = real(100.0);
 
 constexpr Real WIND_SPEED = real(10.0);
@@ -58,6 +56,7 @@ constexpr Real PRESSURE = real(100000.0);
 constexpr Real RHO = real(1.0);
 
 constexpr Real ZROUGH = real(2.0e-4);
+constexpr Real VK = 0.4;
 
 int failures = 0;
 
