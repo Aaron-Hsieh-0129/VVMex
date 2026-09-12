@@ -64,7 +64,6 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
     }
     for (const char* key : {"physics.p3.enable_p3",
              "physics.rrtmgp.enable_rrtmgp",
-             "physics.surface_process.enable",
              "dynamics.forcings.sponge_layer.enable",
              "dynamics.forcings.areamn.enable",
              "dynamics.forcings.random_perturbation.enable",

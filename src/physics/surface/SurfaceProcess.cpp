@@ -30,6 +30,34 @@ SurfaceProcess::initialize(Core::State& state) {
     int ny = grid_.get_local_total_points_y();
     int nx = grid_.get_local_total_points_x();
 
+    const auto tendency_metadata = [&state](const std::string& var_name) {
+        const auto& metadata = state.get_field<3>(var_name).get_metadata();
+
+        std::string units;
+        if (metadata.units == "1") {
+            units = "s-1";
+        }
+        else if (metadata.units == "s-1") {
+            units = "s-2";
+        }
+        else if (!metadata.units.empty()) {
+            units = metadata.units + " s-1";
+        }
+
+        const std::string long_name =
+            metadata.long_name.empty() ? var_name + " tendency" : metadata.long_name + " tendency";
+
+        return Core::FieldMetadata{metadata.grid_staggering, units, long_name};
+    };
+
+    for (const char* var_name : {"th", "qv", "xi", "eta"}) {
+        const std::string fe_tendency_name = "fe_tendency_" + std::string(var_name);
+
+        if (!state.has_field(fe_tendency_name)) {
+            state.add_field<3>(fe_tendency_name, {nz, ny, nx}, tendency_metadata(var_name));
+        }
+    }
+
     if (!state.has_field("qc")) {
         state.add_field<3>("qc",
             {nz, ny, nx},
