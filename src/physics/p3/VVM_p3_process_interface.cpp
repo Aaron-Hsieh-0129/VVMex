@@ -96,7 +96,7 @@ VVM_P3_Interface::VVM_P3_Interface(const VVM::Utils::ConfigurationManager &confi
     if (!state.has_field("bm")) state.add_field<3>("bm", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "m3 kg-1", "ice rime volume mixing ratio"});
 
 
-    std::string source_file = config.get_value<std::string>("initial_conditions.source_file");
+    std::string source_file = config.get_value<std::string>("initial_conditions.source_file", std::string{});
     declare_p3_diag_ = source_file == "./rundata/initial_conditions/profiles/default_cases/p3_bubble_shear.txt" ? true : false;
     if (declare_p3_diag_) {
         if (!state.has_field("th_m_diag")) state.add_field<3>("th_m_diag", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "K", "previous-step air potential temperature for P3 diagnostics"});

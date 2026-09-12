@@ -62,8 +62,7 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
         throw std::runtime_error("Mountain terrain requires simulation.idealized_test = "
                                  "rll_mountain; Jung reproduction remains flat.");
     }
-    for (const char* key : {"physics.p3.enable_p3",
-             "physics.rrtmgp.enable_rrtmgp",
+    for (const char* key : {"physics.rrtmgp.enable_rrtmgp",
              "dynamics.forcings.sponge_layer.enable",
              "dynamics.forcings.areamn.enable",
              "dynamics.forcings.random_perturbation.enable",
