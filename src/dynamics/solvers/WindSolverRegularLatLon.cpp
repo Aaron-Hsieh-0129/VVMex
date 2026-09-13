@@ -77,8 +77,8 @@ require_cuda(cudaError_t result, const char* operation) {
 void
 WindSolver::solve_regular_latlon() {
     const bool initial = !rll_initialized_;
-    const bool periodic = grid_.horizontal_specification().topology.q2 ==
-        Core::HorizontalEdgeTopology::Periodic;
+    const bool periodic =
+        grid_.horizontal_specification().topology.q2 == Core::HorizontalEdgeTopology::Periodic;
     const bool terrain = Core::is_rll_mountain(config_);
     const int h = grid_.get_halo_cells();
     const int nz = grid_.get_local_total_points_z();
@@ -90,9 +90,9 @@ WindSolver::solve_regular_latlon() {
         rll_spacing_ = std::make_unique<Core::Field<1>>("RLL wind spacing", std::array<int, 1>{nz});
         rll_increment_ =
             std::make_unique<Core::Field<0>>("RLL harmonic increment", std::array<int, 0>{});
-        rll_wall_contributions_ = std::make_unique<Core::Field<1>>(
-            "RLL circulation contributions", std::array<int, 1>{grid_.get_global_points_x() +
-                (periodic ? 2 * grid_.get_global_points_y() : 0)});
+        rll_wall_contributions_ = std::make_unique<Core::Field<1>>("RLL circulation contributions",
+            std::array<int, 1>{
+                grid_.get_global_points_x() + (periodic ? 2 * grid_.get_global_points_y() : 0)});
         // The admitted Section 4.2 configuration has uniform physical levels.
         Kokkos::deep_copy(rll_spacing_->get_mutable_device_data(),
             params_.get_value_host(params_.dz));
@@ -215,8 +215,12 @@ WindSolver::solve_regular_latlon() {
         // different harmonic wind correction every step. This synchronization
         // remains outside capture, as did the original horizontal mean.
         auto wall = rll_wall_contributions_->get_host_data();
-        MPI_Allreduce(MPI_IN_PLACE, wall.data(), grid_.get_global_points_x(),
-            VVM_MPI_REAL, MPI_SUM, grid_.get_comm());
+        MPI_Allreduce(MPI_IN_PLACE,
+            wall.data(),
+            grid_.get_global_points_x(),
+            VVM_MPI_REAL,
+            MPI_SUM,
+            grid_.get_comm());
         Real current = real(0.);
         for (int i = 0; i < grid_.get_global_points_x(); ++i) {
             current += wall(i);
@@ -245,7 +249,8 @@ WindSolver::solve_regular_latlon() {
         });
     halo_exchanger_.exchange_multiple_halos(std::vector<Core::Field<3>*>{&fields.u, &fields.v});
     if (bounded_q2_stencils_) {
-        bounded_q2_stencils_->fill_regular_lat_lon_free_slip_physical_wind_halos(fields.u, fields.v);
+        bounded_q2_stencils_->fill_regular_lat_lon_free_slip_physical_wind_halos(fields.u,
+            fields.v);
     }
     // Refresh the ordinary terrain scratch diagnostics for output and the next
     // adaptation. Prognostic xi/eta are never overwritten with solid-cell curl.
@@ -272,32 +277,41 @@ WindSolver::preserve_regular_latlon_periodic_circulation(bool initialize) {
     const auto v = state_.get_field<3>("v").get_mutable_device_data();
     const auto zeta = state_.get_field<3>("zeta").get_device_data();
     const auto snapshot = state_.get_field<2>("rll_zeta_top").get_mutable_device_data();
-    const auto hu = grid_.geometry().device_view(Core::Geometry::HorizontalLocation::U)
-        .contravariant_to_physical.a11;
-    const auto hv = grid_.geometry().device_view(Core::Geometry::HorizontalLocation::V)
-        .contravariant_to_physical.a11;
+    const auto hu = grid_.geometry()
+                        .device_view(Core::Geometry::HorizontalLocation::U)
+                        .contravariant_to_physical.a11;
+    const auto hv = grid_.geometry()
+                        .device_view(Core::Geometry::HorizontalLocation::V)
+                        .contravariant_to_physical.a11;
     const Real radius = grid_.horizontal_specification().geometry.regular_lat_lon.radius;
     const auto contributions = rll_wall_contributions_->get_mutable_device_data();
     Kokkos::deep_copy(contributions, real(0.));
     Kokkos::parallel_for("RLLPeriodicCycleIntegrals",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny-h, nx-h}),
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
         KOKKOS_LAMBDA(int j, int i) {
             if (sj == 0 && j == h) {
-                contributions(si+i-h) = hu(j,i)*u(top,j,i);
+                contributions(si + i - h) = hu(j, i) * u(top, j, i);
             }
             if (si == 0 && i == h) {
-                contributions(gx+sj+j-h) = radius*v(top,j,i);
-                contributions(gx+gy+sj+j-h) = radius/hv(j,i);
+                contributions(gx + sj + j - h) = radius * v(top, j, i);
+                contributions(gx + gy + sj + j - h) = radius / hv(j, i);
             }
-            snapshot(j,i) = zeta(top,j,i);
+            snapshot(j, i) = zeta(top, j, i);
         });
     auto values = rll_wall_contributions_->get_host_data();
-    MPI_Allreduce(MPI_IN_PLACE, values.data(), gx+2*gy, VVM_MPI_REAL, MPI_SUM, grid_.get_comm());
+    MPI_Allreduce(MPI_IN_PLACE,
+        values.data(),
+        gx + 2 * gy,
+        VVM_MPI_REAL,
+        MPI_SUM,
+        grid_.get_comm());
     Real zonal = real(0.), meridional = real(0.), weight = real(0.);
-    for (int i = 0; i < gx; ++i) zonal += values(i);
+    for (int i = 0; i < gx; ++i) {
+        zonal += values(i);
+    }
     for (int j = 0; j < gy; ++j) {
-        meridional += values(gx+j);
-        weight += values(gx+gy+j);
+        meridional += values(gx + j);
+        weight += values(gx + gy + j);
     }
     zonal /= static_cast<Real>(gx);
     if (initialize) {
@@ -306,12 +320,12 @@ WindSolver::preserve_regular_latlon_periodic_circulation(bool initialize) {
         return;
     }
     const Real du = rll_south_circulation_ - zonal;
-    const Real dv = (rll_meridional_circulation_ - meridional)/weight;
+    const Real dv = (rll_meridional_circulation_ - meridional) / weight;
     Kokkos::parallel_for("PreserveRLLPeriodicCirculation",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0,h,h}, {nz,ny-h,nx-h}),
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
         KOKKOS_LAMBDA(int k, int j, int i) {
-            u(k,j,i) += du/hu(j,i);
-            v(k,j,i) += dv/hv(j,i);
+            u(k, j, i) += du / hu(j, i);
+            v(k, j, i) += dv / hv(j, i);
         });
 }
 } // namespace VVM::Dynamics

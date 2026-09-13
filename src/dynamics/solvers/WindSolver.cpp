@@ -76,7 +76,8 @@ WindSolver::WindSolver(const Core::Grid& grid,
 
     horizontal_elliptic_options_.iterations = params_.solver_iteration;
     horizontal_elliptic_options_.diagonal_shift = params_.get_value_host(params_.WRXMU);
-    horizontal_elliptic_options_.refresh_initial_halos = bounded_q2_stencils_ != nullptr ||
+    horizontal_elliptic_options_.refresh_initial_halos =
+        bounded_q2_stencils_ != nullptr ||
         grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon;
 
     VVM::Real h_WRXMU, h_rdx2, h_rdy2;

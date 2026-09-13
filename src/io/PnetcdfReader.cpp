@@ -1,6 +1,7 @@
 #include "PnetcdfReader.hpp"
 #include "PnetcdfRestartMetadata.hpp"
 #include "core/Field.hpp"
+#include "core/RegularLatLonModelConfiguration.hpp"
 #include <iostream>
 #include <algorithm>
 #include <sstream>
@@ -57,7 +58,8 @@ PnetcdfReader::PnetcdfReader(const std::string& filepath,
       strict_missing_variables_(
           config_prefix == "restart" ||
           (config_prefix == "netcdf_reader" &&
-              config.get_value<std::string>("simulation.idealized_test", "none") == "none")),
+              (config.get_value<std::string>("simulation.idealized_test", "none") == "none" ||
+                  Core::is_rll_spatial_terrain(config)))),
       comm_(grid.get_cart_comm()), ncid_(-1), halo_exchanger_(halo_exchanger) {
     MPI_Comm_rank(comm_, &rank_);
 }
@@ -236,6 +238,18 @@ PnetcdfReader::read_variable_2d(
         {"ny", "nx"},
         {static_cast<MPI_Offset>(grid_.get_global_points_y()),
             static_cast<MPI_Offset>(grid_.get_global_points_x())});
+
+    if (var_name == "topo" && Core::is_rll_spatial_terrain(config_)) {
+        MPI_Offset length = 0;
+        if (ncmpi_inq_attlen(ncid, varid, "units", &length) != NC_NOERR || length != 4) {
+            throw std::runtime_error("RLL spatial topo requires units='grid', not metre-valued elevation.");
+        }
+        char units[4];
+        check_ncmpi_error(ncmpi_get_att_text(ncid, varid, "units", units), "Read terrain units");
+        if (std::string(units, 4) != "grid") {
+            throw std::runtime_error("RLL spatial topo requires units='grid', not metre-valued elevation.");
+        }
+    }
 
     MPI_Offset start[2];
     MPI_Offset count[2];

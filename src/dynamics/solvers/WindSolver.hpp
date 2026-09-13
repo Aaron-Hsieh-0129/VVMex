@@ -138,6 +138,8 @@ public:
         const HorizontalDiagnosticWorkspace& workspace,
         const RegularLatLonDiagnosticOptions& options);
 
+    void preserve_regular_latlon_periodic_circulation(bool initialize);
+
 private:
     void fill_bounded_q2_potential_halos(Core::Field<2>& first, Core::Field<2>& second) const;
     void exchange_2d_solver_halos(Core::Field<2>& first, Core::Field<2>& second, int depth);
@@ -176,7 +178,6 @@ private:
     std::unique_ptr<Core::Field<1>> rll_wall_contributions_;
     VVM::Real rll_south_circulation_ = VVM::real(0.0);
     VVM::Real rll_meridional_circulation_ = VVM::real(0.0);
-    void preserve_regular_latlon_periodic_circulation(bool initialize);
     bool rll_initialized_ = false;
 
     VVM::Real h_inv_C0_;

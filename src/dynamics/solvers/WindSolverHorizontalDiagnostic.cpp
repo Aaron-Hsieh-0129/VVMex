@@ -58,7 +58,8 @@ WindSolver::diagnose_horizontal_wind(const Core::Grid& grid,
     if (!reference_boundary && !free_slip_boundary && !periodic_boundary) {
         throw std::invalid_argument("Unknown horizontal diagnostic boundary policy.");
     }
-    if (periodic_boundary && (grid.geometry().kind() != Core::Geometry::GeometryKind::RegularLatLon ||
+    if (periodic_boundary &&
+        (grid.geometry().kind() != Core::Geometry::GeometryKind::RegularLatLon ||
             horizontal.topology.q1 != Core::HorizontalEdgeTopology::Periodic ||
             horizontal.topology.q2 != Core::HorizontalEdgeTopology::Periodic)) {
         throw std::invalid_argument("Periodic RLL diagnostic requires periodic q1 and q2.");

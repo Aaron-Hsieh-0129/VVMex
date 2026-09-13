@@ -7,6 +7,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -324,6 +325,40 @@ run_tests() {
     bad = moist;
     bad["netcdf_reader"]["variables_to_read"]["2d"] = Json::array({"vegtype", "soiltype", "Tg"});
     check_validation(directory, "rll_accept_surface_properties", bad, 1, true);
+    Json spatial = moist;
+    spatial["initial_conditions"]["rll_mountain"] = {
+        {"terrain_source", "netcdf"}, {"zonal_flow", true}, {"u0_m_s", 20.}};
+    spatial["netcdf_reader"] = {{"source_file", "surface.nc"},
+        {"variables_to_read", {{"2d", Json::array({"topo", "vegtype", "soiltype", "Tg"})}}}};
+    check_validation(directory, "rll_spatial_terrain", spatial, 1, true);
+    spatial["dynamics"]["prognostic_variables"]["xi"]["tendency_terms"]["buoyancy"]["temporal_scheme"] = "ForwardEuler";
+    spatial["dynamics"]["prognostic_variables"]["eta"]["tendency_terms"]["buoyancy"]["temporal_scheme"] = "ForwardEuler";
+    check_validation(directory, "rll_reference_forward_buoyancy", spatial, 1, true);
+    spatial["dynamics"]["prognostic_variables"]["xi"]["tendency_terms"]["advection"]["temporal_scheme"] = "ForwardEuler";
+    check_validation(directory, "rll_forward_transport_still_rejected", spatial, 1, false, "AdamsBashforth2");
+    spatial["dynamics"]["prognostic_variables"]["xi"]["tendency_terms"]["advection"]["temporal_scheme"] = "AdamsBashforth2";
+    spatial["initial_conditions"]["reapply_spatial_initial_conditions"] = true;
+    check_validation(directory, "rll_spatial_reapply_rejected", spatial, 1, false, "reapplied");
+    spatial["initial_conditions"].erase("reapply_spatial_initial_conditions");
+    spatial["netcdf_reader"]["variables_to_read"]["2d"] = Json::array({"vegtype"});
+    check_validation(directory, "rll_spatial_requires_topo", spatial, 1, false, "topo");
+    spatial["netcdf_reader"]["variables_to_read"]["2d"] = Json::array({"topo", "lon"});
+    check_validation(directory, "rll_spatial_coordinates_still_analytic", spatial, 1, false, "analytic");
+    spatial["netcdf_reader"]["variables_to_read"]["2d"] = Json::array({"topo"});
+    spatial["initial_conditions"]["rll_mountain"]["terrain_source"] = "unknown";
+    check_validation(directory, "rll_spatial_unknown_source", spatial, 1, false, "terrain_source");
+    for (double value : {-1., .5, 1000., std::numeric_limits<double>::quiet_NaN()}) {
+        if (VVM::Core::valid_rll_terrain_index(value, 2, 103)) {
+            ++failures;
+            std::fprintf(stderr, "FAIL: invalid spatial terrain index accepted.\n");
+        }
+    }
+    for (double value : {0., 1., 21.}) {
+        if (!VVM::Core::valid_rll_terrain_index(value, 2, 103)) {
+            ++failures;
+            std::fprintf(stderr, "FAIL: valid spatial terrain index rejected.\n");
+        }
+    }
     bad = moist;
     bad["netcdf_reader"]["variables_to_read"]["3d"] = Json::array({"th"});
     check_validation(directory, "rll_reject_volume_input", bad, 1, false, "surface fields only");

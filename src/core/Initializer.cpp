@@ -301,6 +301,42 @@ Initializer::initialize_case_terrain() const {
         }
         Kokkos::deep_copy(state_.get_field<2>("f_2d").get_mutable_device_data(), f);
 
+        if (is_rll_spatial_terrain(config_)) {
+            // Already read by the shared PnetcdfReader before mask construction.
+            // Preserve exactly the original grid-index terrain; do not generate,
+            // rescale or convert it a second time.
+            const auto terrain = state_.get_field<2>("topo").get_host_data();
+            int local_invalid = 0, invalid = 0;
+            for (int j = h; j < ny-h; ++j) {
+                for (int i = h; i < nx-h; ++i) {
+                    if (!valid_rll_terrain_index(terrain(j,i), h, nz)) local_invalid = 1;
+                }
+            }
+            MPI_Allreduce(&local_invalid, &invalid, 1, MPI_INT, MPI_MAX, grid_.get_comm());
+            if (invalid) {
+                throw std::runtime_error("RLL NetCDF topo must contain finite, nonnegative integer grid indices below the lid; metre-valued heights are not supported.");
+            }
+            state_.add_field<2>("rll_terrain_height", {ny,nx},
+                {GridStaggering::Centered, "m", "height of spatial-input terrain on model levels"});
+            auto elevation = state_.get_field<2>("rll_terrain_height").get_host_data();
+            const auto z = parameters_.z_up.get_host_data();
+            for (int j = h; j < ny-h; ++j) {
+                for (int i = h; i < nx-h; ++i) {
+                    const int level = terrain(j,i) == real(0.) ? h-1 : static_cast<int>(terrain(j,i));
+                    elevation(j,i) = z(level);
+                }
+            }
+            Kokkos::deep_copy(state_.get_field<2>("rll_terrain_height").get_mutable_device_data(), elevation);
+            halo_exchanger_.exchange_halos(state_.get_field<2>("topo"));
+            halo_exchanger_.exchange_halos(state_.get_field<2>("rll_terrain_height"));
+            if (!periodic) {
+                Boundary::HorizontalBoundaryStencils boundary(grid_);
+                boundary.fill_centered_q2_neumann_halos(state_.get_field<2>("topo"));
+                boundary.fill_centered_q2_neumann_halos(state_.get_field<2>("rll_terrain_height"));
+            }
+            return;
+        }
+
         const Real peak = config_.get_value<Real>("initial_conditions.rll_mountain.height_m");
         const Real width = config_.get_value<Real>("initial_conditions.rll_mountain.half_width_m");
         const Real center_lambda =

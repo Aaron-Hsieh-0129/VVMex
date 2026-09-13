@@ -23,9 +23,23 @@ is_rll_idealized(const Utils::ConfigurationManager& config) {
     return is_jung2019_rll(config) || is_rll_mountain(config);
 }
 
+inline bool
+is_rll_spatial_terrain(const Utils::ConfigurationManager& config) {
+    return is_rll_mountain(config) && config.get_value<std::string>(
+        "initial_conditions.rll_mountain.terrain_source", "analytic") == "netcdf";
+}
+
+inline bool
+valid_rll_terrain_index(double level, int halo, int total_nz) {
+    // Same index convention as Cartesian input: zero means flat; nonzero
+    // values are absolute vertical indices, not elevations in metres.
+    return std::isfinite(level) && level >= 0. && level == std::floor(level) &&
+        (level == 0. || level >= halo-1) && level <= total_nz-2*halo-3;
+}
+
 // Limited channel and explicitly experimental periodic mountain configurations.
 // A profile-backed moist rll_mountain may
-// couple radiation/surface/turbulence/P3; general input terrain, restart and
+// couple radiation/surface/turbulence/P3 and grid-index spatial terrain; restart and
 // horizontal Cartesian forcing remain unsupported.
 inline void
 validate_jung2019_rll(const Utils::ConfigurationManager& config,
@@ -46,7 +60,12 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
             config.get_value<double>("initial_conditions.jung2019.perturbation_scale", 1.) != 0.)) {
         throw std::runtime_error("Experimental periodic RLL requires the zonal mountain initializer without Jung perturbations.");
     }
-    if (is_rll_mountain(config)) {
+    const auto terrain_source = config.get_value<std::string>(
+        "initial_conditions.rll_mountain.terrain_source", "analytic");
+    if (terrain_source != "analytic" && terrain_source != "netcdf") {
+        throw std::runtime_error("RLL terrain_source must be analytic or netcdf.");
+    }
+    if (is_rll_mountain(config) && !is_rll_spatial_terrain(config)) {
         const double height = config.get_value<double>("initial_conditions.rll_mountain.height_m");
         const double width =
             config.get_value<double>("initial_conditions.rll_mountain.half_width_m");
@@ -66,7 +85,7 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
                 "positive width with 3 widths inside the latitude walls.");
         }
     }
-    else if (config.has_key("initial_conditions.rll_mountain")) {
+    else if (!is_rll_mountain(config) && config.has_key("initial_conditions.rll_mountain")) {
         throw std::runtime_error("Mountain terrain requires simulation.idealized_test = "
                                  "rll_mountain; Jung reproduction remains flat.");
     }
@@ -74,6 +93,19 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
         config.has_key("initial_conditions.source_file") &&
         config.get_value<std::string>("initial_conditions.format", "") == "txt" &&
         config.get_value<bool>("physics.p3.enable_p3", false);
+    if (is_rll_spatial_terrain(config)) {
+        const auto fields = config.get_value<nlohmann::json>(
+            "netcdf_reader.variables_to_read.2d", nlohmann::json::array());
+        bool has_topo = false;
+        for (const auto& name : fields) has_topo = has_topo || name == "topo";
+        if (!profile_atmosphere || v.nz < 8 ||
+            config.get_value<std::string>("netcdf_reader.source_file", "").empty() || !has_topo) {
+            throw std::runtime_error("RLL NetCDF terrain requires a profile-backed atmosphere, nz >= 8, a spatial source_file and topo in variables_to_read.2d.");
+        }
+        if (config.get_value<bool>("initial_conditions.reapply_spatial_initial_conditions", false)) {
+            throw std::runtime_error("RLL NetCDF terrain cannot be reapplied after terrain masks are initialized.");
+        }
+    }
     if (!profile_atmosphere &&
         (config.get_value<bool>("physics.rrtmgp.enable_rrtmgp", false) ||
          config.get_value<bool>("dynamics.forcings.sponge_layer.enable", false))) {
@@ -107,7 +139,7 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
                 throw std::runtime_error("RLL spatial input currently supports surface fields only.");
             }
             for (const auto& name : group.value()) {
-                if (name == "topo" || name == "lon" || name == "lat") {
+                if ((name == "topo" && !is_rll_spatial_terrain(config)) || name == "lon" || name == "lat") {
                     throw std::runtime_error("RLL mountain terrain and coordinates must remain analytic; exclude topo/lon/lat from spatial input.");
                 }
             }
@@ -254,11 +286,14 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
                                          " (plus Coriolis for the RLL mountain case).");
             }
 
+            const auto temporal = term.value().value("temporal_scheme", std::string(""));
+            const bool forward_buoyancy = profile_atmosphere && term.key() == "buoyancy" &&
+                (name == "xi" || name == "eta") && temporal == "ForwardEuler";
             if (term.value().value("spatial_scheme", std::string("")) != "Takacs" ||
-                term.value().value("temporal_scheme", std::string("")) != "AdamsBashforth2") {
+                (temporal != "AdamsBashforth2" && !forward_buoyancy)) {
 
                 throw std::runtime_error("RLL vorticity requires Takacs transport "
-                                         "and AdamsBashforth2.");
+                                         "and AdamsBashforth2 (profile buoyancy may use ForwardEuler).");
             }
         }
     }
