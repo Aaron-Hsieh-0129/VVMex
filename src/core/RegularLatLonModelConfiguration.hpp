@@ -119,8 +119,15 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
             throw std::runtime_error("RLL sponge requires a positive timescale and a base inside the atmosphere.");
         }
     }
+    // RandomForcing perturbs potential temperature using global cell indices and
+    // physical height; it does not require Cartesian horizontal coordinates.
+    // Keep dry prescribed Jung states restricted to their analytic perturbations.
+    if (!profile_atmosphere &&
+        config.get_value<bool>("dynamics.forcings.random_perturbation.enable", false)) {
+        throw std::runtime_error(
+            "RLL random perturbation requires a profile-backed moist mountain atmosphere.");
+    }
     for (const char* key : {"dynamics.forcings.areamn.enable",
-             "dynamics.forcings.random_perturbation.enable",
              "dynamics.forcings.lateral_boundary_nudging.enable",
              "restart.enable"}) {
         if (config.get_value<bool>(key, false)) {
@@ -146,9 +153,17 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
         }
     }
     const auto engine = config.get_value<std::string>("output.engine", "HDF5");
-    if ((engine != "HDF5" && !(is_rll_mountain(config) && engine == "BP5")) || h.fix_lonlat) {
+    // The shared HDF5/SST writer exports geometry-derived RLL coordinates.
+    const bool supported_engine = engine == "HDF5" ||
+        (is_rll_mountain(config) && engine == "BP5") ||
+        (profile_atmosphere && engine == "SST");
+    if (!supported_engine) {
         throw std::runtime_error(
-            "Jung RLL currently requires HDF5 output and geometry-derived geographic coordinates.");
+            "Unsupported RLL output engine: " + engine +
+            ". Use HDF5, BP5 for rll_mountain, or SST for a profile-backed moist rll_mountain.");
+    }
+    if (h.fix_lonlat) {
+        throw std::runtime_error("RLL requires geometry-derived geographic coordinates (fix_lonlat=false).");
     }
     const int experiment = config.get_value<int>("initial_conditions.jung2019.case");
     if (experiment != 1 && experiment != 2) {

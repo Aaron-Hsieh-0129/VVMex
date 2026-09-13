@@ -239,15 +239,13 @@ def setup_environment(preset_name):
         # ----------------------------------------------------------------------
         lib_dirs = []
 
-        # Kokkos_DIR first: dependency prefixes often contain another Kokkos with
-        # the same SONAMEs. If an ADIOS2/HDF5 base stack wins here, it silently
-        # replaces the exact Kokkos backend and build options selected by CMake.
-        #
-        # ADIOS2_DIR remains ahead of the HDF5/NetCDF base stack so an explicit
-        # ADIOS2 override still wins over libadios2 copies in that base prefix.
+        # Honor the selected ADIOS2 build before the shared GPU dependency
+        # prefix, which can contain a different libadios2 with the same SONAME.
+        # In particular, SST host-only ranks must use the selected non-Kokkos
+        # ADIOS2 rather than triggering CUDA initialization through ADIOS2.
         for key in [
-            "Kokkos_DIR",
             "ADIOS2_DIR",
+            "Kokkos_DIR",
             "HDF5_DIR",
             "NETCDF_C_DIR",
             "NETCDF_Fortran_DIR",

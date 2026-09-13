@@ -295,6 +295,26 @@ run_tests() {
         }
     }
     check_validation(directory, "rll_profile_physics", moist, 1, true);
+    Json streaming = moist;
+    streaming["output"]["engine"] = "SST";
+    check_validation(directory, "rll_profile_sst", streaming, 1, true);
+    streaming["output"]["engine"] = "unsupported";
+    check_validation(directory, "rll_unsupported_output_engine", streaming, 1, false,
+        "Unsupported RLL output engine");
+    // TC VVM startup noise is supported on the profile-backed RLL path.
+    Json noisy = moist;
+    noisy["dynamics"]["forcings"]["random_perturbation"] = {
+        {"enable", true}, {"time_s", 200.}, {"amplitude", 0.5},
+        {"z_start_m", 0.}, {"z_end_m", 2000.}, {"random_seed", 1129}};
+    check_validation(directory, "rll_profile_random_perturbation", noisy, 1, true);
+    noisy["grid"]["horizontal"]["topology"]["q2"] = "periodic";
+    noisy["grid"]["horizontal"]["geometry"]["experimental_periodic_latitude"] = true;
+    check_validation(directory, "rll_periodic_random_perturbation", noisy, 1, true);
+    noisy["physics"]["p3"]["enable_p3"] = false;
+    noisy["physics"]["rrtmgp"]["enable_rrtmgp"] = false;
+    noisy["dynamics"]["forcings"]["sponge_layer"]["enable"] = false;
+    check_validation(directory, "rll_dry_random_perturbation_rejected", noisy, 1, false,
+        "random perturbation requires a profile-backed moist");
     Json periodic = moist;
     periodic["grid"]["horizontal"]["topology"]["q2"] = "periodic";
     check_validation(directory, "rll_periodic_needs_opt_in", periodic, 1, false,

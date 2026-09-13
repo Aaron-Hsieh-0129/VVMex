@@ -525,11 +525,11 @@ launch_vvm() {
 # IO server ranks are host-only. main.cpp assigns the role by *global* rank
 # (color = world_rank < compute_tasks), so use the same test here.
 #
-# They must not take a GPU: src/main.cpp skips Kokkos initialization on these
-# ranks, but ADIOS2 is built with Kokkos support and still opens a CUDA context of
-# its own (measured: 520 MiB per IO rank) unless no device is visible. Hiding the
-# device is only safe because Kokkos is no longer initialized here -- a
-# CUDA-enabled Kokkos aborts when it finds no device.
+# They must not take a GPU: main.cpp skips Kokkos initialization on these
+# ranks. The selected ADIOS2 must also support host-only processes; a build
+# that automatically initializes CUDA Kokkos will fail with no visible device.
+# submit.py puts the configured ADIOS2 prefix ahead of the GPU base stack to
+# avoid accidentally loading the CUDA-enabled ADIOS2 copy from that stack.
 #
 # This is also what lets the IO server scale past the GPU count: IO ranks no longer
 # consume a slot in the local_rank % VVM_GPUS mapping.

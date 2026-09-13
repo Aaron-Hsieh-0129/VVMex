@@ -178,6 +178,8 @@ private:
     std::unique_ptr<Core::Field<1>> rll_wall_contributions_;
     VVM::Real rll_south_circulation_ = VVM::real(0.0);
     VVM::Real rll_meridional_circulation_ = VVM::real(0.0);
+    VVM::Real rll_inverse_dz_ = VVM::real(0.0);
+    VVM::Real rll_psi_north_ = VVM::real(0.0);
     bool rll_initialized_ = false;
 
     VVM::Real h_inv_C0_;

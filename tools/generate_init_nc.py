@@ -23,7 +23,7 @@ if not VVM_ROOT:
 os.chdir(VVM_ROOT)
 print(f"[Info] Change to VVM_ROOT: {VVM_ROOT}")
 
-CONFIG_PATH = os.environ.get('VVM_CONFIG_PATH', './rundata/input_configs/default_cases/rcemip.json')
+CONFIG_PATH = os.environ.get('VVM_CONFIG_PATH', './rundata/input_configs/rll_tropical.json')
 SOURCE_TW_DATA = './rundata/land/topolsm_TW.nc'
 
 with open(CONFIG_PATH, 'r') as f:
@@ -412,7 +412,21 @@ def get_ideal_slopetype_data(ny, nx):
     return slopetype
 
 def get_ideal_tg_data(ny, nx, value=300.0):
-    return np.full((ny, nx), value, dtype='f8')
+    # Optional prescribed surface-temperature pattern, independent of terrain.
+    reference = os.environ.get('VVM_TG_REFERENCE')
+    if not reference:
+        return np.full((ny, nx), value, dtype='f8')
+    with nc.Dataset(reference, 'r') as ds:
+        field = ds.variables['Tg']
+        if field.dimensions != ('ny', 'nx') or field.shape != (ny, nx):
+            raise ValueError(f"Tg reference {reference} must have shape {(ny, nx)} in (ny, nx) order")
+        data = field[:]
+        if np.ma.getmaskarray(data).any() or not np.isfinite(data).all():
+            raise ValueError(f"Tg reference {reference} contains missing or nonfinite values")
+        if getattr(field, 'units', 'K') != 'K':
+            raise ValueError(f"Tg reference {reference} must use units K")
+        print(f"[Info] Using prescribed Tg from {reference}")
+        return np.asarray(data, dtype='f8')
 
 def get_albedo_data(ny, nx):
     albedo = np.zeros((ny, nx), dtype='f8')
