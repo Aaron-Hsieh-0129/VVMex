@@ -257,7 +257,15 @@ public:
         }
 #endif
 
-        Kokkos::fence();
+#if defined(ENABLE_NCCL)
+        // The normal model uses Kokkos's stream for NCCL too. Only a separate
+        // communication stream needs a producer wait before reading the sum.
+        const bool separate_nccl_stream =
+            nccl_stream_ != Kokkos::DefaultExecutionSpace().cuda_stream();
+        if (separate_nccl_stream) {
+            Kokkos::DefaultExecutionSpace().fence("horizontal mean producer ready");
+        }
+#endif
 
         // Both backends gather the per-rank partial sums and then add them in
         // rank order in the same device kernel below.
@@ -301,7 +309,11 @@ public:
                                      field.get_name() + "': " + ncclGetErrorString(result));
         }
 
-        cudaStreamSynchronize(nccl_stream_);
+        // The following finalize kernel is ordered after NCCL on the shared
+        // stream. Retain the wait when callers supply a different stream.
+        if (separate_nccl_stream) {
+            cudaStreamSynchronize(nccl_stream_);
+        }
 #else
         VVM::Real local_sum = VVM::real(0.0);
         Kokkos::deep_copy(local_sum, d_local_sum);
@@ -497,7 +509,15 @@ public:
         }
 #endif
 
-        Kokkos::fence();
+#if defined(ENABLE_NCCL)
+        // The normal model uses Kokkos's stream for NCCL too. Only a separate
+        // communication stream needs a producer wait before reading the sum.
+        const bool separate_nccl_stream =
+            nccl_stream_ != Kokkos::DefaultExecutionSpace().cuda_stream();
+        if (separate_nccl_stream) {
+            Kokkos::DefaultExecutionSpace().fence("horizontal mean producer ready");
+        }
+#endif
 
         int comm_size = 1;
 
@@ -537,7 +557,11 @@ public:
                                      field.get_name() + "': " + ncclGetErrorString(result));
         }
 
-        cudaStreamSynchronize(nccl_stream_);
+        // The following finalize kernel is ordered after NCCL on the shared
+        // stream. Retain the wait when callers supply a different stream.
+        if (separate_nccl_stream) {
+            cudaStreamSynchronize(nccl_stream_);
+        }
 #else
         const auto host_local_sums =
             Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), d_local_sums);

@@ -1065,7 +1065,9 @@ void VVM_P3_Interface::run(VVM::Core::State &state, const VVM::Real dt) {
         m_policy,
         m_p3_postproc
     ); // Kokkos::parallel_for(p3_main_local_vals)
-    Kokkos::fence();
+    // Both kernels use the default execution stream and persistent member
+    // buffers. Stream ordering makes the postprocessing result available to
+    // unpacking without a host wait.
     postprocessing_and_unpacking(state);
 
     int output_steps = std::round(m_output_interval_s / dt);

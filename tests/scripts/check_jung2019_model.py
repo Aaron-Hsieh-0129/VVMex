@@ -107,7 +107,7 @@ negative = [
     ("wrong_case", ("initial_conditions", "jung2019", "case"), 3, "case must be 1 or 2"),
     ("wrong_amplitude", ("initial_conditions", "jung2019", "jet_scale"), 2, "amplitudes must select"),
     ("external_initialization", ("initial_conditions", "source_file"), "not-read.nc", "analytic initial conditions"),
-    ("bp5", ("output", "engine"), "BP5", "requires HDF5"),
+    ("bp5", ("output", "engine"), "BP5", "Unsupported RLL output engine"),
 ]
 for name, keys, value, message in negative:
     config = copy.deepcopy(base)
