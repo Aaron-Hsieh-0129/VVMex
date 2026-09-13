@@ -17,20 +17,26 @@ struct InitializeRegularLatLonCoordinate {
     VVM::Real domain_edge;
     VVM::Real point_offset;
     VVM::Real spacing;
+    int periodic_size;
 
     InitializeRegularLatLonCoordinate(const Kokkos::View<VVM::Real*>& coordinate_in,
         const int global_start_in,
         const int halo_in,
         const VVM::Real domain_edge_in,
         const VVM::Real point_offset_in,
-        const VVM::Real spacing_in)
+        const VVM::Real spacing_in,
+        const int periodic_size_in = 0)
         : coordinate(coordinate_in), global_start(global_start_in), halo(halo_in),
-          domain_edge(domain_edge_in), point_offset(point_offset_in), spacing(spacing_in) {}
+          domain_edge(domain_edge_in), point_offset(point_offset_in), spacing(spacing_in),
+          periodic_size(periodic_size_in) {}
 
     KOKKOS_INLINE_FUNCTION
     void
     operator()(const int local_index) const noexcept {
-        const int global_index = global_start + local_index - halo;
+        int global_index = global_start + local_index - halo;
+        if (periodic_size > 0) {
+            global_index = (global_index % periodic_size + periodic_size) % periodic_size;
+        }
         coordinate(local_index) =
             domain_edge + (static_cast<VVM::Real>(global_index) + point_offset) * spacing;
     }
@@ -94,10 +100,11 @@ RegularLatLonGeometry::RegularLatLonGeometry(HorizontalDomainLayout layout,
     const VVM::Real dlatitude,
     const VVM::Real longitude_west_edge,
     const VVM::Real latitude_south_edge,
-    const VVM::Real radius)
+    const VVM::Real radius,
+    const bool periodic_latitude)
     : layout_(layout), dlongitude_(dlongitude), dlatitude_(dlatitude),
       longitude_west_edge_(longitude_west_edge), latitude_south_edge_(latitude_south_edge),
-      radius_(radius) {
+      radius_(radius), periodic_latitude_(periodic_latitude) {
 
     validate();
     initialize_coordinates();
@@ -256,7 +263,8 @@ RegularLatLonGeometry::initialize_coordinates() {
             layout_.halo,
             latitude_south_edge_,
             VVM::real(0.5),
-            dlatitude_));
+            dlatitude_,
+            periodic_latitude_ ? layout_.global_ny : 0));
 
     Kokkos::parallel_for("InitializeRegularLatLonQ2Staggered",
         Kokkos::RangePolicy<>(0, ny),
@@ -265,7 +273,8 @@ RegularLatLonGeometry::initialize_coordinates() {
             layout_.halo,
             latitude_south_edge_,
             VVM::real(1.0),
-            dlatitude_));
+            dlatitude_,
+            periodic_latitude_ ? layout_.global_ny : 0));
 }
 
 void
@@ -320,6 +329,9 @@ RegularLatLonGeometry::device_view_impl(const HorizontalLocation location) const
     // Longitude halos remain unwrapped. This keeps computational-coordinate
     // differences smooth through the periodic seam. Output adapters can
     // normalize geographic longitude to [0, 2*pi) later.
+    // Experimental periodic latitude instead wraps native row indices before
+    // constructing both coordinates and metrics, matching the field halo owner.
+    // It describes a repeating RLL patch, not a smooth global spherical seam.
     result.longitude = result.q1;
     result.latitude = result.q2;
 

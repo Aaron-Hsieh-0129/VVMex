@@ -340,6 +340,9 @@ Bp5HistoryWriter::define_schema() {
     io_.DefineAttribute<std::string>("units", rll ? "degrees_north" : "meter", "coordinates/y");
     if (rll) {
         io_.DefineAttribute<std::string>("horizontal_geometry", "regular_latlon");
+        io_.DefineAttribute<std::string>("latitude_topology",
+            grid_.horizontal_specification().geometry.regular_lat_lon.periodic_latitude
+                ? "experimental_periodic" : "bounded");
         io_.DefineAttribute<VVM::Real>("earth_radius_m",
             grid_.horizontal_specification().geometry.regular_lat_lon.radius);
     }

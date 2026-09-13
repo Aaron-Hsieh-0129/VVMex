@@ -13,9 +13,14 @@ args = parser.parse_args()
 config = json.loads(args.config.read_text())
 output = config['output']
 path = Path(output['output_dir'])/(output['output_filename_prefix']+'.bp')
+if not path.exists():
+    parser.error(f'BP5 output not found: {path}. Run the model successfully before checking output.')
 summary = {'output':str(path),'steps':[]}
 with adios2.FileReader(str(path)) as reader:
     assert reader.read_attribute('horizontal_geometry') == 'regular_latlon'
+    periodic = config['grid']['horizontal']['topology']['q2'] == 'periodic'
+    if periodic:
+        assert reader.read_attribute('latitude_topology') == 'experimental_periodic'
     available = reader.available_variables()
     count = int(available['model_time_s']['AvailableStepsCount'])
     interval = config['simulation']['output_interval_s']
@@ -36,6 +41,27 @@ with adios2.FileReader(str(path)) as reader:
         assert data['qv'].max() > .001, 'dry placeholder atmosphere'
         summary['steps'].append({'time_s':time,'ranges':{
             name:[float(value.min()),float(value.max())] for name,value in data.items()}})
+        if periodic:
+            horizontal = config['grid']['horizontal']
+            south, north = np.deg2rad(horizontal['geometry']['latitude_bounds_deg'])
+            dphi = (north-south)/horizontal['ny']
+            radius = horizontal['geometry']['earth_radius_m']
+            phi_z = south+(np.arange(horizontal['ny'])+1)*dphi
+            top_u = data['u'].reshape((-1, horizontal['ny'], horizontal['nx']))[-1]
+            top_v = data['v'].reshape((-1, horizontal['ny'], horizontal['nx']))[-1]
+            top_zeta = data['zeta'].reshape((-1, horizontal['ny'], horizontal['nx']))[-1]
+            cycles = np.array([radius*np.cos(south+.5*dphi)*top_u[0].mean(),
+                radius*top_v[:,0].sum()])
+            if step == 0:
+                initial_cycles = cycles.copy()
+            # Fixed prescribed harmonic cycles are an explicit model constraint.
+            # Scale roundoff by wind*radius*number of summed rows, not near-zero v.
+            eps = np.finfo(top_u.dtype).eps
+            scale = radius*max(1., np.abs(top_u).max(), np.abs(top_v).max())*horizontal['ny']
+            np.testing.assert_allclose(cycles, initial_cycles, rtol=0., atol=100*eps*scale)
+            summary['steps'][-1]['top_cycle_integrals'] = cycles.tolist()
+            summary['steps'][-1]['area_weighted_top_zeta'] = float(
+                np.sum(top_zeta*np.cos(phi_z)[:,None])/(horizontal['nx']*np.cos(phi_z).sum()))
     assert np.max(np.abs(data['lw_heating'])) > 0, 'radiation inactive'
     assert np.max(data['RKM']) > 0, 'turbulence inactive'
     assert np.max(np.abs(data['sfc_flux_qv'])) > 0, 'surface moisture flux inactive'

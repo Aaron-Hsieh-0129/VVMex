@@ -319,6 +319,13 @@ test_invalid_configurations(const std::filesystem::path& directory) {
         config,
         "periodic RLL latitude was accepted");
 
+    config["grid"]["horizontal"]["geometry"]["experimental_periodic_latitude"] = true;
+    const auto periodic = parse_spec(directory, "experimental_periodic_latitude.json", config);
+    check(periodic.horizontal.geometry.regular_lat_lon.periodic_latitude,
+        "experimental periodic latitude must reach geometry construction");
+    check(periodic.horizontal.topology.q2 == HorizontalEdgeTopology::Periodic,
+        "experimental periodic latitude must retain periodic topology");
+
     config = make_structured_rll_config();
 
     config["grid"]["horizontal"]["geometry"]["fix_lonlat"] = true;

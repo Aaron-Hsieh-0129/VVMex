@@ -13,6 +13,8 @@ struct RegularLatLonParameters {
     VVM::Real longitude_west_edge = VVM::real(0.0);
     VVM::Real latitude_south_edge = VVM::real(0.0);
     VVM::Real radius = VVM::real(0.0);
+    // Experimental repeating latitude patch; metrics retain their RLL values.
+    bool periodic_latitude = false;
 };
 
 struct HorizontalGridSpec {

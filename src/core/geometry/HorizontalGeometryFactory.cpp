@@ -23,7 +23,8 @@ HorizontalGeometryFactory::create(const HorizontalGridSpec& spec, HorizontalDoma
             spec.dq2,
             spec.regular_lat_lon.longitude_west_edge,
             spec.regular_lat_lon.latitude_south_edge,
-            spec.regular_lat_lon.radius);
+            spec.regular_lat_lon.radius,
+            spec.regular_lat_lon.periodic_latitude);
 
     case GeometryKind::CubedSphere:
         throw std::invalid_argument("Cubed-sphere geometry is not implemented.");

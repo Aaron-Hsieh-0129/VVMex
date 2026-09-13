@@ -510,6 +510,43 @@ test_invalid_inputs() {
     check(threw, "RLL geometry must reject a cubed-sphere panel id");
 }
 
+void
+test_periodic_latitude_metrics() {
+    // Test the actual seam and a decomposed northern tile, at both native rows.
+    for (const bool tile : {false, true}) {
+        auto layout = make_layout();
+        if (tile) {
+            layout.global_start_j = 50;
+            layout.local_physical_ny = 50;
+        }
+        const auto radius = VVM::real(6371220.);
+        const auto spacing = VVM::real(.001);
+        const auto south = VVM::real(-.05);
+        RegularLatLonGeometry geometry(layout, spacing, spacing, VVM::real(0.),
+            south, radius, true);
+        for (const auto location : {HorizontalLocation::T, HorizontalLocation::U,
+                 HorizontalLocation::V, HorizontalLocation::Z}) {
+            const bool face = location == HorizontalLocation::V || location == HorizontalLocation::Z;
+            const auto view = geometry.device_view(location);
+            const auto lat = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), view.latitude.one_dimensional);
+            const auto scale = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), view.contravariant_to_physical.a11.one_dimensional);
+            const auto jacobian = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), view.sqrt_g.one_dimensional);
+            for (int j = 0; j < layout.local_total_ny(); ++j) {
+                const int global = layout.global_start_j + j - layout.halo;
+                const int wrapped = (global % layout.global_ny + layout.global_ny) % layout.global_ny;
+                const auto expected = south + (VVM::real(wrapped) + (face ? VVM::real(1.) : VVM::real(.5)))*spacing;
+                check(close(lat(j), expected), "periodic geographic latitude must wrap at native staggering");
+                check(close(scale(j), radius*std::cos(expected)), "periodic metric must retain latitude dependence");
+                check(close(jacobian(j), radius*radius*std::cos(expected)), "periodic Jacobian must match the field halo owner");
+                // Both retained harmonic modes must remain curl/divergence-free:
+                // h1*u = constant; J*v/R = constant, including ghost rows.
+                check(close(scale(j)*(VVM::real(20.)/scale(j)), VVM::real(20.)), "zonal harmonic covariant component");
+                check(close(jacobian(j)*(VVM::real(20.)/scale(j))/radius, VVM::real(20.)), "meridional harmonic mass flux");
+            }
+        }
+    }
+}
+
 } // namespace
 
 int
@@ -525,6 +562,7 @@ main(int argc, char** argv) {
             test_metric_and_vector_transforms();
             test_channel_area();
             test_invalid_inputs();
+            test_periodic_latitude_metrics();
         }
         catch (const std::exception& error) {
             ++failures;

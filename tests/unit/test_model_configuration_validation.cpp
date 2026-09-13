@@ -294,6 +294,19 @@ run_tests() {
         }
     }
     check_validation(directory, "rll_profile_physics", moist, 1, true);
+    Json periodic = moist;
+    periodic["grid"]["horizontal"]["topology"]["q2"] = "periodic";
+    check_validation(directory, "rll_periodic_needs_opt_in", periodic, 1, false,
+        "experimental_periodic_latitude");
+    periodic["grid"]["horizontal"]["geometry"]["experimental_periodic_latitude"] = true;
+    check_validation(directory, "rll_periodic_profile_physics", periodic, 1, true);
+    periodic["initial_conditions"]["rll_mountain"]["zonal_flow"] = false;
+    check_validation(directory, "rll_periodic_needs_zonal_initializer", periodic, 1, false,
+        "zonal mountain initializer");
+    periodic["initial_conditions"]["rll_mountain"]["zonal_flow"] = true;
+    periodic["simulation"]["idealized_test"] = "jung2019_barotropic";
+    check_validation(directory, "jung_periodic_still_rejected", periodic, 1, false,
+        "periodic-longitude channel");
     Json bad = moist;
     bad["initial_conditions"].erase("source_file");
     check_validation(directory, "rll_radiation_needs_profile", bad, 1, false, "profile-backed");

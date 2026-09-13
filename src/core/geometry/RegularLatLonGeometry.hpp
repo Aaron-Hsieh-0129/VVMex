@@ -18,7 +18,8 @@ public:
         VVM::Real dlatitude,
         VVM::Real longitude_west_edge,
         VVM::Real latitude_south_edge,
-        VVM::Real radius);
+        VVM::Real radius,
+        bool periodic_latitude = false);
 
     GeometryKind
     kind() const noexcept override {
@@ -94,6 +95,7 @@ private:
     VVM::Real longitude_west_edge_;
     VVM::Real latitude_south_edge_;
     VVM::Real radius_;
+    bool periodic_latitude_;
 
     Kokkos::View<VVM::Real*> q1_centered_;
     Kokkos::View<VVM::Real*> q1_staggered_;

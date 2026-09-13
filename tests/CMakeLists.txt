@@ -2189,6 +2189,21 @@ _vvm_set_test_resources(
     1
 )
 
+add_test(NAME test_rll_periodic_p3_model
+    COMMAND ${Python3_EXECUTABLE} ${TEST_DIR}/scripts/check_rll_p3_model.py
+        $<TARGET_FILE:vvm> ${CMAKE_BINARY_DIR}/rll_periodic_p3_model_tests
+        --wrapper "${GPU_WRAP}" --launcher ${MPIEXEC_EXECUTABLE} --periodic)
+set_tests_properties(test_rll_periodic_p3_model PROPERTIES
+    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}" LABELS "integration;physics" TIMEOUT 420)
+_vvm_set_test_resources(test_rll_periodic_p3_model 1)
+add_test(NAME test_rll_periodic_rest_model
+    COMMAND ${Python3_EXECUTABLE} ${TEST_DIR}/scripts/check_rll_p3_model.py
+        $<TARGET_FILE:vvm> ${CMAKE_BINARY_DIR}/rll_periodic_rest_model_tests
+        --wrapper "${GPU_WRAP}" --launcher ${MPIEXEC_EXECUTABLE} --periodic --rest)
+set_tests_properties(test_rll_periodic_rest_model PROPERTIES
+    WORKING_DIRECTORY "${VVM_TEST_WORKDIR}" LABELS "integration;physics" TIMEOUT 420)
+_vvm_set_test_resources(test_rll_periodic_rest_model 1)
+
 # --- physics tier: GPU only, ~80 s. P3, RRTMGP and the Noah land model -----
 # Forced OFF on a CPU build by the backend guard above: tests/references_cpu/
 # has no digests for these cases, so they would fail for the wrong reason.

@@ -1,0 +1,114 @@
+{
+  "__description": "EXPERIMENTAL doubly periodic RLL physics smoke case. Run experiments/rll_physics/prepare_periodic.py to prepare the resized surface input and a fresh output directory. Not a validated production case.",
+  "grid": {
+    "horizontal": {
+      "nx": 128, "ny": 128, "n_halo_cells": 2,
+      "geometry": {
+        "kind": "regular_latlon", "earth_radius_m": 6371220.0,
+        "experimental_periodic_latitude": true,
+        "longitude_bounds_deg": [-0.05755459533397479, 0.05755459533397479],
+        "latitude_bounds_deg": [-0.05755459533397479, 0.05755459533397479]
+      },
+      "topology": {"q1": "periodic", "q2": "periodic"}
+    },
+    "vertical": {"nz": 99, "type": "default", "dz": 50.0, "dz1": 50.0}
+  },
+  "simulation": {
+    "idealized_test": "rll_mountain", "dt_s": 0.5,
+    "total_time_s": 60.0, "output_interval_s": 20.0
+  },
+  "initial_conditions": {
+    "format": "txt",
+    "source_file": "./rundata/initial_conditions/profiles/default_cases/TNNUA.txt",
+    "perturbation": "none",
+    "jung2019": {"case": 1, "jet_scale": 0.0, "perturbation_scale": 0.0},
+    "rll_mountain": {
+      "height_m": 500.0, "half_width_m": 750.0,
+      "center_longitude_deg": 0.0, "center_latitude_deg": 0.0,
+      "zonal_flow": true, "u0_m_s": 20.0
+    }
+  },
+  "netcdf_reader": {
+    "source_file": "./experiments/rll_physics/periodic_surface.nc",
+    "Tg_source": "atmosphere",
+    "variables_to_read": {"2d": [
+      "sea_land_ice_mask", "vegtype", "soiltype", "slopetype", "Tg",
+      "albedo", "gvf", "lai", "shdmax", "shdmin",
+      "sm1", "sm2", "sm3", "sm4", "sl1", "sl2", "sl3", "sl4"
+    ]}
+  },
+  "dynamics": {
+    "solver": {
+      "w_solver_method": "tridiagonal", "iteration": 200,
+      "initial_iterations": 1000, "vertical_iterations": 10,
+      "WRXMU": 8118488857.679999,
+      "__WRXMU": "RLL Jacobian-weighted relaxation shift = 2/(100 m / radius)^2; not a physical diffusion coefficient."
+    },
+    "forcings": {
+      "sponge_layer": {"enable": true, "damp_thermo": true, "damp_vort": true,
+        "sponge_layer_base": 3500.0, "inv_CRAD": 3600.0},
+      "random_perturbation": {"enable": false},
+      "lateral_boundary_nudging": {"enable": false},
+      "areamn": {"enable": false}
+    },
+    "prognostic_variables": {
+      "th": {"tendency_terms": {"advection": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"}}},
+      "qv": {"tendency_terms": {"advection": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"}}},
+      "qc": {"tendency_terms": {"advection": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"}}},
+      "qr": {"tendency_terms": {"advection": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"}}},
+      "qi": {"tendency_terms": {"advection": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"}}},
+      "qm": {"tendency_terms": {"advection": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"}}},
+      "nc": {"tendency_terms": {"advection": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"}}},
+      "nr": {"tendency_terms": {"advection": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"}}},
+      "ni": {"tendency_terms": {"advection": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"}}},
+      "bm": {"tendency_terms": {"advection": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"}}},
+      "xi": {"tendency_terms": {
+        "advection": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"},
+        "buoyancy": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"},
+        "stretching": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"},
+        "twisting": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"},
+        "coriolis": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"}
+      }},
+      "eta": {"tendency_terms": {
+        "advection": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"},
+        "buoyancy": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"},
+        "stretching": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"},
+        "twisting": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"},
+        "coriolis": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"}
+      }},
+      "zeta": {"tendency_terms": {
+        "advection": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"},
+        "stretching": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"},
+        "twisting": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"},
+        "coriolis": {"enable": true, "temporal_scheme": "AdamsBashforth2", "spatial_scheme": "Takacs"}
+      }}
+    }
+  },
+  "physics": {
+    "p3": {"enable_p3": true, "make_lookup_table": false, "do_predict_nc": true,
+      "do_prescribed_ccn": false, "max_total_ni": 2000000.0},
+    "turbulence": {"enable_turbulence": true},
+    "surface_process": {"enable": true, "frequency_s": 2.0,
+      "land_scheme": "noahlsm", "ocean_scheme": "sflux_2d"},
+    "rrtmgp": {
+      "enable_rrtmgp": true, "column_chunk_size": 1024, "rad_frequency_s": 20.0,
+      "active_gases": ["h2o", "co2", "o3", "n2o", "co", "ch4", "o2", "n2"],
+      "fixed_total_solar_irradiance": -1, "fixed_solar_zenith_angle": -1,
+      "pool_size_multiplier": 1.0,
+      "time": {"year": 2021, "month": 3, "day": 31, "hour": 16, "minute": 0, "second": 0}
+    }
+  },
+  "output": {
+    "engine": "BP5", "output_dir": "/raid/mog/CVVMex_results/validation/rll_physics/periodic_100m/output",
+    "output_filename_prefix": "physics", "output_initial_step": true,
+    "bp5": {"aggregation_type": "TwoLevelShm", "num_subfiles": 1, "stats_level": 0,
+      "async_write": true, "buffer_mode": "pack", "overwrite": true},
+    "fields_to_output": ["th", "qv", "qc", "qr", "qi", "qp", "u", "v", "w", "xi", "eta", "zeta",
+      "rhobar", "pbar", "thbar", "topo", "Tg", "sfc_flux_th", "sfc_flux_qv",
+      "sw_heating", "lw_heating", "RKM", "RKH", "sea_land_ice_mask"],
+    "output_grid": {"x_start": 0, "x_end": -1, "y_start": 0, "y_end": -1, "z_start": 0, "z_end": -1}
+  },
+  "optimization": {"cuda_graph_halo_exchange": ["u", "w", "xi", "eta", "zeta", "th", "qv", "qc", "qi", "qr", "qm", "nc", "ni", "nr", "bm"]},
+  "constants": {"gravity": 9.806, "Rd": 287.04, "PSFC": 100000.0, "P0": 100000.0,
+    "Cp": 1004.5, "Lv": 2500000.0, "OMEGA": 0.00007292, "PI": 3.14159265}
+}

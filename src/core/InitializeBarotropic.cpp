@@ -39,6 +39,12 @@ Initializer::initialize_jung2019() const {
     const Real dlambda = geometry.dq1;
     const Real south = geometry.regular_lat_lon.latitude_south_edge;
     const Real west = geometry.regular_lat_lon.longitude_west_edge;
+    const bool periodic = geometry.regular_lat_lon.periodic_latitude;
+    const int global_ny = grid_.get_global_points_y();
+    const auto latitude_u = [&](int j) {
+        if (periodic) j = (j % global_ny + global_ny) % global_ny;
+        return south + (real(j) + real(.5))*dphi;
+    };
     const bool zonal_mountain =
         is_rll_mountain(config_) &&
         config_.get_value<bool>("initial_conditions.rll_mountain.zonal_flow", false);
@@ -76,9 +82,21 @@ Initializer::initialize_jung2019() const {
         return jet(jet_shift == real(0.) ? latitude : latitude - jet_shift, experiment, jet_scale);
     };
     std::vector<Real> psi_prefix(grid_.get_global_points_y() + 1, real(0.0));
+    Real harmonic = real(0.);
+    if (periodic) {
+        Real wind_sum = real(0.), inverse_scale_sum = real(0.);
+        for (int j = 0; j < global_ny; ++j) {
+            wind_sum += prescribed_jet(latitude_u(j));
+            inverse_scale_sum += real(1.)/(radius*std::cos(latitude_u(j)));
+        }
+        harmonic = wind_sum/inverse_scale_sum;
+    }
     for (int j = 0; j < grid_.get_global_points_y(); ++j) {
         psi_prefix[j + 1] =
             psi_prefix[j] - radius * dphi * prescribed_jet(south + (real(j) + real(.5)) * dphi);
+        if (periodic) {
+            psi_prefix[j+1] += dphi*harmonic/std::cos(latitude_u(j));
+        }
     }
     state_.add_field<0>("rll_psi_north",
         {},
@@ -103,12 +121,14 @@ Initializer::initialize_jung2019() const {
     auto lon = state_.get_field<2>("lon").get_host_data();
     auto lat = state_.get_field<2>("lat").get_host_data();
     for (int j = 0; j < ny; ++j) {
-        const int gj = grid_.get_local_physical_start_y() + j - h;
+        int gj = grid_.get_local_physical_start_y() + j - h;
+        if (periodic) gj = (gj % global_ny + global_ny) % global_ny;
         const Real phi_u = south + (real(gj) + real(0.5)) * dphi;
         const Real phi_z = south + (real(gj) + real(1.0)) * dphi;
         const Real initial_u = prescribed_jet(phi_u);
+        const Real next_phi = periodic ? latitude_u(gj+1) : phi_u+dphi;
         const Real curl =
-            -(std::cos(phi_u + dphi) * prescribed_jet(phi_u + dphi) - std::cos(phi_u) * initial_u) /
+            -(std::cos(next_phi) * prescribed_jet(next_phi) - std::cos(phi_u) * initial_u) /
             (radius * std::cos(phi_z) * dphi);
         for (int i = 0; i < nx; ++i) {
             const int gi = grid_.get_local_physical_start_x() + i - h;
@@ -137,10 +157,18 @@ Initializer::initialize_jung2019() const {
     Kokkos::deep_copy(state_.get_field<2>("lat").get_mutable_device_data(), lat);
     Kokkos::deep_copy(state_.get_field<3>("u").get_mutable_device_data(), u);
     Kokkos::deep_copy(state_.get_field<3>("zeta").get_mutable_device_data(), zeta);
-    Boundary::HorizontalBoundaryStencils boundary(grid_);
     halo_exchanger_.exchange_halos(state_.get_field<3>("zeta"));
-    boundary.fill_positive_face_q2_homogeneous_dirichlet_halos(state_.get_field<3>("zeta"));
-    boundary.fill_regular_lat_lon_free_slip_physical_wind_halos(state_.get_field<3>("u"),
-        state_.get_field<3>("v"));
+    if (periodic) {
+        halo_exchanger_.exchange_multiple_halos(std::vector<Field<3>*>{
+            &state_.get_field<3>("u"), &state_.get_field<3>("v")});
+        halo_exchanger_.exchange_multiple_halos(std::vector<Field<2>*>{
+            &state_.get_field<2>("psi"), &state_.get_field<2>("psinm1")});
+    }
+    else {
+        Boundary::HorizontalBoundaryStencils boundary(grid_);
+        boundary.fill_positive_face_q2_homogeneous_dirichlet_halos(state_.get_field<3>("zeta"));
+        boundary.fill_regular_lat_lon_free_slip_physical_wind_halos(state_.get_field<3>("u"),
+            state_.get_field<3>("v"));
+    }
 }
 } // namespace VVM::Core

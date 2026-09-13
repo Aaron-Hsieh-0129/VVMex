@@ -13,10 +13,15 @@ BoundaryConditionManager::BoundaryConditionManager(const Grid& grid, bool enable
     const auto& horizontal = grid_.horizontal_specification();
     if (rll_channel_) {
         if (horizontal.geometry.kind != Geometry::GeometryKind::RegularLatLon ||
-            horizontal.topology.q1 != HorizontalEdgeTopology::Periodic ||
-            horizontal.topology.q2 != HorizontalEdgeTopology::Bounded) {
+            horizontal.topology.q1 != HorizontalEdgeTopology::Periodic) {
             throw std::runtime_error(
                 "RLL channel boundaries require periodic longitude and bounded latitude.");
+        }
+        // Periodic transport is owned by HaloExchanger, not physical wall fills.
+        if (horizontal.topology.q2 == HorizontalEdgeTopology::Periodic) {
+            rll_channel_ = false;
+            x_bc_type_ = HorizontalBCType::Periodic;
+            y_bc_type_ = HorizontalBCType::Periodic;
         }
         return;
     }

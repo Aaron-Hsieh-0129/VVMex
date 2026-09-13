@@ -23,7 +23,8 @@ is_rll_idealized(const Utils::ConfigurationManager& config) {
     return is_jung2019_rll(config) || is_rll_mountain(config);
 }
 
-// Limited channel configurations. A profile-backed moist rll_mountain may
+// Limited channel and explicitly experimental periodic mountain configurations.
+// A profile-backed moist rll_mountain may
 // couple radiation/surface/turbulence/P3; general input terrain, restart and
 // horizontal Cartesian forcing remain unsupported.
 inline void
@@ -33,10 +34,17 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
     const auto& v = specification.vertical;
     if (!is_rll_idealized(config) || h.geometry.kind != Geometry::GeometryKind::RegularLatLon ||
         h.topology.q1 != HorizontalEdgeTopology::Periodic ||
-        h.topology.q2 != HorizontalEdgeTopology::Bounded || h.n_halo_cells < 2 || h.nx < 8 ||
+        (h.topology.q2 == HorizontalEdgeTopology::Periodic &&
+            (!is_rll_mountain(config) || !h.geometry.regular_lat_lon.periodic_latitude)) ||
+        h.n_halo_cells < 2 || h.nx < 8 ||
         h.ny < 4 || v.nz < 3 || !v.uses_uniform_analytic_coordinate()) {
         throw std::runtime_error("Full-model RLL requires the supported Jung 2019 flat "
                                  "uniform-level periodic-longitude channel configuration.");
+    }
+    if (h.topology.q2 == HorizontalEdgeTopology::Periodic &&
+        (!config.get_value<bool>("initial_conditions.rll_mountain.zonal_flow", false) ||
+            config.get_value<double>("initial_conditions.jung2019.perturbation_scale", 1.) != 0.)) {
+        throw std::runtime_error("Experimental periodic RLL requires the zonal mountain initializer without Jung perturbations.");
     }
     if (is_rll_mountain(config)) {
         const double height = config.get_value<double>("initial_conditions.rll_mountain.height_m");

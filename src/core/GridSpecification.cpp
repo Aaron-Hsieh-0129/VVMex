@@ -205,8 +205,10 @@ configure_regular_lat_lon_geometry(HorizontalDomainSpec& horizontal,
         configuration_error("a 360-degree RLL longitude span requires periodic q1 topology.");
     }
 
-    if (horizontal.topology.q2 != HorizontalEdgeTopology::Bounded) {
-        configuration_error("regular latitude-longitude q2 topology must be bounded.");
+    const bool periodic_latitude = horizontal.topology.q2 == HorizontalEdgeTopology::Periodic;
+    if (periodic_latitude && !config.get_value<bool>(
+            "grid.horizontal.geometry.experimental_periodic_latitude", false)) {
+        configuration_error("periodic RLL latitude requires experimental_periodic_latitude=true.");
     }
 
     if (horizontal.fix_lonlat) {
@@ -224,6 +226,7 @@ configure_regular_lat_lon_geometry(HorizontalDomainSpec& horizontal,
     horizontal.geometry.regular_lat_lon.latitude_south_edge =
         static_cast<VVM::Real>(latitude_south * degrees_to_radians);
     horizontal.geometry.regular_lat_lon.radius = radius;
+    horizontal.geometry.regular_lat_lon.periodic_latitude = periodic_latitude;
 
     require_finite_positive(horizontal.geometry.dq1, "derived RLL longitude spacing");
     require_finite_positive(horizontal.geometry.dq2, "derived RLL latitude spacing");

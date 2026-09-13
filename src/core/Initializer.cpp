@@ -286,14 +286,15 @@ Initializer::initialize_case_terrain() const {
         const Real south = geometry.regular_lat_lon.latitude_south_edge;
         const Real west = geometry.regular_lat_lon.longitude_west_edge;
 
-        Boundary::HorizontalBoundaryStencils boundary(grid_);
+        const bool periodic = geometry.regular_lat_lon.periodic_latitude;
 
         // Preserve the existing RLL-mountain Coriolis initialization.
         const Real omega = config_.get_value<Real>("constants.OMEGA", real(0.));
         auto f = state_.get_field<2>("f_2d").get_host_data();
         for (int j = 0; j < ny; ++j) {
-            const Real phi_z =
-                south + (grid_.get_local_physical_start_y() + j - h + real(1.)) * dphi;
+            int gj = grid_.get_local_physical_start_y() + j - h;
+            if (periodic) gj = (gj % grid_.get_global_points_y() + grid_.get_global_points_y()) % grid_.get_global_points_y();
+            const Real phi_z = south + (gj + real(1.)) * dphi;
             for (int i = 0; i < nx; ++i) {
                 f(j, i) = real(2.) * omega * std::sin(phi_z);
             }
@@ -353,7 +354,9 @@ Initializer::initialize_case_terrain() const {
         Kokkos::deep_copy(state_.get_field<2>("rll_terrain_height").get_mutable_device_data(),
             elevation);
         halo_exchanger_.exchange_halos(state_.get_field<2>("topo"));
-        boundary.fill_centered_q2_neumann_halos(state_.get_field<2>("topo"));
+        if (!periodic) {
+            Boundary::HorizontalBoundaryStencils(grid_).fill_centered_q2_neumann_halos(state_.get_field<2>("topo"));
+        }
         return;
     }
 
@@ -495,14 +498,17 @@ Initializer::finalize_rll_terrain_masks() const {
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
 
-    Boundary::HorizontalBoundaryStencils boundary(grid_);
+    std::unique_ptr<Boundary::HorizontalBoundaryStencils> boundary;
+    if (grid_.horizontal_specification().topology.q2 == HorizontalEdgeTopology::Bounded) {
+        boundary = std::make_unique<Boundary::HorizontalBoundaryStencils>(grid_);
+    }
 
     // Gather neighboring W masks at each owned positive face. The legacy
     // scatter into i-1/j-1 can target a halo on a decomposition boundary;
     // exchanging that halo does not transfer the write to its owner.
     auto& mask_w_field = state_.get_field<3>("ITYPEW");
     halo_exchanger_.exchange_halos(mask_w_field);
-    boundary.fill_centered_q2_neumann_halos(mask_w_field);
+    if (boundary) boundary->fill_centered_q2_neumann_halos(mask_w_field);
 
     const auto mask_w = mask_w_field.get_device_data();
     const auto mask_u = state_.get_field<3>("ITYPEU").get_mutable_device_data();
@@ -516,11 +522,11 @@ Initializer::finalize_rll_terrain_masks() const {
         });
 
     halo_exchanger_.exchange_halos(state_.get_field<2>("topo"));
-    boundary.fill_centered_q2_neumann_halos(state_.get_field<2>("topo"));
+    if (boundary) boundary->fill_centered_q2_neumann_halos(state_.get_field<2>("topo"));
 
     for (const char* name : {"ITYPEU", "ITYPEV", "ITYPEW"}) {
         halo_exchanger_.exchange_halos(state_.get_field<3>(name));
-        boundary.fill_centered_q2_neumann_halos(state_.get_field<3>(name));
+        if (boundary) boundary->fill_centered_q2_neumann_halos(state_.get_field<3>(name));
     }
 }
 

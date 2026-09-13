@@ -57,6 +57,8 @@ parser.add_argument(
     help="MPI launcher",
 )
 
+parser.add_argument('--periodic', action='store_true', help='Exercise experimental doubly periodic RLL terrain and P3')
+parser.add_argument('--rest', action='store_true', help='Use a flat resting periodic atmosphere')
 args = parser.parse_args()
 
 
@@ -389,6 +391,23 @@ config = {
 }
 
 
+if args.periodic:
+    horizontal = config['grid']['horizontal']
+    horizontal['geometry'].update(longitude_bounds_deg=[-.1, .1],
+        latitude_bounds_deg=[-.05, .05], experimental_periodic_latitude=True)
+    horizontal['topology']['q2'] = 'periodic'
+    config['simulation'].update(idealized_test='rll_mountain', dt_s=.5,
+        total_time_s=2., output_interval_s=2.)
+    config['initial_conditions']['jung2019'].update(jet_scale=0., perturbation_scale=0.)
+    config['initial_conditions']['rll_mountain'] = dict(height_m=1000., half_width_m=1000.,
+        center_latitude_deg=0., center_longitude_deg=0., zonal_flow=True, u0_m_s=20.)
+    dq = np.deg2rad(.2/horizontal['nx'])
+    config['dynamics']['solver'].update(WRXMU=2./dq**2, initial_iterations=500)
+    config['optimization'] = {'cuda_graph_halo_exchange': [
+        'u', 'w', 'xi', 'eta', 'zeta', 'th', 'qv', 'qc', 'qi', 'qr', 'qm', 'nc', 'ni', 'nr', 'bm']}
+    if args.rest:
+        config['initial_conditions']['rll_mountain'].update(height_m=0., u0_m_s=0.)
+
 config_path = work / "config.json"
 
 config_path.write_text(
@@ -558,7 +577,7 @@ with h5py.File(output_path, "r") as file:
 
     if not np.isclose(
         final_time,
-        20.0,
+        config['simulation']['total_time_s'],
         rtol=0.0,
         atol=1.0e-12,
     ):
@@ -634,15 +653,28 @@ with h5py.File(output_path, "r") as file:
         f"max(abs(zeta)) = {zeta_abs_max:.17e}"
     )
 
-    if u_abs_max <= 0.0:
+    if not args.rest and u_abs_max <= 0.0:
         raise AssertionError(
             "Jung jet is absent from the integration"
         )
 
-    if zeta_abs_max <= 0.0:
+    if not args.rest and zeta_abs_max <= 0.0:
         raise AssertionError(
             "Jung vorticity field is absent from the integration"
         )
+
+    if args.periodic:
+        # Top is index -1 in physical-volume output. The periodic harmonic must
+        # retain the prescribed top cycle integral to roundoff, not lose the jet.
+        top_u = data['u'][-1, 0, :]
+        phi = np.deg2rad(-.05 + .5*.1/config['grid']['horizontal']['ny'])
+        prescribed = config['initial_conditions']['rll_mountain']['u0_m_s']
+        tolerance = 1.e-10 if data['u'].dtype.itemsize == 8 else 5.e-5
+        np.testing.assert_allclose(top_u.mean(), prescribed*np.cos(phi), rtol=tolerance, atol=tolerance)
+        if args.rest:
+            for name in ('u', 'v', 'w', 'xi', 'eta', 'zeta'):
+                np.testing.assert_allclose(data[name], 0., rtol=0., atol=1.e-12,
+                    err_msg=f'periodic rest state generated {name}')
 
     # -------------------------------------------------------------------------
     # P3 quantities must remain physically admissible.

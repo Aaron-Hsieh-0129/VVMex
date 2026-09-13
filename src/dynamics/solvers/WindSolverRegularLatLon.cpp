@@ -13,7 +13,7 @@ adapt_terrain(Core::State& state,
     const Core::Grid& grid,
     const Core::Parameters& params,
     Core::HaloExchanger& halo,
-    Core::Boundary::HorizontalBoundaryStencils& boundary) {
+    Core::Boundary::HorizontalBoundaryStencils* boundary) {
     const int nz = grid.get_local_total_points_z(), ny = grid.get_local_total_points_y();
     const int nx = grid.get_local_total_points_x(), h = grid.get_halo_cells();
     const auto u = state.get_field<3>("u").get_device_data();
@@ -35,8 +35,10 @@ adapt_terrain(Core::State& state,
             wt(k, j, i) = mw(k, j, i) == real(1.) ? w(k, j, i) : real(0.);
         });
     halo.exchange_multiple_halos(std::vector<Core::Field<3>*>{&uf, &vf, &wf});
-    boundary.fill_regular_lat_lon_free_slip_physical_wind_halos(uf, vf);
-    boundary.fill_centered_q2_neumann_halos(wf);
+    if (boundary) {
+        boundary->fill_regular_lat_lon_free_slip_physical_wind_halos(uf, vf);
+        boundary->fill_centered_q2_neumann_halos(wf);
+    }
     auto& xf = state.get_field<3>("xi_topo");
     auto& ef = state.get_field<3>("eta_topo");
     Kokkos::deep_copy(xf.get_mutable_device_data(), state.get_field<3>("xi").get_device_data());
@@ -56,8 +58,10 @@ adapt_terrain(Core::State& state,
             }
         });
     halo.exchange_multiple_halos(std::vector<Core::Field<3>*>{&xf, &ef});
-    boundary.fill_positive_face_q2_homogeneous_dirichlet_halos(xf);
-    boundary.fill_centered_q2_neumann_halos(ef);
+    if (boundary) {
+        boundary->fill_positive_face_q2_homogeneous_dirichlet_halos(xf);
+        boundary->fill_centered_q2_neumann_halos(ef);
+    }
 }
 
 #if defined(ENABLE_NCCL)
@@ -73,6 +77,8 @@ require_cuda(cudaError_t result, const char* operation) {
 void
 WindSolver::solve_regular_latlon() {
     const bool initial = !rll_initialized_;
+    const bool periodic = grid_.horizontal_specification().topology.q2 ==
+        Core::HorizontalEdgeTopology::Periodic;
     const bool terrain = Core::is_rll_mountain(config_);
     const int h = grid_.get_halo_cells();
     const int nz = grid_.get_local_total_points_z();
@@ -85,7 +91,8 @@ WindSolver::solve_regular_latlon() {
         rll_increment_ =
             std::make_unique<Core::Field<0>>("RLL harmonic increment", std::array<int, 0>{});
         rll_wall_contributions_ = std::make_unique<Core::Field<1>>(
-            "RLL wall circulation contributions", std::array<int, 1>{grid_.get_global_points_x()});
+            "RLL circulation contributions", std::array<int, 1>{grid_.get_global_points_x() +
+                (periodic ? 2 * grid_.get_global_points_y() : 0)});
         // The admitted Section 4.2 configuration has uniform physical levels.
         Kokkos::deep_copy(rll_spacing_->get_mutable_device_data(),
             params_.get_value_host(params_.dz));
@@ -100,6 +107,12 @@ WindSolver::solve_regular_latlon() {
         prepare_regular_latlon_diagnostic_execution();
     }
     RegularLatLonDiagnosticOptions options;
+    if (periodic) {
+        options.boundary_policy = HorizontalDiagnosticBoundaryPolicy::RegularLatLonPeriodic;
+        if (initial) {
+            preserve_regular_latlon_periodic_circulation(true);
+        }
+    }
     options.vertical_iterations = config_.get_value<int>("dynamics.solver.vertical_iterations");
     options.horizontal = horizontal_elliptic_options_;
     Kokkos::deep_copy(options.horizontal.channel_psi_north,
@@ -109,7 +122,7 @@ WindSolver::solve_regular_latlon() {
                 : params_.solver_iteration;
     options.inverse_dz = params_.get_value_host(params_.rdz);
     if (terrain) {
-        adapt_terrain(state_, grid_, params_, halo_exchanger_, *bounded_q2_stencils_);
+        adapt_terrain(state_, grid_, params_, halo_exchanger_, bounded_q2_stencils_.get());
     }
     RegularLatLonDiagnosticFields fields{state_.get_field<2>("psi"),
         state_.get_field<2>("psinm1"),
@@ -169,49 +182,54 @@ WindSolver::solve_regular_latlon() {
     diagnose();
 #endif
 
-    // Kelvin circulation at the southern wall is a separate harmonic degree
-    // of freedom. Preserve its initialized zonal integral of covariant u_1.
-    // This correction has zero discrete curl and divergence on RLL.
     const auto u = fields.u.get_mutable_device_data();
-    const auto h1 = grid_.geometry()
-                        .device_view(Core::Geometry::HorizontalLocation::U)
-                        .contravariant_to_physical.a11;
-    const auto row = rll_wall_contributions_->get_mutable_device_data();
-    Kokkos::deep_copy(row, real(0.));
-    const auto zeta = fields.zeta.get_device_data();
-    const auto top_snapshot = state_.get_field<2>("rll_zeta_top").get_mutable_device_data();
-    const bool owns_south = grid_.get_local_physical_start_y() == 0;
-    const int start_i = grid_.get_local_physical_start_x();
-    Kokkos::parallel_for("RLLSouthWallCirculation",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
-        KOKKOS_LAMBDA(int j, int i) {
-            if (owns_south && j == h) {
-                row(start_i + i - h) = h1(j, i) * u(top, j, i);
-            }
-            // Optional compact history uses the shared State/output machinery;
-            // the prognostic three-dimensional zeta field is unchanged.
-            top_snapshot(j, i) = zeta(top, j, i);
-        });
-    // Each longitude has exactly one owner. Reduce disjoint contributions
-    // (only additions to zero), then sum in the same global order on all ranks.
-    // An ordinary parallel mean has rank-dependent rounding that seeds a
-    // different harmonic wind correction every step. This synchronization
-    // remains outside capture, as did the original horizontal mean.
-    auto wall = rll_wall_contributions_->get_host_data();
-    MPI_Allreduce(MPI_IN_PLACE, wall.data(), grid_.get_global_points_x(),
-        VVM_MPI_REAL, MPI_SUM, grid_.get_comm());
-    Real current = real(0.);
-    for (int i = 0; i < grid_.get_global_points_x(); ++i) {
-        current += wall(i);
+    if (periodic) {
+        preserve_regular_latlon_periodic_circulation(false);
     }
-    current /= static_cast<Real>(grid_.get_global_points_x());
-    if (initial) {
-        rll_south_circulation_ = current;
+    else {
+        // Kelvin circulation at the southern wall is a separate harmonic degree
+        // of freedom. Preserve its initialized zonal integral of covariant u_1.
+        // This correction has zero discrete curl and divergence on RLL.
+        const auto h1 = grid_.geometry()
+                            .device_view(Core::Geometry::HorizontalLocation::U)
+                            .contravariant_to_physical.a11;
+        const auto row = rll_wall_contributions_->get_mutable_device_data();
+        Kokkos::deep_copy(row, real(0.));
+        const auto zeta = fields.zeta.get_device_data();
+        const auto top_snapshot = state_.get_field<2>("rll_zeta_top").get_mutable_device_data();
+        const bool owns_south = grid_.get_local_physical_start_y() == 0;
+        const int start_i = grid_.get_local_physical_start_x();
+        Kokkos::parallel_for("RLLSouthWallCirculation",
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
+            KOKKOS_LAMBDA(int j, int i) {
+                if (owns_south && j == h) {
+                    row(start_i + i - h) = h1(j, i) * u(top, j, i);
+                }
+                // Optional compact history uses the shared State/output machinery;
+                // the prognostic three-dimensional zeta field is unchanged.
+                top_snapshot(j, i) = zeta(top, j, i);
+            });
+        // Each longitude has exactly one owner. Reduce disjoint contributions
+        // (only additions to zero), then sum in the same global order on all ranks.
+        // An ordinary parallel mean has rank-dependent rounding that seeds a
+        // different harmonic wind correction every step. This synchronization
+        // remains outside capture, as did the original horizontal mean.
+        auto wall = rll_wall_contributions_->get_host_data();
+        MPI_Allreduce(MPI_IN_PLACE, wall.data(), grid_.get_global_points_x(),
+            VVM_MPI_REAL, MPI_SUM, grid_.get_comm());
+        Real current = real(0.);
+        for (int i = 0; i < grid_.get_global_points_x(); ++i) {
+            current += wall(i);
+        }
+        current /= static_cast<Real>(grid_.get_global_points_x());
+        if (initial) {
+            rll_south_circulation_ = current;
+        }
+        const Real correction = rll_south_circulation_ - current;
+        Kokkos::parallel_for("PreserveRLLWallCirculation",
+            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
+            KOKKOS_LAMBDA(int k, int j, int i) { u(k, j, i) += correction / h1(j, i); });
     }
-    const Real correction = rll_south_circulation_ - current;
-    Kokkos::parallel_for("PreserveRLLWallCirculation",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
-        KOKKOS_LAMBDA(int k, int j, int i) { u(k, j, i) += correction / h1(j, i); });
     const auto v = fields.v.get_mutable_device_data();
     Kokkos::parallel_for("RLLWindVerticalGhosts",
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
@@ -226,12 +244,74 @@ WindSolver::solve_regular_latlon() {
             }
         });
     halo_exchanger_.exchange_multiple_halos(std::vector<Core::Field<3>*>{&fields.u, &fields.v});
-    bounded_q2_stencils_->fill_regular_lat_lon_free_slip_physical_wind_halos(fields.u, fields.v);
+    if (bounded_q2_stencils_) {
+        bounded_q2_stencils_->fill_regular_lat_lon_free_slip_physical_wind_halos(fields.u, fields.v);
+    }
     // Refresh the ordinary terrain scratch diagnostics for output and the next
     // adaptation. Prognostic xi/eta are never overwritten with solid-cell curl.
     if (terrain) {
-        adapt_terrain(state_, grid_, params_, halo_exchanger_, *bounded_q2_stencils_);
+        adapt_terrain(state_, grid_, params_, halo_exchanger_, bounded_q2_stencils_.get());
     }
     rll_initialized_ = true;
+}
+
+void
+WindSolver::preserve_regular_latlon_periodic_circulation(bool initialize) {
+    // The repeating patch has two harmonic modes, unlike a channel. Fix their
+    // cycle integrals to the prescribed initial top wind. This is an explicit
+    // idealized circulation constraint, not Cartesian physical-mean subtraction
+    // or a prognostic large-scale momentum equation. No RHS projection is made.
+    // With wrapped metrics, u=C/h1(U) and v=D/h1(V) each have zero discrete curl
+    // and divergence, including at the seam. Reductions remain outside capture.
+    const int h = grid_.get_halo_cells(), nz = grid_.get_local_total_points_z();
+    const int ny = grid_.get_local_total_points_y(), nx = grid_.get_local_total_points_x();
+    const int gx = grid_.get_global_points_x(), gy = grid_.get_global_points_y();
+    const int si = grid_.get_local_physical_start_x(), sj = grid_.get_local_physical_start_y();
+    const int top = nz - h - 1;
+    const auto u = state_.get_field<3>("u").get_mutable_device_data();
+    const auto v = state_.get_field<3>("v").get_mutable_device_data();
+    const auto zeta = state_.get_field<3>("zeta").get_device_data();
+    const auto snapshot = state_.get_field<2>("rll_zeta_top").get_mutable_device_data();
+    const auto hu = grid_.geometry().device_view(Core::Geometry::HorizontalLocation::U)
+        .contravariant_to_physical.a11;
+    const auto hv = grid_.geometry().device_view(Core::Geometry::HorizontalLocation::V)
+        .contravariant_to_physical.a11;
+    const Real radius = grid_.horizontal_specification().geometry.regular_lat_lon.radius;
+    const auto contributions = rll_wall_contributions_->get_mutable_device_data();
+    Kokkos::deep_copy(contributions, real(0.));
+    Kokkos::parallel_for("RLLPeriodicCycleIntegrals",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny-h, nx-h}),
+        KOKKOS_LAMBDA(int j, int i) {
+            if (sj == 0 && j == h) {
+                contributions(si+i-h) = hu(j,i)*u(top,j,i);
+            }
+            if (si == 0 && i == h) {
+                contributions(gx+sj+j-h) = radius*v(top,j,i);
+                contributions(gx+gy+sj+j-h) = radius/hv(j,i);
+            }
+            snapshot(j,i) = zeta(top,j,i);
+        });
+    auto values = rll_wall_contributions_->get_host_data();
+    MPI_Allreduce(MPI_IN_PLACE, values.data(), gx+2*gy, VVM_MPI_REAL, MPI_SUM, grid_.get_comm());
+    Real zonal = real(0.), meridional = real(0.), weight = real(0.);
+    for (int i = 0; i < gx; ++i) zonal += values(i);
+    for (int j = 0; j < gy; ++j) {
+        meridional += values(gx+j);
+        weight += values(gx+gy+j);
+    }
+    zonal /= static_cast<Real>(gx);
+    if (initialize) {
+        rll_south_circulation_ = zonal;
+        rll_meridional_circulation_ = meridional;
+        return;
+    }
+    const Real du = rll_south_circulation_ - zonal;
+    const Real dv = (rll_meridional_circulation_ - meridional)/weight;
+    Kokkos::parallel_for("PreserveRLLPeriodicCirculation",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0,h,h}, {nz,ny-h,nx-h}),
+        KOKKOS_LAMBDA(int k, int j, int i) {
+            u(k,j,i) += du/hu(j,i);
+            v(k,j,i) += dv/hv(j,i);
+        });
 }
 } // namespace VVM::Dynamics

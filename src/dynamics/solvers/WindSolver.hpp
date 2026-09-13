@@ -29,7 +29,8 @@ class WindSolver {
 public:
     enum class HorizontalDiagnosticBoundaryPolicy {
         CvvmMode2Reference,
-        RegularLatLonFreeSlipChannel
+        RegularLatLonFreeSlipChannel,
+        RegularLatLonPeriodic
     };
 
     WindSolver(const Core::Grid& grid,
@@ -174,6 +175,8 @@ private:
     std::unique_ptr<Core::Field<0>> rll_increment_;
     std::unique_ptr<Core::Field<1>> rll_wall_contributions_;
     VVM::Real rll_south_circulation_ = VVM::real(0.0);
+    VVM::Real rll_meridional_circulation_ = VVM::real(0.0);
+    void preserve_regular_latlon_periodic_circulation(bool initialize);
     bool rll_initialized_ = false;
 
     VVM::Real h_inv_C0_;

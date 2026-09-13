@@ -52,7 +52,9 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
             "Regular latitude-longitude wind diagnostic requires periodic q1.");
     }
 
-    if (horizontal.topology.q2 != Core::HorizontalEdgeTopology::Bounded) {
+    const bool periodic_boundary =
+        options.boundary_policy == HorizontalDiagnosticBoundaryPolicy::RegularLatLonPeriodic;
+    if ((horizontal.topology.q2 == Core::HorizontalEdgeTopology::Periodic) != periodic_boundary) {
         throw std::invalid_argument(
             "Regular latitude-longitude wind diagnostic requires bounded q2.");
     }
@@ -63,7 +65,7 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
     const bool free_slip_boundary =
         options.boundary_policy == HorizontalDiagnosticBoundaryPolicy::RegularLatLonFreeSlipChannel;
 
-    if (!reference_boundary && !free_slip_boundary) {
+    if (!reference_boundary && !free_slip_boundary && !periodic_boundary) {
         throw std::invalid_argument("Unknown regular latitude-longitude boundary policy.");
     }
 
@@ -121,7 +123,10 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
             "Regular latitude-longitude diagnostic has insufficient spacing entries.");
     }
 
-    Core::Boundary::HorizontalBoundaryStencils boundary(grid);
+    std::unique_ptr<Core::Boundary::HorizontalBoundaryStencils> boundary;
+    if (!periodic_boundary) {
+        boundary = std::make_unique<Core::Boundary::HorizontalBoundaryStencils>(grid);
+    }
 
     vertical_solver.solve(fields.xi,
         fields.eta,
@@ -132,8 +137,8 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
     if (free_slip_boundary) {
         halo.exchange_multiple_halos(std::vector<Core::Field<3>*>{&fields.w, &fields.w_previous});
 
-        boundary.fill_centered_q2_neumann_halos(fields.w);
-        boundary.fill_centered_q2_neumann_halos(fields.w_previous);
+        boundary->fill_centered_q2_neumann_halos(fields.w);
+        boundary->fill_centered_q2_neumann_halos(fields.w_previous);
     }
 
     const auto operation = make_vertical_wind_diagnostic_device_view(grid.geometry());
@@ -160,10 +165,10 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
     halo.exchange_halos(fields.zeta);
 
     if (free_slip_boundary) {
-        boundary.fill_positive_face_q2_homogeneous_dirichlet_halos(fields.zeta);
+        boundary->fill_positive_face_q2_homogeneous_dirichlet_halos(fields.zeta);
     }
-    else {
-        boundary.fill_constant_q2_halos(fields.zeta);
+    else if (reference_boundary) {
+        boundary->fill_constant_q2_halos(fields.zeta);
     }
 
     const HorizontalDiagnosticFields horizontal_fields{fields.psi,
@@ -196,11 +201,11 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
     halo.exchange_multiple_halos(std::vector<Core::Field<3>*>{&fields.u, &fields.v});
 
     if (free_slip_boundary) {
-        boundary.fill_regular_lat_lon_free_slip_physical_wind_halos(fields.u, fields.v);
+        boundary->fill_regular_lat_lon_free_slip_physical_wind_halos(fields.u, fields.v);
     }
-    else {
-        boundary.fill_constant_q2_halos(fields.u);
-        boundary.fill_constant_q2_halos(fields.v);
+    else if (reference_boundary) {
+        boundary->fill_constant_q2_halos(fields.u);
+        boundary->fill_constant_q2_halos(fields.v);
     }
 }
 
