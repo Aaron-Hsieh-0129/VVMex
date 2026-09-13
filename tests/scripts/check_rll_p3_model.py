@@ -392,6 +392,8 @@ config = {
 
 
 if args.periodic:
+    config['physics']['p3']['output_stage_diagnostics'] = True
+    config['output']['fields_to_output'].extend(['qc_before_p3', 'qc_after_p3'])
     horizontal = config['grid']['horizontal']
     horizontal['geometry'].update(longitude_bounds_deg=[-.1, .1],
         latitude_bounds_deg=[-.05, .05], experimental_periodic_latitude=True)
@@ -537,6 +539,9 @@ required_2d_fields = [
     "precip_ice_surf_flux",
 ]
 
+if args.periodic:
+    required_3d_fields.extend(['qc_before_p3', 'qc_after_p3'])
+
 
 nonnegative_fields = [
     "qv",
@@ -664,6 +669,10 @@ with h5py.File(output_path, "r") as file:
         )
 
     if args.periodic:
+        # The dry fixture must expose both real stage snapshots, not generate
+        # condensate merely because diagnostic output is enabled.
+        for name in ('qc_before_p3', 'qc_after_p3'):
+            np.testing.assert_allclose(data[name], 0., rtol=0., atol=1.e-12)
         # Top is index -1 in physical-volume output. The periodic harmonic must
         # retain the prescribed top cycle integral to roundoff, not lose the jet.
         top_u = data['u'][-1, 0, :]

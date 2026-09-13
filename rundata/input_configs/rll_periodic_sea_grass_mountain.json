@@ -86,6 +86,7 @@
   },
   "physics": {
     "p3": {"enable_p3": true, "make_lookup_table": false, "do_predict_nc": true,
+      "output_stage_diagnostics": true,
       "do_prescribed_ccn": false, "max_total_ni": 2000000.0},
     "turbulence": {"enable_turbulence": true},
     "surface_process": {"enable": true, "frequency_s": 2.0,
@@ -105,7 +106,8 @@
       "async_write": true, "buffer_mode": "pack", "overwrite": true},
     "fields_to_output": ["th", "qv", "qc", "qr", "qi", "qp", "u", "v", "w", "xi", "eta", "zeta",
       "rhobar", "pbar", "thbar", "topo", "Tg", "sfc_flux_th", "sfc_flux_qv",
-      "sw_heating", "lw_heating", "RKM", "RKH", "sea_land_ice_mask"],
+      "sw_heating", "lw_heating", "RKM", "RKH", "sea_land_ice_mask",
+      "qc_before_p3", "qc_after_p3"],
     "output_grid": {"x_start": 0, "x_end": -1, "y_start": 0, "y_end": -1, "z_start": 0, "z_end": -1}
   },
   "optimization": {"cuda_graph_halo_exchange": ["u", "w", "xi", "eta", "zeta", "th", "qv", "qc", "qi", "qr", "qm", "nc", "ni", "nr", "bm"]},

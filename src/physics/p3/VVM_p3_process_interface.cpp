@@ -98,8 +98,10 @@ VVM_P3_Interface::VVM_P3_Interface(const VVM::Utils::ConfigurationManager &confi
 
 
     std::string source_file = config.get_value<std::string>("initial_conditions.source_file", std::string{});
-    declare_p3_diag_ = source_file == "./rundata/initial_conditions/profiles/default_cases/p3_bubble_shear.txt" ? true : false;
+    declare_p3_diag_ = source_file == "./rundata/initial_conditions/profiles/default_cases/p3_bubble_shear.txt" ||
+        config.get_value<bool>("physics.p3.output_stage_diagnostics", false);
     if (declare_p3_diag_) {
+        if (!state.has_field("qc_before_p3")) state.add_field<3>("qc_before_p3", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "cloud liquid water after transport, before P3"});
         if (!state.has_field("th_m_diag")) state.add_field<3>("th_m_diag", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "K", "previous-step air potential temperature for P3 diagnostics"});
         if (!state.has_field("qv_m_diag")) state.add_field<3>("qv_m_diag", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "previous-step water vapor mixing ratio for P3 diagnostics"});
         if (!state.has_field("qv_after_p3")) state.add_field<3>("qv_after_p3", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "water vapor mixing ratio after P3"});
@@ -1028,6 +1030,10 @@ void VVM_P3_Interface::run(VVM::Core::State &state, const VVM::Real dt) {
     const int nx = grid_.get_local_total_points_x();
     const int h = grid_.get_halo_cells();
 
+    if (declare_p3_diag_) {
+        Kokkos::deep_copy(state.get_field<3>("qc_before_p3").get_mutable_device_data(),
+            qc_ref_.get(state, "qc").get_device_data());
+    }
     preprocessing_and_packing(state);
     // Kokkos::fence();
 

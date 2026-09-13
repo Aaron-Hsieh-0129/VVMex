@@ -34,7 +34,16 @@ with adios2.FileReader(str(path)) as reader:
         time = float(np.asarray(reader.read('model_time_s',step_selection=[step,1])).squeeze())
         assert time == step*interval
         for name in ('qv','qc','qr','qi','qp'):
-            assert data[name].min() >= -1e-12, (step,name,'negative mixing ratio',data[name].min())
+            minimum = float(data[name].min())
+            if minimum < -1e-12:
+                index = np.unravel_index(np.argmin(data[name]), data[name].shape)
+                stages = {stage: {'at_failure': float(data[stage][index]),
+                                  'minimum': float(data[stage].min())}
+                          for stage in (name+'_before_p3', name+'_after_p3') if stage in data}
+                raise AssertionError({'step': step, 'time_s': time, 'field': name,
+                    'minimum': minimum, 'index': tuple(int(i) for i in index),
+                    'stage_snapshots': stages,
+                    'note': 'No clipping or tolerance relaxation applied.'})
         np.testing.assert_allclose(data['qp'],data['qc']+data['qr']+data['qi'],rtol=0,atol=1e-12)
         assert data['pbar'].min() > 0 and np.ptp(data['pbar']) > 1000., 'not a pressure profile'
         assert data['rhobar'].min() > 0 and np.ptp(data['rhobar']) > .01, 'not a density profile'
