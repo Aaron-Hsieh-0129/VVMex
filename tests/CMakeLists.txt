@@ -325,7 +325,10 @@ set_tests_properties(test_check_output_digest PROPERTIES LABELS unit TIMEOUT 60)
 add_executable(test_deterministic_perturbation
                ${TEST_DIR}/unit/test_deterministic_perturbation.cpp)
 target_include_directories(test_deterministic_perturbation PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(test_deterministic_perturbation PRIVATE Kokkos::kokkos)
+if(ENABLE_NCCL)
+    target_include_directories(test_deterministic_perturbation PRIVATE ${NCCL_INCLUDE_DIR})
+endif()
+target_link_libraries(test_deterministic_perturbation PRIVATE Kokkos::kokkos MPI::MPI_CXX)
 add_test(NAME test_deterministic_perturbation
          COMMAND ${GPU_WRAP} $<TARGET_FILE:test_deterministic_perturbation>)
 set_tests_properties(test_deterministic_perturbation PROPERTIES LABELS unit TIMEOUT 60)
