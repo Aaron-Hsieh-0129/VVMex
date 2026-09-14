@@ -119,7 +119,7 @@ wget https://github.com/HDFGroup/hdf5/releases/download/hdf5_1.14.5/hdf5-1.14.5.
 tar -zxvf hdf5-1.14.5.tar.gz
 cd hdf5-1.14.5
 ./configure --prefix=$INSTALL_DIR \
-            --enable-parallel --enable-shared --enable-cxx --enable-unsupported \
+            --enable-parallel --enable-shared --enable-cxx --enable-unsupported --disable-nonstandard-feature-float16 \
             CC="mpicc" CXX="mpic++" FC="mpifort" LIBS="-lm"
 make -j$(nproc)
 make install
