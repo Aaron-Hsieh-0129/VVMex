@@ -97,8 +97,7 @@ public:
             data_ = ViewType(name_, dims[0], dims[1], dims[2], dims[3]);
         }
 
-        Kokkos::deep_copy(data_, real(0.0));
-        Kokkos::fence();
+        Kokkos::deep_copy(data_, real(0.0)); // Blocking overload: already complete.
     }
 
     // Destructor (Kokkos::View manages its own memory, so usually empty here)
@@ -129,8 +128,7 @@ public:
     HostMirrorType
     get_host_data() const {
         HostMirrorType host_data = Kokkos::create_mirror_view(data_);
-        Kokkos::deep_copy(host_data, data_);
-        Kokkos::fence();
+        Kokkos::deep_copy(host_data, data_); // Blocking overload: host data is ready.
         return host_data;
     }
 
