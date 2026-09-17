@@ -303,98 +303,12 @@ DynamicalCore::compute_zeta_vertical_structure(Core::State& state) const {
 void
 DynamicalCore::compute_wind_fields() {
     if (grid_.geometry().kind() != Core::Geometry::GeometryKind::RegularLatLon) {
-        prepare_cartesian_wind_recovery_inputs();
+        wind_solver_->prepare_cartesian_wind_recovery_inputs(bc_manager_);
     }
 
     wind_solver_->solve();
 
     mean_wind_state_->invalidate();
-}
-
-void
-DynamicalCore::prepare_cartesian_wind_recovery_inputs() {
-    // Assign wind for topography
-    const auto& ITYPEU = ITYPEU_ref_.get(state_, "ITYPEU").get_device_data();
-    const auto& ITYPEV = ITYPEV_ref_.get(state_, "ITYPEV").get_device_data();
-    const auto& ITYPEW = ITYPEW_ref_.get(state_, "ITYPEW").get_device_data();
-    const auto& max_topo_idx = params_.max_topo_idx;
-
-    auto& u_topo = u_topo_ref_.get(state_, "u_topo").get_mutable_device_data();
-    const auto& u = u_ref_.get(state_, "u").get_device_data();
-    auto& v_topo = v_topo_ref_.get(state_, "v_topo").get_mutable_device_data();
-    const auto& v = v_ref_.get(state_, "v").get_device_data();
-    auto& w_topo = w_topo_ref_.get(state_, "w_topo").get_mutable_device_data();
-    const auto& w = w_ref_.get(state_, "w").get_device_data();
-    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), u_topo, u);
-    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), v_topo, v);
-    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), w_topo, w);
-
-    const int nz = grid_.get_local_total_points_z();
-    const int ny = grid_.get_local_total_points_y();
-    const int nx = grid_.get_local_total_points_x();
-    const int h = grid_.get_halo_cells();
-
-    Kokkos::parallel_for("wind_topo",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {max_topo_idx + 2, ny, nx}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            if (ITYPEU(k, j, i) != 1) {
-                u_topo(k, j, i) = 0;
-            }
-            else {
-                u_topo(k, j, i) = u(k, j, i);
-            }
-
-            if (ITYPEV(k, j, i) != 1) {
-                v_topo(k, j, i) = 0;
-            }
-            else {
-                v_topo(k, j, i) = v(k, j, i);
-            }
-
-            if (ITYPEW(k, j, i) != 1) {
-                w_topo(k, j, i) = 0;
-            }
-            else {
-                w_topo(k, j, i) = w(k, j, i);
-            }
-        });
-
-    auto& xi_topo = xi_topo_ref_.get(state_, "xi_topo").get_mutable_device_data();
-    const auto& xi = xi_ref_.get(state_, "xi").get_device_data();
-    auto& eta_topo = eta_topo_ref_.get(state_, "eta_topo").get_mutable_device_data();
-    const auto& eta = eta_ref_.get(state_, "eta").get_device_data();
-    const auto& rdx = params_.rdx;
-    const auto& rdy = params_.rdy;
-    const auto& rdz = params_.rdz;
-    const auto& flex_height_coef_up = params_.flex_height_coef_up.get_device_data();
-
-    // Assign vorticity for topography
-    Kokkos::parallel_for("vorticity_topo",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, h, h}, {nz - h, ny - h, nx - h}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            if (ITYPEV(k, j, i) != 1) {
-                xi_topo(k, j, i) =
-                    (w_topo(k, j + 1, i) - w_topo(k, j, i)) * rdy() -
-                    (v_topo(k + 1, j, i) - v_topo(k, j, i)) * rdz() * flex_height_coef_up(k);
-            }
-            else {
-                xi_topo(k, j, i) = xi(k, j, i);
-            }
-
-            if (ITYPEU(k, j, i) != 1) {
-                eta_topo(k, j, i) =
-                    (w_topo(k, j, i + 1) - w_topo(k, j, i)) * rdx() -
-                    (u_topo(k + 1, j, i) - u_topo(k, j, i)) * rdz() * flex_height_coef_up(k);
-            }
-            else {
-                eta_topo(k, j, i) = eta(k, j, i);
-            }
-        });
-
-    halo_exchanger_.exchange_halos(xi_topo_ref_.get(state_, "xi_topo"));
-    halo_exchanger_.exchange_halos(eta_topo_ref_.get(state_, "eta_topo"));
-    bc_manager_.apply_horizontal_bcs(xi_topo_ref_.get(state_, "xi_topo"));
-    bc_manager_.apply_horizontal_bcs(eta_topo_ref_.get(state_, "eta_topo"));
 }
 
 void

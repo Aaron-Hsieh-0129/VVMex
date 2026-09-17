@@ -42,8 +42,6 @@ public:
     void compute_wind_fields();
     // void step(Core::State& state, VVM::Real dt);
 
-    void prepare_cartesian_wind_recovery_inputs();
-
     void calculate_thermo_tendencies();
     void update_thermodynamics(VVM::Real dt);
     void calculate_vorticity_tendencies();
@@ -119,11 +117,6 @@ private:
     Core::FieldRef<3> xi_ref_;
     Core::FieldRef<3> eta_ref_;
     Core::FieldRef<3> zeta_ref_;
-    Core::FieldRef<3> u_topo_ref_;
-    Core::FieldRef<3> v_topo_ref_;
-    Core::FieldRef<3> w_topo_ref_;
-    Core::FieldRef<3> xi_topo_ref_;
-    Core::FieldRef<3> eta_topo_ref_;
     Core::FieldRef<3> R_xi_ref_;
     Core::FieldRef<3> R_eta_ref_;
     Core::FieldRef<3> R_zeta_ref_;

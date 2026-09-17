@@ -14,6 +14,7 @@
 #include "core/boundary/HorizontalBoundaryStencils.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "core/vvm_types.hpp"
+#include "core/BoundaryConditionManager.hpp"
 #include "dynamics/solvers/HorizontalEllipticSolver.hpp"
 #include "dynamics/spatial_schemes/SpatialScheme.hpp"
 #include "utils/ConfigurationManager.hpp"
@@ -50,6 +51,10 @@ public:
     void solve_regular_latlon();
 
     void relax_2d_batched();
+
+    // Prepares the Cartesian terrain-adjusted wind/vorticity inputs used by
+    // solve_w() and integrate_uv_from_top().
+    void prepare_cartesian_wind_recovery_inputs(const Core::BoundaryConditionManager& bc_manager);
 
     // Integrate existing State u/v from their prescribed top physical level.
     // Uses xi_topo and legacy-sign eta_topo. Does not solve potentials,
@@ -225,6 +230,16 @@ private:
     Core::FieldRef<3> xi_topo_ref_;
     Core::FieldRef<3> eta_topo_ref_;
     Core::FieldRef<3> W3DNM1_ref_;
+    Core::FieldRef<3> xi_ref_;
+    Core::FieldRef<3> eta_ref_;
+
+    Core::FieldRef<3> u_topo_ref_;
+    Core::FieldRef<3> v_topo_ref_;
+    Core::FieldRef<3> w_topo_ref_;
+
+    Core::FieldRef<3> ITYPEU_ref_;
+    Core::FieldRef<3> ITYPEV_ref_;
+    Core::FieldRef<3> ITYPEW_ref_;
 
     mutable std::vector<Core::Field<3>*> uv_fields_;
 
