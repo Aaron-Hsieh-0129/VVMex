@@ -544,6 +544,94 @@ _vvm_set_test_resources(
     1
 )
 
+# Canonical coordinate-component fields in State.
+#
+# The same binary is run once with Cartesian geometry and once with regular
+# latitude-longitude geometry.  This pins the migration contract:
+#
+#   var_con -> contravariant dynamical-core representation
+#   var     -> physical representation
+#
+# VVM retains its historical vorticity orientation:
+#
+#   xi_con   =  omega^1
+#   eta_con  = -omega^2
+#   zeta_con =  omega^3
+add_executable(
+    test_state_coordinate_fields
+    ${TEST_DIR}/unit/test_state_coordinate_fields.cpp
+)
+
+target_include_directories(
+    test_state_coordinate_fields
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(
+    test_state_coordinate_fields
+    PRIVATE
+        vvm_core
+        vvm_io
+        vvm_utils
+        Kokkos::kokkos
+        MPI::MPI_CXX
+)
+
+add_test(
+    NAME test_state_coordinate_fields_cartesian
+    COMMAND
+        ${MPIEXEC_EXECUTABLE}
+        ${MPIEXEC_NUMPROC_FLAG}
+        1
+        ${VVM_MPI_BIND_ARGS}
+        ${MPIEXEC_PREFLAGS}
+        ${GPU_WRAP}
+        $<TARGET_FILE:test_state_coordinate_fields>
+        ${TEST_DIR}/configs/grid_structured_cartesian.json
+        ${MPIEXEC_POSTFLAGS}
+)
+
+set_tests_properties(
+    test_state_coordinate_fields_cartesian
+    PROPERTIES
+        WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+        LABELS "unit"
+        TIMEOUT 120
+)
+
+_vvm_set_test_resources(
+    test_state_coordinate_fields_cartesian
+    1
+)
+
+add_test(
+    NAME test_state_coordinate_fields_rll
+    COMMAND
+        ${MPIEXEC_EXECUTABLE}
+        ${MPIEXEC_NUMPROC_FLAG}
+        1
+        ${VVM_MPI_BIND_ARGS}
+        ${MPIEXEC_PREFLAGS}
+        ${GPU_WRAP}
+        $<TARGET_FILE:test_state_coordinate_fields>
+        ${TEST_DIR}/configs/horizontal_elliptic_regular_latlon.json
+        ${MPIEXEC_POSTFLAGS}
+)
+
+set_tests_properties(
+    test_state_coordinate_fields_rll
+    PROPERTIES
+        WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
+        LABELS "unit"
+        TIMEOUT 120
+)
+
+_vvm_set_test_resources(
+    test_state_coordinate_fields_rll
+    1
+)
+
 # Normalization of legacy and structured horizontal/vertical grid configuration.
 add_executable(test_grid_specification
                ${TEST_DIR}/unit/test_grid_specification.cpp)

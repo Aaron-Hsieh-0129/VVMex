@@ -47,14 +47,26 @@ class State {
     friend class VVM::Dynamics::AdamsBashforth2;
 
 public:
-    // Constructor
 #if defined(ENABLE_NCCL)
+    // Preferred constructor. State depends on configuration and grid geometry,
+    // but not on Parameters.
+    State(const Utils::ConfigurationManager& config,
+        const Grid& grid,
+        ncclComm_t nccl_comm,
+        cudaStream_t nccl_stream);
+
+    // Compatibility constructor retained during migration. Parameters is not
+    // used by State; this overload delegates to the constructor above.
     State(const Utils::ConfigurationManager& config,
         const Parameters& params,
         const Grid& grid,
         ncclComm_t nccl_comm,
         cudaStream_t nccl_stream);
 #else
+    // Preferred constructor.
+    State(const Utils::ConfigurationManager& config, const Grid& grid);
+
+    // Compatibility constructor retained during migration.
     State(const Utils::ConfigurationManager& config, const Parameters& params, const Grid& grid);
 #endif
 
@@ -689,7 +701,6 @@ public:
 private:
     const Utils::ConfigurationManager& config_ref_;
     const Grid& grid_;
-    const Parameters& parameters_;
     std::unordered_map<std::string, AnyField> fields_;
     std::vector<std::string> tracer_names_;
     std::vector<std::string> tracer_source_targets_;

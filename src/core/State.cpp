@@ -6,16 +6,27 @@ namespace VVM {
 namespace Core {
 
 #if defined(ENABLE_NCCL)
+
 State::State(const Utils::ConfigurationManager& config,
-    const Parameters& params,
+    const Parameters&,
     const Grid& grid,
     ncclComm_t nccl_comm,
     cudaStream_t nccl_stream)
-    : config_ref_(config), parameters_(params), grid_(grid), nccl_comm_(nccl_comm),
-      nccl_stream_(nccl_stream) {
+    : State(config, grid, nccl_comm, nccl_stream) {}
+
+State::State(const Utils::ConfigurationManager& config,
+    const Grid& grid,
+    ncclComm_t nccl_comm,
+    cudaStream_t nccl_stream)
+    : config_ref_(config), grid_(grid), nccl_comm_(nccl_comm), nccl_stream_(nccl_stream) {
+
 #else
-State::State(const Utils::ConfigurationManager& config, const Parameters& params, const Grid& grid)
-    : config_ref_(config), parameters_(params), grid_(grid) {
+
+State::State(const Utils::ConfigurationManager& config, const Parameters&, const Grid& grid)
+    : State(config, grid) {}
+
+State::State(const Utils::ConfigurationManager& config, const Grid& grid)
+    : config_ref_(config), grid_(grid) {
 #endif
     int rank;
     MPI_Comm_rank(grid.get_comm(), &rank);
@@ -194,6 +205,54 @@ State::State(const Utils::ConfigurationManager& config, const Parameters& params
     add_field<3>("w",
         {nz_total, ny_total, nx_total},
         FieldMetadata{GridStaggering::StaggeredZ, "m s-1", "vertical wind"});
+
+    // contravariant components used by the generalized-coordinate dynamical core.
+    // VVM vorticity sign convention:
+    //   xi_con   =  omega^1
+    //   eta_con  = -omega^2
+    //   zeta_con =  omega^3
+    const std::string horizontal_velocity_con_units = rll ? "s-1" : "m s-1";
+    const std::string horizontal_vorticity_con_units = rll ? "m-1 s-1" : "s-1";
+    add_field<3>("u_con",
+        {nz_total, ny_total, nx_total},
+        FieldMetadata{GridStaggering::StaggeredX,
+            horizontal_velocity_con_units,
+            "contravariant q1 wind component at U",
+            "",
+            "Canonical dynamical-core component u^1"});
+
+    add_field<3>("v_con",
+        {nz_total, ny_total, nx_total},
+        FieldMetadata{GridStaggering::StaggeredY,
+            horizontal_velocity_con_units,
+            "contravariant q2 wind component at V",
+            "",
+            "Canonical dynamical-core component u^2"});
+
+    add_field<3>("xi_con",
+        {nz_total, ny_total, nx_total},
+        FieldMetadata{GridStaggering::StaggeredYZ,
+            horizontal_vorticity_con_units,
+            "contravariant q1 relative vorticity at V",
+            "",
+            "VVM convention: xi_con = omega^1"});
+
+    add_field<3>("eta_con",
+        {nz_total, ny_total, nx_total},
+        FieldMetadata{GridStaggering::StaggeredXZ,
+            horizontal_vorticity_con_units,
+            "negative contravariant q2 relative vorticity at U",
+            "",
+            "VVM convention: eta_con = -omega^2"});
+
+    add_field<3>("zeta_con",
+        {nz_total, ny_total, nx_total},
+        FieldMetadata{GridStaggering::StaggeredXY,
+            "s-1",
+            "contravariant vertical relative vorticity at Z",
+            "",
+            "VVM convention: zeta_con = omega^3"});
+
     add_field<3>("u_mean",
         {nz_total, ny_total, nx_total},
         FieldMetadata{GridStaggering::StaggeredX,
