@@ -139,6 +139,7 @@ public:
         const RegularLatLonDiagnosticOptions& options);
 
     void preserve_regular_latlon_periodic_circulation(bool initialize);
+    void preserve_regular_latlon_channel_circulation(bool initialize);
 
 private:
     void initialize_regular_latlon_solver(bool periodic, int nz);
