@@ -160,81 +160,15 @@ WindSolver::diagnose_horizontal_wind(const Core::Grid& grid,
         }
     }
 
-    const auto zeta = fields.zeta.get_device_data();
-    const auto w = fields.w.get_device_data();
-    const auto rho = fields.rhobar.get_device_data();
-    const auto rho_up = fields.rhobar_up.get_device_data();
-    const auto flex = fields.flex_mid.get_device_data();
-    const auto rhs_psi = workspace.rhs_psi.get_mutable_device_data();
-    const auto rhs_chi = workspace.rhs_chi.get_mutable_device_data();
-
-    // HorizontalEllipticSolver supplies J internally, exactly once.
-    Kokkos::parallel_for("BuildHorizontalDiagnosticRHS",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
-        KOKKOS_LAMBDA(const int j, const int i) {
-            rhs_psi(j, i) = zeta(top, j, i);
-            rhs_chi(j, i) = flex(top) * rho_up(top - 1) * w(top - 1, j, i) * inverse_dz / rho(top);
-        });
-
-    solver.make_extrapolated_guess(fields.psi, fields.psi_previous, workspace.solution_psi);
-    solver.make_extrapolated_guess(fields.chi, fields.chi_previous, workspace.solution_chi);
-
-    if (free_slip_boundary) {
-        solver.solve_regular_lat_lon_channel_at_z_and_t(workspace.rhs_psi,
-            workspace.solution_psi,
-            workspace.rhs_chi,
-            workspace.solution_chi,
-            options);
-    }
-    else {
-        solver.solve_at_z_and_t(workspace.rhs_psi,
-            workspace.solution_psi,
-            workspace.rhs_chi,
-            workspace.solution_chi,
-            options);
-    }
-
-    const auto psi = fields.psi.get_mutable_device_data();
-    const auto chi = fields.chi.get_mutable_device_data();
-    const auto psi_previous = fields.psi_previous.get_mutable_device_data();
-    const auto chi_previous = fields.chi_previous.get_mutable_device_data();
-    const auto solved_psi = workspace.solution_psi.get_device_data();
-    const auto solved_chi = workspace.solution_chi.get_device_data();
-
-    Kokkos::parallel_for("CommitHorizontalPotentialHistory",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
-        KOKKOS_LAMBDA(const int j, const int i) {
-            psi_previous(j, i) = psi(j, i);
-            chi_previous(j, i) = chi(j, i);
-            psi(j, i) = solved_psi(j, i);
-            chi(j, i) = solved_chi(j, i);
-        });
-
-    halo.exchange_multiple_halos(std::vector<Core::Field<2>*>{&fields.psi,
-        &fields.chi,
-        &fields.psi_previous,
-        &fields.chi_previous});
-
-    if (horizontal.ny > 1 && horizontal.topology.q2 == Core::HorizontalEdgeTopology::Bounded) {
-        Core::Boundary::HorizontalBoundaryStencils boundary(grid);
-
-        if (free_slip_boundary) {
-            boundary.fill_positive_face_q2_dirichlet_halos(fields.psi,
-                options.channel_psi_south,
-                options.channel_psi_north);
-            boundary.fill_positive_face_q2_dirichlet_halos(fields.psi_previous,
-                options.channel_psi_south,
-                options.channel_psi_north);
-            boundary.fill_centered_q2_neumann_halos(fields.chi);
-            boundary.fill_centered_q2_neumann_halos(fields.chi_previous);
-        }
-        else {
-            boundary.fill_constant_q2_halos(fields.psi);
-            boundary.fill_constant_q2_halos(fields.chi);
-            boundary.fill_constant_q2_halos(fields.psi_previous);
-            boundary.fill_constant_q2_halos(fields.chi_previous);
-        }
-    }
+    diagnose_horizontal_potentials(grid,
+        halo,
+        solver,
+        fields,
+        workspace,
+        options,
+        inverse_dz,
+        top,
+        boundary_policy);
 
     adapter.reconstruct_top(fields.psi, fields.chi, fields.u, fields.v, top);
 

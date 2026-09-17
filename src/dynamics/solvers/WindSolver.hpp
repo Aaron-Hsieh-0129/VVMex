@@ -101,6 +101,16 @@ public:
         HorizontalDiagnosticBoundaryPolicy boundary_policy =
             HorizontalDiagnosticBoundaryPolicy::CvvmMode2Reference);
 
+    static void diagnose_horizontal_potentials(const Core::Grid& grid,
+        Core::HaloExchanger& halo,
+        HorizontalEllipticSolver& solver,
+        const HorizontalDiagnosticFields& fields,
+        const HorizontalDiagnosticWorkspace& workspace,
+        const HorizontalEllipticSolver::Options& options,
+        VVM::Real inverse_dz,
+        int top,
+        HorizontalDiagnosticBoundaryPolicy boundary_policy);
+
     struct RegularLatLonDiagnosticFields {
         Core::Field<2>& psi;
         Core::Field<2>& psi_previous;
