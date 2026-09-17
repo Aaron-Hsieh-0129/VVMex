@@ -149,6 +149,8 @@ public:
         HorizontalDiagnosticWorkspace& workspace,
         const RegularLatLonDiagnosticOptions& options);
 
+    void diagnose_cartesian_horizontal_potentials();
+
 private:
     void initialize_regular_latlon_solver(bool periodic, int nz);
 

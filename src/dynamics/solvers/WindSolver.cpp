@@ -349,27 +349,31 @@ WindSolver::solve_w() {
 }
 
 void
-WindSolver::solve_uv() {
+WindSolver::diagnose_cartesian_horizontal_potentials() {
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
     const int h = grid_.get_halo_cells();
+
     const auto& flex_height_coef_mid = params_.flex_height_coef_mid.get_device_data();
+
     const auto& rhobar = rhobar_ref_.get(state_, "rhobar").get_device_data();
     const auto& rhobar_up = rhobar_up_ref_.get(state_, "rhobar_up").get_device_data();
     const auto& rdz = params_.rdz;
 
     auto& psi_field = psi_ref_.get(state_, "psi");
     auto& psinm1_field = psinm1_ref_.get(state_, "psinm1");
+    auto& chi_field = chi_ref_.get(state_, "chi");
+    auto& chinm1_field = chinm1_ref_.get(state_, "chinm1");
+
     auto& psi = psi_field.get_mutable_device_data();
     const auto& psinm1 = psinm1_field.get_device_data();
-    const auto& zeta = zeta_ref_.get(state_, "zeta").get_device_data();
 
-    auto& w = w_ref_.get(state_, "w").get_mutable_device_data();
-    auto& chi_field = chi_ref_.get(state_, "chi");
     auto& chi = chi_field.get_mutable_device_data();
-    auto& chinm1_field = chinm1_ref_.get(state_, "chinm1");
     const auto& chinm1 = chinm1_field.get_device_data();
+
+    const auto& zeta = zeta_ref_.get(state_, "zeta").get_device_data();
+    auto& w = w_ref_.get(state_, "w").get_mutable_device_data();
 
     {
         auto rhs_psi = rhs_psi_field_.get_mutable_device_data();
@@ -377,39 +381,41 @@ WindSolver::solve_uv() {
         auto psi_out = psi_out_field_.get_mutable_device_data();
         auto chi_out = chi_out_field_.get_mutable_device_data();
 
-        // Right-hand sides and the time-extrapolated initial guesses, built on the
-        // deep grid over the physical region only. The ring values then come from the
-        // exchange below, and equal what the neighbour computes for the same cell --
-        // which is what keeps this bitwise identical to relaxing each field alone.
+        // Right-hand sides and the time-extrapolated initial guesses,
+        // preserving the existing Cartesian arithmetic exactly.
         Kokkos::parallel_for("build_rhs_and_guess_2d",
             Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
             KOKKOS_LAMBDA(int j, int i) {
                 rhs_psi(j, i) = zeta(nz - h - 1, j, i);
+
                 rhs_chi(j, i) = flex_height_coef_mid(nz - h - 1) * rhobar_up(nz - h - 2) *
                                 w(nz - h - 2, j, i) * rdz() / rhobar(nz - h - 1);
+
                 psi_out(j, i) = real(2.) * psi(j, i) - psinm1(j, i);
+
                 chi_out(j, i) = real(2.) * chi(j, i) - chinm1(j, i);
             });
     }
 
     relax_2d_batched();
 
-    // Rotate the State buffers, then refresh the halos the rest of solve_uv reads
-    // (calculate_uvtop reaches one ring out in psi and chi).
     {
         auto psi_out = psi_out_field_.get_mutable_device_data();
         auto chi_out = chi_out_field_.get_mutable_device_data();
         auto psinm1_w = psinm1_field.get_mutable_device_data();
         auto chinm1_w = chinm1_field.get_mutable_device_data();
+
         Kokkos::parallel_for("scatter_psi_chi",
             Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
             KOKKOS_LAMBDA(int j, int i) {
                 psinm1_w(j, i) = psi(j, i);
                 chinm1_w(j, i) = chi(j, i);
+
                 psi(j, i) = psi_out(j, i);
                 chi(j, i) = chi_out(j, i);
             });
     }
+
     halo_exchanger_.exchange_halos(psi_field);
     halo_exchanger_.exchange_halos(chi_field);
     halo_exchanger_.exchange_halos(psinm1_field);
@@ -417,7 +423,19 @@ WindSolver::solve_uv() {
 
     fill_bounded_q2_potential_halos(psi_field, chi_field);
     fill_bounded_q2_potential_halos(psinm1_field, chinm1_field);
+}
 
+void
+WindSolver::solve_uv() {
+    const int nz = grid_.get_local_total_points_z();
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
+    const int h = grid_.get_halo_cells();
+
+    diagnose_cartesian_horizontal_potentials();
+
+    const auto psi = psi_ref_.get(state_, "psi").get_device_data();
+    const auto chi = chi_ref_.get(state_, "chi").get_device_data();
     // Calculate utop, vtop
     auto& utop_field = utop_ref_.get(state_, "utop");
     auto& vtop_field = vtop_ref_.get(state_, "vtop");
