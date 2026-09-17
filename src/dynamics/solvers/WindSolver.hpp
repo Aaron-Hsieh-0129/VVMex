@@ -44,7 +44,7 @@ public:
     WindSolver(const WindSolver&) = delete;
     WindSolver& operator=(const WindSolver&) = delete;
 
-    void solve();
+    void solve(const Core::BoundaryConditionManager& bc_manager);
 
     void solve_w();
     void solve_uv();

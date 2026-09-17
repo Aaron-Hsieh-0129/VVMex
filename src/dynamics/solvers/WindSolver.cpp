@@ -147,11 +147,15 @@ WindSolver::WindSolver(const Core::Grid& grid,
 }
 
 void
-WindSolver::solve() {
+WindSolver::solve(const Core::BoundaryConditionManager& bc_manager) {
+
     if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+
         solve_regular_latlon();
         return;
     }
+
+    prepare_cartesian_wind_recovery_inputs(bc_manager);
 
     solve_w();
     solve_uv();

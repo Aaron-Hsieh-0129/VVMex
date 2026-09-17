@@ -302,12 +302,7 @@ DynamicalCore::compute_zeta_vertical_structure(Core::State& state) const {
 
 void
 DynamicalCore::compute_wind_fields() {
-    if (grid_.geometry().kind() != Core::Geometry::GeometryKind::RegularLatLon) {
-        wind_solver_->prepare_cartesian_wind_recovery_inputs(bc_manager_);
-    }
-
-    wind_solver_->solve();
-
+    wind_solver_->solve(bc_manager_);
     mean_wind_state_->invalidate();
 }
 
