@@ -440,6 +440,10 @@ WindSolver::solve_uv() {
 
     integrate_uv_from_top();
 
+    if (uv_fields_.empty()) {
+        uv_fields_ = {&u_ref_.get(state_, "u"), &v_ref_.get(state_, "v")};
+    }
+    halo_exchanger_.exchange_multiple_halos(uv_fields_);
     return;
 }
 
@@ -491,11 +495,6 @@ WindSolver::integrate_uv_from_top() {
                 ((w(nz - h - 1, j + 1, i) - w(nz - h - 1, j, i)) * rdy() - xi(nz - h - 1, j, i)) *
                     dz() / flex_height_coef_up(nz - h - 1);
         });
-
-    if (uv_fields_.empty()) {
-        uv_fields_ = {&u_ref_.get(state_, "u"), &v_ref_.get(state_, "v")};
-    }
-    halo_exchanger_.exchange_multiple_halos(uv_fields_);
 }
 
 // Solve the Z-point streamfunction and T-point velocity potential together.
