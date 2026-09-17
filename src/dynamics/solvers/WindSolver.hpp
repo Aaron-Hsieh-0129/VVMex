@@ -162,6 +162,8 @@ private:
 
     void apply_regular_latlon_wind_closure(bool initial, bool periodic);
 
+    void finalize_cartesian_wind();
+
     const Core::Grid& grid_;
     const Utils::ConfigurationManager& config_;
     const Core::Parameters& params_;

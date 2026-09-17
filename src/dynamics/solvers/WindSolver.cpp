@@ -440,10 +440,7 @@ WindSolver::solve_uv() {
 
     integrate_uv_from_top();
 
-    if (uv_fields_.empty()) {
-        uv_fields_ = {&u_ref_.get(state_, "u"), &v_ref_.get(state_, "v")};
-    }
-    halo_exchanger_.exchange_multiple_halos(uv_fields_);
+    finalize_cartesian_wind();
     return;
 }
 
@@ -730,6 +727,15 @@ WindSolver::apply_cartesian_top_wind_closure() {
 
             v(nz - h - 1, j, i) = vtopmn() + vtop(j, i) - vtopm();
         });
+}
+
+void
+WindSolver::finalize_cartesian_wind() {
+    if (uv_fields_.empty()) {
+        uv_fields_ = {&u_ref_.get(state_, "u"), &v_ref_.get(state_, "v")};
+    }
+
+    halo_exchanger_.exchange_multiple_halos(uv_fields_);
 }
 
 } // namespace Dynamics
