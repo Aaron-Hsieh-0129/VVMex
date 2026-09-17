@@ -120,7 +120,6 @@ WindSolver::solve_regular_latlon() {
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
-    const int top = nz - h - 1;
     if (initial) {
         initialize_regular_latlon_solver(periodic, nz);
     }
@@ -204,41 +203,15 @@ WindSolver::solve_regular_latlon() {
     diagnose();
 #endif
 
-    const auto u = fields.u.get_mutable_device_data();
     if (periodic) {
         preserve_regular_latlon_periodic_circulation(false);
     }
     else {
         preserve_regular_latlon_channel_circulation(initial);
     }
-    const auto v = fields.v.get_mutable_device_data();
-    Kokkos::parallel_for("RLLWindVerticalGhosts",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
-        KOKKOS_LAMBDA(int k, int j, int i) {
-            if (k < h - 1) {
-                u(k, j, i) = u(h - 1, j, i);
-                v(k, j, i) = v(h - 1, j, i);
-            }
-            if (k > top) {
-                u(k, j, i) = u(top, j, i);
-                v(k, j, i) = v(top, j, i);
-            }
-        });
-    halo_exchanger_.exchange_multiple_halos(std::vector<Core::Field<3>*>{&fields.u, &fields.v});
-    if (bounded_q2_stencils_) {
-        bounded_q2_stencils_->fill_regular_lat_lon_free_slip_physical_wind_halos(fields.u,
-            fields.v);
-    }
-    // Refresh the ordinary terrain scratch diagnostics for output and the next
-    // adaptation. Prognostic xi/eta are never overwritten with solid-cell curl.
-    if (terrain) {
-        adapt_terrain(state_,
-            grid_,
-            params_,
-            rll_inverse_dz_,
-            halo_exchanger_,
-            bounded_q2_stencils_.get());
-    }
+
+    finalize_regular_latlon_wind(fields.u, fields.v, terrain);
+
     rll_initialized_ = true;
 }
 
@@ -384,4 +357,50 @@ WindSolver::preserve_regular_latlon_periodic_circulation(bool initialize) {
             v(k, j, i) += dv / hv(j, i);
         });
 }
+
+void
+WindSolver::finalize_regular_latlon_wind(
+    Core::Field<3>& u_field, Core::Field<3>& v_field, const bool terrain) {
+
+    const int h = grid_.get_halo_cells();
+    const int nz = grid_.get_local_total_points_z();
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
+    const int top = nz - h - 1;
+
+    const auto u = u_field.get_mutable_device_data();
+    const auto v = v_field.get_mutable_device_data();
+
+    Kokkos::parallel_for("RLLWindVerticalGhosts",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
+        KOKKOS_LAMBDA(int k, int j, int i) {
+            if (k < h - 1) {
+                u(k, j, i) = u(h - 1, j, i);
+                v(k, j, i) = v(h - 1, j, i);
+            }
+
+            if (k > top) {
+                u(k, j, i) = u(top, j, i);
+                v(k, j, i) = v(top, j, i);
+            }
+        });
+
+    halo_exchanger_.exchange_multiple_halos(std::vector<Core::Field<3>*>{&u_field, &v_field});
+
+    if (bounded_q2_stencils_) {
+        bounded_q2_stencils_->fill_regular_lat_lon_free_slip_physical_wind_halos(u_field, v_field);
+    }
+
+    // Refresh the ordinary terrain scratch diagnostics for output and the next
+    // adaptation. Prognostic xi/eta are never overwritten with solid-cell curl.
+    if (terrain) {
+        adapt_terrain(state_,
+            grid_,
+            params_,
+            rll_inverse_dz_,
+            halo_exchanger_,
+            bounded_q2_stencils_.get());
+    }
+}
+
 } // namespace VVM::Dynamics

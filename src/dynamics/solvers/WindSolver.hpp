@@ -140,6 +140,8 @@ public:
 
     void preserve_regular_latlon_periodic_circulation(bool initialize);
     void preserve_regular_latlon_channel_circulation(bool initialize);
+    void finalize_regular_latlon_wind(
+        Core::Field<3>& u_field, Core::Field<3>& v_field, bool terrain);
 
 private:
     void initialize_regular_latlon_solver(bool periodic, int nz);
