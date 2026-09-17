@@ -42,6 +42,8 @@ public:
     void compute_wind_fields();
     // void step(Core::State& state, VVM::Real dt);
 
+    void prepare_cartesian_wind_recovery_inputs();
+
     void calculate_thermo_tendencies();
     void update_thermodynamics(VVM::Real dt);
     void calculate_vorticity_tendencies();
