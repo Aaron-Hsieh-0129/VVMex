@@ -434,59 +434,12 @@ WindSolver::solve_uv() {
 
     diagnose_cartesian_horizontal_potentials();
 
-    const auto psi = psi_ref_.get(state_, "psi").get_device_data();
-    const auto chi = chi_ref_.get(state_, "chi").get_device_data();
-    // Calculate utop, vtop
-    auto& utop_field = utop_ref_.get(state_, "utop");
-    auto& vtop_field = vtop_ref_.get(state_, "vtop");
-    auto& utop = utop_field.get_mutable_device_data();
-    auto& vtop = vtop_field.get_mutable_device_data();
-    const auto& rdx = params_.rdx;
-    const auto& rdy = params_.rdy;
-    Kokkos::parallel_for("calculate_uvtop",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
-        KOKKOS_LAMBDA(int j, int i) {
-            utop(j, i) = -(psi(j, i) - psi(j - 1, i)) * rdy() + (chi(j, i + 1) - chi(j, i)) * rdx();
-            vtop(j, i) = (psi(j, i) - psi(j, i - 1)) * rdx() + (chi(j + 1, i) - chi(j, i)) * rdy();
-        });
+    reconstruct_cartesian_top_wind();
 
-    // calculate u
-    auto& u_field = u_ref_.get(state_, "u");
-    auto& u = u_field.get_mutable_device_data();
-    auto& v_field = v_ref_.get(state_, "v");
-    auto& v = v_field.get_mutable_device_data();
-
-    auto& utopm = utop_mean_tmp_ref_.get(state_, "utop_mean_tmp").get_mutable_device_data();
-    auto& vtopm = vtop_mean_tmp_ref_.get(state_, "vtop_mean_tmp").get_mutable_device_data();
-    state_.calculate_horizontal_mean(utop_field, utopm);
-    state_.calculate_horizontal_mean(vtop_field, vtopm);
-
-    auto& utopmn = utopmn_ref_.get(state_, "utopmn").get_device_data();
-    auto& vtopmn = vtopmn_ref_.get(state_, "vtopmn").get_device_data();
-
-    // Note: this data clipping is necessary to prevent too small values and this makes CPU and GPU VVM same.
-    Kokkos::parallel_for("DataClipZero", 1, KOKKOS_LAMBDA(const int i) {
-        if (Kokkos::abs(utopm()) < 1e-15) {
-            utopm() = real(0.0);
-        }
-        if (Kokkos::abs(vtopm()) < 1e-15) {
-            vtopm() = real(0.0);
-        }
-    });
-
-    Kokkos::parallel_for("uvtop_process",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
-        KOKKOS_LAMBDA(int j, int i) {
-            u(nz - h - 1, j, i) = utopmn() + utop(j, i) - utopm();
-            v(nz - h - 1, j, i) = vtopmn() + vtop(j, i) - vtopm();
-        });
+    apply_cartesian_top_wind_closure();
 
     integrate_uv_from_top();
 
-    if (uv_fields_.empty()) {
-        uv_fields_ = {&u_ref_.get(state_, "u"), &v_ref_.get(state_, "v")};
-    }
-    halo_exchanger_.exchange_multiple_halos(uv_fields_);
     return;
 }
 
@@ -538,6 +491,11 @@ WindSolver::integrate_uv_from_top() {
                 ((w(nz - h - 1, j + 1, i) - w(nz - h - 1, j, i)) * rdy() - xi(nz - h - 1, j, i)) *
                     dz() / flex_height_coef_up(nz - h - 1);
         });
+
+    if (uv_fields_.empty()) {
+        uv_fields_ = {&u_ref_.get(state_, "u"), &v_ref_.get(state_, "v")};
+    }
+    halo_exchanger_.exchange_multiple_halos(uv_fields_);
 }
 
 // Solve the Z-point streamfunction and T-point velocity potential together.
@@ -701,6 +659,78 @@ WindSolver::exchange_w_solver_halos(WindSolver::DeepField& field, const int dept
     if (bounded_q2_stencils_) {
         bounded_q2_stencils_->fill_constant_q2_halos(field);
     }
+}
+
+void
+WindSolver::reconstruct_cartesian_top_wind() {
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
+    const int h = grid_.get_halo_cells();
+
+    const auto psi = psi_ref_.get(state_, "psi").get_device_data();
+    const auto chi = chi_ref_.get(state_, "chi").get_device_data();
+    auto& utop_field = utop_ref_.get(state_, "utop");
+    auto& vtop_field = vtop_ref_.get(state_, "vtop");
+    auto& utop = utop_field.get_mutable_device_data();
+    auto& vtop = vtop_field.get_mutable_device_data();
+
+    const auto& rdx = params_.rdx;
+    const auto& rdy = params_.rdy;
+
+    Kokkos::parallel_for("calculate_uvtop",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
+        KOKKOS_LAMBDA(int j, int i) {
+            utop(j, i) = -(psi(j, i) - psi(j - 1, i)) * rdy() + (chi(j, i + 1) - chi(j, i)) * rdx();
+
+            vtop(j, i) = (psi(j, i) - psi(j, i - 1)) * rdx() + (chi(j + 1, i) - chi(j, i)) * rdy();
+        });
+}
+
+void
+WindSolver::apply_cartesian_top_wind_closure() {
+    const int nz = grid_.get_local_total_points_z();
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
+    const int h = grid_.get_halo_cells();
+
+    auto& utop_field = utop_ref_.get(state_, "utop");
+    auto& vtop_field = vtop_ref_.get(state_, "vtop");
+
+    const auto& utop = utop_field.get_device_data();
+    const auto& vtop = vtop_field.get_device_data();
+
+    auto& u_field = u_ref_.get(state_, "u");
+    auto& v_field = v_ref_.get(state_, "v");
+    auto& u = u_field.get_mutable_device_data();
+    auto& v = v_field.get_mutable_device_data();
+
+    auto& utopm = utop_mean_tmp_ref_.get(state_, "utop_mean_tmp").get_mutable_device_data();
+    auto& vtopm = vtop_mean_tmp_ref_.get(state_, "vtop_mean_tmp").get_mutable_device_data();
+
+    state_.calculate_horizontal_mean(utop_field, utopm);
+    state_.calculate_horizontal_mean(vtop_field, vtopm);
+
+    const auto& utopmn = utopmn_ref_.get(state_, "utopmn").get_device_data();
+    const auto& vtopmn = vtopmn_ref_.get(state_, "vtopmn").get_device_data();
+
+    // Keep the original clipping behavior exactly.
+    Kokkos::parallel_for("DataClipZero", 1, KOKKOS_LAMBDA(const int i) {
+        if (Kokkos::abs(utopm()) < 1e-15) {
+            utopm() = real(0.0);
+        }
+
+        if (Kokkos::abs(vtopm()) < 1e-15) {
+            vtopm() = real(0.0);
+        }
+    });
+
+    Kokkos::parallel_for("uvtop_process",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
+        KOKKOS_LAMBDA(int j, int i) {
+            u(nz - h - 1, j, i) = utopmn() + utop(j, i) - utopm();
+
+            v(nz - h - 1, j, i) = vtopmn() + vtop(j, i) - vtopm();
+        });
 }
 
 } // namespace Dynamics

@@ -151,6 +151,9 @@ public:
 
     void diagnose_cartesian_horizontal_potentials();
 
+    void reconstruct_cartesian_top_wind();
+    void apply_cartesian_top_wind_closure();
+
 private:
     void initialize_regular_latlon_solver(bool periodic, int nz);
 
