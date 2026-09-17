@@ -143,6 +143,12 @@ public:
     void finalize_regular_latlon_wind(
         Core::Field<3>& u_field, Core::Field<3>& v_field, bool terrain);
 
+    // RLL diagnostic execution and CUDA graph capture/replay.
+    void execute_regular_latlon_diagnostic(bool initial,
+        RegularLatLonDiagnosticFields& fields,
+        HorizontalDiagnosticWorkspace& workspace,
+        const RegularLatLonDiagnosticOptions& options);
+
 private:
     void initialize_regular_latlon_solver(bool periodic, int nz);
 

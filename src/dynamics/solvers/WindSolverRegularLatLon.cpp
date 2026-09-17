@@ -161,47 +161,13 @@ WindSolver::solve_regular_latlon() {
         params_.flex_height_coef_mid,
         *rll_spacing_,
         *rll_increment_};
+
     HorizontalDiagnosticWorkspace workspace{rhs_psi_field_,
         rhs_chi_field_,
         psi_out_field_,
         chi_out_field_};
-    const auto diagnose = [&]() {
-        diagnose_regular_latlon_wind(grid_,
-            halo_exchanger_,
-            *rll_vertical_solver_,
-            horizontal_elliptic_solver_,
-            fields,
-            workspace,
-            options);
-    };
-#if defined(ENABLE_NCCL)
-    if (initial) {
-        diagnose();
-    }
-    else {
-        // AB2 exchanges its two prognostic allocations. Capture once for each
-        // backing allocation; all private solver/history storage stays fixed.
-        const auto key = fields.zeta.get_device_data().data();
-        auto found = rll_graphs_.find(key);
-        const auto stream = Kokkos::DefaultExecutionSpace().cuda_stream();
-        if (found == rll_graphs_.end()) {
-            Kokkos::fence();
-            require_cuda(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal),
-                "Begin RLL diagnostic capture");
-            diagnose();
-            cudaGraph_t graph = nullptr;
-            require_cuda(cudaStreamEndCapture(stream, &graph), "End RLL diagnostic capture");
-            cudaGraphExec_t executable = nullptr;
-            const auto result = cudaGraphInstantiate(&executable, graph, nullptr, nullptr, 0);
-            cudaGraphDestroy(graph);
-            require_cuda(result, "Instantiate RLL diagnostic graph");
-            found = rll_graphs_.emplace(key, executable).first;
-        }
-        require_cuda(cudaGraphLaunch(found->second, stream), "Replay RLL diagnostic graph");
-    }
-#else
-    diagnose();
-#endif
+
+    execute_regular_latlon_diagnostic(initial, fields, workspace, options);
 
     if (periodic) {
         preserve_regular_latlon_periodic_circulation(false);
@@ -401,6 +367,67 @@ WindSolver::finalize_regular_latlon_wind(
             halo_exchanger_,
             bounded_q2_stencils_.get());
     }
+}
+
+void
+WindSolver::execute_regular_latlon_diagnostic(const bool initial,
+    RegularLatLonDiagnosticFields& fields,
+    HorizontalDiagnosticWorkspace& workspace,
+    const RegularLatLonDiagnosticOptions& options) {
+
+    const auto diagnose = [&]() {
+        diagnose_regular_latlon_wind(grid_,
+            halo_exchanger_,
+            *rll_vertical_solver_,
+            horizontal_elliptic_solver_,
+            fields,
+            workspace,
+            options);
+    };
+
+#if defined(ENABLE_NCCL)
+
+    if (initial) {
+        diagnose();
+        return;
+    }
+
+    // AB2 exchanges its two prognostic allocations. Capture once for each
+    // backing allocation; all private solver/history storage stays fixed.
+    const auto key = fields.zeta.get_device_data().data();
+
+    auto found = rll_graphs_.find(key);
+
+    const auto stream = Kokkos::DefaultExecutionSpace().cuda_stream();
+
+    if (found == rll_graphs_.end()) {
+        require_cuda(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal),
+            "Begin RLL diagnostic capture");
+
+        diagnose();
+
+        cudaGraph_t graph = nullptr;
+
+        require_cuda(cudaStreamEndCapture(stream, &graph), "End RLL diagnostic capture");
+
+        cudaGraphExec_t executable = nullptr;
+
+        const auto result = cudaGraphInstantiate(&executable, graph, nullptr, nullptr, 0);
+
+        cudaGraphDestroy(graph);
+
+        require_cuda(result, "Instantiate RLL diagnostic graph");
+
+        found = rll_graphs_.emplace(key, executable).first;
+    }
+
+    require_cuda(cudaGraphLaunch(found->second, stream), "Replay RLL diagnostic graph");
+
+#else
+
+    diagnose();
+
+#endif
 }
 
 } // namespace VVM::Dynamics
