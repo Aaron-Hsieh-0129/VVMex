@@ -30,6 +30,53 @@ WindSolver::prepare_horizontal_diagnostic_execution() {
 }
 
 void
+WindSolver::reconstruct_horizontal_top_wind(const HorizontalWindStateAdapter& adapter,
+    const HorizontalDiagnosticFields& fields,
+    const int top) {
+
+    adapter.reconstruct_top(fields.psi, fields.chi, fields.u, fields.v, top);
+}
+
+void
+WindSolver::apply_prescribed_zonal_covariant_increment(
+    const Core::Grid& grid, const HorizontalDiagnosticFields& fields, const int top) {
+
+    const int nx = grid.get_local_total_points_x();
+    const int ny = grid.get_local_total_points_y();
+    const int h = grid.get_halo_cells();
+
+    const auto inverse_h1 = grid.geometry()
+                                .device_view(Core::Geometry::HorizontalLocation::U)
+                                .physical_to_contravariant.a11;
+
+    const auto increment = fields.zonal_covariant_increment.get_device_data();
+
+    const auto u = fields.u.get_mutable_device_data();
+
+    Kokkos::parallel_for("AddPrescribedZonalCovariantIncrement",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
+        KOKKOS_LAMBDA(const int j, const int i) {
+            u(top, j, i) += increment() * inverse_h1(j, i);
+        });
+}
+
+void
+WindSolver::integrate_horizontal_wind_from_top(const HorizontalWindStateAdapter& adapter,
+    const HorizontalDiagnosticFields& fields,
+    const int bottom,
+    const int top) {
+
+    adapter.integrate_from_top(fields.w,
+        fields.xi,
+        fields.eta,
+        fields.spacing,
+        fields.u,
+        fields.v,
+        bottom,
+        top);
+}
+
+void
 WindSolver::diagnose_horizontal_wind(const Core::Grid& grid,
     Core::HaloExchanger& halo,
     HorizontalEllipticSolver& solver,
@@ -170,29 +217,11 @@ WindSolver::diagnose_horizontal_wind(const Core::Grid& grid,
         top,
         boundary_policy);
 
-    adapter.reconstruct_top(fields.psi, fields.chi, fields.u, fields.v, top);
+    reconstruct_horizontal_top_wind(adapter, fields, top);
 
-    const auto inverse_h1 = grid.geometry()
-                                .device_view(Core::Geometry::HorizontalLocation::U)
-                                .physical_to_contravariant.a11;
+    apply_prescribed_zonal_covariant_increment(grid, fields, top);
 
-    const auto increment = fields.zonal_covariant_increment.get_device_data();
-    const auto u = fields.u.get_mutable_device_data();
-
-    Kokkos::parallel_for("AddPrescribedZonalCovariantIncrement",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
-        KOKKOS_LAMBDA(const int j, const int i) {
-            u(top, j, i) += increment() * inverse_h1(j, i);
-        });
-
-    adapter.integrate_from_top(fields.w,
-        fields.xi,
-        fields.eta,
-        fields.spacing,
-        fields.u,
-        fields.v,
-        bottom,
-        top);
+    integrate_horizontal_wind_from_top(adapter, fields, bottom, top);
 }
 
 } // namespace Dynamics

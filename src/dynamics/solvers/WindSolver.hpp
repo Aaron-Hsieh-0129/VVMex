@@ -25,6 +25,7 @@ namespace Dynamics {
 enum class WSolverMethod { TRIDIAGONAL, JACOBI };
 
 class VerticalEllipticSolver;
+class HorizontalWindStateAdapter;
 
 class WindSolver {
 public:
@@ -86,6 +87,18 @@ public:
         Core::Field<2>& solution_psi;
         Core::Field<2>& solution_chi;
     };
+
+    static void reconstruct_horizontal_top_wind(const HorizontalWindStateAdapter& adapter,
+        const HorizontalDiagnosticFields& fields,
+        int top);
+
+    static void apply_prescribed_zonal_covariant_increment(
+        const Core::Grid& grid, const HorizontalDiagnosticFields& fields, int top);
+
+    static void integrate_horizontal_wind_from_top(const HorizontalWindStateAdapter& adapter,
+        const HorizontalDiagnosticFields& fields,
+        int bottom,
+        int top);
 
     static void prepare_horizontal_diagnostic_execution();
 
