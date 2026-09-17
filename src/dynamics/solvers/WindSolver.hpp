@@ -141,6 +141,8 @@ public:
     void preserve_regular_latlon_periodic_circulation(bool initialize);
 
 private:
+    void initialize_regular_latlon_solver(bool periodic, int nz);
+
     void fill_bounded_q2_potential_halos(Core::Field<2>& first, Core::Field<2>& second) const;
     void exchange_2d_solver_halos(Core::Field<2>& first, Core::Field<2>& second, int depth);
 

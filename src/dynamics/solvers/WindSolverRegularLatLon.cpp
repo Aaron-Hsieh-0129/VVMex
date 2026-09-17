@@ -80,6 +80,37 @@ require_cuda(cudaError_t result, const char* operation) {
 }
 
 void
+WindSolver::initialize_regular_latlon_solver(const bool periodic, const int nz) {
+    Core::validate_jung2019_rll(config_, Core::GridSpecification::from_config(config_));
+
+    rll_inverse_dz_ = params_.get_value_host(params_.rdz);
+
+    Kokkos::deep_copy(rll_psi_north_, state_.get_field<0>("rll_psi_north").get_device_data());
+
+    rll_spacing_ = std::make_unique<Core::Field<1>>("RLL wind spacing", std::array<int, 1>{nz});
+
+    rll_increment_ =
+        std::make_unique<Core::Field<0>>("RLL harmonic increment", std::array<int, 0>{});
+
+    rll_wall_contributions_ = std::make_unique<Core::Field<1>>("RLL circulation contributions",
+        std::array<int, 1>{
+            grid_.get_global_points_x() + (periodic ? 2 * grid_.get_global_points_y() : 0)});
+
+    Kokkos::deep_copy(rll_spacing_->get_mutable_device_data(), params_.get_value_host(params_.dz));
+
+    rll_vertical_solver_ = std::make_unique<VerticalEllipticSolver>(grid_,
+        halo_exchanger_,
+        state_.get_field<1>("rhobar"),
+        state_.get_field<1>("rhobar_up"),
+        params_.flex_height_coef_mid,
+        params_.flex_height_coef_up,
+        rll_inverse_dz_,
+        params_.get_value_host(params_.WRXMU));
+
+    prepare_regular_latlon_diagnostic_execution();
+}
+
+void
 WindSolver::solve_regular_latlon() {
     const bool initial = !rll_initialized_;
     const bool periodic =
@@ -91,28 +122,7 @@ WindSolver::solve_regular_latlon() {
     const int nx = grid_.get_local_total_points_x();
     const int top = nz - h - 1;
     if (initial) {
-        Core::validate_jung2019_rll(config_, Core::GridSpecification::from_config(config_));
-        rll_inverse_dz_ = params_.get_value_host(params_.rdz);
-        Kokkos::deep_copy(rll_psi_north_,
-            state_.get_field<0>("rll_psi_north").get_device_data());
-        rll_spacing_ = std::make_unique<Core::Field<1>>("RLL wind spacing", std::array<int, 1>{nz});
-        rll_increment_ =
-            std::make_unique<Core::Field<0>>("RLL harmonic increment", std::array<int, 0>{});
-        rll_wall_contributions_ = std::make_unique<Core::Field<1>>("RLL circulation contributions",
-            std::array<int, 1>{
-                grid_.get_global_points_x() + (periodic ? 2 * grid_.get_global_points_y() : 0)});
-        // The admitted Section 4.2 configuration has uniform physical levels.
-        Kokkos::deep_copy(rll_spacing_->get_mutable_device_data(),
-            params_.get_value_host(params_.dz));
-        rll_vertical_solver_ = std::make_unique<VerticalEllipticSolver>(grid_,
-            halo_exchanger_,
-            state_.get_field<1>("rhobar"),
-            state_.get_field<1>("rhobar_up"),
-            params_.flex_height_coef_mid,
-            params_.flex_height_coef_up,
-            rll_inverse_dz_,
-            params_.get_value_host(params_.WRXMU));
-        prepare_regular_latlon_diagnostic_execution();
+        initialize_regular_latlon_solver(periodic, nz);
     }
     RegularLatLonDiagnosticOptions options;
     if (periodic) {
@@ -129,7 +139,11 @@ WindSolver::solve_regular_latlon() {
                 : params_.solver_iteration;
     options.inverse_dz = rll_inverse_dz_;
     if (terrain) {
-        adapt_terrain(state_, grid_, params_, rll_inverse_dz_, halo_exchanger_,
+        adapt_terrain(state_,
+            grid_,
+            params_,
+            rll_inverse_dz_,
+            halo_exchanger_,
             bounded_q2_stencils_.get());
     }
     RegularLatLonDiagnosticFields fields{state_.get_field<2>("psi"),
@@ -263,7 +277,11 @@ WindSolver::solve_regular_latlon() {
     // Refresh the ordinary terrain scratch diagnostics for output and the next
     // adaptation. Prognostic xi/eta are never overwritten with solid-cell curl.
     if (terrain) {
-        adapt_terrain(state_, grid_, params_, rll_inverse_dz_, halo_exchanger_,
+        adapt_terrain(state_,
+            grid_,
+            params_,
+            rll_inverse_dz_,
+            halo_exchanger_,
             bounded_q2_stencils_.get());
     }
     rll_initialized_ = true;
