@@ -43,6 +43,8 @@ public:
     WindSolver(const WindSolver&) = delete;
     WindSolver& operator=(const WindSolver&) = delete;
 
+    void solve();
+
     void solve_w();
     void solve_uv();
     void solve_regular_latlon();

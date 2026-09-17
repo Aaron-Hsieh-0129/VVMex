@@ -147,6 +147,17 @@ WindSolver::WindSolver(const Core::Grid& grid,
 }
 
 void
+WindSolver::solve() {
+    if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+        solve_regular_latlon();
+        return;
+    }
+
+    solve_w();
+    solve_uv();
+}
+
+void
 WindSolver::solve_w() {
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
