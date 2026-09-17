@@ -113,7 +113,7 @@ WindSolver::initialize_regular_latlon_solver(const bool periodic, const int nz) 
 void
 WindSolver::solve_regular_latlon() {
     const bool initial = !rll_initialized_;
-    const bool periodic =
+    const bool q2_periodic =
         grid_.horizontal_specification().topology.q2 == Core::HorizontalEdgeTopology::Periodic;
     const bool terrain = Core::is_rll_mountain(config_);
     const int h = grid_.get_halo_cells();
@@ -121,10 +121,10 @@ WindSolver::solve_regular_latlon() {
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
     if (initial) {
-        initialize_regular_latlon_solver(periodic, nz);
+        initialize_regular_latlon_solver(q2_periodic, nz);
     }
     RegularLatLonDiagnosticOptions options;
-    if (periodic) {
+    if (q2_periodic) {
         options.boundary_policy = HorizontalDiagnosticBoundaryPolicy::RegularLatLonPeriodic;
         if (initial) {
             preserve_regular_latlon_periodic_circulation(true);
@@ -169,12 +169,7 @@ WindSolver::solve_regular_latlon() {
 
     execute_regular_latlon_diagnostic(initial, fields, workspace, options);
 
-    if (periodic) {
-        preserve_regular_latlon_periodic_circulation(false);
-    }
-    else {
-        preserve_regular_latlon_channel_circulation(initial);
-    }
+    apply_regular_latlon_wind_closure(initial, q2_periodic);
 
     finalize_regular_latlon_wind(fields.u, fields.v, terrain);
 
@@ -428,6 +423,17 @@ WindSolver::execute_regular_latlon_diagnostic(const bool initial,
     diagnose();
 
 #endif
+}
+
+void
+WindSolver::apply_regular_latlon_wind_closure(const bool initial, const bool periodic) {
+
+    if (periodic) {
+        preserve_regular_latlon_periodic_circulation(false);
+    }
+    else {
+        preserve_regular_latlon_channel_circulation(initial);
+    }
 }
 
 } // namespace VVM::Dynamics
