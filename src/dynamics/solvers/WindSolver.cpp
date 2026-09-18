@@ -8,6 +8,7 @@
 
 #include "WindSolver.hpp"
 #include "dynamics/solvers/VerticalEllipticSolver.hpp"
+#include "dynamics/operators/HorizontalWindReconstruction.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "core/geometry/HorizontalLocation.hpp"
 
@@ -685,15 +686,22 @@ WindSolver::reconstruct_cartesian_top_wind() {
     auto& utop = utop_field.get_mutable_device_data();
     auto& vtop = vtop_field.get_mutable_device_data();
 
-    const auto& rdx = params_.rdx;
-    const auto& rdy = params_.rdy;
+    const auto reconstruction =
+        Operators::make_horizontal_wind_reconstruction_device_view(grid_.geometry());
 
     Kokkos::parallel_for("calculate_uvtop",
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
-        KOKKOS_LAMBDA(int j, int i) {
-            utop(j, i) = -(psi(j, i) - psi(j - 1, i)) * rdy() + (chi(j, i + 1) - chi(j, i)) * rdx();
+        KOKKOS_LAMBDA(const int j, const int i) {
+            // The shared reconstruction returns covariant horizontal wind.
+            // For Cartesian geometry:
+            //
+            //   g_ij = delta_ij
+            //
+            // so covariant, contravariant, and physical horizontal
+            // components are identical.
+            utop(j, i) = reconstruction.calculate_covariant_q1_at_u(psi, chi, j, i);
 
-            vtop(j, i) = (psi(j, i) - psi(j, i - 1)) * rdx() + (chi(j + 1, i) - chi(j, i)) * rdy();
+            vtop(j, i) = reconstruction.calculate_covariant_q2_at_v(psi, chi, j, i);
         });
 }
 
