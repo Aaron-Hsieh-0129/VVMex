@@ -32,6 +32,9 @@ struct HorizontalWindReconstructionDeviceView {
     VVM::Real dq1 = VVM::real(0.0);
     VVM::Real dq2 = VVM::real(0.0);
 
+    VVM::Real rdq1 = VVM::real(0.0);
+    VVM::Real rdq2 = VVM::real(0.0);
+
     template <typename PsiView, typename ChiView>
     KOKKOS_INLINE_FUNCTION VVM::Real
     calculate_contravariant_q1_at_u(
@@ -62,9 +65,11 @@ struct HorizontalWindReconstructionDeviceView {
     KOKKOS_INLINE_FUNCTION VVM::Real
     calculate_covariant_q1_at_u(
         const PsiView& psi, const ChiView& chi, const int j, const int i) const noexcept {
+
         const VVM::Real rotational =
-            -(psi(j, i) - psi(j - 1, i)) / (sqrt_g_g_contra_11_at_u(j, i) * dq2);
-        const VVM::Real divergent = (chi(j, i + 1) - chi(j, i)) / dq1;
+            -(psi(j, i) - psi(j - 1, i)) * rdq2 / sqrt_g_g_contra_11_at_u(j, i);
+
+        const VVM::Real divergent = (chi(j, i + 1) - chi(j, i)) * rdq1;
 
         return rotational + divergent;
     }
@@ -76,9 +81,11 @@ struct HorizontalWindReconstructionDeviceView {
     KOKKOS_INLINE_FUNCTION VVM::Real
     calculate_covariant_q2_at_v(
         const PsiView& psi, const ChiView& chi, const int j, const int i) const noexcept {
+
         const VVM::Real rotational =
-            (psi(j, i) - psi(j, i - 1)) / (sqrt_g_g_contra_22_at_v(j, i) * dq1);
-        const VVM::Real divergent = (chi(j + 1, i) - chi(j, i)) / dq2;
+            (psi(j, i) - psi(j, i - 1)) * rdq1 / sqrt_g_g_contra_22_at_v(j, i);
+
+        const VVM::Real divergent = (chi(j + 1, i) - chi(j, i)) * rdq2;
 
         return rotational + divergent;
     }
@@ -110,6 +117,9 @@ make_horizontal_wind_reconstruction_device_view(
     result.sqrt_g_g_contra_22_at_v = v.sqrt_g_g_contra.a22;
     result.dq1 = geometry.dq1();
     result.dq2 = geometry.dq2();
+
+    result.rdq1 = u.rdq1;
+    result.rdq2 = u.rdq2;
 
     return result;
 }
