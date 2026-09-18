@@ -37,6 +37,9 @@ struct HorizontalVorticityDeviceView {
     VVM::Real dq1 = VVM::real(0.0);
     VVM::Real dq2 = VVM::real(0.0);
 
+    VVM::Real rdq1 = VVM::real(0.0);
+    VVM::Real rdq2 = VVM::real(0.0);
+
     template <typename WView, typename CovariantQ2View>
     KOKKOS_INLINE_FUNCTION VVM::Real
     calculate_contravariant_q1_at_v(const WView& w,
@@ -46,7 +49,7 @@ struct HorizontalVorticityDeviceView {
         const int i,
         const VVM::Real inverse_vertical_spacing) const noexcept {
 
-        const VVM::Real dw_dq2 = (w(k, j + 1, i) - w(k, j, i)) / dq2;
+        const VVM::Real dw_dq2 = (w(k, j + 1, i) - w(k, j, i)) * rdq2;
         const VVM::Real du2_dz = (covariant_q2_at_v(k + 1, j, i) - covariant_q2_at_v(k, j, i)) *
                                  inverse_vertical_spacing;
 
@@ -64,7 +67,7 @@ struct HorizontalVorticityDeviceView {
 
         const VVM::Real du1_dz = (covariant_q1_at_u(k + 1, j, i) - covariant_q1_at_u(k, j, i)) *
                                  inverse_vertical_spacing;
-        const VVM::Real dw_dq1 = (w(k, j, i + 1) - w(k, j, i)) / dq1;
+        const VVM::Real dw_dq1 = (w(k, j, i + 1) - w(k, j, i)) * rdq1;
 
         return (du1_dz - dw_dq1) / sqrt_g_at_u(j, i);
     }
@@ -79,7 +82,7 @@ struct HorizontalVorticityDeviceView {
         const int j,
         const int i) const noexcept {
 
-        const VVM::Real dw_dq1 = (w(k, j, i + 1) - w(k, j, i)) / dq1;
+        const VVM::Real dw_dq1 = (w(k, j, i + 1) - w(k, j, i)) * rdq1;
 
         return dw_dq1 + sqrt_g_at_u(j, i) * contravariant_q2_at_u(k, j, i);
     }
@@ -92,7 +95,7 @@ struct HorizontalVorticityDeviceView {
         const int j,
         const int i) const noexcept {
 
-        const VVM::Real dw_dq2 = (w(k, j + 1, i) - w(k, j, i)) / dq2;
+        const VVM::Real dw_dq2 = (w(k, j + 1, i) - w(k, j, i)) * rdq2;
 
         return dw_dq2 - sqrt_g_at_v(j, i) * contravariant_q1_at_v(k, j, i);
     }
@@ -118,6 +121,9 @@ make_horizontal_vorticity_device_view(const Core::Geometry::HorizontalGeometry& 
     result.sqrt_g_at_v = v.sqrt_g;
     result.dq1 = geometry.dq1();
     result.dq2 = geometry.dq2();
+
+    result.rdq1 = u.rdq1;
+    result.rdq2 = u.rdq2;
 
     return result;
 }
