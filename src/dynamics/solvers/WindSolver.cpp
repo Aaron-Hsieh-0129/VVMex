@@ -159,7 +159,7 @@ WindSolver::solve(const Core::BoundaryConditionManager& bc_manager) {
     prepare_cartesian_wind_recovery_inputs(bc_manager);
 
     solve_w();
-    solve_uv();
+    recover_cartesian_horizontal_wind();
 }
 
 void
@@ -442,12 +442,7 @@ WindSolver::diagnose_cartesian_horizontal_potentials() {
 }
 
 void
-WindSolver::solve_uv() {
-    const int nz = grid_.get_local_total_points_z();
-    const int ny = grid_.get_local_total_points_y();
-    const int nx = grid_.get_local_total_points_x();
-    const int h = grid_.get_halo_cells();
-
+WindSolver::recover_cartesian_horizontal_wind() {
     diagnose_cartesian_horizontal_potentials();
 
     reconstruct_cartesian_top_wind();

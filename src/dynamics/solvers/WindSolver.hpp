@@ -48,7 +48,7 @@ public:
     void solve(const Core::BoundaryConditionManager& bc_manager);
 
     void solve_w();
-    void solve_uv();
+    void recover_cartesian_horizontal_wind(); // original solve_uv
     void solve_regular_latlon();
 
     void relax_2d_batched();
