@@ -40,6 +40,9 @@ struct HorizontalVorticityDeviceView {
     VVM::Real rdq1 = VVM::real(0.0);
     VVM::Real rdq2 = VVM::real(0.0);
 
+    Core::Geometry::GeometryField2D inverse_h1_at_u;
+    Core::Geometry::GeometryField2D inverse_h2_at_v;
+
     template <typename WView, typename CovariantQ2View>
     KOKKOS_INLINE_FUNCTION VVM::Real
     calculate_contravariant_q1_at_v(const WView& w,
@@ -99,6 +102,32 @@ struct HorizontalVorticityDeviceView {
 
         return dw_dq2 - sqrt_g_at_v(j, i) * contravariant_q1_at_v(k, j, i);
     }
+
+    template <typename WView>
+    KOKKOS_INLINE_FUNCTION VVM::Real
+    calculate_physical_q1_vertical_shear_at_u(const WView& w,
+        const VVM::Real physical_q2_vorticity_at_u,
+        const int k,
+        const int j,
+        const int i) const noexcept {
+
+        const VVM::Real dw_dq1 = (w(k, j, i + 1) - w(k, j, i)) * rdq1;
+
+        return dw_dq1 * inverse_h1_at_u(j, i) + physical_q2_vorticity_at_u;
+    }
+
+    template <typename WView>
+    KOKKOS_INLINE_FUNCTION VVM::Real
+    calculate_physical_q2_vertical_shear_at_v(const WView& w,
+        const VVM::Real physical_q1_vorticity_at_v,
+        const int k,
+        const int j,
+        const int i) const noexcept {
+
+        const VVM::Real dw_dq2 = (w(k, j + 1, i) - w(k, j, i)) * rdq2;
+
+        return dw_dq2 * inverse_h2_at_v(j, i) - physical_q1_vorticity_at_v;
+    }
 };
 
 inline HorizontalVorticityDeviceView
@@ -124,6 +153,9 @@ make_horizontal_vorticity_device_view(const Core::Geometry::HorizontalGeometry& 
 
     result.rdq1 = u.rdq1;
     result.rdq2 = u.rdq2;
+
+    result.inverse_h1_at_u = u.physical_to_contravariant.a11;
+    result.inverse_h2_at_v = v.physical_to_contravariant.a22;
 
     return result;
 }

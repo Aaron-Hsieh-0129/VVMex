@@ -3,6 +3,7 @@
 
 #include "core/Field.hpp"
 #include "core/geometry/HorizontalGeometry.hpp"
+#include "dynamics/operators/HorizontalVorticity.hpp"
 #include "dynamics/operators/HorizontalWindReconstruction.hpp"
 
 namespace VVM {
@@ -69,6 +70,8 @@ private:
     Operators::HorizontalWindReconstructionDeviceView reconstruction_;
     VVM::Real dq1_;
     VVM::Real dq2_;
+
+    Operators::HorizontalVorticityDeviceView vorticity_;
 };
 
 } // namespace Dynamics

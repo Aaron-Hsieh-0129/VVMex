@@ -58,7 +58,8 @@ HorizontalWindStateAdapter::HorizontalWindStateAdapter(
     const Core::Geometry::HorizontalGeometry& geometry)
     : layout_(geometry.layout()),
       reconstruction_(Operators::make_horizontal_wind_reconstruction_device_view(geometry)),
-      dq1_(geometry.dq1()), dq2_(geometry.dq2()) {
+      dq1_(geometry.dq1()), dq2_(geometry.dq2()),
+      vorticity_(Operators::make_horizontal_vorticity_device_view(geometry)) {
 
     // The reconstruction factory rejects unsupported/nonorthogonal geometry.
     if (layout_.halo < 1 || layout_.local_physical_nx < 1 || layout_.local_physical_ny < 1) {
@@ -281,11 +282,8 @@ HorizontalWindStateAdapter::integrate_from_top(const Core::Field<3>& w,
 
     validate_storage(ud.data(), vd.data(), {wd.data(), xd.data(), ed.data(), ds.data()});
 
-    const auto ih1 = inverse_h1_at_u_;
-    const auto ih2 = inverse_h2_at_v_;
-    const Real dq1 = dq1_;
-    const Real dq2 = dq2_;
     const int h = layout_.halo;
+    const auto vorticity = vorticity_;
 
     const auto policy = Kokkos::Experimental::require(
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h},
@@ -295,10 +293,18 @@ HorizontalWindStateAdapter::integrate_from_top(const Core::Field<3>& w,
     Kokkos::parallel_for("IntegratePhysicalWindFromTop",
         policy,
         KOKKOS_LAMBDA(const int j, const int i) {
-            // Orthogonal, height-independent specialization of CVVM covariant recovery.
             for (int k = top - 1; k >= bottom; --k) {
-                const Real du_dz = (wd(k, j, i + 1) - wd(k, j, i)) / dq1 * ih1(j, i) - ed(k, j, i);
-                const Real dv_dz = (wd(k, j + 1, i) - wd(k, j, i)) / dq2 * ih2(j, i) - xd(k, j, i);
+                // VVM convention:
+                //   xi  = physical omega_1
+                //   eta = -physical omega_2
+                //
+                // Therefore:
+                //   physical omega_2 = -eta
+                const Real du_dz =
+                    vorticity.calculate_physical_q1_vertical_shear_at_u(wd, -ed(k, j, i), k, j, i);
+
+                const Real dv_dz =
+                    vorticity.calculate_physical_q2_vertical_shear_at_v(wd, xd(k, j, i), k, j, i);
 
                 ud(k, j, i) = ud(k + 1, j, i) - du_dz * ds(k);
                 vd(k, j, i) = vd(k + 1, j, i) - dv_dz * ds(k);
