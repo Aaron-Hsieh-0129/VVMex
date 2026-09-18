@@ -194,6 +194,13 @@ private:
 
     void finalize_cartesian_wind();
 
+    void recover_regular_latlon_horizontal_wind(bool initial,
+        bool periodic,
+        bool terrain,
+        RegularLatLonDiagnosticFields& fields,
+        HorizontalDiagnosticWorkspace& workspace,
+        const RegularLatLonDiagnosticOptions& options);
+
     const Core::Grid& grid_;
     const Utils::ConfigurationManager& config_;
     const Core::Parameters& params_;

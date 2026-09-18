@@ -167,11 +167,12 @@ WindSolver::solve_regular_latlon() {
         psi_out_field_,
         chi_out_field_};
 
-    execute_regular_latlon_diagnostic(initial, fields, workspace, options);
-
-    apply_regular_latlon_wind_closure(initial, q2_periodic);
-
-    finalize_regular_latlon_wind(fields.u, fields.v, terrain);
+    recover_regular_latlon_horizontal_wind(initial,
+        q2_periodic,
+        terrain,
+        fields,
+        workspace,
+        options);
 
     rll_initialized_ = true;
 }
@@ -434,6 +435,21 @@ WindSolver::apply_regular_latlon_wind_closure(const bool initial, const bool per
     else {
         preserve_regular_latlon_channel_circulation(initial);
     }
+}
+
+void
+WindSolver::recover_regular_latlon_horizontal_wind(const bool initial,
+    const bool periodic,
+    const bool terrain,
+    RegularLatLonDiagnosticFields& fields,
+    HorizontalDiagnosticWorkspace& workspace,
+    const RegularLatLonDiagnosticOptions& options) {
+
+    execute_regular_latlon_diagnostic(initial, fields, workspace, options);
+
+    apply_regular_latlon_wind_closure(initial, periodic);
+
+    finalize_regular_latlon_wind(fields.u, fields.v, terrain);
 }
 
 } // namespace VVM::Dynamics
