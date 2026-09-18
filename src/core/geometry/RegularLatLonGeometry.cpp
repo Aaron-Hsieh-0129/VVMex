@@ -362,6 +362,9 @@ RegularLatLonGeometry::device_view_impl(const HorizontalLocation location) const
     result.dq1 = dlongitude_;
     result.dq2 = dlatitude_;
 
+    result.rdq1 = VVM::real(1.0) / dlongitude_;
+    result.rdq2 = VVM::real(1.0) / dlatitude_;
+
     return result;
 }
 

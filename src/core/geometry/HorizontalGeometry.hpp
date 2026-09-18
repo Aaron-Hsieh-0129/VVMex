@@ -182,8 +182,23 @@ struct HorizontalGeometryDeviceView {
     Matrix2DeviceView physical_to_contravariant;
     Matrix2DeviceView contravariant_to_physical;
 
+    // Uniform computational-coordinate spacing and its reciprocal.
+    //
+    // Cartesian:
+    //   dq1  = dx
+    //   dq2  = dy
+    //   rdq1 = 1 / dx
+    //   rdq2 = 1 / dy
+    //
+    // Regular latitude-longitude:
+    //   dq1  = d(lambda)
+    //   dq2  = d(phi)
+    //   rdq1 = 1 / d(lambda)
+    //   rdq2 = 1 / d(phi)
     VVM::Real dq1 = VVM::real(0.0);
     VVM::Real dq2 = VVM::real(0.0);
+    VVM::Real rdq1 = VVM::real(0.0);
+    VVM::Real rdq2 = VVM::real(0.0);
 
     // Recover the unweighted inverse metric when an operator needs g^ij.
     // Most conservative operators should use sqrt_g_g_contra directly.

@@ -254,6 +254,9 @@ CartesianGeometry::device_view_impl(const HorizontalLocation location) const {
     result.dq1 = dx_;
     result.dq2 = dy_;
 
+    result.rdq1 = VVM::real(1.0) / dx_;
+    result.rdq2 = VVM::real(1.0) / dy_;
+
     return result;
 }
 
