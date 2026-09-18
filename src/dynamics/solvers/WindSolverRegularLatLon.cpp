@@ -89,12 +89,14 @@ WindSolver::initialize_regular_latlon_solver(const bool periodic, const int nz) 
 
     rll_spacing_ = std::make_unique<Core::Field<1>>("RLL wind spacing", std::array<int, 1>{nz});
 
-    rll_increment_ =
-        std::make_unique<Core::Field<0>>("RLL harmonic increment", std::array<int, 0>{});
+    rll_prescribed_zonal_covariant_increment_ =
+        std::make_unique<Core::Field<0>>("RLL prescribed zonal covariant increment",
+            std::array<int, 0>{});
 
-    rll_wall_contributions_ = std::make_unique<Core::Field<1>>("RLL circulation contributions",
-        std::array<int, 1>{
-            grid_.get_global_points_x() + (periodic ? 2 * grid_.get_global_points_y() : 0)});
+    rll_constraint_contributions_ =
+        std::make_unique<Core::Field<1>>("RLL harmonic constraint contributions",
+            std::array<int, 1>{
+                grid_.get_global_points_x() + (periodic ? 2 * grid_.get_global_points_y() : 0)});
 
     Kokkos::deep_copy(rll_spacing_->get_mutable_device_data(), params_.get_value_host(params_.dz));
 
@@ -126,7 +128,9 @@ WindSolver::solve_regular_latlon() {
         // This target belongs to the incoming physical wind, before either
         // terrain adaptation or the initial diagnostic can modify it.
         if (initial) {
-            preserve_regular_latlon_periodic_circulation(true);
+            maintain_horizontal_wind_constraint(
+                HorizontalWindConstraintKind::PeriodicCycleCirculation,
+                true);
         }
     }
     // Assemble this invocation's field references after the initial periodic
@@ -181,7 +185,7 @@ WindSolver::prepare_regular_latlon_wind_recovery(
         state_.get_field<1>("rhobar_up"),
         params_.flex_height_coef_mid,
         *rll_spacing_,
-        *rll_increment_};
+        *rll_prescribed_zonal_covariant_increment_};
 }
 
 void
@@ -205,7 +209,7 @@ WindSolver::preserve_regular_latlon_channel_circulation(const bool initialize) {
 
     const auto top_snapshot = state_.get_field<2>("rll_zeta_top").get_mutable_device_data();
 
-    const auto row = rll_wall_contributions_->get_mutable_device_data();
+    const auto row = rll_constraint_contributions_->get_mutable_device_data();
 
     Kokkos::deep_copy(row, real(0.));
 
@@ -230,7 +234,7 @@ WindSolver::preserve_regular_latlon_channel_circulation(const bool initialize) {
     // An ordinary parallel mean has rank-dependent rounding that seeds a
     // different harmonic wind correction every step. This synchronization
     // remains outside capture, as did the original horizontal mean.
-    auto wall = rll_wall_contributions_->get_host_data();
+    auto wall = rll_constraint_contributions_->get_host_data();
 
     MPI_Allreduce(MPI_IN_PLACE,
         wall.data(),
@@ -248,10 +252,10 @@ WindSolver::preserve_regular_latlon_channel_circulation(const bool initialize) {
     current /= static_cast<Real>(grid_.get_global_points_x());
 
     if (initialize) {
-        rll_south_circulation_ = current;
+        rll_harmonic_targets_.q1 = current;
     }
 
-    const Real correction = rll_south_circulation_ - current;
+    const Real correction = rll_harmonic_targets_.q1 - current;
 
     Kokkos::parallel_for("PreserveRLLWallCirculation",
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
@@ -282,7 +286,7 @@ WindSolver::preserve_regular_latlon_periodic_circulation(bool initialize) {
                         .device_view(Core::Geometry::HorizontalLocation::V)
                         .contravariant_to_physical.a11;
     const Real radius = grid_.horizontal_specification().geometry.regular_lat_lon.radius;
-    const auto contributions = rll_wall_contributions_->get_mutable_device_data();
+    const auto contributions = rll_constraint_contributions_->get_mutable_device_data();
     Kokkos::deep_copy(contributions, real(0.));
     Kokkos::parallel_for("RLLPeriodicCycleIntegrals",
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
@@ -296,7 +300,7 @@ WindSolver::preserve_regular_latlon_periodic_circulation(bool initialize) {
             }
             snapshot(j, i) = zeta(top, j, i);
         });
-    auto values = rll_wall_contributions_->get_host_data();
+    auto values = rll_constraint_contributions_->get_host_data();
     MPI_Allreduce(MPI_IN_PLACE,
         values.data(),
         gx + 2 * gy,
@@ -312,13 +316,15 @@ WindSolver::preserve_regular_latlon_periodic_circulation(bool initialize) {
         weight += values(gx + gy + j);
     }
     zonal /= static_cast<Real>(gx);
+
     if (initialize) {
-        rll_south_circulation_ = zonal;
-        rll_meridional_circulation_ = meridional;
+        rll_harmonic_targets_.q1 = zonal;
+        rll_harmonic_targets_.q2 = meridional;
         return;
     }
-    const Real du = rll_south_circulation_ - zonal;
-    const Real dv = (rll_meridional_circulation_ - meridional) / weight;
+    const Real du = rll_harmonic_targets_.q1 - zonal;
+    const Real dv = (rll_harmonic_targets_.q2 - meridional) / weight;
+
     Kokkos::parallel_for("PreserveRLLPeriodicCirculation",
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
         KOKKOS_LAMBDA(int k, int j, int i) {
@@ -434,17 +440,6 @@ WindSolver::execute_regular_latlon_diagnostic(const bool initial,
 }
 
 void
-WindSolver::apply_regular_latlon_wind_closure(const bool initial, const bool periodic) {
-
-    if (periodic) {
-        preserve_regular_latlon_periodic_circulation(false);
-    }
-    else {
-        preserve_regular_latlon_channel_circulation(initial);
-    }
-}
-
-void
 WindSolver::recover_regular_latlon_horizontal_wind(const bool initial,
     const bool periodic,
     const bool terrain,
@@ -454,7 +449,10 @@ WindSolver::recover_regular_latlon_horizontal_wind(const bool initial,
 
     execute_regular_latlon_diagnostic(initial, fields, workspace, options);
 
-    apply_regular_latlon_wind_closure(initial, periodic);
+    maintain_horizontal_wind_constraint(
+        periodic ? HorizontalWindConstraintKind::PeriodicCycleCirculation
+                 : HorizontalWindConstraintKind::BoundedQ2WallCirculation,
+        periodic ? false : initial);
 
     finalize_regular_latlon_wind(fields.u, fields.v, terrain);
 }

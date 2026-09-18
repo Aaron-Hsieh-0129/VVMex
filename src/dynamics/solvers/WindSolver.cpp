@@ -447,12 +447,33 @@ WindSolver::recover_cartesian_horizontal_wind() {
 
     reconstruct_cartesian_top_wind();
 
-    apply_cartesian_top_wind_closure();
+    maintain_horizontal_wind_constraint(HorizontalWindConstraintKind::TopMean, false);
 
     integrate_uv_from_top();
 
     finalize_cartesian_wind();
     return;
+}
+
+void
+WindSolver::maintain_horizontal_wind_constraint(const HorizontalWindConstraintKind kind,
+    const bool initialize_target) {
+
+    switch (kind) {
+    case HorizontalWindConstraintKind::TopMean:
+        apply_cartesian_top_wind_closure();
+        return;
+
+    case HorizontalWindConstraintKind::PeriodicCycleCirculation:
+        preserve_regular_latlon_periodic_circulation(initialize_target);
+        return;
+
+    case HorizontalWindConstraintKind::BoundedQ2WallCirculation:
+        preserve_regular_latlon_channel_circulation(initialize_target);
+        return;
+    }
+
+    throw std::logic_error("Unsupported horizontal wind constraint kind.");
 }
 
 void

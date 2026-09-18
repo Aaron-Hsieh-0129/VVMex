@@ -185,6 +185,16 @@ public:
     void apply_cartesian_top_wind_closure();
 
 private:
+    enum class HorizontalWindConstraintKind {
+        TopMean,
+        PeriodicCycleCirculation,
+        BoundedQ2WallCirculation
+    };
+
+    struct HorizontalWindConstraintTargets {
+        VVM::Real q1 = VVM::real(0.0);
+        VVM::Real q2 = VVM::real(0.0);
+    };
     void initialize_regular_latlon_solver(bool periodic, int nz);
 
     RegularLatLonDiagnosticFields prepare_regular_latlon_wind_recovery(
@@ -193,7 +203,8 @@ private:
     void fill_bounded_q2_potential_halos(Core::Field<2>& first, Core::Field<2>& second) const;
     void exchange_2d_solver_halos(Core::Field<2>& first, Core::Field<2>& second, int depth);
 
-    void apply_regular_latlon_wind_closure(bool initial, bool periodic);
+    void maintain_horizontal_wind_constraint(HorizontalWindConstraintKind kind,
+        bool initialize_target);
 
     void finalize_cartesian_wind();
 
@@ -234,10 +245,10 @@ private:
     std::unique_ptr<Core::Boundary::HorizontalBoundaryStencils> bounded_q2_stencils_;
     std::unique_ptr<VerticalEllipticSolver> rll_vertical_solver_;
     std::unique_ptr<Core::Field<1>> rll_spacing_;
-    std::unique_ptr<Core::Field<0>> rll_increment_;
-    std::unique_ptr<Core::Field<1>> rll_wall_contributions_;
-    VVM::Real rll_south_circulation_ = VVM::real(0.0);
-    VVM::Real rll_meridional_circulation_ = VVM::real(0.0);
+    std::unique_ptr<Core::Field<0>> rll_prescribed_zonal_covariant_increment_;
+    std::unique_ptr<Core::Field<1>> rll_constraint_contributions_;
+    HorizontalWindConstraintTargets rll_harmonic_targets_;
+
     VVM::Real rll_inverse_dz_ = VVM::real(0.0);
     VVM::Real rll_psi_north_ = VVM::real(0.0);
     bool rll_initialized_ = false;
