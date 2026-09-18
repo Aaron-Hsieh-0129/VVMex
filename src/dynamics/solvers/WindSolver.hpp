@@ -187,6 +187,9 @@ public:
 private:
     void initialize_regular_latlon_solver(bool periodic, int nz);
 
+    RegularLatLonDiagnosticFields prepare_regular_latlon_wind_recovery(
+        bool initial, bool terrain, RegularLatLonDiagnosticOptions& options);
+
     void fill_bounded_q2_potential_halos(Core::Field<2>& first, Core::Field<2>& second) const;
     void exchange_2d_solver_halos(Core::Field<2>& first, Core::Field<2>& second, int depth);
 

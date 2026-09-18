@@ -116,20 +116,41 @@ WindSolver::solve_regular_latlon() {
     const bool q2_periodic =
         grid_.horizontal_specification().topology.q2 == Core::HorizontalEdgeTopology::Periodic;
     const bool terrain = Core::is_rll_mountain(config_);
-    const int h = grid_.get_halo_cells();
     const int nz = grid_.get_local_total_points_z();
-    const int ny = grid_.get_local_total_points_y();
-    const int nx = grid_.get_local_total_points_x();
     if (initial) {
         initialize_regular_latlon_solver(q2_periodic, nz);
     }
     RegularLatLonDiagnosticOptions options;
     if (q2_periodic) {
         options.boundary_policy = HorizontalDiagnosticBoundaryPolicy::RegularLatLonPeriodic;
+        // This target belongs to the incoming physical wind, before either
+        // terrain adaptation or the initial diagnostic can modify it.
         if (initial) {
             preserve_regular_latlon_periodic_circulation(true);
         }
     }
+    // Assemble this invocation's field references after the initial periodic
+    // target has been captured and before diagnostic execution / graph capture.
+    auto fields = prepare_regular_latlon_wind_recovery(initial, terrain, options);
+
+    HorizontalDiagnosticWorkspace workspace{rhs_psi_field_,
+        rhs_chi_field_,
+        psi_out_field_,
+        chi_out_field_};
+
+    recover_regular_latlon_horizontal_wind(initial,
+        q2_periodic,
+        terrain,
+        fields,
+        workspace,
+        options);
+
+    rll_initialized_ = true;
+}
+
+WindSolver::RegularLatLonDiagnosticFields
+WindSolver::prepare_regular_latlon_wind_recovery(
+    const bool initial, const bool terrain, RegularLatLonDiagnosticOptions& options) {
     options.vertical_iterations = config_.get_value<int>("dynamics.solver.vertical_iterations");
     options.horizontal = horizontal_elliptic_options_;
     options.horizontal.channel_psi_north = rll_psi_north_;
@@ -145,7 +166,7 @@ WindSolver::solve_regular_latlon() {
             halo_exchanger_,
             bounded_q2_stencils_.get());
     }
-    RegularLatLonDiagnosticFields fields{state_.get_field<2>("psi"),
+    return RegularLatLonDiagnosticFields{state_.get_field<2>("psi"),
         state_.get_field<2>("psinm1"),
         state_.get_field<2>("chi"),
         state_.get_field<2>("chinm1"),
@@ -161,20 +182,6 @@ WindSolver::solve_regular_latlon() {
         params_.flex_height_coef_mid,
         *rll_spacing_,
         *rll_increment_};
-
-    HorizontalDiagnosticWorkspace workspace{rhs_psi_field_,
-        rhs_chi_field_,
-        psi_out_field_,
-        chi_out_field_};
-
-    recover_regular_latlon_horizontal_wind(initial,
-        q2_periodic,
-        terrain,
-        fields,
-        workspace,
-        options);
-
-    rll_initialized_ = true;
 }
 
 void
