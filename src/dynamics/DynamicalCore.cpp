@@ -3,6 +3,8 @@
 #include "spatial_schemes/Takacs.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "dynamics/solvers/VerticalWindDiagnostic.hpp"
+#include "dynamics/operators/HorizontalVectorConversion.hpp"
+
 #include <stdexcept>
 #include <iostream>
 #include <unordered_set>
@@ -183,6 +185,117 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
 }
 
 DynamicalCore::~DynamicalCore() = default;
+
+void
+DynamicalCore::update_contravariant_shadow_state() {
+    using Core::Geometry::GeometryKind;
+    using Core::Geometry::HorizontalLocation;
+    using Operators::HorizontalVectorConversion;
+
+    const auto geometry_kind = grid_.geometry().kind();
+
+    if (geometry_kind != GeometryKind::Cartesian && geometry_kind != GeometryKind::RegularLatLon) {
+        throw std::logic_error("Contravariant shadow state currently supports only Cartesian and "
+                               "regular latitude-longitude geometry.");
+    }
+
+    const auto& u = u_ref_.get(state_, "u").get_device_data();
+    const auto& v = v_ref_.get(state_, "v").get_device_data();
+    const auto& xi = xi_ref_.get(state_, "xi").get_device_data();
+    const auto& eta = eta_ref_.get(state_, "eta").get_device_data();
+    const auto& zeta = zeta_ref_.get(state_, "zeta").get_device_data();
+
+    auto& u_con = u_con_ref_.get(state_, "u_con").get_mutable_device_data();
+    auto& v_con = v_con_ref_.get(state_, "v_con").get_mutable_device_data();
+    auto& xi_con = xi_con_ref_.get(state_, "xi_con").get_mutable_device_data();
+    auto& eta_con = eta_con_ref_.get(state_, "eta_con").get_mutable_device_data();
+    auto& zeta_con = zeta_con_ref_.get(state_, "zeta_con").get_mutable_device_data();
+
+    auto exec = Kokkos::DefaultExecutionSpace();
+
+    // Cartesian:
+    //
+    //     u^1     = u
+    //     u^2     = v
+    //     omega^1 = xi
+    //    -omega^2 = eta
+    //     omega^3 = zeta
+    //
+    // Use direct copies here so the shadow state is bitwise-identical to the
+    // existing physical Cartesian state.
+    if (geometry_kind == GeometryKind::Cartesian) {
+        Kokkos::deep_copy(exec, u_con, u);
+        Kokkos::deep_copy(exec, v_con, v);
+        Kokkos::deep_copy(exec, xi_con, xi);
+        Kokkos::deep_copy(exec, eta_con, eta);
+        Kokkos::deep_copy(exec, zeta_con, zeta);
+        return;
+    }
+
+    // Regular latitude-longitude:
+    //
+    //     h1 = a cos(phi)
+    //     h2 = a
+    //
+    // Wind:
+    //     u_con = U / h1      at U
+    //     v_con = V / h2      at V
+    //
+    // Vorticity:
+    //     xi_con  = xi  / h1  at V
+    //     eta_con = eta / h2  at U
+    //
+    // eta already follows the historical VVM convention
+    //
+    //     eta = -omega_2(physical)
+    //
+    // and eta_con is defined as
+    //
+    //     eta_con = -omega^2
+    //
+    // so no additional minus sign is introduced here.
+
+    const auto u_geometry = grid_.geometry().device_view(HorizontalLocation::U);
+    const auto v_geometry = grid_.geometry().device_view(HorizontalLocation::V);
+
+    const auto inverse_h1_at_u = u_geometry.physical_to_contravariant.a11;
+    const auto inverse_h2_at_v = v_geometry.physical_to_contravariant.a22;
+
+    const int nz = grid_.get_local_total_points_z();
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
+
+    // Keep the kernel capture deliberately small. Do not capture the complete
+    // HorizontalGeometryDeviceView because the generalized-coordinate
+    // operators must remain CUDA-graph safe.
+    Kokkos::parallel_for("UpdateContravariantWindShadow",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) {
+            u_con(k, j, i) = HorizontalVectorConversion::physical_to_contravariant(u(k, j, i),
+                inverse_h1_at_u(j, i));
+
+            v_con(k, j, i) = HorizontalVectorConversion::physical_to_contravariant(v(k, j, i),
+                inverse_h2_at_v(j, i));
+        });
+
+    const auto inverse_h1_at_v = v_geometry.physical_to_contravariant.a11;
+    const auto inverse_h2_at_u = u_geometry.physical_to_contravariant.a22;
+
+    Kokkos::parallel_for("UpdateContravariantHorizontalVorticityShadow",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) {
+            xi_con(k, j, i) = HorizontalVectorConversion::physical_to_contravariant(xi(k, j, i),
+                inverse_h1_at_v(j, i));
+
+            eta_con(k, j, i) = HorizontalVectorConversion::physical_to_contravariant(eta(k, j, i),
+                inverse_h2_at_u(j, i));
+        });
+
+    // q3 is still the physical vertical coordinate in the current Cartesian
+    // and RLL implementations. Therefore omega^3 and zeta have the same
+    // numerical representation.
+    Kokkos::deep_copy(exec, zeta_con, zeta);
+}
 
 void
 DynamicalCore::compute_diagnostic_fields() const {

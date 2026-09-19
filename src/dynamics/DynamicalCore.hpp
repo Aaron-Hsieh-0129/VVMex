@@ -48,6 +48,7 @@ public:
     void update_vorticity(VVM::Real dt);
     void diagnose_wind_fields(Core::State& state);
     void initialize_restart_history();
+    void update_contravariant_shadow_state();
 
 private:
     const Utils::ConfigurationManager& config_;
@@ -117,6 +118,13 @@ private:
     Core::FieldRef<3> xi_ref_;
     Core::FieldRef<3> eta_ref_;
     Core::FieldRef<3> zeta_ref_;
+
+    Core::FieldRef<3> u_con_ref_;
+    Core::FieldRef<3> v_con_ref_;
+    Core::FieldRef<3> xi_con_ref_;
+    Core::FieldRef<3> eta_con_ref_;
+    Core::FieldRef<3> zeta_con_ref_;
+
     Core::FieldRef<3> R_xi_ref_;
     Core::FieldRef<3> R_eta_ref_;
     Core::FieldRef<3> R_zeta_ref_;

@@ -188,6 +188,8 @@ Model::init() {
     if (config_.get_value<bool>("restart.enable", false)) {
         dycore_->initialize_restart_history();
     }
+
+    dycore_->update_contravariant_shadow_state();
 }
 
 void
@@ -550,6 +552,8 @@ Model::run_step(VVM::Real dt) {
         VVM::Utils::Timer timer("dynamics_diagnostics");
         dycore_->compute_diagnostic_fields();
     }
+
+    dycore_->update_contravariant_shadow_state();
 }
 
 void
