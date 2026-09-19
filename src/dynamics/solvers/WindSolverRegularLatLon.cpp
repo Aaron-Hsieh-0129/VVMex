@@ -3,6 +3,7 @@
 #include "dynamics/solvers/HorizontalWindStateAdapter.hpp"
 #include "core/RegularLatLonModelConfiguration.hpp"
 #include "dynamics/operators/RegularLatLonTerrain.hpp"
+#include "dynamics/operators/HorizontalVectorConversion.hpp"
 
 namespace VVM::Dynamics {
 namespace {
@@ -220,9 +221,9 @@ WindSolver::measure_regular_latlon_channel_circulation() {
     const int gx = grid_.get_global_points_x();
     const int top = nz - h - 1;
 
-    const auto h1 = grid_.geometry()
-                        .device_view(Core::Geometry::HorizontalLocation::U)
-                        .contravariant_to_physical.a11;
+    const auto h1_at_u = grid_.geometry()
+                             .device_view(Core::Geometry::HorizontalLocation::U)
+                             .contravariant_to_physical.a11;
 
     const auto u = state_.get_field<3>("u").get_device_data();
     const auto zeta = state_.get_field<3>("zeta").get_device_data();
@@ -237,7 +238,9 @@ WindSolver::measure_regular_latlon_channel_circulation() {
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
         KOKKOS_LAMBDA(const int j, const int i) {
             if (owns_south && j == h) {
-                contributions(start_i + i - h) = h1(j, i) * u(top, j, i);
+                contributions(start_i + i - h) =
+                    Operators::HorizontalVectorConversion::physical_to_covariant(u(top, j, i),
+                        h1_at_u(j, i));
             }
 
             top_snapshot(j, i) = zeta(top, j, i);
@@ -394,13 +397,17 @@ WindSolver::measure_regular_latlon_periodic_circulation() {
     const auto zeta = state_.get_field<3>("zeta").get_device_data();
     const auto snapshot = state_.get_field<2>("rll_zeta_top").get_mutable_device_data();
 
-    const auto hu = grid_.geometry()
-                        .device_view(Core::Geometry::HorizontalLocation::U)
-                        .contravariant_to_physical.a11;
+    const auto h1_at_u = grid_.geometry()
+                             .device_view(Core::Geometry::HorizontalLocation::U)
+                             .contravariant_to_physical.a11;
 
-    const auto hv = grid_.geometry()
-                        .device_view(Core::Geometry::HorizontalLocation::V)
-                        .contravariant_to_physical.a11;
+    const auto h2_at_v = grid_.geometry()
+                             .device_view(Core::Geometry::HorizontalLocation::V)
+                             .contravariant_to_physical.a22;
+
+    const auto h1_at_v = grid_.geometry()
+                             .device_view(Core::Geometry::HorizontalLocation::V)
+                             .contravariant_to_physical.a11;
 
     const Real radius = grid_.horizontal_specification().geometry.regular_lat_lon.radius;
 
@@ -412,13 +419,17 @@ WindSolver::measure_regular_latlon_periodic_circulation() {
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
         KOKKOS_LAMBDA(const int j, const int i) {
             if (sj == 0 && j == h) {
-                contributions(si + i - h) = hu(j, i) * u(top, j, i);
+                contributions(si + i - h) =
+                    Operators::HorizontalVectorConversion::physical_to_covariant(u(top, j, i),
+                        h1_at_u(j, i));
             }
 
             if (si == 0 && i == h) {
-                contributions(gx + sj + j - h) = radius * v(top, j, i);
+                contributions(gx + sj + j - h) =
+                    Operators::HorizontalVectorConversion::physical_to_covariant(v(top, j, i),
+                        h2_at_v(j, i));
 
-                contributions(gx + gy + sj + j - h) = radius / hv(j, i);
+                contributions(gx + gy + sj + j - h) = radius / h1_at_v(j, i);
             }
 
             snapshot(j, i) = zeta(top, j, i);

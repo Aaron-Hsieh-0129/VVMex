@@ -233,8 +233,8 @@ HorizontalWindStateAdapter::reconstruct_top(const Core::Field<2>& psi,
     validate_storage(ud.data(), vd.data(), {pd.data(), cd.data()});
 
     const auto reconstruction = reconstruction_;
-    const auto ih1 = inverse_h1_at_u_;
-    const auto ih2 = inverse_h2_at_v_;
+    const auto inverse_h1 = inverse_h1_at_u_;
+    const auto inverse_h2 = inverse_h2_at_v_;
     const int h = layout_.halo;
 
     const auto policy = Kokkos::Experimental::require(
@@ -245,8 +245,13 @@ HorizontalWindStateAdapter::reconstruct_top(const Core::Field<2>& psi,
     Kokkos::parallel_for("ReconstructPhysicalTopWind",
         policy,
         KOKKOS_LAMBDA(const int j, const int i) {
-            ud(top, j, i) = reconstruction.calculate_covariant_q1_at_u(pd, cd, j, i) * ih1(j, i);
-            vd(top, j, i) = reconstruction.calculate_covariant_q2_at_v(pd, cd, j, i) * ih2(j, i);
+            ud(top, j, i) = Operators::HorizontalVectorConversion::covariant_to_physical(
+                reconstruction.calculate_covariant_q1_at_u(pd, cd, j, i),
+                inverse_h1(j, i));
+
+            vd(top, j, i) = Operators::HorizontalVectorConversion::covariant_to_physical(
+                reconstruction.calculate_covariant_q2_at_v(pd, cd, j, i),
+                inverse_h2(j, i));
         });
 }
 

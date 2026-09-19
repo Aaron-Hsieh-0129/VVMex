@@ -5,6 +5,7 @@
 #include "core/geometry/HorizontalGeometry.hpp"
 #include "dynamics/operators/HorizontalVorticity.hpp"
 #include "dynamics/operators/HorizontalWindReconstruction.hpp"
+#include "dynamics/operators/HorizontalVectorConversion.hpp"
 
 namespace VVM {
 namespace Dynamics {

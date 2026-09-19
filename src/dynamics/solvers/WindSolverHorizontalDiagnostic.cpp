@@ -2,6 +2,7 @@
 #include "dynamics/solvers/HorizontalWindStateAdapter.hpp"
 #include "core/geometry/GeometryKind.hpp"
 #include "core/geometry/HorizontalLocation.hpp"
+#include "dynamics/operators/HorizontalVectorConversion.hpp"
 
 #include <array>
 #include <cmath>
@@ -56,7 +57,9 @@ WindSolver::apply_prescribed_zonal_covariant_increment(
     Kokkos::parallel_for("AddPrescribedZonalCovariantIncrement",
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
         KOKKOS_LAMBDA(const int j, const int i) {
-            u(top, j, i) += increment() * inverse_h1(j, i);
+            u(top, j, i) +=
+                Operators::HorizontalVectorConversion::covariant_to_physical(increment(),
+                    inverse_h1(j, i));
         });
 }
 
