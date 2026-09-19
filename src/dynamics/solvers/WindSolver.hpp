@@ -173,6 +173,18 @@ public:
     void finalize_regular_latlon_wind(
         Core::Field<3>& u_field, Core::Field<3>& v_field, bool terrain);
 
+    void measure_regular_latlon_channel_circulation();
+
+    void capture_regular_latlon_channel_circulation_target();
+
+    void apply_regular_latlon_channel_circulation_correction();
+
+    void measure_regular_latlon_periodic_circulation();
+
+    void capture_regular_latlon_periodic_circulation_target();
+
+    void apply_regular_latlon_periodic_circulation_correction();
+
     // RLL diagnostic execution and CUDA graph capture/replay.
     void execute_regular_latlon_diagnostic(bool initial,
         RegularLatLonDiagnosticFields& fields,
@@ -194,6 +206,12 @@ private:
     struct HorizontalWindConstraintTargets {
         VVM::Real q1 = VVM::real(0.0);
         VVM::Real q2 = VVM::real(0.0);
+    };
+
+    struct HorizontalWindConstraintMeasurements {
+        VVM::Real q1 = VVM::real(0.0);
+        VVM::Real q2 = VVM::real(0.0);
+        VVM::Real weight = VVM::real(0.0);
     };
     void initialize_regular_latlon_solver(bool periodic, int nz);
 
@@ -248,6 +266,15 @@ private:
     std::unique_ptr<Core::Field<0>> rll_prescribed_zonal_covariant_increment_;
     std::unique_ptr<Core::Field<1>> rll_constraint_contributions_;
     HorizontalWindConstraintTargets rll_harmonic_targets_;
+    HorizontalWindConstraintMeasurements rll_harmonic_measurements_;
+
+#if defined(ENABLE_NCCL)
+    Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space>
+        rll_harmonic_targets_device_;
+
+    Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space>
+        rll_harmonic_measurements_device_;
+#endif
 
     VVM::Real rll_inverse_dz_ = VVM::real(0.0);
     VVM::Real rll_psi_north_ = VVM::real(0.0);
