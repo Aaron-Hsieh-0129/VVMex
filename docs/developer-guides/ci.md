@@ -40,7 +40,7 @@ only one a fork's pull request can trigger.
   ignores unknown keys*, so a parse failure is one of the few configuration
   errors it will not absorb.
 - **Test registry** — `tests/scripts/check_test_registry.py` reads
-  `tests/CMakeLists.txt` and checks that every file it names exists: unit-test
+  `tests/CMakeLists.txt` and `tests/cmake/*.cmake` and checks that every file they name exists: unit-test
   sources, `tests/configs/*.json`, per-backend baselines, and `references/`
   digests. It also reports the reverse — data no registered test reads. CMake
   resolves these at configure time and CTest only at run time, so a case
@@ -68,8 +68,8 @@ A clean CPU build plus `ctest` with no optional tier enabled, which is exactly
 the default tier: the unit tests, the HDF5 precision cases, and the seven
 dynamical-core regression cases against `tests/baselines_cpu/`.
 
-Enabling a tier is a **configure-time** decision (see the tier block at the top
-of `tests/CMakeLists.txt`), so `ctest` with no arguments is already the right
+Enabling a tier is a **configure-time** decision (see `tests/cmake/TestOptions.cmake`
+and the selection examples in `tests/README.md`), so `ctest` with no arguments is already the right
 selection — there is no need to filter by label.
 
 The tree is deleted before configuring, every run. Two defects make a reused

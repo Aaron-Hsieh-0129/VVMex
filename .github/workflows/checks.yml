@@ -96,6 +96,9 @@ jobs:
       - name: Test registry matches the files it names
         run: python3 tests/scripts/check_test_registry.py
 
+      - name: Test suite switches and runtime policy
+        run: python3 tests/scripts/test_cmake_registration.py
+
       # .gitmodules and the index have to agree: a submodule declared in one but
       # not the other gives "No url found for submodule path" on a fresh clone,
       # which is a broken checkout for everyone rather than a failed test. This

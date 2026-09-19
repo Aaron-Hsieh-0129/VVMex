@@ -1,38 +1,11 @@
-add_executable(test_vertical_elliptic_solver
-    ${TEST_DIR}/unit/test_vertical_elliptic_solver.cpp
-)
+vvm_add_test_executable(test_vertical_elliptic_solver
+    LIBRARIES vvm_dynamics vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX)
 
-target_link_libraries(test_vertical_elliptic_solver PRIVATE
-    vvm_dynamics
-    vvm_core
-    vvm_utils
-    Kokkos::kokkos
-    MPI::MPI_CXX
-)
+vvm_add_test_executable(test_regular_latlon_wind_diagnostic
+    LIBRARIES vvm_dynamics vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX)
 
-add_executable(test_regular_latlon_wind_diagnostic
-    ${TEST_DIR}/unit/test_regular_latlon_wind_diagnostic.cpp
-)
-
-target_link_libraries(test_regular_latlon_wind_diagnostic PRIVATE
-    vvm_dynamics
-    vvm_core
-    vvm_utils
-    Kokkos::kokkos
-    MPI::MPI_CXX
-)
-
-add_executable(test_regular_latlon_channel_boundaries
-    ${TEST_DIR}/unit/test_regular_latlon_channel_boundaries.cpp
-)
-
-target_link_libraries(test_regular_latlon_channel_boundaries PRIVATE
-    vvm_dynamics
-    vvm_core
-    vvm_utils
-    Kokkos::kokkos
-    MPI::MPI_CXX
-)
+vvm_add_test_executable(test_regular_latlon_channel_boundaries
+    LIBRARIES vvm_dynamics vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX)
 
 set(_vertical_ranks 1)
 if(VVM_TEST_MULTIRANK)
