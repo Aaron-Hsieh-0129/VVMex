@@ -48,7 +48,9 @@ public:
     void update_vorticity(VVM::Real dt);
     void diagnose_wind_fields(Core::State& state);
     void initialize_restart_history();
-    void update_contravariant_shadow_state();
+
+    void update_contravariant_wind_shadow_state();
+    void update_contravariant_vorticity_shadow_state();
 
 private:
     const Utils::ConfigurationManager& config_;

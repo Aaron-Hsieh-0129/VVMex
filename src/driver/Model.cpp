@@ -184,12 +184,16 @@ Model::init() {
         Core::is_rll_idealized(config_)) {
         dycore_->compute_wind_fields();
     }
+    else {
+        dycore_->update_contravariant_wind_shadow_state();
+    }
+
     dycore_->compute_diagnostic_fields();
     if (config_.get_value<bool>("restart.enable", false)) {
         dycore_->initialize_restart_history();
     }
 
-    dycore_->update_contravariant_shadow_state();
+    dycore_->update_contravariant_vorticity_shadow_state();
 }
 
 void
@@ -553,7 +557,7 @@ Model::run_step(VVM::Real dt) {
         dycore_->compute_diagnostic_fields();
     }
 
-    dycore_->update_contravariant_shadow_state();
+    dycore_->update_contravariant_vorticity_shadow_state();
 }
 
 void
