@@ -45,6 +45,13 @@ public:
         VVM::Real dt,
         const TimeIntegrator::StageProcessor& process_stage = {}) const;
 
+    void advance(Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        VVM::Real dt,
+        Core::Field<3>& target,
+        Core::Field<3>* previous_state) const;
+
     bool
     uses_multistage_scheme() const {
         return integrator_->uses_multistage_scheme();

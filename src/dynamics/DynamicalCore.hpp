@@ -50,7 +50,8 @@ public:
     void initialize_restart_history();
 
     void update_contravariant_wind_shadow_state();
-    void update_contravariant_vorticity_shadow_state();
+    void sync_contravariant_vorticity_from_physical();
+    void sync_physical_horizontal_vorticity_from_contravariant();
 
     void prepare_vorticity_for_tendency_evaluation();
     void restore_vorticity_after_tendency_evaluation();

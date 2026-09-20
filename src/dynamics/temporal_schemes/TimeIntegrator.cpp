@@ -27,9 +27,41 @@ TimeIntegrator::step(Core::State& state,
                                  "' requires a tendency evaluator and stage processor.");
     }
 
-    auto& field_to_update = var_ref_.get(state, variable_name_);
-    auto& field_new_view = field_to_update.get_mutable_device_data();
+    auto& target = var_ref_.get(state, variable_name_);
 
+    Core::Field<3>* previous_state = nullptr;
+
+    if (has_ab2_terms_) {
+        previous_state = &var_prev_ref_.get(state, prev_state_name_);
+    }
+
+    step_single_stage(state, grid, params, dt, target, previous_state);
+}
+
+void
+TimeIntegrator::step(Core::State& state,
+    const Core::Grid& grid,
+    const Core::Parameters& params,
+    VVM::Real dt,
+    Core::Field<3>& target,
+    Core::Field<3>* previous_state) const {
+
+    if (multistage_scheme_) {
+        throw std::runtime_error("Explicit prognostic target is not supported for multistage "
+                                 "integration of '" +
+                                 variable_name_ + "'.");
+    }
+
+    step_single_stage(state, grid, params, dt, target, previous_state);
+}
+
+void
+TimeIntegrator::step_single_stage(Core::State& state,
+    const Core::Grid& grid,
+    const Core::Parameters& params,
+    VVM::Real dt,
+    Core::Field<3>& target,
+    Core::Field<3>* previous_state) const {
     const int nz = grid.get_local_total_points_z();
     const int ny = grid.get_local_total_points_y();
     const int nx = grid.get_local_total_points_x();
@@ -37,26 +69,31 @@ TimeIntegrator::step(Core::State& state,
 
     int k_start = h;
     int k_end = nz - h;
+
     if (variable_name_ == "xi" || variable_name_ == "eta") {
         k_end = nz - h - 1;
     }
 
     if (has_ab2_terms_) {
-        // Variable uses Adams-Bashforth (and possibly also Forward Euler)
-        auto& field_prev_step = var_prev_ref_.get(state, prev_state_name_);
+        if (previous_state == nullptr) {
+            throw std::runtime_error(
+                "AB2 integration for '" + variable_name_ + "' requires previous-state storage.");
+        }
 
-        auto& var_view = field_to_update.get_mutable_device_data();
-        auto& var_m_view = field_prev_step.get_mutable_device_data();
+        auto& var_view = target.get_mutable_device_data();
 
-        // swap previous and now
+        auto& var_m_view = previous_state->get_mutable_device_data();
+
+        // Preserve the existing VVMex storage-swap behavior exactly.
         auto temp_view = var_view;
         var_view = var_m_view;
         var_m_view = temp_view;
+
         auto field_new_view = var_view;
         auto field_old_view = var_m_view;
 
-        size_t now_idx = state.get_step() % 2;
-        size_t prev_idx = (state.get_step() + 1) % 2;
+        const size_t now_idx = state.get_step() % 2;
+        const size_t prev_idx = (state.get_step() + 1) % 2;
 
         auto& hist_0 = hist_0_ref_.get(state, hist_0_name_);
         auto& hist_1 = hist_1_ref_.get(state, hist_1_name_);
@@ -67,15 +104,15 @@ TimeIntegrator::step(Core::State& state,
         const auto& ITYPEV = itypev_ref_.get(state, "ITYPEV").get_device_data();
         const auto& ITYPEW = itypew_ref_.get(state, "ITYPEW").get_device_data();
         const auto& max_topo_idx = params.max_topo_idx;
+
         if (variable_name_ == "xi") {
             Kokkos::parallel_for("topo",
                 Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h},
                     {max_topo_idx + 1, ny - h, nx - h}),
                 KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                    // Set tendency to 0 if ITYPEV = 0
                     if (ITYPEV(k, j, i) != 1) {
-                        hist_now(k, j, i) = real(0.);
-                        hist_prev(k, j, i) = real(0.);
+                        hist_now(k, j, i) = real(0.0);
+                        hist_prev(k, j, i) = real(0.0);
                     }
                 });
         }
@@ -84,10 +121,9 @@ TimeIntegrator::step(Core::State& state,
                 Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h},
                     {max_topo_idx + 1, ny - h, nx - h}),
                 KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                    // Set tendency to 0 if ITYPEU = 0
                     if (ITYPEU(k, j, i) != 1) {
-                        hist_now(k, j, i) = real(0.);
-                        hist_prev(k, j, i) = real(0.);
+                        hist_now(k, j, i) = real(0.0);
+                        hist_prev(k, j, i) = real(0.0);
                     }
                 });
         }
@@ -96,10 +132,9 @@ TimeIntegrator::step(Core::State& state,
                 Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h},
                     {max_topo_idx + 1, ny - h, nx - h}),
                 KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                    // Set tendency to 0 if ITYPEW = 0
                     if (ITYPEW(k, j, i) != 1) {
-                        hist_now(k, j, i) = real(0.);
-                        hist_prev(k, j, i) = real(0.);
+                        hist_now(k, j, i) = real(0.0);
+                        hist_prev(k, j, i) = real(0.0);
                     }
                 });
         }
@@ -145,7 +180,6 @@ TimeIntegrator::step(Core::State& state,
             }
         }
 
-        // --- Add Forward Euler tendencies on top of AB2 update if applicable ---
         if (has_fe_terms_) {
             const auto& fe_tendency_data =
                 fe_tendency_ref_.get(state, fe_tendency_name_).get_device_data();
@@ -159,11 +193,9 @@ TimeIntegrator::step(Core::State& state,
     }
 
     if (has_fe_terms_ && !has_ab2_terms_) {
-        // Variable *only* uses Forward Euler
-        auto& field_new_view = var_ref_.get(state, variable_name_).get_mutable_device_data();
-
+        auto& field_new_view = target.get_mutable_device_data();
         auto& fe_tendency_field = fe_tendency_ref_.get(state, fe_tendency_name_);
-        auto fe_tendency_data = fe_tendency_field.get_device_data();
+        const auto fe_tendency_data = fe_tendency_field.get_device_data();
 
         Kokkos::parallel_for("Pure_Forward_Euler_Step",
             Kokkos::MDRangePolicy<Kokkos::Rank<3>>({k_start, h, h}, {k_end, ny - h, nx - h}),

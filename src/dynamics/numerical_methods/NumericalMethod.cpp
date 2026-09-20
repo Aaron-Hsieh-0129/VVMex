@@ -86,5 +86,22 @@ NumericalMethod::advance(Core::State& state,
     integrator_->step(state, grid, params, dt, evaluate_tendency, process_stage);
 }
 
+void
+NumericalMethod::advance(Core::State& state,
+    const Core::Grid& grid,
+    const Core::Parameters& params,
+    VVM::Real dt,
+    Core::Field<3>& target,
+    Core::Field<3>* previous_state) const {
+
+    if (uses_multistage_scheme()) {
+        throw std::runtime_error("Explicit prognostic target is not supported for multistage "
+                                 "integration of '" +
+                                 variable_name_ + "'.");
+    }
+
+    integrator_->step(state, grid, params, dt, target, previous_state);
+}
+
 } // namespace Dynamics
 } // namespace VVM

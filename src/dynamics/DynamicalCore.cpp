@@ -137,8 +137,17 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
         // P3 consumes the pre-dynamics th/qv values after this update.
         const bool p3_previous_state = p3_enabled && (var_name == "th" || var_name == "qv");
         if (requirements.previous_state || p3_previous_state) {
-            state_.add_field<3>(var_name + "_m", dims);
+            if (var_name == "xi") {
+                state_.add_field<3>("xi_con_m", dims);
+            }
+            else if (var_name == "eta") {
+                state_.add_field<3>("eta_con_m", dims);
+            }
+            else {
+                state_.add_field<3>(var_name + "_m", dims);
+            }
         }
+
         if (requirements.ab2_tendency_history) {
             state_.add_field<3>("d_" + var_name + "_0", dims);
             state_.add_field<3>("d_" + var_name + "_1", dims);
@@ -248,7 +257,7 @@ DynamicalCore::update_contravariant_wind_shadow_state() {
 }
 
 void
-DynamicalCore::update_contravariant_vorticity_shadow_state() {
+DynamicalCore::sync_contravariant_vorticity_from_physical() {
     using Core::Geometry::GeometryKind;
     using Core::Geometry::HorizontalLocation;
     using Operators::HorizontalVectorConversion;
@@ -256,9 +265,8 @@ DynamicalCore::update_contravariant_vorticity_shadow_state() {
     const auto geometry_kind = grid_.geometry().kind();
 
     if (geometry_kind != GeometryKind::Cartesian && geometry_kind != GeometryKind::RegularLatLon) {
-        throw std::logic_error(
-            "Contravariant vorticity shadow state currently supports only Cartesian "
-            "and regular latitude-longitude geometry.");
+        throw std::logic_error("Contravariant vorticity synchronization currently supports only "
+                               "Cartesian and regular latitude-longitude geometry.");
     }
 
     const auto& xi = xi_ref_.get(state_, "xi").get_device_data();
@@ -321,6 +329,56 @@ DynamicalCore::update_contravariant_vorticity_shadow_state() {
 }
 
 void
+DynamicalCore::sync_physical_horizontal_vorticity_from_contravariant() {
+    using Core::Geometry::GeometryKind;
+    using Core::Geometry::HorizontalLocation;
+    using Operators::HorizontalVectorConversion;
+
+    const auto geometry_kind = grid_.geometry().kind();
+
+    if (geometry_kind != GeometryKind::Cartesian && geometry_kind != GeometryKind::RegularLatLon) {
+
+        throw std::logic_error("Physical vorticity compatibility synchronization currently "
+                               "supports only Cartesian and regular latitude-longitude "
+                               "geometry.");
+    }
+
+    const auto& xi_con = xi_con_ref_.get(state_, "xi_con").get_device_data();
+    const auto& eta_con = eta_con_ref_.get(state_, "eta_con").get_device_data();
+
+    auto& xi = xi_ref_.get(state_, "xi").get_mutable_device_data();
+    auto& eta = eta_ref_.get(state_, "eta").get_mutable_device_data();
+
+    auto exec = Kokkos::DefaultExecutionSpace();
+
+    if (geometry_kind == GeometryKind::Cartesian) {
+        Kokkos::deep_copy(exec, xi, xi_con);
+        Kokkos::deep_copy(exec, eta, eta_con);
+        return;
+    }
+
+    const auto u_geometry = grid_.geometry().device_view(HorizontalLocation::U);
+    const auto v_geometry = grid_.geometry().device_view(HorizontalLocation::V);
+
+    const auto h1_at_v = v_geometry.contravariant_to_physical.a11;
+    const auto h2_at_u = u_geometry.contravariant_to_physical.a22;
+
+    const int nz = grid_.get_local_total_points_z();
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
+
+    Kokkos::parallel_for("SyncPhysicalHorizontalVorticityFromContravariant",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) {
+            xi(k, j, i) = HorizontalVectorConversion::contravariant_to_physical(xi_con(k, j, i),
+                h1_at_v(j, i));
+
+            eta(k, j, i) = HorizontalVectorConversion::contravariant_to_physical(eta_con(k, j, i),
+                h2_at_u(j, i));
+        });
+}
+
+void
 DynamicalCore::compute_diagnostic_fields() const {
     // RLL deformation reads physical wind/vorticity directly and does not use
     // the Cartesian shear-strain scratch fields.
@@ -338,39 +396,75 @@ DynamicalCore::compute_diagnostic_fields() const {
 
 void
 DynamicalCore::initialize_restart_history() {
-    int rank = grid_.get_mpi_rank();
+    const int rank = grid_.get_mpi_rank();
+
     if (rank == 0) {
         std::cout << "  [WARNING] Restart files do not preserve the previous AB2 "
-                     "tendency. The first step after restart uses first-order history "
-                     "initialization and may differ from an uninterrupted run."
+                     "tendency. The first step after restart uses first-order "
+                     "history initialization and may differ from an uninterrupted "
+                     "run."
                   << std::endl;
     }
 
     for (const auto& item : numerical_methods_) {
         const std::string& var_name = item.first;
+        if (var_name == "xi") {
+            if (state_.has_field("xi_con_m")) {
+                Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+                    state_.get_field<3>("xi_con_m").get_mutable_device_data(),
+                    state_.get_field<3>("xi_con").get_device_data());
+            }
+        }
+        else if (var_name == "eta") {
+            if (state_.has_field("eta_con_m")) {
+                Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+                    state_.get_field<3>("eta_con_m").get_mutable_device_data(),
+                    state_.get_field<3>("eta_con").get_device_data());
+            }
+        }
+        else {
+            const std::string previous_name = var_name + "_m";
+            if (state_.has_field(previous_name)) {
+                Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+                    state_.get_field<3>(previous_name).get_mutable_device_data(),
+                    state_.get_field<3>(var_name).get_device_data());
+            }
+        }
+    }
 
-        if (state_.has_field(var_name + "_m")) {
-            Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
-                state_.get_field<3>(var_name + "_m").get_mutable_device_data(),
-                state_.get_field<3>(var_name).get_device_data());
+    // Non-vorticity tendency initialization retains the established path.
+    for (const auto& item : numerical_methods_) {
+        const std::string& var_name = item.first;
+        const bool is_vorticity =
+            std::find(vorticity_vars_.begin(), vorticity_vars_.end(), var_name) !=
+            vorticity_vars_.end();
+
+        if (!is_vorticity) {
+            item.second->calculate_tendencies(state_, grid_, params_);
+        }
+    }
+
+    // Vorticity restart history must go through exactly the same
+    // density-normalized physical tendency evaluation and physical->con
+    // conversion as a normal timestep.
+    calculate_vorticity_tendencies();
+
+    // Restart provides only one tendency state. Duplicate it into both AB2
+    // history slots so the first resumed step remains the established
+    // first-order startup.
+    for (const auto& item : numerical_methods_) {
+        const std::string& var_name = item.first;
+        if (!state_.has_field("d_" + var_name + "_0")) {
+            continue;
         }
 
-        item.second->calculate_tendencies(state_, grid_, params_);
+        const size_t now_idx = state_.get_step() % 2;
+        const std::string now_name = "d_" + var_name + (now_idx == 0 ? "_0" : "_1");
+        const std::string previous_name = "d_" + var_name + (now_idx == 0 ? "_1" : "_0");
 
-        // NOTE: Restart files currently store the prognostic state but not the
-        // previous AB2 tendency. The tendency evaluated from the restart state is
-        // therefore copied into both history slots. This makes the first resumed
-        // step equivalent to a first-order startup step; normal AB2 integration
-        // resumes afterward. Restart is intended for recovery, not bitwise-exact
-        // continuation.
-        if (state_.has_field("d_" + var_name + "_0")) {
-            const size_t now_idx = state_.get_step() % 2;
-            const std::string now_name = "d_" + var_name + (now_idx == 0 ? "_0" : "_1");
-            const std::string prev_name = "d_" + var_name + (now_idx == 0 ? "_1" : "_0");
-            Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
-                state_.get_field<3>(prev_name).get_mutable_device_data(),
-                state_.get_field<3>(now_name).get_device_data());
-        }
+        Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+            state_.get_field<3>(previous_name).get_mutable_device_data(),
+            state_.get_field<3>(now_name).get_device_data());
     }
 
     if (state_.has_field("utopmn_m")) {
@@ -378,7 +472,9 @@ DynamicalCore::initialize_restart_history() {
             utopmn_m_ref_.get(state_, "utopmn_m").get_mutable_device_data(),
             utopmn_ref_.get(state_, "utopmn").get_device_data());
     }
+
     if (state_.has_field("vtopmn_m")) {
+
         Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
             vtopmn_m_ref_.get(state_, "vtopmn_m").get_mutable_device_data(),
             vtopmn_ref_.get(state_, "vtopmn").get_device_data());
@@ -440,16 +536,13 @@ void
 DynamicalCore::compute_wind_fields() {
     const auto geometry_kind = grid_.geometry().kind();
 
-    update_contravariant_vorticity_shadow_state();
-
+    // xi_con / eta_con are already the persistent prognostic state.
     wind_solver_->solve(bc_manager_);
     mean_wind_state_->invalidate();
-
     update_contravariant_wind_shadow_state();
 
-    // RLL wind recovery re-diagnoses physical zeta. xi/eta are not modified by
-    // WindSolver, so only the vertical shadow needs to be refreshed here.
     if (geometry_kind == Core::Geometry::GeometryKind::RegularLatLon) {
+        // The RLL diagnostic reconstructs physical zeta.
         Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
             zeta_con_ref_.get(state_, "zeta_con").get_mutable_device_data(),
             zeta_ref_.get(state_, "zeta").get_device_data());
@@ -638,7 +731,16 @@ DynamicalCore::ensure_field_cache() {
         for (const auto& var_name : var_names) {
             VariableCache entry;
             entry.name = var_name;
-            entry.field = &state_.get_field<3>(var_name);
+            if (var_name == "xi") {
+                entry.field = &xi_con_ref_.get(state_, "xi_con");
+            }
+            else if (var_name == "eta") {
+                entry.field = &eta_con_ref_.get(state_, "eta_con");
+            }
+            else {
+                entry.field = &state_.get_field<3>(var_name);
+            }
+
             const auto method_it = numerical_methods_.find(var_name);
             entry.method =
                 (method_it == numerical_methods_.end()) ? nullptr : method_it->second.get();
@@ -778,23 +880,102 @@ DynamicalCore::update_thermodynamics(VVM::Real dt) {
 
 void
 DynamicalCore::calculate_vorticity_tendencies() {
+
     ensure_field_cache();
 
     prepare_vorticity_for_tendency_evaluation();
 
-    // Calculate vorticity tendency
+    using Core::Geometry::GeometryKind;
+    using Core::Geometry::HorizontalLocation;
+    using Operators::HorizontalVectorConversion;
+
+    const auto geometry_kind = grid_.geometry().kind();
+
+    const int nz = grid_.get_local_total_points_z();
+
+    const int ny = grid_.get_local_total_points_y();
+
+    const int nx = grid_.get_local_total_points_x();
+
+    auto convert_to_contravariant = [&](Core::Field<3>& tendency, const bool is_xi) {
+        if (geometry_kind == GeometryKind::Cartesian) {
+
+            // Cartesian physical and contravariant horizontal
+            // components are identical.
+            return;
+        }
+
+        if (geometry_kind != GeometryKind::RegularLatLon) {
+
+            throw std::logic_error("Horizontal-vorticity tendency conversion currently "
+                                   "supports only Cartesian and regular latitude-longitude "
+                                   "geometry.");
+        }
+
+        auto data = tendency.get_mutable_device_data();
+
+        if (is_xi) {
+            const auto inverse_h1_at_v =
+                grid_.geometry().device_view(HorizontalLocation::V).physical_to_contravariant.a11;
+
+            Kokkos::parallel_for("ConvertXiTendencyToContravariant",
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
+                KOKKOS_LAMBDA(const int k, const int j, const int i) {
+                    data(k, j, i) =
+                        HorizontalVectorConversion::physical_to_contravariant(data(k, j, i),
+                            inverse_h1_at_v(j, i));
+                });
+
+            return;
+        }
+
+        const auto inverse_h2_at_u =
+            grid_.geometry().device_view(HorizontalLocation::U).physical_to_contravariant.a22;
+
+        Kokkos::parallel_for("ConvertEtaTendencyToContravariant",
+            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
+            KOKKOS_LAMBDA(const int k, const int j, const int i) {
+                data(k, j, i) = HorizontalVectorConversion::physical_to_contravariant(data(k, j, i),
+                    inverse_h2_at_u(j, i));
+            });
+    };
+
     for (const auto& var : vorticity_cache_) {
-        if (var.method != nullptr) {
-            var.method->calculate_tendencies(state_, grid_, params_);
+        if (var.method == nullptr) {
+            continue;
+        }
+
+        // Existing spatial operators still compute tendencies of the
+        // physical/legacy representation.
+        var.method->calculate_tendencies(state_, grid_, params_);
+
+        if (!var.is_xi && !var.is_eta) {
+            continue;
+        }
+
+        const size_t now_idx = state_.get_step() % 2;
+        const std::string history_name = "d_" + var.name + (now_idx == 0 ? "_0" : "_1");
+
+        if (state_.has_field(history_name)) {
+            convert_to_contravariant(state_.get_field<3>(history_name), var.is_xi);
+        }
+
+        const std::string fe_name = "fe_tendency_" + var.name;
+
+        if (state_.has_field(fe_name)) {
+            convert_to_contravariant(state_.get_field<3>(fe_name), var.is_xi);
         }
     }
+
+    // xi / eta are only a temporary physical compatibility view during
+    // tendency evaluation.
+    restore_vorticity_after_tendency_evaluation();
+    sync_contravariant_vorticity_from_physical();
 }
 
 void
 DynamicalCore::update_vorticity(VVM::Real dt) {
     ensure_field_cache();
-
-    restore_vorticity_after_tendency_evaluation();
 
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
@@ -802,45 +983,76 @@ DynamicalCore::update_vorticity(VVM::Real dt) {
     const int h = grid_.get_halo_cells();
 
     for (const auto& var : vorticity_cache_) {
-        if (var.method != nullptr) {
-            var.method->advance(state_, grid_, params_, dt);
-
-            auto& var_data = var.field->get_mutable_device_data();
-            const auto& max_topo_idx = params_.max_topo_idx;
-            const int h = grid_.get_halo_cells();
-            if (var.is_xi) {
-                const auto& ITYPEV = ITYPEV_ref_.get(state_, "ITYPEV").get_device_data();
-                Kokkos::parallel_for("mask_xi_topo",
-                    Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0},
-                        {max_topo_idx + 2, ny, nx}),
-                    KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                        if (ITYPEV(k, j, i) != 1) {
-                            var_data(k, j, i) = real(0.0);
-                        }
-                    });
-            }
-            else if (var.is_eta) {
-                const auto& ITYPEU = ITYPEU_ref_.get(state_, "ITYPEU").get_device_data();
-                Kokkos::parallel_for("mask_eta_topo",
-                    Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0},
-                        {max_topo_idx + 2, ny, nx}),
-                    KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                        if (ITYPEU(k, j, i) != 1) {
-                            var_data(k, j, i) = real(0.0);
-                        }
-                    });
-            }
-
-            halo_exchanger_.exchange_halos(*var.field);
-            bc_manager_.apply_horizontal_bcs(*var.field);
+        if (var.method == nullptr) {
+            continue;
         }
+
+        if (var.is_xi) {
+            Core::Field<3>* previous = nullptr;
+            if (state_.has_field("xi_con_m")) {
+                previous = &state_.get_field<3>("xi_con_m");
+            }
+            var.method->advance(state_, grid_, params_, dt, *var.field, previous);
+        }
+        else if (var.is_eta) {
+            Core::Field<3>* previous = nullptr;
+            if (state_.has_field("eta_con_m")) {
+                previous = &state_.get_field<3>("eta_con_m");
+            }
+            var.method->advance(state_, grid_, params_, dt, *var.field, previous);
+        }
+        else {
+            var.method->advance(state_, grid_, params_, dt);
+        }
+
+        auto& var_data = var.field->get_mutable_device_data();
+        const auto& max_topo_idx = params_.max_topo_idx;
+
+        if (var.is_xi) {
+            const auto& ITYPEV = ITYPEV_ref_.get(state_, "ITYPEV").get_device_data();
+
+            Kokkos::parallel_for("mask_xi_topo",
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {max_topo_idx + 2, ny, nx}),
+                KOKKOS_LAMBDA(const int k, const int j, const int i) {
+                    if (ITYPEV(k, j, i) != 1) {
+                        var_data(k, j, i) = real(0.0);
+                    }
+                });
+        }
+        else if (var.is_eta) {
+            const auto& ITYPEU = ITYPEU_ref_.get(state_, "ITYPEU").get_device_data();
+
+            Kokkos::parallel_for("mask_eta_topo",
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {max_topo_idx + 2, ny, nx}),
+                KOKKOS_LAMBDA(const int k, const int j, const int i) {
+                    if (ITYPEU(k, j, i) != 1) {
+                        var_data(k, j, i) = real(0.0);
+                    }
+                });
+        }
+
+        halo_exchanger_.exchange_halos(*var.field);
+        bc_manager_.apply_horizontal_bcs(*var.field);
     }
-    bc_manager_.apply_vorticity_bc(xi_ref_.get(state_, "xi"));
-    bc_manager_.apply_vorticity_bc(eta_ref_.get(state_, "eta"));
+
+    // Vertical vorticity boundary conditions now apply directly to the
+    // canonical horizontal prognostic components.
+    bc_manager_.apply_vorticity_bc(xi_con_ref_.get(state_, "xi_con"));
+    bc_manager_.apply_vorticity_bc(eta_con_ref_.get(state_, "eta_con"));
+
+    // Legacy physics / output / Cartesian zeta reconstruction still consume
+    // physical xi / eta.
+    sync_physical_horizontal_vorticity_from_contravariant();
 
     if (config_.get_value<std::string>("simulation.idealized_test", "none") != "twisting") {
         compute_zeta_vertical_structure(state_);
     }
+
+    // The current generalized coordinate changes only the horizontal basis,
+    // so omega^3 remains identical to physical zeta.
+    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+        zeta_con_ref_.get(state_, "zeta_con").get_mutable_device_data(),
+        zeta_ref_.get(state_, "zeta").get_device_data());
 }
 
 void
@@ -851,6 +1063,12 @@ DynamicalCore::diagnose_wind_fields(Core::State& state) {
 
 void
 DynamicalCore::prepare_vorticity_for_tendency_evaluation() {
+    // xi_con / eta_con are the persistent prognostic state.
+    //
+    // Existing spatial tendency operators still consume the established
+    // physical/legacy representation.
+    sync_physical_horizontal_vorticity_from_contravariant();
+
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
@@ -889,11 +1107,10 @@ DynamicalCore::restore_vorticity_after_tendency_evaluation() {
     auto& eta = eta_ref_.get(state_, "eta").get_mutable_device_data();
     auto& zeta = zeta_ref_.get(state_, "zeta").get_mutable_device_data();
 
-    // Restore the persistent physical-representation prognostic state before
-    // temporal integration. In particular, AB2 previous-state storage remains
-    // attached to the existing xi / eta / zeta representation in this phase.
+    // Restore the temporary physical compatibility representation after
+    // density-normalized tendency evaluation.
     //
-    // Preserve the existing arithmetic exactly.
+    // xi_con / eta_con remain the persistent prognostic state.
 
     Kokkos::parallel_for("multiply_density_xi",
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {nz - h, ny, nx}),

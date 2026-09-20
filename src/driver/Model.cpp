@@ -180,6 +180,7 @@ Model::init() {
         predict_uvtopmn_ = false;
     }
 
+    dycore_->sync_contravariant_vorticity_from_physical();
     if (config_.get_value<bool>("initial_conditions.diagnose_wind_from_vorticity", false) ||
         Core::is_rll_idealized(config_)) {
         dycore_->compute_wind_fields();
@@ -192,8 +193,6 @@ Model::init() {
     if (config_.get_value<bool>("restart.enable", false)) {
         dycore_->initialize_restart_history();
     }
-
-    dycore_->update_contravariant_vorticity_shadow_state();
 }
 
 void
@@ -540,6 +539,8 @@ Model::run_step(VVM::Real dt) {
             bc_manager_.apply_vorticity_bc(*target.field);
         }
         dycore_->compute_zeta_vertical_structure(state_);
+
+        dycore_->sync_contravariant_vorticity_from_physical();
     }
 
     if (wind_solver_) {
@@ -555,10 +556,6 @@ Model::run_step(VVM::Real dt) {
     {
         VVM::Utils::Timer timer("dynamics_diagnostics");
         dycore_->compute_diagnostic_fields();
-    }
-
-    if (!wind_solver_) {
-        dycore_->update_contravariant_vorticity_shadow_state();
     }
 }
 

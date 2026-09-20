@@ -33,6 +33,20 @@ public:
         const TendencyEvaluator& evaluate_tendency,
         const StageProcessor& process_stage) const;
 
+    void step(Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        VVM::Real dt,
+        Core::Field<3>& target,
+        Core::Field<3>* previous_state) const;
+
+    void step_single_stage(Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        VVM::Real dt,
+        Core::Field<3>& target,
+        Core::Field<3>* previous_state) const;
+
     bool
     uses_multistage_scheme() const {
         return multistage_scheme_ != nullptr;
