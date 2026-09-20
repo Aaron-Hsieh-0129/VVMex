@@ -438,10 +438,18 @@ DynamicalCore::compute_zeta_vertical_structure(Core::State& state) const {
 
 void
 DynamicalCore::compute_wind_fields() {
+    const auto geometry_kind = grid_.geometry().kind();
+    if (geometry_kind == Core::Geometry::GeometryKind::Cartesian) {
+        update_contravariant_vorticity_shadow_state();
+    }
+
     wind_solver_->solve(bc_manager_);
     mean_wind_state_->invalidate();
 
     update_contravariant_wind_shadow_state();
+    if (geometry_kind == Core::Geometry::GeometryKind::RegularLatLon) {
+        update_contravariant_vorticity_shadow_state();
+    }
 }
 
 void

@@ -388,7 +388,7 @@ WindSolver::diagnose_cartesian_horizontal_potentials() {
     auto& chi = chi_field.get_mutable_device_data();
     const auto& chinm1 = chinm1_field.get_device_data();
 
-    const auto& zeta = zeta_ref_.get(state_, "zeta").get_device_data();
+    const auto& zeta = zeta_con_ref_.get(state_, "zeta_con").get_device_data();
     auto& w = w_ref_.get(state_, "w").get_mutable_device_data();
 
     {
@@ -827,9 +827,9 @@ WindSolver::prepare_cartesian_wind_recovery_inputs(
         });
 
     auto& xi_topo = xi_topo_ref_.get(state_, "xi_topo").get_mutable_device_data();
-    const auto& xi = xi_ref_.get(state_, "xi").get_device_data();
+    const auto& xi = xi_con_ref_.get(state_, "xi_con").get_device_data();
     auto& eta_topo = eta_topo_ref_.get(state_, "eta_topo").get_mutable_device_data();
-    const auto& eta = eta_ref_.get(state_, "eta").get_device_data();
+    const auto& eta = eta_con_ref_.get(state_, "eta_con").get_device_data();
 
     const auto& rdx = params_.rdx;
     const auto& rdy = params_.rdy;

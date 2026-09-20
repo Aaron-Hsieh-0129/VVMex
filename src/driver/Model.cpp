@@ -557,7 +557,9 @@ Model::run_step(VVM::Real dt) {
         dycore_->compute_diagnostic_fields();
     }
 
-    dycore_->update_contravariant_vorticity_shadow_state();
+    if (!wind_solver_) {
+        dycore_->update_contravariant_vorticity_shadow_state();
+    }
 }
 
 void

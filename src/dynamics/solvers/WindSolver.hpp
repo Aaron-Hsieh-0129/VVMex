@@ -297,12 +297,15 @@ private:
     Core::FieldRef<3> u_ref_;
     Core::FieldRef<3> v_ref_;
     Core::FieldRef<3> w_ref_;
-    Core::FieldRef<3> zeta_ref_;
+
+    Core::FieldRef<3> xi_con_ref_;
+    Core::FieldRef<3> eta_con_ref_;
+    Core::FieldRef<3> zeta_con_ref_;
+
     Core::FieldRef<3> xi_topo_ref_;
     Core::FieldRef<3> eta_topo_ref_;
+
     Core::FieldRef<3> W3DNM1_ref_;
-    Core::FieldRef<3> xi_ref_;
-    Core::FieldRef<3> eta_ref_;
 
     Core::FieldRef<3> u_topo_ref_;
     Core::FieldRef<3> v_topo_ref_;
