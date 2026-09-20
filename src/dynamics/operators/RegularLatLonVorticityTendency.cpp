@@ -22,17 +22,41 @@ struct InverseSpacing {
         return flex(k) * inverse_dz();
     }
 };
-struct Fields {
+
+// IMPORTANT REPRESENTATION CONTRACT:
+//
+// u / v / w:
+//     physical wind.
+//
+// xi / eta / zeta:
+//     temporary density-normalized physical/legacy-sign vorticity:
+//
+//         xi   = physical omega_1 / rhobar_up
+//         eta  = -physical omega_2 / rhobar_up
+//         zeta = physical omega_3 / rhobar
+//
+// The member names remain unchanged intentionally because the existing
+// device operators consume this established field bundle. The struct name
+// makes the temporary representation explicit without changing kernel
+// arithmetic or device argument layout.
+struct DensityNormalizedPhysicalFields {
     Volume u, v, w, xi, eta, zeta;
+
     Plane f_at_z;
+
     Profile rho, rho_up;
+
     ProductProfile fn1, fn2;
-    InverseSpacing inverse_spacing, inverse_spacing_mid, inverse_spacing_up;
+
+    InverseSpacing inverse_spacing;
+    InverseSpacing inverse_spacing_mid;
+    InverseSpacing inverse_spacing_up;
 };
+
 struct TendencyFunctor {
     Kokkos::View<const RegularLatLonTopTransportDeviceView> transport;
     Kokkos::View<const RegularLatLonTopDeformationDeviceView> deformation;
-    Fields fields;
+    DensityNormalizedPhysicalFields fields;
     Volume output;
     int variable, begin, end;
     RegularLatLonVorticityTendency::Term term;
@@ -75,6 +99,43 @@ struct TendencyFunctor {
         output(k, j, i) += value;
     }
 };
+
+DensityNormalizedPhysicalFields
+bind_density_normalized_physical_fields(const Core::State& state, const Core::Parameters& params) {
+    DensityNormalizedPhysicalFields fields{};
+
+    // Physical wind remains the current RLL tendency input representation.
+    fields.u = state.get_field<3>("u").get_device_data();
+    fields.v = state.get_field<3>("v").get_device_data();
+    fields.w = state.get_field<3>("w").get_device_data();
+
+    // These State allocations have already been divided by reference density
+    // by DynamicalCore::prepare_vorticity_for_tendency_evaluation().
+    //
+    // Do NOT replace them with xi_con / eta_con / zeta_con here:
+    // those fields represent persistent, non-density-normalized
+    // contravariant vorticity.
+    fields.xi = state.get_field<3>("xi").get_device_data();
+    fields.eta = state.get_field<3>("eta").get_device_data();
+    fields.zeta = state.get_field<3>("zeta").get_device_data();
+
+    fields.f_at_z = state.get_field<2>("f_2d").get_device_data();
+
+    fields.rho = state.get_field<1>("rhobar").get_device_data();
+
+    fields.rho_up = state.get_field<1>("rhobar_up").get_device_data();
+
+    fields.fn1 = {params.fact1_xi_eta.get_device_data(), fields.rho, 1};
+
+    fields.fn2 = {params.fact2_xi_eta.get_device_data(), fields.rho, 0};
+
+    fields.inverse_spacing = {params.flex_height_coef_up.get_device_data(), params.rdz};
+    fields.inverse_spacing_up = fields.inverse_spacing;
+    fields.inverse_spacing_mid = {params.flex_height_coef_mid.get_device_data(), params.rdz};
+
+    return fields;
+}
+
 using Policy = Kokkos::MDRangePolicy<Kokkos::Rank<3>>;
 }
 
@@ -103,7 +164,7 @@ RegularLatLonVorticityTendency::prepare_execution() {
 }
 
 void
-RegularLatLonVorticityTendency::add(const Core::State& state,
+RegularLatLonVorticityTendency::add_from_density_normalized_physical_state(const Core::State& state,
     const Core::Grid& grid,
     const Core::Parameters& params,
     Core::Field<3>& output,
@@ -126,21 +187,9 @@ RegularLatLonVorticityTendency::add(const Core::State& state,
             "RLL vorticity tendencies require flat or initialized RLL mountain terrain below the "
             "lid, two halos and at least three wind levels.");
     }
-    Fields f{};
-    f.u = state.get_field<3>("u").get_device_data();
-    f.v = state.get_field<3>("v").get_device_data();
-    f.w = state.get_field<3>("w").get_device_data();
-    f.xi = state.get_field<3>("xi").get_device_data();
-    f.eta = state.get_field<3>("eta").get_device_data();
-    f.zeta = state.get_field<3>("zeta").get_device_data();
-    f.f_at_z = state.get_field<2>("f_2d").get_device_data();
-    f.rho = state.get_field<1>("rhobar").get_device_data();
-    f.rho_up = state.get_field<1>("rhobar_up").get_device_data();
-    f.fn1 = {params.fact1_xi_eta.get_device_data(), f.rho, 1};
-    f.fn2 = {params.fact2_xi_eta.get_device_data(), f.rho, 0};
-    f.inverse_spacing = {params.flex_height_coef_up.get_device_data(), params.rdz};
-    f.inverse_spacing_up = f.inverse_spacing;
-    f.inverse_spacing_mid = {params.flex_height_coef_mid.get_device_data(), params.rdz};
+
+    const auto f = bind_density_normalized_physical_fields(state, params);
+
     const int begin = component == 2 ? top : h;
     const int end = component == 2 ? top + 1 : top;
     Kokkos::parallel_for("RLLVorticityTendency",
