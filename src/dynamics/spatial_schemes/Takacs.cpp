@@ -381,7 +381,7 @@ Takacs::calculate_stretching_tendency_x(const Core::State& state,
     Core::Field<3>& out_tendency,
     const std::string& var_name) const {
 
-    const auto& u = u_ref_.get(state, "u").get_device_data();
+    const auto& u = u_con_ref_.get(state, "u_con").get_device_data();
     const auto& xi = xi_ref_.get(state, "xi").get_device_data();
     const auto& rhobar = rhobar_ref_.get(state, "rhobar").get_device_data();
     auto& tendency = out_tendency.get_mutable_device_data();
@@ -433,7 +433,7 @@ Takacs::calculate_stretching_tendency_y(const Core::State& state,
     Core::Field<3>& out_tendency,
     const std::string& var_name) const {
 
-    const auto& v = v_ref_.get(state, "v").get_device_data();
+    const auto& v = v_con_ref_.get(state, "v_con").get_device_data();
     const auto& eta = eta_ref_.get(state, "eta").get_device_data();
     const auto& rhobar = rhobar_ref_.get(state, "rhobar").get_device_data();
     auto& tendency = out_tendency.get_mutable_device_data();
@@ -533,7 +533,7 @@ Takacs::calculate_R_xi(const Core::State& state,
     const Core::Parameters& params,
     Core::Field<3>& out_R_xi) const {
 
-    const auto& v = v_ref_.get(state, "v").get_device_data();
+    const auto& v = v_con_ref_.get(state, "v_con").get_device_data();
     const auto& w = w_ref_.get(state, "w").get_device_data();
     auto& R_xi = out_R_xi.get_mutable_device_data();
 
@@ -575,7 +575,7 @@ Takacs::calculate_R_eta(const Core::State& state,
     const Core::Parameters& params,
     Core::Field<3>& out_R_eta) const {
 
-    const auto& u = u_ref_.get(state, "u").get_device_data();
+    const auto& u = u_con_ref_.get(state, "u_con").get_device_data();
     const auto& w = w_ref_.get(state, "w").get_device_data();
     auto& R_eta = out_R_eta.get_mutable_device_data();
 
@@ -617,8 +617,8 @@ Takacs::calculate_R_zeta(const Core::State& state,
     const Core::Parameters& params,
     Core::Field<3>& out_R_zeta) const {
 
-    const auto& u = u_ref_.get(state, "u").get_device_data();
-    const auto& v = v_ref_.get(state, "v").get_device_data();
+    const auto& u = u_con_ref_.get(state, "u_con").get_device_data();
+    const auto& v = v_con_ref_.get(state, "v_con").get_device_data();
     auto& R_zeta = out_R_zeta.get_mutable_device_data();
 
     auto rdx = params.rdx;
@@ -978,7 +978,7 @@ Takacs::calculate_coriolis_tendency_x(const Core::State& state,
     Core::Field<3>& out_tendency) const {
 
     auto& tendency = out_tendency.get_mutable_device_data();
-    const auto& u = u_ref_.get(state, "u").get_device_data();
+    const auto& u = u_con_ref_.get(state, "u_con").get_device_data();
     // const auto& f = state.get_field<1>("f").get_device_data();
     const auto& f_2d = f_2d_ref_.get(state, "f_2d").get_device_data();
     const auto& rdz = params.rdz;
@@ -1007,7 +1007,7 @@ Takacs::calculate_coriolis_tendency_y(const Core::State& state,
     Core::Field<3>& out_tendency) const {
 
     auto& tendency = out_tendency.get_mutable_device_data();
-    const auto& v = v_ref_.get(state, "v").get_device_data();
+    const auto& v = v_con_ref_.get(state, "v_con").get_device_data();
     // const auto& f = state.get_field<1>("f").get_device_data();
     const auto& f_2d = f_2d_ref_.get(state, "f_2d").get_device_data();
     const auto& rdz = params.rdz;
@@ -1036,8 +1036,8 @@ Takacs::calculate_coriolis_tendency_z(const Core::State& state,
     Core::Field<3>& out_tendency) const {
 
     auto& tendency = out_tendency.get_mutable_device_data();
-    const auto& u = u_ref_.get(state, "u").get_device_data();
-    const auto& v = v_ref_.get(state, "v").get_device_data();
+    const auto& u = u_con_ref_.get(state, "u_con").get_device_data();
+    const auto& v = v_con_ref_.get(state, "v_con").get_device_data();
     // const auto& f = state.get_field<1>("f").get_device_data();
     const auto& f_2d = f_2d_ref_.get(state, "f_2d").get_device_data();
     const auto& rdx = params.rdx;

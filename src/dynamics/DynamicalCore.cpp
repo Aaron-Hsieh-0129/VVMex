@@ -455,8 +455,8 @@ DynamicalCore::compute_uvtopmn() {
     const int h = grid_.get_halo_cells();
     const auto& dt = params_.dt;
 
-    const auto& u = u_ref_.get(state_, "u").get_device_data();
-    const auto& v = v_ref_.get(state_, "v").get_device_data();
+    const auto& u = u_con_ref_.get(state_, "u_con").get_device_data();
+    const auto& v = v_con_ref_.get(state_, "v_con").get_device_data();
     const auto& w = w_ref_.get(state_, "w").get_device_data();
     const auto& flex_height_coef_mid = params_.flex_height_coef_mid.get_device_data();
     const auto& rhobar = rhobar_ref_.get(state_, "rhobar").get_device_data();

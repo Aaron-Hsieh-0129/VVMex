@@ -60,14 +60,13 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
     VVM::Real stage_dt) const {
     // Get scalar field that needs to be advected
     const auto& advected_field = advected_ref_.get(state, variable_name_);
-    auto& u_field = u_ref_.get(state, "u");
-    auto& v_field = v_ref_.get(state, "v");
-    auto& w_field = w_ref_.get(state, "w");
     auto& u_mean_field = u_mean_ref_.get(state, "u_mean");
     auto& v_mean_field = v_mean_ref_.get(state, "v_mean");
     auto& w_mean_field = w_mean_ref_.get(state, "w_mean");
 
-    if (grid.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon &&
+    const auto geometry_kind = grid.geometry().kind();
+
+    if (geometry_kind == Core::Geometry::GeometryKind::RegularLatLon &&
         (variable_name_ == "xi" || variable_name_ == "eta" || variable_name_ == "zeta")) {
         // The RLL vorticity adapter constructs metric-weighted face fluxes
         // directly from physical State winds. It does not read these legacy
@@ -85,6 +84,17 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
             stage_dt);
         return;
     }
+
+    const bool use_contravariant_horizontal_wind =
+        geometry_kind == Core::Geometry::GeometryKind::Cartesian;
+
+    auto& u_field =
+        use_contravariant_horizontal_wind ? u_con_ref_.get(state, "u_con") : u_ref_.get(state, "u");
+
+    auto& v_field =
+        use_contravariant_horizontal_wind ? v_con_ref_.get(state, "v_con") : v_ref_.get(state, "v");
+
+    auto& w_field = w_ref_.get(state, "w");
 
     const auto& u = u_field.get_device_data();
     const auto& v = v_field.get_device_data();

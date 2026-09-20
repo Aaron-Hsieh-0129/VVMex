@@ -75,8 +75,12 @@ private:
     MeanWindState::Variant mean_wind_variant_ = MeanWindState::Variant::Scalar;
 
     Core::ConstFieldRef<3> advected_ref_;
+
     Core::FieldRef<3> u_ref_;
     Core::FieldRef<3> v_ref_;
+    Core::FieldRef<3> u_con_ref_;
+    Core::FieldRef<3> v_con_ref_;
+
     Core::FieldRef<3> w_ref_;
     Core::FieldRef<3> u_mean_ref_;
     Core::FieldRef<3> v_mean_ref_;

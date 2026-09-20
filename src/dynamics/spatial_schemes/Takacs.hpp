@@ -129,8 +129,8 @@ private:
     using TeamPolicy = Kokkos::TeamPolicy<Kokkos::DefaultExecutionSpace>;
     using MemberType = TeamPolicy::member_type;
 
-    Core::ConstFieldRef<3> u_ref_;
-    Core::ConstFieldRef<3> v_ref_;
+    Core::ConstFieldRef<3> u_con_ref_;
+    Core::ConstFieldRef<3> v_con_ref_;
     Core::ConstFieldRef<3> w_ref_;
     Core::ConstFieldRef<3> xi_ref_;
     Core::ConstFieldRef<3> eta_ref_;
