@@ -72,6 +72,56 @@ adapt_terrain(Core::State& state,
     }
 }
 
+void
+convert_regular_latlon_horizontal_vorticity_to_contravariant(const Core::Grid& grid,
+    const Core::Field<3>& xi_physical,
+    const Core::Field<3>& eta_physical,
+    Core::Field<3>& xi_con,
+    Core::Field<3>& eta_con) {
+
+    using Core::Geometry::HorizontalLocation;
+    using Operators::HorizontalVectorConversion;
+
+    const int nz = grid.get_local_total_points_z();
+    const int ny = grid.get_local_total_points_y();
+    const int nx = grid.get_local_total_points_x();
+
+    // xi = physical omega_1 and is V-staggered.
+    const auto inverse_h1_at_v =
+        grid.geometry().device_view(HorizontalLocation::V).physical_to_contravariant.a11;
+
+    // eta = -physical omega_2 and is U-staggered.
+    //
+    // The historical VVM minus sign is already contained in eta, so no
+    // additional sign change belongs to the representation conversion:
+    //
+    //     eta_con = eta / h2 = -omega^2.
+    const auto inverse_h2_at_u =
+        grid.geometry().device_view(HorizontalLocation::U).physical_to_contravariant.a22;
+
+    const auto xi = xi_physical.get_device_data();
+    const auto eta = eta_physical.get_device_data();
+
+    auto xi_con_data = xi_con.get_mutable_device_data();
+    auto eta_con_data = eta_con.get_mutable_device_data();
+
+    // xi_topo / eta_topo already have their halo exchange and RLL wall
+    // boundary conditions established by adapt_terrain(). Convert the full
+    // allocation so the solver-private contravariant fields inherit those
+    // valid halo values without another communication step.
+    Kokkos::parallel_for("RLLTerrainVorticityToContravariant",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) {
+            xi_con_data(k, j, i) =
+                HorizontalVectorConversion::physical_to_contravariant(xi(k, j, i),
+                    inverse_h1_at_v(j, i));
+
+            eta_con_data(k, j, i) =
+                HorizontalVectorConversion::physical_to_contravariant(eta(k, j, i),
+                    inverse_h2_at_u(j, i));
+        });
+}
+
 #if defined(ENABLE_NCCL)
 void
 require_cuda(cudaError_t result, const char* operation) {
@@ -108,6 +158,12 @@ WindSolver::initialize_regular_latlon_solver(const bool periodic, const int nz) 
 
     rll_covariant_q2_wind_ =
         std::make_unique<Core::Field<3>>("RLL covariant q2 wind scratch", volume_shape);
+
+    rll_terrain_xi_con_ =
+        std::make_unique<Core::Field<3>>("RLL terrain xi contravariant scratch", volume_shape);
+
+    rll_terrain_eta_con_ =
+        std::make_unique<Core::Field<3>>("RLL terrain eta contravariant scratch", volume_shape);
 
     rll_prescribed_zonal_covariant_increment_ =
         std::make_unique<Core::Field<0>>("RLL prescribed zonal covariant increment",
@@ -205,7 +261,19 @@ WindSolver::prepare_regular_latlon_wind_recovery(
             rll_inverse_dz_,
             halo_exchanger_,
             bounded_q2_stencils_.get());
+
+        convert_regular_latlon_horizontal_vorticity_to_contravariant(grid_,
+            state_.get_field<3>("xi_topo"),
+            state_.get_field<3>("eta_topo"),
+            *rll_terrain_xi_con_,
+            *rll_terrain_eta_con_);
     }
+
+    const Core::Field<3>& active_xi_con =
+        terrain ? *rll_terrain_xi_con_ : state_.get_field<3>("xi_con");
+
+    const Core::Field<3>& active_eta_con =
+        terrain ? *rll_terrain_eta_con_ : state_.get_field<3>("eta_con");
 
     return RegularLatLonDiagnosticFields{state_.get_field<2>("psi"),
         state_.get_field<2>("psinm1"),
@@ -218,8 +286,8 @@ WindSolver::prepare_regular_latlon_wind_recovery(
         state_.get_field<3>(terrain ? "xi_topo" : "xi"),
         state_.get_field<3>(terrain ? "eta_topo" : "eta"),
         // Canonical persistent representation.
-        state_.get_field<3>("xi_con"),
-        state_.get_field<3>("eta_con"),
+        active_xi_con,
+        active_eta_con,
         // Solver-private covariant scratch.
         *rll_covariant_q1_wind_,
         *rll_covariant_q2_wind_,

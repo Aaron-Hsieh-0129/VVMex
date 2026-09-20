@@ -32,17 +32,14 @@ commit_regular_latlon_covariant_wind_to_physical(const Core::Grid& grid,
     const auto inverse_h1_at_u = grid.geometry()
                                      .device_view(Core::Geometry::HorizontalLocation::U)
                                      .physical_to_contravariant.a11;
-
     const auto inverse_h2_at_v = grid.geometry()
                                      .device_view(Core::Geometry::HorizontalLocation::V)
                                      .physical_to_contravariant.a22;
 
     const auto q1 = covariant_q1.get_device_data();
-
     const auto q2 = covariant_q2.get_device_data();
 
     auto physical_u = u.get_mutable_device_data();
-
     auto physical_v = v.get_mutable_device_data();
 
     Kokkos::parallel_for("CommitRegularLatLonPhysicalWindFromCovariant",
@@ -192,26 +189,11 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
         boundary = std::make_unique<Core::Boundary::HorizontalBoundaryStencils>(grid);
     }
 
-    if (terrain) {
-        // Terrain-adjusted xi_topo / eta_topo remain in the established
-        // physical/legacy representation.
-        vertical_solver.solve(fields.xi,
-            fields.eta,
-            fields.w,
-            fields.w_previous,
-            options.vertical_iterations);
-    }
-    else {
-        // Flat RLL now uses the persistent canonical representation:
-        //
-        //     xi_con  =  omega^1
-        //     eta_con = -omega^2
-        vertical_solver.solve_from_vvm_contravariant_state(fields.xi_con,
-            fields.eta_con,
-            fields.w,
-            fields.w_previous,
-            options.vertical_iterations);
-    }
+    vertical_solver.solve_from_vvm_contravariant_state(fields.xi_con,
+        fields.eta_con,
+        fields.w,
+        fields.w_previous,
+        options.vertical_iterations);
 
     if (free_slip_boundary) {
         halo.exchange_multiple_halos(std::vector<Core::Field<3>*>{&fields.w, &fields.w_previous});
@@ -222,8 +204,6 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
 
     const auto operation = make_vertical_wind_diagnostic_device_view(grid.geometry());
 
-    const auto xi = fields.xi.get_device_data();
-    const auto eta = fields.eta.get_device_data();
     const auto spacing = fields.spacing.get_device_data();
     const auto zeta = fields.zeta.get_mutable_device_data();
 
@@ -235,38 +215,24 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {zeta_end_j, nx - h}),
         Kokkos::Experimental::WorkItemProperty::HintLightWeight);
 
-    if (terrain) {
-        // Terrain-adjusted xi_topo / eta_topo are still stored using the
-        // physical/legacy VVM representation. Preserve the existing path.
-        Kokkos::parallel_for("DiagnoseRegularLatLonZetaColumn",
-            zeta_policy,
-            KOKKOS_LAMBDA(const int j, const int i) {
-                operation.integrate_zeta_column(xi, eta, spacing, zeta, bottom, top, j, i, true);
-            });
-    }
-    else {
-        // Flat RLL uses the canonical persistent contravariant vorticity:
-        //
-        //     xi_con  =  omega^1
-        //     eta_con = -omega^2
-        const auto omega1 = fields.xi_con.get_device_data();
-        const auto eta_con = fields.eta_con.get_device_data();
-        const NegatedView3D<decltype(eta_con)> omega2{eta_con};
+    const auto omega1 = fields.xi_con.get_device_data();
+    const auto eta_con = fields.eta_con.get_device_data();
 
-        Kokkos::parallel_for("DiagnoseRegularLatLonZetaColumnContravariant",
-            zeta_policy,
-            KOKKOS_LAMBDA(const int j, const int i) {
-                operation.integrate_zeta_column_from_contravariant(omega1,
-                    omega2,
-                    spacing,
-                    zeta,
-                    bottom,
-                    top,
-                    j,
-                    i,
-                    true);
-            });
-    }
+    const NegatedView3D<decltype(eta_con)> omega2{eta_con};
+
+    Kokkos::parallel_for("DiagnoseRegularLatLonZetaColumnContravariant",
+        zeta_policy,
+        KOKKOS_LAMBDA(const int j, const int i) {
+            operation.integrate_zeta_column_from_contravariant(omega1,
+                omega2,
+                spacing,
+                zeta,
+                bottom,
+                top,
+                j,
+                i,
+                true);
+        });
 
     halo.exchange_halos(fields.zeta);
 
@@ -293,65 +259,40 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
         fields.spacing,
         fields.zonal_covariant_increment};
 
-    if (terrain) {
-        // Terrain-adjusted xi_topo / eta_topo are still physical/legacy-sign
-        // quantities. Preserve the established compatibility path exactly.
-        diagnose_horizontal_wind(grid,
-            halo,
-            horizontal_solver,
-            horizontal_fields,
-            workspace,
-            options.horizontal,
-            options.inverse_dz,
-            bottom,
-            top,
-            options.boundary_policy);
-    }
-    else {
-        // Solve psi / chi exactly as before.
-        diagnose_horizontal_potentials(grid,
-            halo,
-            horizontal_solver,
-            horizontal_fields,
-            workspace,
-            options.horizontal,
-            options.inverse_dz,
-            top,
-            options.boundary_policy);
+    // Horizontal potential solve is common to flat and terrain RLL.
+    diagnose_horizontal_potentials(grid,
+        halo,
+        horizontal_solver,
+        horizontal_fields,
+        workspace,
+        options.horizontal,
+        options.inverse_dz,
+        top,
+        options.boundary_policy);
 
-        // Generalized wind-column recovery:
-        //
-        //     xi_con  =  omega^1
-        //     eta_con = -omega^2
-        //
-        //         -> covariant u_1 / u_2
-        //
-        // The VVM eta sign is handled only by the representation-boundary
-        // wrapper inside HorizontalWindColumnRecovery.
-        const HorizontalWindColumnRecovery column_recovery(grid.geometry());
+    // Both flat and terrain paths now provide canonical contravariant
+    // horizontal vorticity through fields.xi_con / fields.eta_con.
+    const HorizontalWindColumnRecovery column_recovery(grid.geometry());
 
-        column_recovery.recover_from_vvm_contravariant_state(fields.psi,
-            fields.chi,
-            fields.w,
-            fields.xi_con,
-            fields.eta_con,
-            fields.spacing,
-            fields.zonal_covariant_increment,
-            fields.covariant_q1_wind,
-            fields.covariant_q2_wind,
-            bottom,
-            top);
+    column_recovery.recover_from_vvm_contravariant_state(fields.psi,
+        fields.chi,
+        fields.w,
+        fields.xi_con,
+        fields.eta_con,
+        fields.spacing,
+        fields.zonal_covariant_increment,
+        fields.covariant_q1_wind,
+        fields.covariant_q2_wind,
+        bottom,
+        top);
 
-        // Physical u/v remain the public/physics representation during this
-        // transitional phase.
-        commit_regular_latlon_covariant_wind_to_physical(grid,
-            fields.covariant_q1_wind,
-            fields.covariant_q2_wind,
-            fields.u,
-            fields.v,
-            bottom,
-            top);
-    }
+    commit_regular_latlon_covariant_wind_to_physical(grid,
+        fields.covariant_q1_wind,
+        fields.covariant_q2_wind,
+        fields.u,
+        fields.v,
+        bottom,
+        top);
 
     halo.exchange_multiple_halos(std::vector<Core::Field<3>*>{&fields.u, &fields.v});
 

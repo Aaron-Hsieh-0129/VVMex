@@ -286,6 +286,15 @@ private:
     std::unique_ptr<Core::Field<3>> rll_covariant_q1_wind_;
     std::unique_ptr<Core::Field<3>> rll_covariant_q2_wind_;
 
+    // Solver-private canonical representation of terrain-adjusted horizontal
+    // vorticity.
+    //
+    // xi_topo / eta_topo remain physical/legacy State fields. These scratch
+    // fields provide the representation consumed by the generalized RLL
+    // wind-recovery backend.
+    std::unique_ptr<Core::Field<3>> rll_terrain_xi_con_;
+    std::unique_ptr<Core::Field<3>> rll_terrain_eta_con_;
+
 #if defined(ENABLE_NCCL)
     Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space>
         rll_harmonic_targets_device_;
