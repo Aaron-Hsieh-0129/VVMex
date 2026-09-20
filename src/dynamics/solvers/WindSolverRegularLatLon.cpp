@@ -5,6 +5,8 @@
 #include "dynamics/operators/RegularLatLonTerrain.hpp"
 #include "dynamics/operators/HorizontalVectorConversion.hpp"
 
+#include <array>
+
 namespace VVM::Dynamics {
 namespace {
 // Outside solver capture, like the existing Cartesian terrain adaptation.
@@ -96,6 +98,16 @@ WindSolver::initialize_regular_latlon_solver(const bool periodic, const int nz) 
     Kokkos::deep_copy(rll_psi_north_, state_.get_field<0>("rll_psi_north").get_device_data());
 
     rll_spacing_ = std::make_unique<Core::Field<1>>("RLL wind spacing", std::array<int, 1>{nz});
+
+    const std::array<int, 3> volume_shape{nz,
+        grid_.get_local_total_points_y(),
+        grid_.get_local_total_points_x()};
+
+    rll_covariant_q1_wind_ =
+        std::make_unique<Core::Field<3>>("RLL covariant q1 wind scratch", volume_shape);
+
+    rll_covariant_q2_wind_ =
+        std::make_unique<Core::Field<3>>("RLL covariant q2 wind scratch", volume_shape);
 
     rll_prescribed_zonal_covariant_increment_ =
         std::make_unique<Core::Field<0>>("RLL prescribed zonal covariant increment",
@@ -194,6 +206,7 @@ WindSolver::prepare_regular_latlon_wind_recovery(
             halo_exchanger_,
             bounded_q2_stencils_.get());
     }
+
     return RegularLatLonDiagnosticFields{state_.get_field<2>("psi"),
         state_.get_field<2>("psinm1"),
         state_.get_field<2>("chi"),
@@ -201,8 +214,15 @@ WindSolver::prepare_regular_latlon_wind_recovery(
         state_.get_field<3>("zeta"),
         state_.get_field<3>("w"),
         state_.get_field<3>("W3DNM1"),
+        // Current physical representation.
         state_.get_field<3>(terrain ? "xi_topo" : "xi"),
         state_.get_field<3>(terrain ? "eta_topo" : "eta"),
+        // Canonical persistent representation.
+        state_.get_field<3>("xi_con"),
+        state_.get_field<3>("eta_con"),
+        // Solver-private covariant scratch.
+        *rll_covariant_q1_wind_,
+        *rll_covariant_q2_wind_,
         state_.get_field<3>("u"),
         state_.get_field<3>("v"),
         state_.get_field<1>("rhobar"),
@@ -645,6 +665,7 @@ WindSolver::finalize_regular_latlon_wind(
 
 void
 WindSolver::execute_regular_latlon_diagnostic(const bool initial,
+    const bool terrain,
     RegularLatLonDiagnosticFields& fields,
     HorizontalDiagnosticWorkspace& workspace,
     const RegularLatLonDiagnosticOptions& options) {
@@ -656,7 +677,8 @@ WindSolver::execute_regular_latlon_diagnostic(const bool initial,
             horizontal_elliptic_solver_,
             fields,
             workspace,
-            options);
+            options,
+            terrain);
     };
 
 #if defined(ENABLE_NCCL)
@@ -712,7 +734,7 @@ WindSolver::recover_regular_latlon_horizontal_wind(const bool initial,
     HorizontalDiagnosticWorkspace& workspace,
     const RegularLatLonDiagnosticOptions& options) {
 
-    execute_regular_latlon_diagnostic(initial, fields, workspace, options);
+    execute_regular_latlon_diagnostic(initial, terrain, fields, workspace, options);
 
     maintain_horizontal_wind_constraint(
         periodic ? HorizontalWindConstraintKind::PeriodicCycleCirculation

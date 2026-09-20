@@ -21,6 +21,17 @@ require_cuda_success(cudaError_t status, const char* operation) {
     }
 }
 
+struct SignedVolumeView {
+    Core::Field<3>::ViewType view;
+    Real sign = real(1.0);
+
+    KOKKOS_INLINE_FUNCTION
+    Real
+    operator()(const int k, const int j, const int i) const noexcept {
+        return sign * view(k, j, i);
+    }
+};
+
 } // namespace
 #endif
 
@@ -109,8 +120,70 @@ HorizontalWindColumnRecovery::recover(const Core::Field<2>& psi,
     const Core::Field<1>& spacing,
     Core::Field<3>& output1,
     Core::Field<3>& output2,
-    int bottom_level,
-    int top_level) const {
+    const int bottom_level,
+    const int top_level) const {
+
+    recover_impl(psi,
+        chi,
+        w,
+        omega1,
+        omega2,
+        real(1.0),
+        spacing,
+        nullptr,
+        output1,
+        output2,
+        bottom_level,
+        top_level);
+}
+
+void
+HorizontalWindColumnRecovery::recover_from_vvm_contravariant_state(const Core::Field<2>& psi,
+    const Core::Field<2>& chi,
+    const Core::Field<3>& w,
+    const Core::Field<3>& xi_con,
+    const Core::Field<3>& eta_con,
+    const Core::Field<1>& spacing,
+    const Core::Field<0>& zonal_covariant_increment,
+    Core::Field<3>& covariant_q1,
+    Core::Field<3>& covariant_q2,
+    const int bottom_level,
+    const int top_level) const {
+
+    // VVM:
+    //
+    //     xi_con  =  omega^1
+    //     eta_con = -omega^2
+    //
+    // Keep this sign conversion at the State/solver boundary. The generalized
+    // HorizontalVorticity operator continues to use true tensor components.
+    recover_impl(psi,
+        chi,
+        w,
+        xi_con,
+        eta_con,
+        real(-1.0),
+        spacing,
+        &zonal_covariant_increment,
+        covariant_q1,
+        covariant_q2,
+        bottom_level,
+        top_level);
+}
+
+void
+HorizontalWindColumnRecovery::recover_impl(const Core::Field<2>& psi,
+    const Core::Field<2>& chi,
+    const Core::Field<3>& w,
+    const Core::Field<3>& omega1,
+    const Core::Field<3>& q2_component,
+    const Real q2_sign,
+    const Core::Field<1>& spacing,
+    const Core::Field<0>* q1_top_increment,
+    Core::Field<3>& output1,
+    Core::Field<3>& output2,
+    const int bottom_level,
+    const int top_level) const {
 
     const int nz = static_cast<int>(w.get_device_data().extent(0));
 
@@ -121,13 +194,13 @@ HorizontalWindColumnRecovery::recover(const Core::Field<2>& psi,
 
     validate_horizontal_field(psi, "psi");
     validate_horizontal_field(chi, "chi");
+
     validate_volume(w, nz, "w");
     validate_volume(omega1, nz, "omega1");
-    validate_volume(omega2, nz, "omega2");
+    validate_volume(q2_component, nz, "q2_component");
     validate_volume(output1, nz, "output1");
     validate_volume(output2, nz, "output2");
 
-    // The highest spacing entry used is top_level-1.
     if (static_cast<int>(spacing.get_device_data().extent(0)) < top_level) {
         throw std::invalid_argument(
             "HorizontalWindColumnRecovery: insufficient vertical spacing entries.");
@@ -137,10 +210,13 @@ HorizontalWindColumnRecovery::recover(const Core::Field<2>& psi,
     const auto chi_data = chi.get_device_data();
     const auto w_data = w.get_device_data();
     const auto omega1_data = omega1.get_device_data();
-    const auto omega2_data = omega2.get_device_data();
+    const auto q2_component_data = q2_component.get_device_data();
+
+    const SignedVolumeView omega2_data{q2_component_data, q2_sign};
     const auto spacing_data = spacing.get_device_data();
-    const auto output1_data = output1.get_mutable_device_data();
-    const auto output2_data = output2.get_mutable_device_data();
+
+    auto output1_data = output1.get_mutable_device_data();
+    auto output2_data = output2.get_mutable_device_data();
 
     if (output1_data.data() == output2_data.data()) {
         throw std::invalid_argument(
@@ -151,14 +227,23 @@ HorizontalWindColumnRecovery::recover(const Core::Field<2>& psi,
         chi_data.data(),
         w_data.data(),
         omega1_data.data(),
-        omega2_data.data(),
+        q2_component_data.data(),
         spacing_data.data()};
 
     for (const Real* input : input_data) {
         if (input == output1_data.data() || input == output2_data.data()) {
+
             throw std::invalid_argument(
                 "HorizontalWindColumnRecovery requires distinct input and output storage.");
         }
+    }
+
+    Core::Field<0>::ViewType q1_top_increment_data;
+
+    const bool has_q1_top_increment = q1_top_increment != nullptr;
+
+    if (has_q1_top_increment) {
+        q1_top_increment_data = q1_top_increment->get_device_data();
     }
 
     const int h = layout_.halo;
@@ -166,6 +251,7 @@ HorizontalWindColumnRecovery::recover(const Core::Field<2>& psi,
     const int ny = layout_.local_total_ny();
 
     const auto policy = Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h});
+
     const auto compact_policy = Kokkos::Experimental::require(policy,
         Kokkos::Experimental::WorkItemProperty::HintLightWeight);
 
@@ -174,8 +260,14 @@ HorizontalWindColumnRecovery::recover(const Core::Field<2>& psi,
     Kokkos::parallel_for("ReconstructCovariantTopWind",
         compact_policy,
         KOKKOS_LAMBDA(const int j, const int i) {
-            output1_data(top_level, j, i) =
-                reconstruction.calculate_covariant_q1_at_u(psi_data, chi_data, j, i);
+            Real q1 = reconstruction.calculate_covariant_q1_at_u(psi_data, chi_data, j, i);
+
+            if (has_q1_top_increment) {
+                q1 += q1_top_increment_data();
+            }
+
+            output1_data(top_level, j, i) = q1;
+
             output2_data(top_level, j, i) =
                 reconstruction.calculate_covariant_q2_at_v(psi_data, chi_data, j, i);
         });

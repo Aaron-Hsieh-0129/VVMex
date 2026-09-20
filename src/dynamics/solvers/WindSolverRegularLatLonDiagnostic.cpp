@@ -1,6 +1,8 @@
-#include "dynamics/solvers/WindSolver.hpp"
-
 #include "core/geometry/GeometryKind.hpp"
+#include "core/geometry/HorizontalLocation.hpp"
+#include "dynamics/solvers/WindSolver.hpp"
+#include "dynamics/operators/HorizontalVectorConversion.hpp"
+#include "dynamics/solvers/HorizontalWindColumnRecovery.hpp"
 #include "dynamics/solvers/VerticalEllipticSolver.hpp"
 #include "dynamics/solvers/VerticalWindDiagnostic.hpp"
 
@@ -12,9 +14,56 @@
 namespace VVM {
 namespace Dynamics {
 
+namespace {
+
+void
+commit_regular_latlon_covariant_wind_to_physical(const Core::Grid& grid,
+    const Core::Field<3>& covariant_q1,
+    const Core::Field<3>& covariant_q2,
+    Core::Field<3>& u,
+    Core::Field<3>& v,
+    const int bottom,
+    const int top) {
+
+    const int h = grid.get_halo_cells();
+    const int ny = grid.get_local_total_points_y();
+    const int nx = grid.get_local_total_points_x();
+
+    const auto inverse_h1_at_u = grid.geometry()
+                                     .device_view(Core::Geometry::HorizontalLocation::U)
+                                     .physical_to_contravariant.a11;
+
+    const auto inverse_h2_at_v = grid.geometry()
+                                     .device_view(Core::Geometry::HorizontalLocation::V)
+                                     .physical_to_contravariant.a22;
+
+    const auto q1 = covariant_q1.get_device_data();
+
+    const auto q2 = covariant_q2.get_device_data();
+
+    auto physical_u = u.get_mutable_device_data();
+
+    auto physical_v = v.get_mutable_device_data();
+
+    Kokkos::parallel_for("CommitRegularLatLonPhysicalWindFromCovariant",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({bottom, h, h}, {top + 1, ny - h, nx - h}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) {
+            physical_u(k, j, i) =
+                Operators::HorizontalVectorConversion::covariant_to_physical(q1(k, j, i),
+                    inverse_h1_at_u(j, i));
+
+            physical_v(k, j, i) =
+                Operators::HorizontalVectorConversion::covariant_to_physical(q2(k, j, i),
+                    inverse_h2_at_v(j, i));
+        });
+}
+
+} // namespace
+
 void
 WindSolver::prepare_regular_latlon_diagnostic_execution() {
     VerticalEllipticSolver::prepare_execution();
+    HorizontalWindColumnRecovery::prepare_execution();
     prepare_horizontal_diagnostic_execution();
 
 #if defined(KOKKOS_ENABLE_CUDA)
@@ -38,7 +87,8 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
     HorizontalEllipticSolver& horizontal_solver,
     const RegularLatLonDiagnosticFields& fields,
     const HorizontalDiagnosticWorkspace& workspace,
-    const RegularLatLonDiagnosticOptions& options) {
+    const RegularLatLonDiagnosticOptions& options,
+    const bool terrain) {
 
     if (grid.geometry().kind() != Core::Geometry::GeometryKind::RegularLatLon) {
         throw std::invalid_argument(
@@ -61,7 +111,6 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
 
     const bool reference_boundary =
         options.boundary_policy == HorizontalDiagnosticBoundaryPolicy::CvvmMode2Reference;
-
     const bool free_slip_boundary =
         options.boundary_policy == HorizontalDiagnosticBoundaryPolicy::RegularLatLonFreeSlipChannel;
 
@@ -100,11 +149,15 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
             "Regular latitude-longitude wind diagnostic received an invalid vertical layout.");
     }
 
-    const std::array<const Core::Field<3>*, 7> volumes = {&fields.zeta,
+    const std::array<const Core::Field<3>*, 11> volumes = {&fields.zeta,
         &fields.w,
         &fields.w_previous,
         &fields.xi,
         &fields.eta,
+        &fields.xi_con,
+        &fields.eta_con,
+        &fields.covariant_q1_wind,
+        &fields.covariant_q2_wind,
         &fields.u,
         &fields.v};
 
@@ -187,16 +240,65 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
         fields.spacing,
         fields.zonal_covariant_increment};
 
-    diagnose_horizontal_wind(grid,
-        halo,
-        horizontal_solver,
-        horizontal_fields,
-        workspace,
-        options.horizontal,
-        options.inverse_dz,
-        bottom,
-        top,
-        options.boundary_policy);
+    if (terrain) {
+        // Terrain-adjusted xi_topo / eta_topo are still physical/legacy-sign
+        // quantities. Preserve the established compatibility path exactly.
+        diagnose_horizontal_wind(grid,
+            halo,
+            horizontal_solver,
+            horizontal_fields,
+            workspace,
+            options.horizontal,
+            options.inverse_dz,
+            bottom,
+            top,
+            options.boundary_policy);
+    }
+    else {
+        // Solve psi / chi exactly as before.
+        diagnose_horizontal_potentials(grid,
+            halo,
+            horizontal_solver,
+            horizontal_fields,
+            workspace,
+            options.horizontal,
+            options.inverse_dz,
+            top,
+            options.boundary_policy);
+
+        // Generalized wind-column recovery:
+        //
+        //     xi_con  =  omega^1
+        //     eta_con = -omega^2
+        //
+        //         -> covariant u_1 / u_2
+        //
+        // The VVM eta sign is handled only by the representation-boundary
+        // wrapper inside HorizontalWindColumnRecovery.
+        const HorizontalWindColumnRecovery column_recovery(grid.geometry());
+
+        column_recovery.recover_from_vvm_contravariant_state(fields.psi,
+            fields.chi,
+            fields.w,
+            fields.xi_con,
+            fields.eta_con,
+            fields.spacing,
+            fields.zonal_covariant_increment,
+            fields.covariant_q1_wind,
+            fields.covariant_q2_wind,
+            bottom,
+            top);
+
+        // Physical u/v remain the public/physics representation during this
+        // transitional phase.
+        commit_regular_latlon_covariant_wind_to_physical(grid,
+            fields.covariant_q1_wind,
+            fields.covariant_q2_wind,
+            fields.u,
+            fields.v,
+            bottom,
+            top);
+    }
 
     halo.exchange_multiple_halos(std::vector<Core::Field<3>*>{&fields.u, &fields.v});
 

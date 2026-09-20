@@ -53,6 +53,39 @@ public:
         int bottom_level,
         int top_level) const;
 
+    // VVM State representation boundary.
+    //
+    // xi_con  =  omega^1
+    // eta_con = -omega^2
+    //
+    // The prescribed zonal increment is already a covariant q1 wind increment.
+    // It is applied at the top before downward column integration so the
+    // existing harmonic-mode semantics are preserved.
+    void recover_from_vvm_contravariant_state(const Core::Field<2>& psi,
+        const Core::Field<2>& chi,
+        const Core::Field<3>& w,
+        const Core::Field<3>& xi_con,
+        const Core::Field<3>& eta_con,
+        const Core::Field<1>& spacing,
+        const Core::Field<0>& zonal_covariant_increment,
+        Core::Field<3>& covariant_q1,
+        Core::Field<3>& covariant_q2,
+        int bottom_level,
+        int top_level) const;
+
+    void recover_impl(const Core::Field<2>& psi,
+        const Core::Field<2>& chi,
+        const Core::Field<3>& w,
+        const Core::Field<3>& omega1,
+        const Core::Field<3>& q2_component,
+        VVM::Real q2_sign,
+        const Core::Field<1>& spacing,
+        const Core::Field<0>* q1_top_increment,
+        Core::Field<3>& output1,
+        Core::Field<3>& output2,
+        int bottom_level,
+        int top_level) const;
+
 private:
     void validate_horizontal_field(const Core::Field<2>& field, const char* role) const;
     void validate_volume(const Core::Field<3>& field, int nz, const char* role) const;

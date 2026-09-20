@@ -3,6 +3,7 @@
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "core/boundary/HorizontalBoundaryStencils.hpp"
 #include "core/geometry/HorizontalLocation.hpp"
+#include "dynamics/operators/HorizontalVectorConversion.hpp"
 #include "dynamics/solvers/HorizontalEllipticSolver.hpp"
 #include "dynamics/solvers/HorizontalWindStateAdapter.hpp"
 #include "dynamics/solvers/VerticalEllipticSolver.hpp"
@@ -320,6 +321,8 @@ free_slip_physical_wind_halos(const Grid& grid, const Field<3>& u, const Field<3
 struct Sources {
     Field<3> xi;
     Field<3> eta;
+    Field<3> xi_con;
+    Field<3> eta_con;
     Field<1> rhobar;
     Field<1> rhobar_up;
     Field<1> flex_mid;
@@ -333,6 +336,14 @@ struct Sources {
                   grid.get_local_total_points_y(),
                   grid.get_local_total_points_x()}),
           eta("combined_eta",
+              {grid.get_local_total_points_z(),
+                  grid.get_local_total_points_y(),
+                  grid.get_local_total_points_x()}),
+          xi_con("combined_xi_con",
+              {grid.get_local_total_points_z(),
+                  grid.get_local_total_points_y(),
+                  grid.get_local_total_points_x()}),
+          eta_con("combined_eta_con",
               {grid.get_local_total_points_z(),
                   grid.get_local_total_points_y(),
                   grid.get_local_total_points_x()}),
@@ -399,6 +410,55 @@ struct Sources {
         VVM::Core::Boundary::HorizontalBoundaryStencils boundary(grid);
         boundary.fill_positive_face_q2_homogeneous_dirichlet_halos(xi);
         boundary.fill_centered_q2_neumann_halos(eta);
+
+        // Mirror the production representation boundary: establish physical
+        // halos/wall conditions first, then generate the contravariant shadow.
+        update_contravariant_vorticity(grid);
+    }
+
+    void
+    update_contravariant_vorticity(const Grid& grid) {
+        using VVM::Core::Geometry::HorizontalLocation;
+        using VVM::Dynamics::Operators::HorizontalVectorConversion;
+
+        const auto u_geometry = grid.geometry().device_view(HorizontalLocation::U);
+
+        const auto v_geometry = grid.geometry().device_view(HorizontalLocation::V);
+
+        // xi is native at V:
+        //
+        //     xi_con = omega^1 = xi / h1
+        const auto inverse_h1_at_v = v_geometry.physical_to_contravariant.a11;
+
+        // eta is native at U and already contains the historical VVM sign:
+        //
+        //     eta     = -omega_2(physical)
+        //     eta_con = -omega^2
+        //
+        // Therefore no additional minus sign is introduced here.
+        const auto inverse_h2_at_u = u_geometry.physical_to_contravariant.a22;
+
+        const auto xi_data = xi.get_device_data();
+        const auto eta_data = eta.get_device_data();
+
+        auto xi_con_data = xi_con.get_mutable_device_data();
+        auto eta_con_data = eta_con.get_mutable_device_data();
+
+        const int nz = grid.get_local_total_points_z();
+        const int ny = grid.get_local_total_points_y();
+        const int nx = grid.get_local_total_points_x();
+
+        Kokkos::parallel_for("UpdateTestContravariantVorticity",
+            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
+            KOKKOS_LAMBDA(const int k, const int j, const int i) {
+                xi_con_data(k, j, i) =
+                    HorizontalVectorConversion::physical_to_contravariant(xi_data(k, j, i),
+                        inverse_h1_at_v(j, i));
+
+                eta_con_data(k, j, i) =
+                    HorizontalVectorConversion::physical_to_contravariant(eta_data(k, j, i),
+                        inverse_h2_at_u(j, i));
+            });
     }
 
     bool
@@ -451,6 +511,8 @@ struct Sources {
 
         append(result, snapshot(xi));
         append(result, snapshot(eta));
+        append(result, snapshot(xi_con));
+        append(result, snapshot(eta_con));
         append(result, snapshot(rhobar));
         append(result, snapshot(rhobar_up));
         append(result, snapshot(flex_mid));
@@ -543,6 +605,8 @@ struct DiagnosticState {
     Field<3> zeta;
     Field<3> w;
     Field<3> w_previous;
+    Field<3> covariant_q1_wind;
+    Field<3> covariant_q2_wind;
     Field<3> u;
     Field<3> v;
     Field<2> rhs_psi;
@@ -566,6 +630,14 @@ struct DiagnosticState {
                   grid.get_local_total_points_y(),
                   grid.get_local_total_points_x()}),
           w_previous("combined_w_previous",
+              {grid.get_local_total_points_z(),
+                  grid.get_local_total_points_y(),
+                  grid.get_local_total_points_x()}),
+          covariant_q1_wind("combined_covariant_q1_wind",
+              {grid.get_local_total_points_z(),
+                  grid.get_local_total_points_y(),
+                  grid.get_local_total_points_x()}),
+          covariant_q2_wind("combined_covariant_q2_wind",
               {grid.get_local_total_points_z(),
                   grid.get_local_total_points_y(),
                   grid.get_local_total_points_x()}),
@@ -595,6 +667,8 @@ struct DiagnosticState {
         zeta.set_to_zero();
         w.set_to_zero();
         w_previous.set_to_zero();
+        covariant_q1_wind.set_to_zero();
+        covariant_q2_wind.set_to_zero();
         u.set_to_zero();
         v.set_to_zero();
         rhs_psi.set_to_zero();
@@ -645,6 +719,10 @@ struct DiagnosticState {
             w_previous,
             sources.xi,
             sources.eta,
+            sources.xi_con,
+            sources.eta_con,
+            covariant_q1_wind,
+            covariant_q2_wind,
             u,
             v,
             sources.rhobar,
@@ -670,6 +748,8 @@ struct DiagnosticState {
         append(result, snapshot(zeta));
         append(result, snapshot(w));
         append(result, snapshot(w_previous));
+        append(result, snapshot(covariant_q1_wind));
+        append(result, snapshot(covariant_q2_wind));
         append(result, snapshot(u));
         append(result, snapshot(v));
         append(result, snapshot(rhs_psi));
@@ -788,7 +868,8 @@ run_case(const Grid& grid, HaloExchanger& halo, bool stretched) {
             horizontal,
             state.bind(sources),
             state.workspace(),
-            options);
+            options,
+            false);
     };
 
     sources.initialize_step(grid, halo, 0);

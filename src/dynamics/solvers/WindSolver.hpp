@@ -129,16 +129,29 @@ public:
         Core::Field<2>& psi_previous;
         Core::Field<2>& chi;
         Core::Field<2>& chi_previous;
+
         Core::Field<3>& zeta;
         Core::Field<3>& w;
         Core::Field<3>& w_previous;
 
-        // Under RegularLatLonFreeSlipChannel, callers prepare xi with
-        // positive-face homogeneous Dirichlet walls and eta with centered
-        // homogeneous Neumann walls before entering this diagnostic.
+        // Existing physical/legacy-sign representation.
+        // Terrain adaptation, VerticalEllipticSolver and the current
+        // zeta-column diagnosis still use these fields.
         const Core::Field<3>& xi;
         const Core::Field<3>& eta;
-
+        // Persistent canonical representation:
+        //
+        //     xi_con  =  omega^1
+        //     eta_con = -omega^2
+        //
+        // Used by the generalized flat-RLL horizontal wind-column recovery.
+        const Core::Field<3>& xi_con;
+        const Core::Field<3>& eta_con;
+        // Solver-private covariant wind scratch.
+        //
+        // These are not model State fields.
+        Core::Field<3>& covariant_q1_wind;
+        Core::Field<3>& covariant_q2_wind;
         Core::Field<3>& u;
         Core::Field<3>& v;
         const Core::Field<1>& rhobar;
@@ -166,7 +179,8 @@ public:
         HorizontalEllipticSolver& horizontal_solver,
         const RegularLatLonDiagnosticFields& fields,
         const HorizontalDiagnosticWorkspace& workspace,
-        const RegularLatLonDiagnosticOptions& options);
+        const RegularLatLonDiagnosticOptions& options,
+        bool terrain);
 
     void preserve_regular_latlon_periodic_circulation(bool initialize);
     void preserve_regular_latlon_channel_circulation(bool initialize);
@@ -187,6 +201,7 @@ public:
 
     // RLL diagnostic execution and CUDA graph capture/replay.
     void execute_regular_latlon_diagnostic(bool initial,
+        bool terrain,
         RegularLatLonDiagnosticFields& fields,
         HorizontalDiagnosticWorkspace& workspace,
         const RegularLatLonDiagnosticOptions& options);
@@ -267,6 +282,9 @@ private:
     std::unique_ptr<Core::Field<1>> rll_constraint_contributions_;
     HorizontalWindConstraintTargets rll_harmonic_targets_;
     HorizontalWindConstraintMeasurements rll_harmonic_measurements_;
+
+    std::unique_ptr<Core::Field<3>> rll_covariant_q1_wind_;
+    std::unique_ptr<Core::Field<3>> rll_covariant_q2_wind_;
 
 #if defined(ENABLE_NCCL)
     Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space>

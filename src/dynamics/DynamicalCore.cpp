@@ -439,16 +439,20 @@ DynamicalCore::compute_zeta_vertical_structure(Core::State& state) const {
 void
 DynamicalCore::compute_wind_fields() {
     const auto geometry_kind = grid_.geometry().kind();
-    if (geometry_kind == Core::Geometry::GeometryKind::Cartesian) {
-        update_contravariant_vorticity_shadow_state();
-    }
+
+    update_contravariant_vorticity_shadow_state();
 
     wind_solver_->solve(bc_manager_);
     mean_wind_state_->invalidate();
 
     update_contravariant_wind_shadow_state();
+
+    // RLL wind recovery re-diagnoses physical zeta. xi/eta are not modified by
+    // WindSolver, so only the vertical shadow needs to be refreshed here.
     if (geometry_kind == Core::Geometry::GeometryKind::RegularLatLon) {
-        update_contravariant_vorticity_shadow_state();
+        Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+            zeta_con_ref_.get(state_, "zeta_con").get_mutable_device_data(),
+            zeta_ref_.get(state_, "zeta").get_device_data());
     }
 }
 
