@@ -52,6 +52,9 @@ public:
     void update_contravariant_wind_shadow_state();
     void update_contravariant_vorticity_shadow_state();
 
+    void prepare_vorticity_for_tendency_evaluation();
+    void restore_vorticity_after_tendency_evaluation();
+
 private:
     const Utils::ConfigurationManager& config_;
     Core::State& state_;

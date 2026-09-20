@@ -768,27 +768,7 @@ void
 DynamicalCore::calculate_vorticity_tendencies() {
     ensure_field_cache();
 
-    const int nz = grid_.get_local_total_points_z();
-    const int ny = grid_.get_local_total_points_y();
-    const int nx = grid_.get_local_total_points_x();
-    const int h = grid_.get_halo_cells();
-    const auto& rhobar_up = rhobar_up_ref_.get(state_, "rhobar_up").get_device_data();
-    const auto& rhobar = rhobar_ref_.get(state_, "rhobar").get_device_data();
-
-    auto& xi = xi_ref_.get(state_, "xi").get_mutable_device_data();
-    auto& eta = eta_ref_.get(state_, "eta").get_mutable_device_data();
-    auto& zeta = zeta_ref_.get(state_, "zeta").get_mutable_device_data();
-
-    // Divide by density
-    Kokkos::parallel_for("divide_by_density_xi_eta",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {nz - h, ny, nx}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            xi(k, j, i) /= rhobar_up(k);
-            eta(k, j, i) /= rhobar_up(k);
-        });
-    Kokkos::parallel_for("divide_by_density_zeta",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {nz - h + 1, ny, nx}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) { zeta(k, j, i) /= rhobar(k); });
+    prepare_vorticity_for_tendency_evaluation();
 
     // Calculate vorticity tendency
     for (const auto& var : vorticity_cache_) {
@@ -802,26 +782,12 @@ void
 DynamicalCore::update_vorticity(VVM::Real dt) {
     ensure_field_cache();
 
+    restore_vorticity_after_tendency_evaluation();
+
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
     const int h = grid_.get_halo_cells();
-    const auto& rhobar_up = rhobar_up_ref_.get(state_, "rhobar_up").get_device_data();
-    const auto& rhobar = rhobar_ref_.get(state_, "rhobar").get_device_data();
-
-    auto& xi = xi_ref_.get(state_, "xi").get_mutable_device_data();
-    auto& eta = eta_ref_.get(state_, "eta").get_mutable_device_data();
-    auto& zeta = zeta_ref_.get(state_, "zeta").get_mutable_device_data();
-
-    Kokkos::parallel_for("multiply_density_xi",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {nz - h, ny, nx}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) { xi(k, j, i) *= rhobar_up(k); });
-    Kokkos::parallel_for("multiply_density_eta",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {nz - h, ny, nx}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) { eta(k, j, i) *= rhobar_up(k); });
-    Kokkos::parallel_for("multiply_density_zeta",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {nz - h + 1, ny, nx}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) { zeta(k, j, i) *= rhobar(k); });
 
     for (const auto& var : vorticity_cache_) {
         if (var.method != nullptr) {
@@ -869,6 +835,65 @@ void
 DynamicalCore::diagnose_wind_fields(Core::State& state) {
     compute_uvtopmn();
     compute_wind_fields();
+}
+
+void
+DynamicalCore::prepare_vorticity_for_tendency_evaluation() {
+    const int nz = grid_.get_local_total_points_z();
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
+    const int h = grid_.get_halo_cells();
+
+    const auto& rhobar_up = rhobar_up_ref_.get(state_, "rhobar_up").get_device_data();
+    const auto& rhobar = rhobar_ref_.get(state_, "rhobar").get_device_data();
+
+    auto& xi = xi_ref_.get(state_, "xi").get_mutable_device_data();
+    auto& eta = eta_ref_.get(state_, "eta").get_mutable_device_data();
+    auto& zeta = zeta_ref_.get(state_, "zeta").get_mutable_device_data();
+
+    Kokkos::parallel_for("divide_by_density_xi_eta",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {nz - h, ny, nx}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) {
+            xi(k, j, i) /= rhobar_up(k);
+            eta(k, j, i) /= rhobar_up(k);
+        });
+
+    Kokkos::parallel_for("divide_by_density_zeta",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {nz - h + 1, ny, nx}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) { zeta(k, j, i) /= rhobar(k); });
+}
+
+void
+DynamicalCore::restore_vorticity_after_tendency_evaluation() {
+    const int nz = grid_.get_local_total_points_z();
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
+    const int h = grid_.get_halo_cells();
+
+    const auto& rhobar_up = rhobar_up_ref_.get(state_, "rhobar_up").get_device_data();
+    const auto& rhobar = rhobar_ref_.get(state_, "rhobar").get_device_data();
+
+    auto& xi = xi_ref_.get(state_, "xi").get_mutable_device_data();
+    auto& eta = eta_ref_.get(state_, "eta").get_mutable_device_data();
+    auto& zeta = zeta_ref_.get(state_, "zeta").get_mutable_device_data();
+
+    // Restore the persistent physical-representation prognostic state before
+    // temporal integration. In particular, AB2 previous-state storage remains
+    // attached to the existing xi / eta / zeta representation in this phase.
+    //
+    // Preserve the existing arithmetic exactly.
+
+    Kokkos::parallel_for("multiply_density_xi",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {nz - h, ny, nx}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) { xi(k, j, i) *= rhobar_up(k); });
+
+    Kokkos::parallel_for("multiply_density_eta",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {nz - h, ny, nx}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) { eta(k, j, i) *= rhobar_up(k); });
+
+    Kokkos::parallel_for("multiply_density_zeta",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {nz - h + 1, ny, nx}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) { zeta(k, j, i) *= rhobar(k); });
 }
 
 } // namespace Dynamics
