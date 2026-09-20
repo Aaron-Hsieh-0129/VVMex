@@ -104,7 +104,7 @@ public:
         const Core::Grid& grid,
         const Core::Parameters& params,
         Core::Field<3>& output) const override {
-        vorticity_.add_from_density_normalized_physical_state(state,
+        vorticity_.add_from_canonical_state(state,
             grid,
             params,
             output,
@@ -116,7 +116,7 @@ public:
         const Core::Grid& grid,
         const Core::Parameters& params,
         Core::Field<3>& output) const override {
-        vorticity_.add_from_density_normalized_physical_state(state,
+        vorticity_.add_from_canonical_state(state,
             grid,
             params,
             output,
@@ -128,7 +128,7 @@ public:
         const Core::Grid& grid,
         const Core::Parameters& params,
         Core::Field<3>& output) const override {
-        vorticity_.add_from_density_normalized_physical_state(state,
+        vorticity_.add_from_canonical_state(state,
             grid,
             params,
             output,

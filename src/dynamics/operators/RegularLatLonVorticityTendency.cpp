@@ -39,14 +39,56 @@ struct InverseSpacing {
 // device operators consume this established field bundle. The struct name
 // makes the temporary representation explicit without changing kernel
 // arithmetic or device argument layout.
-struct DensityNormalizedPhysicalFields {
-    Volume u, v, w, xi, eta, zeta;
+struct DensityNormalizedPhysicalFromContravariant {
+    Volume contravariant;
+    Core::Geometry::GeometryField2D physical_scale;
+    Profile density;
+
+    KOKKOS_INLINE_FUNCTION Real
+    operator()(const int k, const int j, const int i) const {
+
+        // Preserve the historical arithmetic order:
+        //
+        //     physical = scale * contravariant
+        //     normalized = physical / density
+        //
+        // Do not rewrite as contravariant / density * scale.
+        return (physical_scale(j, i) * contravariant(k, j, i)) / density(k);
+    }
+};
+
+struct DensityNormalizedPhysicalIdentity {
+    Volume physical;
+    Profile density;
+
+    KOKKOS_INLINE_FUNCTION Real
+    operator()(const int k, const int j, const int i) const {
+
+        return physical(k, j, i) / density(k);
+    }
+};
+
+struct CanonicalStateFields {
+    // Wind remains physical in the existing RLL stencil implementation.
+    Volume u;
+    Volume v;
+    Volume w;
+
+    // These accessors expose exactly the density-normalized physical
+    // quantities expected by the established CVVM stencil, but their
+    // persistent backing state is canonical.
+    DensityNormalizedPhysicalFromContravariant xi;
+    DensityNormalizedPhysicalFromContravariant eta;
+
+    DensityNormalizedPhysicalIdentity zeta;
 
     Plane f_at_z;
 
-    Profile rho, rho_up;
+    Profile rho;
+    Profile rho_up;
 
-    ProductProfile fn1, fn2;
+    ProductProfile fn1;
+    ProductProfile fn2;
 
     InverseSpacing inverse_spacing;
     InverseSpacing inverse_spacing_mid;
@@ -56,14 +98,19 @@ struct DensityNormalizedPhysicalFields {
 struct TendencyFunctor {
     Kokkos::View<const RegularLatLonTopTransportDeviceView> transport;
     Kokkos::View<const RegularLatLonTopDeformationDeviceView> deformation;
-    DensityNormalizedPhysicalFields fields;
+
+    CanonicalStateFields fields;
+
     Volume output;
-    int variable, begin, end;
+    int variable;
+    int begin;
+    int end;
+
     RegularLatLonVorticityTendency::Term term;
     bool evaluate = true;
 
     KOKKOS_INLINE_FUNCTION void
-    operator()(int k, int j, int i) const {
+    operator()(const int k, const int j, const int i) const {
         if (!evaluate) {
             return;
         }
@@ -100,30 +147,50 @@ struct TendencyFunctor {
     }
 };
 
-DensityNormalizedPhysicalFields
-bind_density_normalized_physical_fields(const Core::State& state, const Core::Parameters& params) {
-    DensityNormalizedPhysicalFields fields{};
+CanonicalStateFields
+bind_canonical_state_fields(
+    const Core::State& state, const Core::Grid& grid, const Core::Parameters& params) {
+    using Core::Geometry::HorizontalLocation;
+    CanonicalStateFields fields{};
 
-    // Physical wind remains the current RLL tendency input representation.
+    // Keep the established physical-wind arithmetic for this RLL stencil.
     fields.u = state.get_field<3>("u").get_device_data();
     fields.v = state.get_field<3>("v").get_device_data();
     fields.w = state.get_field<3>("w").get_device_data();
+    fields.rho = state.get_field<1>("rhobar").get_device_data();
+    fields.rho_up = state.get_field<1>("rhobar_up").get_device_data();
 
-    // These State allocations have already been divided by reference density
-    // by DynamicalCore::prepare_vorticity_for_tendency_evaluation().
+    const auto u_geometry = grid.geometry().device_view(HorizontalLocation::U);
+    const auto v_geometry = grid.geometry().device_view(HorizontalLocation::V);
+
+    // Reproduce the historical density-normalized physical xi:
     //
-    // Do NOT replace them with xi_con / eta_con / zeta_con here:
-    // those fields represent persistent, non-density-normalized
-    // contravariant vorticity.
-    fields.xi = state.get_field<3>("xi").get_device_data();
-    fields.eta = state.get_field<3>("eta").get_device_data();
-    fields.zeta = state.get_field<3>("zeta").get_device_data();
+    //     xi_phys / rho_up
+    //       = (h1_at_v * xi_con) / rho_up
+    //
+    // xi_con itself is never modified.
+    fields.xi = {state.get_field<3>("xi_con").get_device_data(),
+        v_geometry.contravariant_to_physical.a11,
+        fields.rho_up};
+
+    // eta_con already contains VVM's historical minus sign:
+    //
+    //     eta_con = -omega^2
+    //
+    // therefore:
+    //
+    //     eta_phys = h2_at_u * eta_con
+    fields.eta = {state.get_field<3>("eta_con").get_device_data(),
+        u_geometry.contravariant_to_physical.a22,
+        fields.rho_up};
+
+    // zeta is unchanged by the current horizontal coordinate transform.
+    // Reproduce the previous in-place zeta /= rho arithmetic lazily.
+    fields.zeta = {state.get_field<3>("zeta").get_device_data(),
+
+        fields.rho};
 
     fields.f_at_z = state.get_field<2>("f_2d").get_device_data();
-
-    fields.rho = state.get_field<1>("rhobar").get_device_data();
-
-    fields.rho_up = state.get_field<1>("rhobar_up").get_device_data();
 
     fields.fn1 = {params.fact1_xi_eta.get_device_data(), fields.rho, 1};
 
@@ -164,7 +231,7 @@ RegularLatLonVorticityTendency::prepare_execution() {
 }
 
 void
-RegularLatLonVorticityTendency::add_from_density_normalized_physical_state(const Core::State& state,
+RegularLatLonVorticityTendency::add_from_canonical_state(const Core::State& state,
     const Core::Grid& grid,
     const Core::Parameters& params,
     Core::Field<3>& output,
@@ -188,7 +255,7 @@ RegularLatLonVorticityTendency::add_from_density_normalized_physical_state(const
             "lid, two halos and at least three wind levels.");
     }
 
-    const auto f = bind_density_normalized_physical_fields(state, params);
+    const auto f = bind_canonical_state_fields(state, grid, params);
 
     const int begin = component == 2 ? top : h;
     const int end = component == 2 ? top + 1 : top;

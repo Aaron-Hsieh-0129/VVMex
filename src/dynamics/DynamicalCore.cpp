@@ -883,18 +883,28 @@ DynamicalCore::calculate_vorticity_tendencies() {
 
     ensure_field_cache();
 
-    prepare_vorticity_for_tendency_evaluation();
-
     using Core::Geometry::GeometryKind;
     using Core::Geometry::HorizontalLocation;
     using Operators::HorizontalVectorConversion;
 
     const auto geometry_kind = grid_.geometry().kind();
 
+    // Cartesian retains the established destructive density-normalization
+    // path exactly. This is required for bitwise regression because the
+    // divide/multiply round-trip historically acted on the prognostic state.
+    //
+    // RLL tendencies now consume canonical xi_con / eta_con directly and
+    // reproduce the same density-normalized physical stencil inputs lazily.
+    if (geometry_kind == GeometryKind::Cartesian) {
+        prepare_vorticity_for_tendency_evaluation();
+    }
+    else if (geometry_kind != GeometryKind::RegularLatLon) {
+        throw std::logic_error("Vorticity tendency evaluation currently supports only "
+                               "Cartesian and regular latitude-longitude geometry.");
+    }
+
     const int nz = grid_.get_local_total_points_z();
-
     const int ny = grid_.get_local_total_points_y();
-
     const int nx = grid_.get_local_total_points_x();
 
     auto convert_to_contravariant = [&](Core::Field<3>& tendency, const bool is_xi) {
@@ -967,10 +977,13 @@ DynamicalCore::calculate_vorticity_tendencies() {
         }
     }
 
-    // xi / eta are only a temporary physical compatibility view during
-    // tendency evaluation.
-    restore_vorticity_after_tendency_evaluation();
-    sync_contravariant_vorticity_from_physical();
+    if (geometry_kind == GeometryKind::Cartesian) {
+        // Preserve the historical density round-trip in the Cartesian
+        // prognostic state exactly.
+        restore_vorticity_after_tendency_evaluation();
+
+        sync_contravariant_vorticity_from_physical();
+    }
 }
 
 void

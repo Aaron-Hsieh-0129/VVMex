@@ -44,7 +44,7 @@ RegularLatLonTakacs::calculate_advection_tendency(const Core::State& state,
     }
 
     if (var_name == "xi" || var_name == "eta" || var_name == "zeta") {
-        vorticity_.add_from_density_normalized_physical_state(state,
+        vorticity_.add_from_canonical_state(state,
             grid,
             params,
             out_tendency,
@@ -109,7 +109,7 @@ RegularLatLonTakacs::calculate_stretching_tendency_x(const Core::State& state,
     const Core::Parameters& params,
     Core::Field<3>& output,
     const std::string& variable) const {
-    vorticity_.add_from_density_normalized_physical_state(state,
+    vorticity_.add_from_canonical_state(state,
         grid,
         params,
         output,
@@ -138,7 +138,7 @@ RegularLatLonTakacs::calculate_twisting_tendency_x(const Core::State& state,
     const Core::Parameters& params,
     Core::Field<3>& output,
     const std::string& variable) const {
-    vorticity_.add_from_density_normalized_physical_state(state,
+    vorticity_.add_from_canonical_state(state,
         grid,
         params,
         output,

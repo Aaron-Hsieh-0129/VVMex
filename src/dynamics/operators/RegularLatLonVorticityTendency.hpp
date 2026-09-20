@@ -8,28 +8,33 @@
 
 namespace VVM::Dynamics::Operators {
 
-// Production launch adapter. It borrows the density-normalized vorticity
-// used by DynamicalCore during tendency evaluation; no extra normalization.
+// Production launch adapter for canonical RLL dynamics.
 //
-// During normal tendency evaluation DynamicalCore temporarily transforms the
-// persistent physical State fields:
+// Persistent horizontal vorticity is supplied through:
 //
-//     xi   -> xi   / rhobar_up
-//     eta  -> eta  / rhobar_up
-//     zeta -> zeta / rhobar
+//     xi_con  =  omega^1
+//     eta_con = -omega^2
 //
-// before entering this operator.
+// zeta remains the physical/vertical component for the current
+// horizontal-only generalized coordinate.
 //
-// Therefore this operator consumes density-normalized PHYSICAL / legacy-sign
-// State vorticity, not the persistent contravariant shadow fields
-// xi_con / eta_con / zeta_con.
+// The existing CVVM/RLL device stencils historically operate on
+// density-normalized physical horizontal-vorticity components. To preserve
+// their established arithmetic exactly, this adapter materializes those
+// values lazily from the canonical state on device:
+//
+//     xi/rho_up  = (h1 * xi_con)  / rho_up
+//     eta/rho_up = (h2 * eta_con) / rho_up
+//     zeta/rho   = zeta / rho
+//
+// No physical xi/eta State allocation is consumed or modified here.
 class RegularLatLonVorticityTendency {
 public:
     enum class Term { Transport, Stretching, Twisting, Planetary };
     explicit RegularLatLonVorticityTendency(const Core::Geometry::HorizontalGeometry& geometry);
     static void prepare_execution();
 
-    void add_from_density_normalized_physical_state(const Core::State& state,
+    void add_from_canonical_state(const Core::State& state,
         const Core::Grid& grid,
         const Core::Parameters& params,
         Core::Field<3>& output,
