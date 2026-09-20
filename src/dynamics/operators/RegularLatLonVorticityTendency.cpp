@@ -1,4 +1,5 @@
 #include "dynamics/operators/RegularLatLonVorticityTendency.hpp"
+#include "dynamics/operators/HorizontalVectorConversion.hpp"
 
 namespace VVM::Dynamics::Operators {
 namespace {
@@ -152,8 +153,6 @@ bind_canonical_state_fields(
     const Core::State& state, const Core::Grid& grid, const Core::Parameters& params) {
     using Core::Geometry::HorizontalLocation;
     CanonicalStateFields fields{};
-
-    // Keep the established physical-wind arithmetic for this RLL stencil.
     fields.u = state.get_field<3>("u").get_device_data();
     fields.v = state.get_field<3>("v").get_device_data();
     fields.w = state.get_field<3>("w").get_device_data();
@@ -163,37 +162,43 @@ bind_canonical_state_fields(
     const auto u_geometry = grid.geometry().device_view(HorizontalLocation::U);
     const auto v_geometry = grid.geometry().device_view(HorizontalLocation::V);
 
-    // Reproduce the historical density-normalized physical xi:
+    // xi:
     //
-    //     xi_phys / rho_up
-    //       = (h1_at_v * xi_con) / rho_up
+    // persistent:
+    //     xi_con = omega^1
     //
-    // xi_con itself is never modified.
+    // stencil interface:
+    //     xi = physical omega_1 / rho_up
+    //
+    // therefore lazily reproduce:
+    //
+    //     (xi_con * h1_at_v) / rho_up
     fields.xi = {state.get_field<3>("xi_con").get_device_data(),
         v_geometry.contravariant_to_physical.a11,
         fields.rho_up};
 
-    // eta_con already contains VVM's historical minus sign:
+    // eta:
     //
+    // persistent:
     //     eta_con = -omega^2
     //
-    // therefore:
+    // stencil interface:
+    //     eta = -physical omega_2 / rho_up
     //
-    //     eta_phys = h2_at_u * eta_con
+    // eta_con already contains the VVM sign, so no additional minus sign.
     fields.eta = {state.get_field<3>("eta_con").get_device_data(),
         u_geometry.contravariant_to_physical.a22,
         fields.rho_up};
 
-    // zeta is unchanged by the current horizontal coordinate transform.
-    // Reproduce the previous in-place zeta /= rho arithmetic lazily.
-    fields.zeta = {state.get_field<3>("zeta").get_device_data(),
-
-        fields.rho};
+    // Current horizontal-only generalized coordinate:
+    //
+    //     zeta_con == physical zeta
+    //
+    // The old stencil expects zeta/rho.
+    fields.zeta = {state.get_field<3>("zeta").get_device_data(), fields.rho};
 
     fields.f_at_z = state.get_field<2>("f_2d").get_device_data();
-
     fields.fn1 = {params.fact1_xi_eta.get_device_data(), fields.rho, 1};
-
     fields.fn2 = {params.fact2_xi_eta.get_device_data(), fields.rho, 0};
 
     fields.inverse_spacing = {params.flex_height_coef_up.get_device_data(), params.rdz};

@@ -104,6 +104,12 @@ struct RegularLatLonHorizontalDeformationDeviceView {
     }
 
     template <typename Fields>
+    KOKKOS_INLINE_FUNCTION VVM::Real
+    zeta_over_rho(const Fields& fields, const int k, const int j, const int i) const noexcept {
+        return fields.zeta(k, j, i) / fields.rho(k);
+    }
+
+    template <typename Fields>
     KOKKOS_INLINE_FUNCTION HorizontalDeformationTerms
     calculate_xi_at_v(const Fields& fields, int k, int j, int i) const noexcept {
 

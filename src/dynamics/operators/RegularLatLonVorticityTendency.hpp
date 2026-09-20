@@ -8,26 +8,20 @@
 
 namespace VVM::Dynamics::Operators {
 
-// Production launch adapter for canonical RLL dynamics.
+// Production RLL vorticity-tendency adapter.
 //
-// Persistent horizontal vorticity is supplied through:
+// Persistent horizontal vorticity is canonical:
 //
 //     xi_con  =  omega^1
 //     eta_con = -omega^2
 //
-// zeta remains the physical/vertical component for the current
+// zeta remains the physical vertical component for the current
 // horizontal-only generalized coordinate.
 //
-// The existing CVVM/RLL device stencils historically operate on
-// density-normalized physical horizontal-vorticity components. To preserve
-// their established arithmetic exactly, this adapter materializes those
-// values lazily from the canonical state on device:
-//
-//     xi/rho_up  = (h1 * xi_con)  / rho_up
-//     eta/rho_up = (h2 * eta_con) / rho_up
-//     zeta/rho   = zeta / rho
-//
-// No physical xi/eta State allocation is consumed or modified here.
+// The underlying CVVM stencils retain their established arithmetic.
+// Density-normalized physical quantities are reconstructed locally inside
+// the device operators from the canonical state without modifying xi/eta
+// State fields.
 class RegularLatLonVorticityTendency {
 public:
     enum class Term { Transport, Stretching, Twisting, Planetary };

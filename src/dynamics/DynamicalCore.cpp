@@ -890,11 +890,10 @@ DynamicalCore::calculate_vorticity_tendencies() {
     const auto geometry_kind = grid_.geometry().kind();
 
     // Cartesian retains the established destructive density-normalization
-    // path exactly. This is required for bitwise regression because the
-    // divide/multiply round-trip historically acted on the prognostic state.
+    // path. This preserves its exact regression trajectory.
     //
-    // RLL tendencies now consume canonical xi_con / eta_con directly and
-    // reproduce the same density-normalized physical stencil inputs lazily.
+    // RLL tendency operators consume canonical xi_con / eta_con directly
+    // and reconstruct the historical normalized physical arithmetic locally.
     if (geometry_kind == GeometryKind::Cartesian) {
         prepare_vorticity_for_tendency_evaluation();
     }
@@ -906,22 +905,11 @@ DynamicalCore::calculate_vorticity_tendencies() {
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
-
+    const int h = grid_.get_halo_cells();
     auto convert_to_contravariant = [&](Core::Field<3>& tendency, const bool is_xi) {
         if (geometry_kind == GeometryKind::Cartesian) {
-
-            // Cartesian physical and contravariant horizontal
-            // components are identical.
             return;
         }
-
-        if (geometry_kind != GeometryKind::RegularLatLon) {
-
-            throw std::logic_error("Horizontal-vorticity tendency conversion currently "
-                                   "supports only Cartesian and regular latitude-longitude "
-                                   "geometry.");
-        }
-
         auto data = tendency.get_mutable_device_data();
 
         if (is_xi) {
@@ -935,7 +923,6 @@ DynamicalCore::calculate_vorticity_tendencies() {
                         HorizontalVectorConversion::physical_to_contravariant(data(k, j, i),
                             inverse_h1_at_v(j, i));
                 });
-
             return;
         }
 
@@ -955,8 +942,6 @@ DynamicalCore::calculate_vorticity_tendencies() {
             continue;
         }
 
-        // Existing spatial operators still compute tendencies of the
-        // physical/legacy representation.
         var.method->calculate_tendencies(state_, grid_, params_);
 
         if (!var.is_xi && !var.is_eta) {
@@ -978,12 +963,78 @@ DynamicalCore::calculate_vorticity_tendencies() {
     }
 
     if (geometry_kind == GeometryKind::Cartesian) {
-        // Preserve the historical density round-trip in the Cartesian
-        // prognostic state exactly.
+        // Preserve the historical physical density round-trip.
         restore_vorticity_after_tendency_evaluation();
 
+        // xi_con / eta_con are canonical, so commit that exact restored
+        // Cartesian state before AB2/FE.
         sync_contravariant_vorticity_from_physical();
+        return;
     }
+
+    //
+    // RLL exact prognostic round-trip
+    // --------------------------------
+    //
+    // Before canonical ownership, tendency evaluation performed:
+    //
+    // xi_con
+    //   -> physical xi
+    //   -> xi/rho_up
+    //   -> xi
+    //   -> xi_con
+    //
+    // and equivalently for eta.
+    //
+    // That sequence is not bitwise neutral. Reproduce the exact operation
+    // sequence directly on canonical storage, without materializing the
+    // physical State fields.
+    //
+
+    const auto& rho_up = rhobar_up_ref_.get(state_, "rhobar_up").get_device_data();
+    const auto& rho = rhobar_ref_.get(state_, "rhobar").get_device_data();
+    auto xi_con = xi_con_ref_.get(state_, "xi_con").get_mutable_device_data();
+    auto eta_con = eta_con_ref_.get(state_, "eta_con").get_mutable_device_data();
+
+    auto zeta = zeta_ref_.get(state_, "zeta").get_mutable_device_data();
+
+    const auto v_geometry = grid_.geometry().device_view(HorizontalLocation::V);
+    const auto u_geometry = grid_.geometry().device_view(HorizontalLocation::U);
+
+    const auto h1_at_v = v_geometry.contravariant_to_physical.a11;
+    const auto inverse_h1_at_v = v_geometry.physical_to_contravariant.a11;
+    const auto h2_at_u = u_geometry.contravariant_to_physical.a22;
+    const auto inverse_h2_at_u = u_geometry.physical_to_contravariant.a22;
+
+    Kokkos::parallel_for("RLLCanonicalVorticityDensityRoundTrip",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {nz - h, ny, nx}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) {
+            // Match the old xi sequence exactly:
+            //
+            // physical = xi_con * h1
+            // physical /= rho_up
+            // physical *= rho_up
+            // xi_con = physical * inverse_h1
+
+            VVM::Real physical_xi = xi_con(k, j, i) * h1_at_v(j, i);
+            physical_xi /= rho_up(k);
+            physical_xi *= rho_up(k);
+            xi_con(k, j, i) = physical_xi * inverse_h1_at_v(j, i);
+
+            // Same for legacy-sign eta.
+            VVM::Real physical_eta = eta_con(k, j, i) * h2_at_u(j, i);
+            physical_eta /= rho_up(k);
+            physical_eta *= rho_up(k);
+
+            eta_con(k, j, i) = physical_eta * inverse_h2_at_u(j, i);
+        });
+
+    Kokkos::parallel_for("RLLVerticalVorticityDensityRoundTrip",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {nz - h + 1, ny, nx}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) {
+            zeta(k, j, i) /= rho(k);
+            zeta(k, j, i) *= rho(k);
+        });
 }
 
 void
