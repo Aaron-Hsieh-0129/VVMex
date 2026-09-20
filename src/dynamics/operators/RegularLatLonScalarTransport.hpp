@@ -16,11 +16,14 @@ namespace Operators {
 // scalar_q:
 //     Density-normalized scalar at T points.
 //
-// physical_mass_flux_q1:
-//     rho * U at U points, in kg m^-2 s^-1.
+// contravariant_mass_flux_q1:
+//     rho * u^1 at U points.
 //
-// physical_mass_flux_q2:
-//     rho * V at V points, in kg m^-2 s^-1.
+// contravariant_mass_flux_q2:
+//     rho * u^2 at V points.
+//
+// Horizontal Jacobian factors are NOT included in either field.
+// HorizontalFluxDivergence applies the native face Jacobian exactly once.
 //
 // vertical_mass_flux:
 //     rho_up * w at vertical faces, in kg m^-2 s^-1.
@@ -52,8 +55,8 @@ public:
     // All used vertical_cell_spacing entries must be positive and finite.
     // Input and output storage must not overlap.
     void add_flux_convergence(const Core::Field<3>& scalar_q,
-        const Core::Field<3>& physical_mass_flux_q1,
-        const Core::Field<3>& physical_mass_flux_q2,
+        const Core::Field<3>& contravariant_mass_flux_q1,
+        const Core::Field<3>& contravariant_mass_flux_q2,
         const Core::Field<3>& vertical_mass_flux,
         const Core::Field<1>& vertical_cell_spacing,
         Core::Field<3>& out_flux_convergence,
@@ -65,14 +68,7 @@ private:
 
     Core::Geometry::HorizontalDomainLayout layout_;
     TakacsScalarTransportDeviceView transport_;
-    Core::Geometry::GeometryField2D physical_to_contravariant_q1_;
-    Core::Geometry::GeometryField2D physical_to_contravariant_q2_;
-
-    // Keep the large immutable operator payload out of CUDA kernel arguments.
-    // Manual graph capture cannot allocate Kokkos's global scratch functor.
     Kokkos::View<TakacsScalarTransportDeviceView> device_transport_;
-    Kokkos::View<Core::Geometry::GeometryField2D> device_physical_to_contravariant_q1_;
-    Kokkos::View<Core::Geometry::GeometryField2D> device_physical_to_contravariant_q2_;
 };
 
 } // namespace Operators

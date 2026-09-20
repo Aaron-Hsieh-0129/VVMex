@@ -221,10 +221,17 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
         const auto mu = state.get_field<3>("ITYPEU").get_device_data();
         const auto mv = state.get_field<3>("ITYPEV").get_device_data();
         const auto mw = state.get_field<3>("ITYPEW").get_device_data();
-        // Physical mass fluxes; the RLL transport operator supplies metric
-        // factors and this term divides by rho exactly once after convergence.
-        // Keep this multi-view functor out of Kokkos's constant-memory launch
-        // path, whose event synchronization is forbidden during graph capture.
+        // First construct the established PHYSICAL mass fluxes.
+        //
+        // The RLL physical -> contravariant conversion is deliberately delayed
+        // until after halo exchange and physical boundary conditions. This preserves
+        // the original numerical ordering:
+        //
+        //     rho * U
+        //         -> halo / physical BC
+        //         -> (1 / h1) * (rho * U)
+        //
+        // rather than changing it to rho * (U / h1).
         const auto policy = Kokkos::Experimental::require(
             Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, h, h}, {nz - h, ny - h, nx - h}),
             Kokkos::Experimental::WorkItemProperty::HintLightWeight);
@@ -258,6 +265,34 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
         bc_manager_.apply_horizontal_bcs(u_mean_field);
         bc_manager_.apply_horizontal_bcs(v_mean_field);
         bc_manager_.apply_horizontal_bcs(w_mean_field);
+
+        if (geometry_kind == Core::Geometry::GeometryKind::RegularLatLon) {
+            using Core::Geometry::HorizontalLocation;
+            const auto u_geometry = grid.geometry().device_view(HorizontalLocation::U);
+            const auto v_geometry = grid.geometry().device_view(HorizontalLocation::V);
+            const auto inverse_h1_at_u = u_geometry.physical_to_contravariant.a11;
+            const auto inverse_h2_at_v = v_geometry.physical_to_contravariant.a22;
+
+            // The physical mass fluxes already have their halos and physical
+            // boundary conditions applied. Convert the complete usable storage
+            // to the common scalar-advection contract:
+            //
+            //     rho * U -> rho * u^1
+            //     rho * V -> rho * u^2
+            //
+            // Keep metric-first multiplication because this matches the
+            // established RLL adapter arithmetic exactly.
+            const auto conversion_policy = Kokkos::Experimental::require(
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {nz - h, ny, nx}),
+                Kokkos::Experimental::WorkItemProperty::HintLightWeight);
+
+            Kokkos::parallel_for("RLLScalarMassFluxToContravariant",
+                conversion_policy,
+                KOKKOS_LAMBDA(const int k, const int j, const int i) {
+                    u_mean_data(k, j, i) = inverse_h1_at_u(j, i) * u_mean_data(k, j, i);
+                    v_mean_data(k, j, i) = inverse_h2_at_v(j, i) * v_mean_data(k, j, i);
+                });
+        }
 
         if (mean_wind_state_) {
             mean_wind_state_->set(mean_wind_variant_, state.get_step());

@@ -5,6 +5,7 @@
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "dynamics/numerical_methods/NumericalMethodFactory.hpp"
 #include "dynamics/operators/RegularLatLonScalarTransport.hpp"
+#include "core/geometry/HorizontalLocation.hpp"
 
 #include <filesystem>
 #include <cmath>
@@ -378,10 +379,28 @@ main(int argc, char** argv) {
 
         const auto mass_v = state.get_field<3>("v_mean").get_host_data();
 
-        require(mass_u(h, h + 2, h + 3) == 0 && mass_u(h, h + 1, h + 1) == 6,
-            "native terrain mass-flux mask");
+        // Scalar horizontal mass flux now follows the common generalized-coordinate
+        // contract:
+        //
+        //     u_mean = rho * u^1
+        //     v_mean = rho * u^2
+        //
+        // The native terrain mask is applied while the flux is still physical;
+        // metric conversion afterwards must preserve masked zero values.
+        const auto inverse_h1_at_u_device = grid.geometry()
+                                                .device_view(Core::Geometry::HorizontalLocation::U)
+                                                .physical_to_contravariant.a11.one_dimensional;
 
-        require(mass_v(h, h - 1, h) == 0 && mass_v(h, ny - h - 1, h) == 0,
+        const auto inverse_h1_at_u =
+            Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), inverse_h1_at_u_device);
+
+        const Real expected_active_u = inverse_h1_at_u(h + 1) * real(6.0);
+
+        require(mass_u(h, h + 2, h + 3) == real(0.0) &&
+                    mass_u(h, h + 1, h + 1) == expected_active_u,
+            "contravariant terrain mass-flux mask");
+
+        require(mass_v(h, h - 1, h) == real(0.0) && mass_v(h, ny - h - 1, h) == real(0.0),
             "no normal scalar wall flux");
 
         // --------------------------------------------------------------------

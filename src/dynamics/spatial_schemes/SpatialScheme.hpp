@@ -30,6 +30,18 @@ public:
         return false;
     }
 
+    // Horizontal mass-flux contract:
+    //
+    //     mass_flux_x = rho * u^1
+    //     mass_flux_y = rho * u^2
+    //
+    // at their native U/V faces.
+    //
+    // For Cartesian coordinates, contravariant and physical horizontal
+    // components are identical, so this preserves the existing Cartesian
+    // arithmetic.
+    //
+    // mass_flux_z remains rho_up * w.
     virtual void
     calculate_advection_tendency(const Core::State& state,
         const Core::Field<3>& scalar,

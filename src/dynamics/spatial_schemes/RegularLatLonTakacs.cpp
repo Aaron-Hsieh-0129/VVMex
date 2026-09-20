@@ -27,8 +27,8 @@ RegularLatLonTakacs::RegularLatLonTakacs(const Core::Geometry::HorizontalGeometr
 void
 RegularLatLonTakacs::calculate_advection_tendency(const Core::State& state,
     const Core::Field<3>& scalar,
-    const Core::Field<3>& physical_mass_flux_q1,
-    const Core::Field<3>& physical_mass_flux_q2,
+    const Core::Field<3>& contravariant_mass_flux_q1,
+    const Core::Field<3>& contravariant_mass_flux_q2,
     const Core::Field<3>& vertical_mass_flux,
     const Core::Grid& grid,
     const Core::Parameters& params,
@@ -65,8 +65,8 @@ RegularLatLonTakacs::calculate_advection_tendency(const Core::State& state,
     const int nz = grid.get_local_total_points_z();
 
     scalar_transport_.add_flux_convergence(scalar,
-        physical_mass_flux_q1,
-        physical_mass_flux_q2,
+        contravariant_mass_flux_q1,
+        contravariant_mass_flux_q2,
         vertical_mass_flux,
         params.dz_mid,
         out_tendency,

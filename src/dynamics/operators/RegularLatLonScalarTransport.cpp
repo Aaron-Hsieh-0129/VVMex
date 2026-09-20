@@ -1,14 +1,10 @@
 #include "dynamics/operators/RegularLatLonScalarTransport.hpp"
+#include "core/geometry/GeometryKind.hpp"
 
 #include <array>
 #include <stdexcept>
 #include <string>
-
 #include <Kokkos_Core.hpp>
-
-#include "core/geometry/GeometryKind.hpp"
-#include "core/geometry/HorizontalLocation.hpp"
-#include "dynamics/operators/OrthogonalAnelasticMassFlux.hpp"
 
 #if defined(KOKKOS_ENABLE_CUDA)
 #include <cuda_runtime.h>
@@ -25,20 +21,27 @@ using SpacingView = Core::Field<1>::ViewType;
 
 using ScalarTransportPolicy = Kokkos::MDRangePolicy<Kokkos::DefaultExecutionSpace, Kokkos::Rank<3>>;
 
-// Immutable operator state lives in persistent device scalar views so this
-// driver remains small enough for capture-safe CUDA kernel arguments.
-// HintLightWeight prevents selection of reusable constant-memory launch state.
 struct ScalarTransportFunctor {
     Kokkos::View<const TakacsScalarTransportDeviceView> transport;
 
-    Kokkos::View<const Core::Geometry::GeometryField2D> physical_to_contravariant_q1;
-    Kokkos::View<const Core::Geometry::GeometryField2D> physical_to_contravariant_q2;
-
     VolumeView scalar;
-    VolumeView physical_mass_flux_q1;
-    VolumeView physical_mass_flux_q2;
+
+    // Common generalized-coordinate contract.
+    //
+    // These fields already contain:
+    //
+    //     rho * u^1
+    //     rho * u^2
+    //
+    // Horizontal Jacobian weighting remains exclusively inside
+    // HorizontalFluxDivergence.
+    VolumeView contravariant_mass_flux_q1;
+    VolumeView contravariant_mass_flux_q2;
+
     VolumeView vertical_mass_flux;
+
     SpacingView vertical_cell_spacing;
+
     VolumeView output;
 
     int k_begin = 0;
@@ -47,17 +50,10 @@ struct ScalarTransportFunctor {
     KOKKOS_INLINE_FUNCTION
     void
     operator()(const int k, const int j, const int i) const {
-        OrthogonalContravariantMassFluxQ1DeviceView<VolumeView> mass_flux_q1;
-        mass_flux_q1.physical_mass_flux = physical_mass_flux_q1;
-        mass_flux_q1.physical_to_contravariant_11 = physical_to_contravariant_q1();
-
-        OrthogonalContravariantMassFluxQ2DeviceView<VolumeView> mass_flux_q2;
-        mass_flux_q2.physical_mass_flux = physical_mass_flux_q2;
-        mass_flux_q2.physical_to_contravariant_22 = physical_to_contravariant_q2();
 
         const VVM::Real horizontal = transport().calculate_horizontal_flux_convergence_at_t(scalar,
-            mass_flux_q1,
-            mass_flux_q2,
+            contravariant_mass_flux_q1,
+            contravariant_mass_flux_q2,
             k,
             j,
             i);
@@ -94,12 +90,9 @@ RegularLatLonScalarTransport::RegularLatLonScalarTransport(
     const Core::Geometry::HorizontalGeometry& geometry, const VVM::Real alpha)
     : layout_(geometry.layout()),
       transport_(make_takacs_scalar_transport_device_view(geometry, alpha)),
-      device_transport_("regular_lat_lon_scalar_transport_device"),
-      device_physical_to_contravariant_q1_("regular_lat_lon_scalar_transport_q1_metric"),
-      device_physical_to_contravariant_q2_("regular_lat_lon_scalar_transport_q2_metric") {
+      device_transport_("regular_lat_lon_scalar_transport_device") {
 
     if (geometry.kind() != Core::Geometry::GeometryKind::RegularLatLon) {
-
         throw std::invalid_argument("RegularLatLonScalarTransport requires "
                                     "regular latitude-longitude geometry.");
     }
@@ -110,22 +103,11 @@ RegularLatLonScalarTransport::RegularLatLonScalarTransport(
     }
 
     if (layout_.local_physical_nx < 1 || layout_.local_physical_ny < 1) {
-
         throw std::invalid_argument("RegularLatLonScalarTransport requires "
                                     "a nonempty physical horizontal domain.");
     }
 
-    require_orthogonal_mass_flux_geometry(geometry);
-
-    const auto u_geometry = geometry.device_view(Core::Geometry::HorizontalLocation::U);
-    const auto v_geometry = geometry.device_view(Core::Geometry::HorizontalLocation::V);
-
-    physical_to_contravariant_q1_ = u_geometry.physical_to_contravariant.a11;
-    physical_to_contravariant_q2_ = v_geometry.physical_to_contravariant.a22;
-
     Kokkos::deep_copy(device_transport_, transport_);
-    Kokkos::deep_copy(device_physical_to_contravariant_q1_, physical_to_contravariant_q1_);
-    Kokkos::deep_copy(device_physical_to_contravariant_q2_, physical_to_contravariant_q2_);
 }
 
 void
@@ -192,50 +174,45 @@ RegularLatLonScalarTransport::validate_volume(
 
 void
 RegularLatLonScalarTransport::add_flux_convergence(const Core::Field<3>& scalar_q,
-    const Core::Field<3>& physical_mass_flux_q1,
-    const Core::Field<3>& physical_mass_flux_q2,
+    const Core::Field<3>& contravariant_mass_flux_q1,
+    const Core::Field<3>& contravariant_mass_flux_q2,
     const Core::Field<3>& vertical_mass_flux,
     const Core::Field<1>& vertical_cell_spacing,
     Core::Field<3>& out_flux_convergence,
     const int k_begin,
     const int k_end) const {
-
     const int nz = static_cast<int>(scalar_q.get_device_data().extent(0));
-
     if (k_begin < 0 || k_end > nz || k_end - k_begin < 3) {
-
         throw std::invalid_argument("RegularLatLonScalarTransport requires "
                                     "a valid half-open vertical range containing "
                                     "at least three scalar levels.");
     }
 
     validate_volume(scalar_q, nz, "scalar_q");
-    validate_volume(physical_mass_flux_q1, nz, "physical_mass_flux_q1");
-    validate_volume(physical_mass_flux_q2, nz, "physical_mass_flux_q2");
+    validate_volume(contravariant_mass_flux_q1, nz, "contravariant_mass_flux_q1");
+    validate_volume(contravariant_mass_flux_q2, nz, "contravariant_mass_flux_q2");
     validate_volume(vertical_mass_flux, nz, "vertical_mass_flux");
     validate_volume(out_flux_convergence, nz, "out_flux_convergence");
 
     if (static_cast<int>(vertical_cell_spacing.get_device_data().extent(0)) < k_end) {
-
         throw std::invalid_argument("RegularLatLonScalarTransport received "
                                     "insufficient vertical-cell spacing entries.");
     }
 
     auto scalar_data = scalar_q.get_device_data();
-    auto physical_mass_flux_q1_data = physical_mass_flux_q1.get_device_data();
-    auto physical_mass_flux_q2_data = physical_mass_flux_q2.get_device_data();
+    auto contravariant_mass_flux_q1_data = contravariant_mass_flux_q1.get_device_data();
+    auto contravariant_mass_flux_q2_data = contravariant_mass_flux_q2.get_device_data();
     auto vertical_mass_flux_data = vertical_mass_flux.get_device_data();
     auto vertical_cell_spacing_data = vertical_cell_spacing.get_device_data();
     auto output_data = out_flux_convergence.get_mutable_device_data();
 
     const std::array<const VVM::Real*, 5> input_storage = {scalar_data.data(),
-        physical_mass_flux_q1_data.data(),
-        physical_mass_flux_q2_data.data(),
+        contravariant_mass_flux_q1_data.data(),
+        contravariant_mass_flux_q2_data.data(),
         vertical_mass_flux_data.data(),
         vertical_cell_spacing_data.data()};
 
     for (const VVM::Real* input : input_storage) {
-
         if (input == output_data.data()) {
             throw std::invalid_argument("RegularLatLonScalarTransport requires "
                                         "distinct input and output storage.");
@@ -245,16 +222,12 @@ RegularLatLonScalarTransport::add_flux_convergence(const Core::Field<3>& scalar_
     ScalarTransportFunctor functor;
 
     functor.transport = device_transport_;
-    functor.physical_to_contravariant_q1 = device_physical_to_contravariant_q1_;
-    functor.physical_to_contravariant_q2 = device_physical_to_contravariant_q2_;
-    functor.physical_mass_flux_q1 = physical_mass_flux_q1_data;
-    functor.physical_mass_flux_q2 = physical_mass_flux_q2_data;
-
     functor.scalar = scalar_data;
+    functor.contravariant_mass_flux_q1 = contravariant_mass_flux_q1_data;
+    functor.contravariant_mass_flux_q2 = contravariant_mass_flux_q2_data;
     functor.vertical_mass_flux = vertical_mass_flux_data;
     functor.vertical_cell_spacing = vertical_cell_spacing_data;
     functor.output = output_data;
-
     functor.k_begin = k_begin;
     functor.k_end = k_end;
 

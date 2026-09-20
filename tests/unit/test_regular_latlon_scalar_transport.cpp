@@ -1,7 +1,6 @@
 #include "core/Field.hpp"
 #include "core/geometry/CartesianGeometry.hpp"
 #include "core/geometry/RegularLatLonGeometry.hpp"
-#include "dynamics/operators/OrthogonalAnelasticMassFlux.hpp"
 #include "dynamics/operators/RegularLatLonScalarTransport.hpp"
 #include "dynamics/operators/TakacsScalarTransport.hpp"
 
@@ -29,8 +28,6 @@ using VVM::Core::Field;
 using VVM::Core::Geometry::CartesianGeometry;
 using VVM::Core::Geometry::HorizontalDomainLayout;
 using VVM::Core::Geometry::RegularLatLonGeometry;
-using VVM::Dynamics::Operators::make_orthogonal_contravariant_mass_flux_q1_device_view;
-using VVM::Dynamics::Operators::make_orthogonal_contravariant_mass_flux_q2_device_view;
 using VVM::Dynamics::Operators::make_takacs_scalar_transport_device_view;
 using VVM::Dynamics::Operators::RegularLatLonScalarTransport;
 
@@ -293,8 +290,8 @@ test_transport_and_replay(const RegularLatLonGeometry& geometry) {
     const Real sentinel = real(-17.25);
 
     Field<3> scalar("stage_scalar", {nz, ny, nx});
-    Field<3> physical_mass_flux_q1("stage_physical_mass_flux_q1", {nz, ny, nx});
-    Field<3> physical_mass_flux_q2("stage_physical_mass_flux_q2", {nz, ny, nx});
+    Field<3> contravariant_mass_flux_q1("stage_contravariant_mass_flux_q1", {nz, ny, nx});
+    Field<3> contravariant_mass_flux_q2("stage_contravariant_mass_flux_q2", {nz, ny, nx});
     Field<3> vertical_mass_flux("stage_vertical_mass_flux", {nz, ny, nx});
     Field<1> vertical_spacing("stage_vertical_spacing", {nz});
 
@@ -303,8 +300,8 @@ test_transport_and_replay(const RegularLatLonGeometry& geometry) {
     Field<3> replay("stage_replay", {nz, ny, nx});
 
     auto scalar_data = scalar.get_mutable_device_data();
-    auto physical_q1_data = physical_mass_flux_q1.get_mutable_device_data();
-    auto physical_q2_data = physical_mass_flux_q2.get_mutable_device_data();
+    auto contravariant_q1_data = contravariant_mass_flux_q1.get_mutable_device_data();
+    auto contravariant_q2_data = contravariant_mass_flux_q2.get_mutable_device_data();
     auto vertical_flux_data = vertical_mass_flux.get_mutable_device_data();
     auto spacing_data = vertical_spacing.get_mutable_device_data();
 
@@ -319,11 +316,11 @@ test_transport_and_replay(const RegularLatLonGeometry& geometry) {
                                    real(0.02) * latitude_index + real(0.04) * level +
                                    real(0.001) * longitude_index * latitude_index;
 
-            physical_q1_data(k, j, i) = real(1.1) + real(0.025) * longitude_index +
-                                        real(0.015) * latitude_index + real(0.01) * level;
+            contravariant_q1_data(k, j, i) = real(1.1) + real(0.025) * longitude_index +
+                                             real(0.015) * latitude_index + real(0.01) * level;
 
-            physical_q2_data(k, j, i) = real(-0.6) + real(0.012) * longitude_index -
-                                        real(0.02) * latitude_index + real(0.008) * level;
+            contravariant_q2_data(k, j, i) = real(-0.6) + real(0.012) * longitude_index -
+                                             real(0.02) * latitude_index + real(0.008) * level;
 
             vertical_flux_data(k, j, i) = real(0.08) + real(0.004) * longitude_index -
                                           real(0.003) * latitude_index + real(0.02) * level;
@@ -350,8 +347,8 @@ test_transport_and_replay(const RegularLatLonGeometry& geometry) {
         };
 
         append(scalar);
-        append(physical_mass_flux_q1);
-        append(physical_mass_flux_q2);
+        append(contravariant_mass_flux_q1);
+        append(contravariant_mass_flux_q2);
         append(vertical_mass_flux);
         append(vertical_spacing);
 
@@ -359,26 +356,21 @@ test_transport_and_replay(const RegularLatLonGeometry& geometry) {
     }();
 
     const auto scalar_reference = scalar.get_device_data();
-    const auto physical_q1_reference = physical_mass_flux_q1.get_device_data();
-    const auto physical_q2_reference = physical_mass_flux_q2.get_device_data();
+    const auto contravariant_q1_reference = contravariant_mass_flux_q1.get_device_data();
+    const auto contravariant_q2_reference = contravariant_mass_flux_q2.get_device_data();
     const auto vertical_flux_reference = vertical_mass_flux.get_device_data();
     const auto spacing_reference = vertical_spacing.get_device_data();
     const auto expected_data = expected.get_mutable_device_data();
 
     const auto operator_view = make_takacs_scalar_transport_device_view(geometry);
-    const auto adapted_q1 =
-        make_orthogonal_contravariant_mass_flux_q1_device_view(geometry, physical_q1_reference);
-    const auto adapted_q2 =
-        make_orthogonal_contravariant_mass_flux_q2_device_view(geometry, physical_q2_reference);
-
     Kokkos::parallel_for("EvaluateExplicitRllScalarTransportReference",
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({k_begin, halo, halo},
             {k_end, ny - halo, nx - halo}),
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
             expected_data(k, j, i) +=
                 operator_view.calculate_horizontal_flux_convergence_at_t(scalar_reference,
-                    adapted_q1,
-                    adapted_q2,
+                    contravariant_q1_reference,
+                    contravariant_q2_reference,
                     k,
                     j,
                     i) +
@@ -409,8 +401,8 @@ test_transport_and_replay(const RegularLatLonGeometry& geometry) {
     graph.begin();
 
     transport.add_flux_convergence(scalar,
-        physical_mass_flux_q1,
-        physical_mass_flux_q2,
+        contravariant_mass_flux_q1,
+        contravariant_mass_flux_q2,
         vertical_mass_flux,
         vertical_spacing,
         replay,
@@ -421,8 +413,8 @@ test_transport_and_replay(const RegularLatLonGeometry& geometry) {
     graph.launch();
 #else
     transport.add_flux_convergence(scalar,
-        physical_mass_flux_q1,
-        physical_mass_flux_q2,
+        contravariant_mass_flux_q1,
+        contravariant_mass_flux_q2,
         vertical_mass_flux,
         vertical_spacing,
         replay,
@@ -431,8 +423,8 @@ test_transport_and_replay(const RegularLatLonGeometry& geometry) {
 #endif
 
     transport.add_flux_convergence(scalar,
-        physical_mass_flux_q1,
-        physical_mass_flux_q2,
+        contravariant_mass_flux_q1,
+        contravariant_mass_flux_q2,
         vertical_mass_flux,
         vertical_spacing,
         direct,
@@ -512,8 +504,8 @@ test_transport_and_replay(const RegularLatLonGeometry& geometry) {
         };
 
         append(scalar);
-        append(physical_mass_flux_q1);
-        append(physical_mass_flux_q2);
+        append(contravariant_mass_flux_q1);
+        append(contravariant_mass_flux_q2);
         append(vertical_mass_flux);
         append(vertical_spacing);
 

@@ -49,8 +49,8 @@ public:
 
     void calculate_advection_tendency(const Core::State& state,
         const Core::Field<3>& scalar,
-        const Core::Field<3>& physical_mass_flux_q1,
-        const Core::Field<3>& physical_mass_flux_q2,
+        const Core::Field<3>& contravariant_mass_flux_q1,
+        const Core::Field<3>& contravariant_mass_flux_q2,
         const Core::Field<3>& vertical_mass_flux,
         const Core::Grid& grid,
         const Core::Parameters& params,
