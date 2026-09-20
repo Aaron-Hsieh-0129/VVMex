@@ -10,9 +10,9 @@
 namespace VVM {
 namespace Dynamics {
 
-#if defined(KOKKOS_ENABLE_CUDA)
 namespace {
 
+#if defined(KOKKOS_ENABLE_CUDA)
 void
 require_cuda_success(cudaError_t status, const char* operation) {
     if (status != cudaSuccess) {
@@ -20,6 +20,7 @@ require_cuda_success(cudaError_t status, const char* operation) {
                                  cudaGetErrorString(status));
     }
 }
+#endif
 
 struct SignedVolumeView {
     Core::Field<3>::ViewType view;
@@ -33,7 +34,6 @@ struct SignedVolumeView {
 };
 
 } // namespace
-#endif
 
 HorizontalWindColumnRecovery::HorizontalWindColumnRecovery(
     const Core::Geometry::HorizontalGeometry& geometry)

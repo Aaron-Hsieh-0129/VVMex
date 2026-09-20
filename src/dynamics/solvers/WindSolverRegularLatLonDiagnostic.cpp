@@ -192,11 +192,26 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
         boundary = std::make_unique<Core::Boundary::HorizontalBoundaryStencils>(grid);
     }
 
-    vertical_solver.solve(fields.xi,
-        fields.eta,
-        fields.w,
-        fields.w_previous,
-        options.vertical_iterations);
+    if (terrain) {
+        // Terrain-adjusted xi_topo / eta_topo remain in the established
+        // physical/legacy representation.
+        vertical_solver.solve(fields.xi,
+            fields.eta,
+            fields.w,
+            fields.w_previous,
+            options.vertical_iterations);
+    }
+    else {
+        // Flat RLL now uses the persistent canonical representation:
+        //
+        //     xi_con  =  omega^1
+        //     eta_con = -omega^2
+        vertical_solver.solve_from_vvm_contravariant_state(fields.xi_con,
+            fields.eta_con,
+            fields.w,
+            fields.w_previous,
+            options.vertical_iterations);
+    }
 
     if (free_slip_boundary) {
         halo.exchange_multiple_halos(std::vector<Core::Field<3>*>{&fields.w, &fields.w_previous});

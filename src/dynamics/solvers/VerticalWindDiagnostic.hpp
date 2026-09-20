@@ -87,6 +87,50 @@ struct VerticalWindDiagnosticDeviceView {
                    dq2;
     }
 
+    // Canonical persistent-vorticity form of the J-weighted vertical-wind RHS.
+    //
+    // VVM State convention:
+    //
+    //     xi_con  =  omega^1
+    //     eta_con = -omega^2
+    //
+    // For orthogonal Cartesian/RLL geometry:
+    //
+    //     xi_physical  = h1 * xi_con
+    //     eta_physical = h2 * eta_con
+    //
+    // The factorization below deliberately mirrors calculate_weighted_rhs_at_t()
+    // as closely as possible. This keeps the representation change local while
+    // preserving the established weighted-RHS numerical structure.
+    //
+    // This is the current Cartesian/RLL orthogonal implementation. A future
+    // nonorthogonal cubed-sphere implementation must use the full metric tensor
+    // rather than extending these scalar scale-factor relations.
+    template <typename XiConView, typename EtaConView>
+    KOKKOS_INLINE_FUNCTION Real
+    calculate_weighted_rhs_from_vvm_contravariant_at_t(const XiConView& xi_con,
+        const EtaConView& eta_con,
+        const int k,
+        const int j,
+        const int i) const noexcept {
+
+        const Real h1_north = coefficient(h1_v, j);
+        const Real h1_south = coefficient(h1_v, j - 1);
+
+        // Recover the physical/legacy quantities locally only for the existing
+        // weighted-RHS factorization.
+        //
+        // eta_con already contains the historical VVM minus sign.
+        const Real eta_east = h2 * eta_con(k, j, i);
+        const Real eta_west = h2 * eta_con(k, j, i - 1);
+
+        const Real xi_north = h1_north * xi_con(k, j, i);
+        const Real xi_south = h1_south * xi_con(k, j - 1, i);
+
+        return -h2 * (eta_east - eta_west) / dq1 -
+               (h1_north * xi_north - h1_south * xi_south) / dq2;
+    }
+
     // D = div_h(omega_h); d_z(zeta) = -D. Physical State eta is minus the
     // canonical northward vorticity. Native source staggering is retained.
     template <typename XiView, typename EtaView>

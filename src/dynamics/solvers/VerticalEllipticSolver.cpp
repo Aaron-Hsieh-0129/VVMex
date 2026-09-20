@@ -189,20 +189,48 @@ VerticalEllipticSolver::solve(const Core::Field<3>& xi,
     const Core::Field<3>& eta,
     Core::Field<3>& w,
     Core::Field<3>& previous_w,
-    int iterations) {
+    const int iterations) {
+
+    solve_impl(xi, eta, w, previous_w, iterations, VorticityInputRepresentation::PhysicalLegacy);
+}
+
+void
+VerticalEllipticSolver::solve_from_vvm_contravariant_state(const Core::Field<3>& xi_con,
+    const Core::Field<3>& eta_con,
+    Core::Field<3>& w,
+    Core::Field<3>& previous_w,
+    const int iterations) {
+
+    solve_impl(xi_con,
+        eta_con,
+        w,
+        previous_w,
+        iterations,
+        VorticityInputRepresentation::VvmContravariant);
+}
+
+void
+VerticalEllipticSolver::solve_impl(const Core::Field<3>& q1_vorticity,
+    const Core::Field<3>& q2_vorticity,
+    Core::Field<3>& w,
+    Core::Field<3>& previous_w,
+    const int iterations,
+    VorticityInputRepresentation representation) {
     if (iterations <= 0) {
         throw std::invalid_argument("Vertical solver iteration count must be positive.");
     }
-    for (const auto* field : {&xi,
-             &eta,
+    for (const auto* field : {&q1_vorticity,
+             &q2_vorticity,
              static_cast<const Core::Field<3>*>(&w),
              static_cast<const Core::Field<3>*>(&previous_w)}) {
         validate(*field);
     }
-    const Real* pointers[] = {xi.get_device_data().data(),
-        eta.get_device_data().data(),
+
+    const Real* pointers[] = {q1_vorticity.get_device_data().data(),
+        q2_vorticity.get_device_data().data(),
         w.get_device_data().data(),
         previous_w.get_device_data().data()};
+
     for (int a = 0; a < 4; ++a) {
         for (int b = a + 1; b < 4; ++b) {
             if (pointers[a] == pointers[b]) {
@@ -214,12 +242,18 @@ VerticalEllipticSolver::solve(const Core::Field<3>& xi,
               nx = grid_.get_local_total_points_x(), h = grid_.get_halo_cells();
     const int last = nz - h - 2, ni = nx - 2 * h;
     const auto operation = operation_;
-    const auto xd = xi.get_device_data(), ed = eta.get_device_data();
-    const auto wd = w.get_mutable_device_data(), history = previous_w.get_mutable_device_data();
+
+    const auto wd = w.get_mutable_device_data();
+    const auto history = previous_w.get_mutable_device_data();
+
+    const auto q1 = q1_vorticity.get_device_data();
+    const auto q2 = q2_vorticity.get_device_data();
+
     const auto rhs = rhs_.get_mutable_device_data(), first = first_.get_mutable_device_data();
     const auto light3 = Kokkos::Experimental::require(
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
         Kokkos::Experimental::WorkItemProperty::HintLightWeight);
+
     Kokkos::parallel_for("VerticalGuessAndHistory", light3, KOKKOS_LAMBDA(int k, int j, int i) {
         const Real old = wd(k, j, i);
         Real guess = old;
@@ -235,9 +269,29 @@ VerticalEllipticSolver::solve(const Core::Field<3>& xi,
     const auto source_policy = Kokkos::Experimental::require(
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {last + 1, ny - h, nx - h}),
         Kokkos::Experimental::WorkItemProperty::HintLightWeight);
-    Kokkos::parallel_for("VerticalWeightedRHS", source_policy, KOKKOS_LAMBDA(int k, int j, int i) {
-        rhs(k, j, i) = operation.calculate_weighted_rhs_at_t(xd, ed, k, j, i);
-    });
+
+    if (representation == VorticityInputRepresentation::PhysicalLegacy) {
+
+        // Preserve the established physical/terrain arithmetic exactly.
+        Kokkos::parallel_for("VerticalWeightedRHS",
+            source_policy,
+            KOKKOS_LAMBDA(const int k, const int j, const int i) {
+                rhs(k, j, i) = operation.calculate_weighted_rhs_at_t(q1, q2, k, j, i);
+            });
+    }
+    else {
+        // Canonical persistent-vorticity path:
+        //
+        //     q1 = xi_con  =  omega^1
+        //     q2 = eta_con = -omega^2
+        Kokkos::parallel_for("VerticalWeightedRHSContravariant",
+            source_policy,
+            KOKKOS_LAMBDA(const int k, const int j, const int i) {
+                rhs(k, j, i) =
+                    operation.calculate_weighted_rhs_from_vvm_contravariant_at_t(q1, q2, k, j, i);
+            });
+    }
+
     refresh(first_, 1);
     Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), second_.get_mutable_device_data(), first);
 

@@ -33,20 +33,43 @@ public:
 
     static void prepare_execution();
 
-    // Inputs are physical xi and legacy-sign eta, with valid horizontal halos.
-    // Save old w into previous_w, extrapolate 2*w-previous_w, then perform
-    // exactly iterations line-relaxation sweeps. No source fields are modified.
-    // Interior k = halo ... nz-halo-2; rigid surfaces at halo-1 and nz-halo-1.
-    // Final w halos are refreshed through the full horizontal halo depth.
-    // Bounded q2 uses CVVM MODE=2 copying, not a complete free-slip policy.
-    // All inputs/outputs must be distinct, full Grid-sized allocations.
-    // Solver, geometry, halo, and field allocations must outlive queued work
-    // and captured graphs. Do not call this solver concurrently on two streams.
+    // Legacy physical/terrain-compatible path.
+    //
+    // Inputs:
+    //
+    //     xi  = physical omega_1
+    //     eta = -physical omega_2
+    //
+    // This path remains required by terrain-adjusted xi_topo / eta_topo.
     void solve(const Core::Field<3>& xi,
         const Core::Field<3>& eta,
         Core::Field<3>& w,
         Core::Field<3>& previous_w,
         int iterations);
+
+    // Canonical persistent-vorticity path.
+    //
+    // Inputs follow the VVM State convention:
+    //
+    //     xi_con  =  omega^1
+    //     eta_con = -omega^2
+    //
+    // The solver equation, iteration order, Thomas coefficients and w/history
+    // semantics are identical to solve(). Only weighted-RHS construction differs.
+    void solve_from_vvm_contravariant_state(const Core::Field<3>& xi_con,
+        const Core::Field<3>& eta_con,
+        Core::Field<3>& w,
+        Core::Field<3>& previous_w,
+        int iterations);
+
+    enum class VorticityInputRepresentation { PhysicalLegacy, VvmContravariant };
+
+    void solve_impl(const Core::Field<3>& q1_vorticity,
+        const Core::Field<3>& q2_vorticity,
+        Core::Field<3>& w,
+        Core::Field<3>& previous_w,
+        int iterations,
+        VorticityInputRepresentation representation);
 
 private:
     using WorkField = Core::Field<3, Kokkos::LayoutRight>;
