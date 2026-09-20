@@ -100,6 +100,57 @@ struct VerticalWindDiagnosticDeviceView {
                coefficient(jacobian_z, j);
     }
 
+    // Canonical generalized-coordinate form of horizontal vorticity
+    // divergence.
+    //
+    // Inputs are the actual contravariant tensor components:
+    //
+    //     omega1 = omega^1
+    //     omega2 = omega^2
+    //
+    // For the currently supported Cartesian/RLL geometries:
+    //
+    //     div_h(omega_h)
+    //       = 1/J [
+    //             d_q1(J omega^1)
+    //           + d_q2(J omega^2)
+    //         ].
+    //
+    // Staggering:
+    //
+    //     omega^1 : V
+    //     omega^2 : U
+    //     result  : Z
+    //
+    // The VVM State convention eta_con = -omega^2 is intentionally NOT
+    // handled here. The caller owns that representation boundary.
+    template <typename Omega1View, typename Omega2View>
+    KOKKOS_INLINE_FUNCTION Real
+    calculate_vorticity_divergence_from_contravariant_at_z(const Omega1View& omega1,
+        const Omega2View& omega2,
+        const int k,
+        const int j,
+        const int i) const noexcept {
+
+        // For Cartesian/RLL:
+        //
+        //     J_V = h1_V * h2
+        //     J_U = h1_U * h2
+        //
+        // h2 is constant for the current RLL geometry and unity in Cartesian.
+        const Real jacobian_v = h2 * coefficient(h1_v, j);
+        const Real jacobian_u_south = h2 * coefficient(h1_u, j);
+        const Real jacobian_u_north = h2 * coefficient(h1_u, j + 1);
+
+        const Real flux_q1 =
+            (jacobian_v * omega1(k, j, i + 1) - jacobian_v * omega1(k, j, i)) / dq1;
+
+        const Real flux_q2 =
+            (jacobian_u_north * omega2(k, j + 1, i) - jacobian_u_south * omega2(k, j, i)) / dq2;
+
+        return (flux_q1 + flux_q2) / coefficient(jacobian_z, j);
+    }
+
     // Keep zeta(top) unchanged. spacing(k) = dz/flex_up(k). The optional
     // first upper ghost follows CVVM ZETA_DIAG and VVMex's upward formula.
     // Caller guarantees valid halos, nonaliasing inputs/output, bottom>=0,
@@ -124,6 +175,42 @@ struct VerticalWindDiagnosticDeviceView {
             zeta(top + 1, j, i) =
                 zeta(top, j, i) -
                 spacing(top) * calculate_vorticity_divergence_at_z(xi, eta, k_top(top), j, i);
+        }
+    }
+
+    // Integrate physical vertical vorticity using canonical contravariant
+    // horizontal vorticity.
+    //
+    // The top zeta value remains the prescribed/diagnosed physical value.
+    // Horizontal vorticity is supplied as true omega^1 / omega^2 tensor
+    // components.
+    template <typename Omega1View, typename Omega2View, typename Profile, typename ZetaView>
+    KOKKOS_INLINE_FUNCTION void
+    integrate_zeta_column_from_contravariant(const Omega1View& omega1,
+        const Omega2View& omega2,
+        const Profile& spacing,
+        const ZetaView& zeta,
+        const int bottom,
+        const int top,
+        const int j,
+        const int i,
+        const bool extend_upper_ghost) const noexcept {
+
+        for (int k = top - 1; k >= bottom; --k) {
+            zeta(k, j, i) =
+                zeta(k + 1, j, i) +
+                spacing(k) *
+                    calculate_vorticity_divergence_from_contravariant_at_z(omega1, omega2, k, j, i);
+        }
+
+        if (extend_upper_ghost) {
+            zeta(top + 1, j, i) =
+                zeta(top, j, i) -
+                spacing(top) * calculate_vorticity_divergence_from_contravariant_at_z(omega1,
+                                   omega2,
+                                   k_top(top),
+                                   j,
+                                   i);
         }
     }
 

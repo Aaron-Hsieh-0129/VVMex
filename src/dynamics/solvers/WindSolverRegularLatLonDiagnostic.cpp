@@ -58,6 +58,17 @@ commit_regular_latlon_covariant_wind_to_physical(const Core::Grid& grid,
         });
 }
 
+template <typename View>
+struct NegatedView3D {
+    View view;
+
+    KOKKOS_INLINE_FUNCTION
+    Real
+    operator()(const int k, const int j, const int i) const noexcept {
+        return -view(k, j, i);
+    }
+};
+
 } // namespace
 
 void
@@ -209,11 +220,38 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {zeta_end_j, nx - h}),
         Kokkos::Experimental::WorkItemProperty::HintLightWeight);
 
-    Kokkos::parallel_for("DiagnoseRegularLatLonZetaColumn",
-        zeta_policy,
-        KOKKOS_LAMBDA(const int j, const int i) {
-            operation.integrate_zeta_column(xi, eta, spacing, zeta, bottom, top, j, i, true);
-        });
+    if (terrain) {
+        // Terrain-adjusted xi_topo / eta_topo are still stored using the
+        // physical/legacy VVM representation. Preserve the existing path.
+        Kokkos::parallel_for("DiagnoseRegularLatLonZetaColumn",
+            zeta_policy,
+            KOKKOS_LAMBDA(const int j, const int i) {
+                operation.integrate_zeta_column(xi, eta, spacing, zeta, bottom, top, j, i, true);
+            });
+    }
+    else {
+        // Flat RLL uses the canonical persistent contravariant vorticity:
+        //
+        //     xi_con  =  omega^1
+        //     eta_con = -omega^2
+        const auto omega1 = fields.xi_con.get_device_data();
+        const auto eta_con = fields.eta_con.get_device_data();
+        const NegatedView3D<decltype(eta_con)> omega2{eta_con};
+
+        Kokkos::parallel_for("DiagnoseRegularLatLonZetaColumnContravariant",
+            zeta_policy,
+            KOKKOS_LAMBDA(const int j, const int i) {
+                operation.integrate_zeta_column_from_contravariant(omega1,
+                    omega2,
+                    spacing,
+                    zeta,
+                    bottom,
+                    top,
+                    j,
+                    i,
+                    true);
+            });
+    }
 
     halo.exchange_halos(fields.zeta);
 
