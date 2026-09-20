@@ -95,9 +95,7 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
     HorizontalEllipticSolver& horizontal_solver,
     const RegularLatLonDiagnosticFields& fields,
     const HorizontalDiagnosticWorkspace& workspace,
-    const RegularLatLonDiagnosticOptions& options,
-    const bool terrain) {
-
+    const RegularLatLonDiagnosticOptions& options) {
     if (grid.geometry().kind() != Core::Geometry::GeometryKind::RegularLatLon) {
         throw std::invalid_argument(
             "Regular latitude-longitude wind diagnostic requires RegularLatLon geometry.");
@@ -157,11 +155,9 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
             "Regular latitude-longitude wind diagnostic received an invalid vertical layout.");
     }
 
-    const std::array<const Core::Field<3>*, 11> volumes = {&fields.zeta,
+    const std::array<const Core::Field<3>*, 9> volumes = {&fields.zeta,
         &fields.w,
         &fields.w_previous,
-        &fields.xi,
-        &fields.eta,
         &fields.xi_con,
         &fields.eta_con,
         &fields.covariant_q1_wind,
@@ -243,27 +239,22 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
         boundary->fill_constant_q2_halos(fields.zeta);
     }
 
-    const HorizontalDiagnosticFields horizontal_fields{fields.psi,
+    const HorizontalPotentialDiagnosticFields potential_fields{fields.psi,
         fields.psi_previous,
         fields.chi,
         fields.chi_previous,
+
         fields.zeta,
         fields.w,
-        fields.xi,
-        fields.eta,
-        fields.u,
-        fields.v,
+
         fields.rhobar,
         fields.rhobar_up,
-        fields.flex_mid,
-        fields.spacing,
-        fields.zonal_covariant_increment};
+        fields.flex_mid};
 
-    // Horizontal potential solve is common to flat and terrain RLL.
     diagnose_horizontal_potentials(grid,
         halo,
         horizontal_solver,
-        horizontal_fields,
+        potential_fields,
         workspace,
         options.horizontal,
         options.inverse_dz,
@@ -306,16 +297,38 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
 }
 
 void
+WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
+    Core::HaloExchanger& halo,
+    VerticalEllipticSolver& vertical_solver,
+    HorizontalEllipticSolver& horizontal_solver,
+    const RegularLatLonDiagnosticFields& fields,
+    const HorizontalDiagnosticWorkspace& workspace,
+    const RegularLatLonDiagnosticOptions& options,
+    const bool terrain) {
+    // Terrain handling now belongs entirely to the preparation boundary.
+    // Keep this overload temporarily so existing direct diagnostic callers
+    // do not need to change in the same refactor.
+    (void)terrain;
+
+    diagnose_regular_latlon_wind(grid,
+        halo,
+        vertical_solver,
+        horizontal_solver,
+        fields,
+        workspace,
+        options);
+}
+
+void
 WindSolver::diagnose_horizontal_potentials(const Core::Grid& grid,
     Core::HaloExchanger& halo,
     HorizontalEllipticSolver& solver,
-    const HorizontalDiagnosticFields& fields,
+    const HorizontalPotentialDiagnosticFields& fields,
     const HorizontalDiagnosticWorkspace& workspace,
     const HorizontalEllipticSolver::Options& options,
     const Real inverse_dz,
     const int top,
     const HorizontalDiagnosticBoundaryPolicy boundary_policy) {
-
     const int nx = grid.get_local_total_points_x();
     const int ny = grid.get_local_total_points_y();
     const int h = grid.get_halo_cells();

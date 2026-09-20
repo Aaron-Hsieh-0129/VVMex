@@ -717,8 +717,6 @@ struct DiagnosticState {
             zeta,
             w,
             w_previous,
-            sources.xi,
-            sources.eta,
             sources.xi_con,
             sources.eta_con,
             covariant_q1_wind,

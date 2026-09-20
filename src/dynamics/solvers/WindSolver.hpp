@@ -81,6 +81,20 @@ public:
         const Core::Field<0>& zonal_covariant_increment;
     };
 
+    struct HorizontalPotentialDiagnosticFields {
+        Core::Field<2>& psi;
+        Core::Field<2>& psi_previous;
+        Core::Field<2>& chi;
+        Core::Field<2>& chi_previous;
+
+        const Core::Field<3>& zeta;
+        const Core::Field<3>& w;
+
+        const Core::Field<1>& rhobar;
+        const Core::Field<1>& rhobar_up;
+        const Core::Field<1>& flex_mid;
+    };
+
     struct HorizontalDiagnosticWorkspace {
         Core::Field<2>& rhs_psi;
         Core::Field<2>& rhs_chi;
@@ -117,7 +131,7 @@ public:
     static void diagnose_horizontal_potentials(const Core::Grid& grid,
         Core::HaloExchanger& halo,
         HorizontalEllipticSolver& solver,
-        const HorizontalDiagnosticFields& fields,
+        const HorizontalPotentialDiagnosticFields& fields,
         const HorizontalDiagnosticWorkspace& workspace,
         const HorizontalEllipticSolver::Options& options,
         VVM::Real inverse_dz,
@@ -134,11 +148,6 @@ public:
         Core::Field<3>& w;
         Core::Field<3>& w_previous;
 
-        // Existing physical/legacy-sign representation.
-        // Terrain adaptation, VerticalEllipticSolver and the current
-        // zeta-column diagnosis still use these fields.
-        const Core::Field<3>& xi;
-        const Core::Field<3>& eta;
         // Persistent canonical representation:
         //
         //     xi_con  =  omega^1
@@ -182,6 +191,14 @@ public:
         const RegularLatLonDiagnosticOptions& options,
         bool terrain);
 
+    static void diagnose_regular_latlon_wind(const Core::Grid& grid,
+        Core::HaloExchanger& halo,
+        VerticalEllipticSolver& vertical_solver,
+        HorizontalEllipticSolver& horizontal_solver,
+        const RegularLatLonDiagnosticFields& fields,
+        const HorizontalDiagnosticWorkspace& workspace,
+        const RegularLatLonDiagnosticOptions& options);
+
     void preserve_regular_latlon_periodic_circulation(bool initialize);
     void preserve_regular_latlon_channel_circulation(bool initialize);
     void finalize_regular_latlon_wind(
@@ -201,7 +218,6 @@ public:
 
     // RLL diagnostic execution and CUDA graph capture/replay.
     void execute_regular_latlon_diagnostic(bool initial,
-        bool terrain,
         RegularLatLonDiagnosticFields& fields,
         HorizontalDiagnosticWorkspace& workspace,
         const RegularLatLonDiagnosticOptions& options);

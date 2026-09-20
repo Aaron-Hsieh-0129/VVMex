@@ -282,9 +282,6 @@ WindSolver::prepare_regular_latlon_wind_recovery(
         state_.get_field<3>("zeta"),
         state_.get_field<3>("w"),
         state_.get_field<3>("W3DNM1"),
-        // Current physical representation.
-        state_.get_field<3>(terrain ? "xi_topo" : "xi"),
-        state_.get_field<3>(terrain ? "eta_topo" : "eta"),
         // Canonical persistent representation.
         active_xi_con,
         active_eta_con,
@@ -733,7 +730,6 @@ WindSolver::finalize_regular_latlon_wind(
 
 void
 WindSolver::execute_regular_latlon_diagnostic(const bool initial,
-    const bool terrain,
     RegularLatLonDiagnosticFields& fields,
     HorizontalDiagnosticWorkspace& workspace,
     const RegularLatLonDiagnosticOptions& options) {
@@ -745,8 +741,7 @@ WindSolver::execute_regular_latlon_diagnostic(const bool initial,
             horizontal_elliptic_solver_,
             fields,
             workspace,
-            options,
-            terrain);
+            options);
     };
 
 #if defined(ENABLE_NCCL)
@@ -802,7 +797,7 @@ WindSolver::recover_regular_latlon_horizontal_wind(const bool initial,
     HorizontalDiagnosticWorkspace& workspace,
     const RegularLatLonDiagnosticOptions& options) {
 
-    execute_regular_latlon_diagnostic(initial, terrain, fields, workspace, options);
+    execute_regular_latlon_diagnostic(initial, fields, workspace, options);
 
     maintain_horizontal_wind_constraint(
         periodic ? HorizontalWindConstraintKind::PeriodicCycleCirculation

@@ -210,10 +210,20 @@ WindSolver::diagnose_horizontal_wind(const Core::Grid& grid,
         }
     }
 
+    const HorizontalPotentialDiagnosticFields potential_fields{fields.psi,
+        fields.psi_previous,
+        fields.chi,
+        fields.chi_previous,
+        fields.zeta,
+        fields.w,
+        fields.rhobar,
+        fields.rhobar_up,
+        fields.flex_mid};
+
     diagnose_horizontal_potentials(grid,
         halo,
         solver,
-        fields,
+        potential_fields,
         workspace,
         options,
         inverse_dz,
