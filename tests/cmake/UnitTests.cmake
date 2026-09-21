@@ -884,3 +884,10 @@ add_vvm_unit_test(test_rll_vorticity_tendency_state DEVICE MPI
     LABELS integration
     TIMEOUT 180)
 
+# One common skew affine chart: metric raising/lowering, curl/divergence,
+# scalar transport, horizontal vorticity transport/deformation and rigid lid.
+# This tests local operators, not six-panel topology or wind recovery.
+add_vvm_unit_test(test_generalized_nonorthogonal_dynamics DEVICE
+    LIBRARIES vvm_core Kokkos::kokkos MPI::MPI_CXX
+    TIMEOUT 120)
+

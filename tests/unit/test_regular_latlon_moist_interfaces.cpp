@@ -446,20 +446,28 @@ main(int argc, char** argv) {
             // Moist=true is required here. Otherwise the factory selects
             // generalized dry buoyancy, which intentionally rejects
             // a State containing moist fields.
-            auto method = factory.create(name, buoyancy, false, true, dims);
+            auto method = factory.create(name, buoyancy, false, false, dims);
 
             method->calculate_tendencies(state, grid, params);
 
             const auto value = state.get_field<3>(tendency).get_host_data();
 
-            const Real ref =
+            const Real physical_ref =
                 std::string(name) == "xi"
                     ? real(9.806 * .608 * .0001) /
                           (real(6371220.) * grid.horizontal_specification().geometry.dq2)
                     : real(0.);
-
-            require(std::abs(value(h, h + 1, h + 1) - ref) < real(1e-14),
-                "factory moist buoyancy physical gradient");
+            const auto& spec = grid.horizontal_specification().geometry;
+            const Real scale =
+                std::string(name) == "xi"
+                    ? spec.regular_lat_lon.radius *
+                          std::cos(spec.regular_lat_lon.latitude_south_edge + real(2) * spec.dq2)
+                    : spec.regular_lat_lon.radius;
+            require(std::isfinite(value(h, h + 1, h + 1)) &&
+                        std::abs(scale * value(h, h + 1, h + 1) - physical_ref) <=
+                            real(256) * std::numeric_limits<Real>::epsilon() *
+                                std::max(std::abs(physical_ref), real(1e-20)),
+                "factory moist buoyancy produces canonical increments");
 
             require(value(nz - h - 1, h + 1, h + 1) == 0, "buoyancy upper level excluded");
         }
@@ -473,10 +481,14 @@ main(int argc, char** argv) {
         using Location = Core::Geometry::HorizontalLocation;
 
         Scheme canonical(grid.geometry(), Scheme::BuoyancyMode::Moist);
-        Dynamics::GeneralizedTakacsBoundary weights;
-        weights.xi_weight = grid.geometry().device_view(Location::V).contravariant_to_physical.a11;
-        weights.eta_weight = grid.geometry().device_view(Location::U).contravariant_to_physical.a22;
-        Scheme weighted(grid.geometry(), Scheme::BuoyancyMode::Moist, weights);
+        require(canonical.produces_canonical_vorticity_tendency(),
+            "generalized scheme declares its canonical output contract");
+        Dynamics::SpatialScheme legacy_contract;
+        require(!legacy_contract.produces_canonical_vorticity_tendency(),
+            "legacy scheme default must not advertise canonical output");
+        require(canonical.vorticity_advection_uses_state() &&
+                    !legacy_contract.vorticity_advection_uses_state(),
+            "state-based vorticity advection is an explicit scheme capability");
         Vorticity vorticity_reference(grid.geometry());
         Dynamics::Operators::GeneralizedBuoyancy buoyancy_reference(grid.geometry());
 
@@ -525,17 +537,13 @@ main(int argc, char** argv) {
 
         Core::Field<3> ref("assembly_reference", dims);
         Core::Field<3> con("assembly_canonical", dims);
-        Core::Field<3> phys("assembly_weighted", dims);
-        const Real con_seed = real(2e-15), phys_seed = real(3e-8);
+        const Real con_seed = real(2e-15);
         const Real tol = real(256) * std::numeric_limits<Real>::epsilon();
         const auto close = [&](Real actual, Real expected) {
             return std::isfinite(actual) && std::isfinite(expected) &&
                    std::abs(actual - expected) <=
                        tol * std::max({std::abs(actual), std::abs(expected), real(1e-25)});
         };
-        const auto& geometry_spec = grid.horizontal_specification().geometry;
-        const Real radius = geometry_spec.regular_lat_lon.radius;
-        const Real south = geometry_spec.regular_lat_lon.latitude_south_edge;
 
         for (const std::string name : {"xi", "eta", "zeta"}) {
             const std::string history = "fe_tendency_" + name;
@@ -557,7 +565,6 @@ main(int argc, char** argv) {
                     Term::Planetary};
                 ref.set_to_zero();
                 Kokkos::deep_copy(con.get_mutable_device_data(), con_seed);
-                Kokkos::deep_copy(phys.get_mutable_device_data(), phys_seed);
 
                 if (term_index < 4) {
                     vorticity_reference.add_from_canonical_state(state,
@@ -649,7 +656,6 @@ main(int argc, char** argv) {
                     }
                 };
                 invoke(canonical, con);
-                invoke(weighted, phys);
                 Json config_for_term;
                 config_for_term["tendency_terms"][labels[term_index]] = {{"enable", true},
                     {"spatial_scheme", "Takacs"},
@@ -659,29 +665,43 @@ main(int argc, char** argv) {
 
                 const auto r = ref.get_host_data();
                 const auto c = con.get_host_data();
-                const auto p = phys.get_host_data();
                 const auto f = state.get_field<3>(history).get_host_data();
                 for (int k = 0; k < nz; ++k) {
                     for (int j = 0; j < ny; ++j) {
                         for (int i = 0; i < nx; ++i) {
-                            const Real scale =
-                                name == "xi"    ? radius * std::cos(south + (j - h + real(1)) *
-                                                                             geometry_spec.dq2)
-                                : name == "eta" ? radius
-                                                : real(1);
                             const bool masked = term_index == 4 && k >= h && k < nz - h - 1 &&
                                                 j >= h && j < ny - h && i >= h && i < nx - h &&
                                                 k <= params.max_topo_idx &&
                                                 mask_host(k, j, i) == real(0);
                             require(close(c(k, j, i), masked ? real(0) : con_seed + r(k, j, i)),
                                 "generalized scheme canonical routing/accumulation");
-                            require(close(p(k, j, i),
-                                        masked ? real(0) : phys_seed + scale * r(k, j, i)),
-                                "generalized scheme weights only the new increment");
-                            require(close(f(k, j, i), scale * r(k, j, i)),
-                                "factory retains physical tendency representation");
+                            require(close(f(k, j, i), r(k, j, i)),
+                                "factory history contains canonical tendency without physical "
+                                "rescaling");
                         }
                     }
+                }
+                {
+                    const std::string target_name = name == "xi"    ? "xi_con"
+                                                    : name == "eta" ? "eta_con"
+                                                                    : "zeta";
+                    auto& target = state.get_field<3>(target_name);
+                    // Allocate an independent host mirror: on CPU get_host_data
+                    // aliases storage and cannot serve as a saved pre-update state.
+                    auto saved = Kokkos::create_mirror(target.get_device_data());
+                    Kokkos::deep_copy(saved, target.get_device_data());
+                    const Real dt = real(0.5);
+                    method->advance(state, grid, params, dt, target, nullptr);
+                    const auto advanced = target.get_host_data();
+                    for (int k = h; k < (name == "zeta" ? nz - h : nz - h - 1); ++k) {
+                        for (int j = h; j < ny - h; ++j) {
+                            for (int i = h; i < nx - h; ++i) {
+                                require(close(advanced(k, j, i), saved(k, j, i) + dt * r(k, j, i)),
+                                    "pure FE updates the canonical prognostic target directly");
+                            }
+                        }
+                    }
+                    Kokkos::deep_copy(target.get_mutable_device_data(), saved);
                 }
                 if (name == "xi" && term_index == 1) {
                     const int saved_top = params.max_topo_idx;

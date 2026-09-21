@@ -880,102 +880,36 @@ DynamicalCore::update_thermodynamics(VVM::Real dt) {
 
 void
 DynamicalCore::calculate_vorticity_tendencies() {
-
     ensure_field_cache();
 
     using Core::Geometry::GeometryKind;
-    using Core::Geometry::HorizontalLocation;
-    using Operators::HorizontalVectorConversion;
 
     const auto geometry_kind = grid_.geometry().kind();
+    const bool cartesian_exact = geometry_kind == GeometryKind::Cartesian;
 
-    // Cartesian retains the established destructive density-normalization
-    // path. This preserves its exact regression trajectory.
-    //
-    // Generalized RLL tendency operators read canonical xi_con / eta_con
-    // and density-normalize through read-only accessors.
-    if (geometry_kind == GeometryKind::Cartesian) {
+    if (cartesian_exact) {
+        // Preserve the established Cartesian density-normalization path.
         prepare_vorticity_for_tendency_evaluation();
     }
     else if (geometry_kind != GeometryKind::RegularLatLon) {
+        // Do not admit a new geometry before wind recovery and topology
+        // support it. Generalized tendency kernels alone are not sufficient.
         throw std::logic_error("Vorticity tendency evaluation currently supports only "
                                "Cartesian and regular latitude-longitude geometry.");
     }
 
-    const int nz = grid_.get_local_total_points_z();
-    const int ny = grid_.get_local_total_points_y();
-    const int nx = grid_.get_local_total_points_x();
-
-    auto convert_to_contravariant = [&](Core::Field<3>& tendency, const bool is_xi) {
-        if (geometry_kind == GeometryKind::Cartesian) {
-            return;
-        }
-
-        auto data = tendency.get_mutable_device_data();
-
-        if (is_xi) {
-            const auto inverse_h1_at_v =
-                grid_.geometry().device_view(HorizontalLocation::V).physical_to_contravariant.a11;
-
-            Kokkos::parallel_for("ConvertXiTendencyToContravariant",
-                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
-                KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                    data(k, j, i) =
-                        HorizontalVectorConversion::physical_to_contravariant(data(k, j, i),
-                            inverse_h1_at_v(j, i));
-                });
-
-            return;
-        }
-
-        const auto inverse_h2_at_u =
-            grid_.geometry().device_view(HorizontalLocation::U).physical_to_contravariant.a22;
-
-        Kokkos::parallel_for("ConvertEtaTendencyToContravariant",
-            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
-            KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                data(k, j, i) = HorizontalVectorConversion::physical_to_contravariant(data(k, j, i),
-                    inverse_h2_at_u(j, i));
-            });
-    };
-
     for (const auto& var : vorticity_cache_) {
-        if (var.method == nullptr) {
-            continue;
-        }
-
-        var.method->calculate_tendencies(state_, grid_, params_);
-
-        if (!var.is_xi && !var.is_eta) {
-            continue;
-        }
-
-        const size_t now_idx = state_.get_step() % 2;
-        const std::string history_name = "d_" + var.name + (now_idx == 0 ? "_0" : "_1");
-
-        if (state_.has_field(history_name)) {
-            convert_to_contravariant(state_.get_field<3>(history_name), var.is_xi);
-        }
-
-        const std::string fe_name = "fe_tendency_" + var.name;
-
-        if (state_.has_field(fe_name)) {
-            convert_to_contravariant(state_.get_field<3>(fe_name), var.is_xi);
+        if (var.method != nullptr) {
+            // Generalized producers already write canonical AB2/FE histories.
+            // Do not rescale these buffers or touch unrelated physics scratch.
+            var.method->calculate_tendencies(state_, grid_, params_);
         }
     }
 
-    if (geometry_kind == GeometryKind::Cartesian) {
-        // Preserve the historical physical density round-trip.
+    if (cartesian_exact) {
         restore_vorticity_after_tendency_evaluation();
-
-        // xi_con / eta_con are canonical, so commit that exact restored
-        // Cartesian state before AB2/FE.
         sync_contravariant_vorticity_from_physical();
-        return;
     }
-
-    // RLL kernels read canonical prognostic state without modifying it.
-    // Do not emulate the retired physical/density normalization round-trip.
 }
 
 void

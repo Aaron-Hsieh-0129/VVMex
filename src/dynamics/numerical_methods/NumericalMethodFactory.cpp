@@ -38,22 +38,11 @@ validate_rll_vorticity_state(
 
 GeneralizedTakacsBoundary
 make_rll_takacs_boundary(const Core::Geometry::HorizontalGeometry& geometry) {
-    using Core::Geometry::GeometryKind;
-    using Core::Geometry::HorizontalLocation;
-
-    if (geometry.kind() != GeometryKind::RegularLatLon) {
-        throw std::invalid_argument("The RLL Takacs output boundary requires RLL geometry.");
+    if (geometry.kind() != Core::Geometry::GeometryKind::RegularLatLon) {
+        throw std::invalid_argument("The RLL Takacs boundary requires RLL geometry.");
     }
 
-    // DynamicalCore still accumulates physical tendencies and converts the
-    // total once. These positive factors multiply only new increments;
-    // the VVM eta sign is already handled by the generalized operators.
     GeneralizedTakacsBoundary boundary;
-
-    boundary.xi_weight = geometry.device_view(HorizontalLocation::V).contravariant_to_physical.a11;
-
-    boundary.eta_weight = geometry.device_view(HorizontalLocation::U).contravariant_to_physical.a22;
-
     boundary.validate_vorticity = validate_rll_vorticity_state;
 
     return boundary;
@@ -329,8 +318,25 @@ NumericalMethodFactory::create(const std::string& variable_name,
                 term_config,
                 spatial_scheme_name,
                 is_tracer);
+
+            // AB2/FE vorticity histories outside the Cartesian exact path
+            // store canonical components. Reject a physical producer before
+            // terms are assembled; never silently mix representations.
+            const bool vorticity_variable =
+                !is_tracer &&
+                (variable_name == "xi" || variable_name == "eta" || variable_name == "zeta");
+
+            if (vorticity_variable &&
+                grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian &&
+                !spatial_scheme->produces_canonical_vorticity_tendency()) {
+                throw std::runtime_error("Spatial scheme '" + spatial_scheme_name +
+                                         "' does not produce canonical vorticity tendencies for '" +
+                                         variable_name + "'.");
+            }
+
             const bool normalize_anelastic_scalar =
                 is_thermodynamic && spatial_scheme->produces_anelastic_scalar_flux_divergence();
+
             auto tendency_term = create_tendency_term(variable_name,
                 term_name,
                 std::move(spatial_scheme),

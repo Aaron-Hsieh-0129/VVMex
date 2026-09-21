@@ -9,17 +9,10 @@
 namespace VVM {
 namespace Dynamics {
 
-// Host-side output/validation policy. Weights multiply only the new
-// canonical increment; they are NOT a general vector-basis transform.
-// A nonorthogonal physical conversion needs both staggered components.
-// The optional validator must perform host-only checks without allocating
-// device memory or synchronizing a stream during CUDA graph capture.
+// Host-only topology/initialization validation. Representation is fixed:
+// generalized dynamics always accumulate canonical vorticity tendencies.
 struct GeneralizedTakacsBoundary {
-    using Weight = Core::Geometry::GeometryField2D;
     using Validator = void (*)(const Core::State&, const Core::Grid&, const Core::Parameters&);
-
-    Weight xi_weight = Weight::constant_value(real(1.0));
-    Weight eta_weight = Weight::constant_value(real(1.0));
     Validator validate_vorticity = nullptr;
 };
 
@@ -152,6 +145,16 @@ public:
             output,
             "zeta",
             Operators::GeneralizedVorticityTendency::Term::Planetary);
+    }
+
+    bool
+    produces_canonical_vorticity_tendency() const override {
+        return true;
+    }
+
+    bool
+    vorticity_advection_uses_state() const override {
+        return true;
     }
 
 private:

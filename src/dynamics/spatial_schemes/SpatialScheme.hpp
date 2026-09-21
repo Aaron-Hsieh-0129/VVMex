@@ -15,6 +15,16 @@ class SpatialScheme {
 public:
     virtual ~SpatialScheme() = default;
 
+    virtual bool
+    produces_canonical_vorticity_tendency() const {
+        return false;
+    }
+
+    virtual bool
+    vorticity_advection_uses_state() const {
+        return false;
+    }
+
     // Directionally split schemes retain the existing hooks below. Schemes
     // with a coupled multidimensional limiter override this capability and
     // calculate the complete advection tendency in one evaluation.

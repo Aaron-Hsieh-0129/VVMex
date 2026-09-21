@@ -44,17 +44,7 @@ GeneralizedTakacs::add_vorticity_tendency(const Core::State& state,
         boundary_.validate_vorticity(state, grid, params);
     }
 
-    auto weight = Core::Geometry::GeometryField2D::constant_value(real(1.0));
-
-    if (variable == "xi") {
-        weight = boundary_.xi_weight;
-    }
-    else if (variable == "eta") {
-        weight = boundary_.eta_weight;
-    }
-
-    vorticity_
-        .add_weighted_from_canonical_state(state, grid, params, output, variable, term, weight);
+    vorticity_.add_from_canonical_state(state, grid, params, output, variable, term);
 }
 
 void
@@ -134,8 +124,10 @@ GeneralizedTakacs::add_buoyancy_tendency(const Core::State& state,
 
     const int h = grid.get_halo_cells();
     const int end = grid.get_local_total_points_z() - h - 1;
-    const auto& weight = xi_component ? boundary_.xi_weight : boundary_.eta_weight;
 
+    // The operator's default is canonical xi_con/eta_con output.
+    // The moist face mask still clears the complete accumulated tendency
+    // at masked points. Removing physical weights does not change that rule.
     if (buoyancy_mode_ == BuoyancyMode::Moist) {
         buoyancy_.add_moist_tendency(state.get_field<3>("th"),
             state.get_field<1>("thbar"),
@@ -147,8 +139,7 @@ GeneralizedTakacs::add_buoyancy_tendency(const Core::State& state,
             h,
             end,
             params.max_topo_idx,
-            xi_component,
-            weight);
+            xi_component);
     }
     else if (xi_component) {
         buoyancy_.add_xi_tendency(state.get_field<3>("th"),
@@ -156,8 +147,7 @@ GeneralizedTakacs::add_buoyancy_tendency(const Core::State& state,
             params.gravity,
             output,
             h,
-            end,
-            weight);
+            end);
     }
     else {
         buoyancy_.add_eta_tendency(state.get_field<3>("th"),
@@ -165,8 +155,7 @@ GeneralizedTakacs::add_buoyancy_tendency(const Core::State& state,
             params.gravity,
             output,
             h,
-            end,
-            weight);
+            end);
     }
 }
 

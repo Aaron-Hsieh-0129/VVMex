@@ -5,6 +5,8 @@
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "dynamics/DynamicalCore.hpp"
 #include "dynamics/operators/GeneralizedVorticityTendency.hpp"
+#include "dynamics/operators/GeneralizedBuoyancy.hpp"
+#include "dynamics/temporal_schemes/TimeIntegrator.hpp"
 #include "utils/ConfigurationManager.hpp"
 
 #include <Kokkos_Core.hpp>
@@ -19,6 +21,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -99,6 +102,9 @@ struct TemporaryConfig {
                     {"temporal_scheme", "AdamsBashforth2"}};
             }
         }
+        // Keep this a valid Jung2019 RLL production configuration. Forward-Euler
+        // consumption is tested independently below with TimeIntegrator; Jung2019
+        // itself intentionally permits only the three AB2 vorticity terms above.
         const auto path = directory / "config.json";
         std::ofstream output(path);
         output << config.dump(2);
@@ -195,6 +201,19 @@ fill_inputs(
         }
         Kokkos::deep_copy(state.get_field<3>(name).get_mutable_device_data(), data);
     }
+    Kokkos::deep_copy(state.get_field<1>("thbar").get_mutable_device_data(), real(300));
+    Kokkos::deep_copy(params.gravity, real(9.806));
+    auto theta = state.get_field<3>("th").get_host_data();
+    for (int k = 0; k < nz; ++k) {
+        for (int j = 0; j < ny; ++j) {
+            for (int i = 0; i < nx; ++i) {
+                theta(k, j, i) =
+                    real(300) + amplitude * (real(.0625) * i + real(.125) * j + real(.03125) * k);
+            }
+        }
+    }
+    Kokkos::deep_copy(state.get_field<3>("th").get_mutable_device_data(), theta);
+
     // In this tendency-only fixture, deliberately unrelated physical caches
     // detect an accidental import/export of prognostic horizontal vorticity.
     for (const char* name : {"u", "v", "xi", "eta"}) {
@@ -277,22 +296,47 @@ run_test(const std::string& path
     params.max_topo_idx = grid.get_halo_cells();
     fill_inputs(state, grid, params, 1);
 
+    const std::array<int, 3> dims{grid.get_local_total_points_z(),
+        grid.get_local_total_points_y(),
+        grid.get_local_total_points_x()};
+
+    // Jung2019 has no Forward-Euler vorticity terms, so State correctly does
+    // not allocate these buffers from configuration. Add explicit scratch only
+    // for the isolated mixed AB2/FE TimeIntegrator contract tested below.
+    for (const char* name : {"xi", "eta", "zeta"}) {
+        const std::string field_name = "fe_tendency_" + std::string(name);
+        if (!state.has_field(field_name)) {
+            state.add_field<3>(field_name, dims);
+        }
+    }
+
     Dynamics::DynamicalCore core(config, grid, params, state, halo, boundary);
     Vorticity reference(grid.geometry());
+    Dynamics::Operators::GeneralizedBuoyancy buoyancy(grid.geometry());
     Core::Field<3> part("canonical_term_reference",
         {grid.get_local_total_points_z(),
             grid.get_local_total_points_y(),
             grid.get_local_total_points_x()});
 
     const std::array<const char*, 3> equations = {"xi", "eta", "zeta"};
-    const std::array<const char*, 11> protected_fields =
-        {"xi_con", "eta_con", "zeta", "zeta_con", "xi", "eta", "u_con", "v_con", "u", "v", "w"};
+    const std::array<const char*, 12> protected_fields = {"xi_con",
+        "eta_con",
+        "zeta",
+        "zeta_con",
+        "xi",
+        "eta",
+        "u_con",
+        "v_con",
+        "u",
+        "v",
+        "w",
+        "th"};
 
     // This reference checks orchestration/representation, not a second
     // independent discretization of the already-tested numerical operators.
     const auto verify = [&](const auto& evaluate, const std::string& label) {
         const std::size_t slot = state.get_step() % 2;
-        std::array<Values, 11> before;
+        std::array<Values, 12> before;
         for (std::size_t n = 0; n < protected_fields.size(); ++n) {
             before[n] = snapshot(state.get_field<3>(protected_fields[n]));
         }
@@ -323,7 +367,7 @@ run_test(const std::string& path
             for (std::size_t history = 0; history < 2; ++history) {
                 Kokkos::deep_copy(state.get_field<3>("d_" + name + "_" + std::to_string(history))
                                       .get_mutable_device_data(),
-                    real(17 + n + 3 * history));
+                    real(1e-9) * real(17 + n + 3 * history));
             }
             inactive[n] =
                 snapshot(state.get_field<3>("d_" + name + "_" + std::to_string(1 - slot)));
@@ -354,7 +398,39 @@ run_test(const std::string& path
         return active;
     };
 
-    for (std::size_t slot = 0; slot < 2; ++slot) {
+    const auto fill_canonical_fe = [&](std::size_t component) {
+        const std::string name(equations[component]);
+        auto& fe = state.get_field<3>("fe_tendency_" + name);
+        fe.set_to_zero();
+
+        // These are valid generalized canonical sources even though the dry
+        // Jung2019 production configuration intentionally does not enable them.
+        reference
+            .add_from_canonical_state(state, grid, params, fe, name, Vorticity::Term::Planetary);
+
+        if (component < 2) {
+            const int h = grid.get_halo_cells();
+            const int end = grid.get_local_total_points_z() - h - 1;
+            if (component == 0) {
+                buoyancy.add_xi_tendency(state.get_field<3>("th"),
+                    state.get_field<1>("thbar"),
+                    params.gravity,
+                    fe,
+                    h,
+                    end);
+            }
+            else {
+                buoyancy.add_eta_tendency(state.get_field<3>("th"),
+                    state.get_field<1>("thbar"),
+                    params.gravity,
+                    fe,
+                    h,
+                    end);
+            }
+        }
+    };
+
+    for (std::size_t slot = 0; slot < 3; ++slot) {
         state.set_step(slot);
         fill_inputs(state, grid, params, 1);
         const std::string label = "AB2 slot " + std::to_string(slot);
@@ -363,30 +439,83 @@ run_test(const std::string& path
         };
         verify(direct, label + " warmup");
         verify(direct, label + " repeat");
+        {
 #if defined(KOKKOS_ENABLE_CUDA)
-        // Host-selected AB2 parity is fixed in a captured graph. Capture one
-        // graph for each parity; do not claim replay dynamically reads step_.
-        CapturedTendency graph;
-        graph.capture(core);
+            // Host-selected AB2 parity is fixed in a captured graph. Capture one
+            // graph for each parity; do not claim replay dynamically reads step_.
+            CapturedTendency graph;
+            graph.capture(core);
 #endif
-        for (int version : {2, 3}) {
-            fill_inputs(state, grid, params, version);
+            for (int version : {2, 3}) {
+                fill_inputs(state, grid, params, version);
 #if defined(KOKKOS_ENABLE_CUDA)
-            const auto replay = verify([&]() {
-                graph.run();
-            }, label + " replay");
-            const auto ordinary = verify(direct, label + " changed-input direct");
-            for (std::size_t n = 0; n < equations.size(); ++n) {
-                require(bitwise_equal(replay[n], ordinary[n]),
-                    label + ": graph/direct tendency mismatch");
-            }
+                const auto replay = verify([&]() {
+                    graph.run();
+                }, label + " replay");
+                const auto ordinary = verify(direct, label + " changed-input direct");
+                for (std::size_t n = 0; n < replay.size(); ++n) {
+                    require(bitwise_equal(replay[n], ordinary[n]),
+                        label + ": graph/direct tendency mismatch");
+                }
 #else
-            verify(direct, label + " changed-input direct");
+                verify(direct, label + " changed-input direct");
 #endif
+            }
+        } // Destroy parity graph before AB2 swaps prognostic storage.
+
+        // Test the real NumericalMethod/TimeIntegrator consumer. Physics caches
+        // are deliberately unrelated and must not be used as update targets.
+        verify(direct, label + " before mixed AB2/FE advance");
+        const int h = grid.get_halo_cells(), nz = dims[0], ny = dims[1], nx = dims[2];
+        const int top = nz - h - 1;
+        const Real dt = real(0.5), tolerance = real(256) * std::numeric_limits<Real>::epsilon();
+        const auto physical_xi = snapshot(state.get_field<3>("xi"));
+        const auto physical_eta = snapshot(state.get_field<3>("eta"));
+        for (std::size_t n = 0; n < equations.size(); ++n) {
+            const std::string name(equations[n]);
+            const std::string target_name = n == 0 ? "xi_con" : n == 1 ? "eta_con" : "zeta";
+            auto& target = state.get_field<3>(target_name);
+            auto& previous = state.get_field<3>(target_name + "_m");
+            const auto old = snapshot(target);
+            const auto now =
+                snapshot(state.get_field<3>("d_" + name + "_" + std::to_string(slot % 2)));
+            const auto prev =
+                snapshot(state.get_field<3>("d_" + name + "_" + std::to_string(1 - slot % 2)));
+            fill_canonical_fe(n);
+            const auto fe = snapshot(state.get_field<3>("fe_tendency_" + name));
+
+            // Production configuration remains legal AB2-only Jung2019. This
+            // isolated integrator verifies that an additional canonical FE
+            // group is consumed without touching physical compatibility fields.
+            Dynamics::TimeIntegrator mixed_integrator(name, true, true);
+            mixed_integrator.step(state, grid, params, dt, target, &previous);
+            const auto advanced = snapshot(target);
+            require(bitwise_equal(old, snapshot(previous)),
+                label + ": AB2 previous state lost canonical storage ownership");
+            for (int k = (n == 2 ? top : h); k < (n == 2 ? top + 1 : top); ++k) {
+                for (int j = h; j < ny - h; ++j) {
+                    for (int i = h; i < nx - h; ++i) {
+                        const std::size_t p = (static_cast<std::size_t>(k) * ny + j) * nx + i;
+                        const Real ab =
+                            slot == 0 ? now[p] : real(1.5) * now[p] - real(.5) * prev[p];
+                        const Real expected_value = (old[p] + dt * ab) + dt * fe[p];
+                        const Real scale = std::max({std::abs(old[p]),
+                            std::abs(dt * ab),
+                            std::abs(dt * fe[p]),
+                            real(1e-30)});
+                        require(std::isfinite(advanced[p]) &&
+                                    std::abs(advanced[p] - expected_value) <= tolerance * scale,
+                            label + ": mixed AB2/FE update is not canonical");
+                    }
+                }
+            }
         }
+        require(bitwise_equal(physical_xi, snapshot(state.get_field<3>("xi"))) &&
+                    bitwise_equal(physical_eta, snapshot(state.get_field<3>("eta"))),
+            label + ": integration wrote physical compatibility fields");
     }
     std::cout << "PASS: RLL tendency evaluation preserves prognostic state; "
-                 "both AB2 history slots contain canonical increments";
+                 "AB2 histories and isolated mixed AB2/FE explicit-target updates are canonical";
 #if defined(KOKKOS_ENABLE_CUDA)
     std::cout << "; changed-input graph replay passed";
 #endif

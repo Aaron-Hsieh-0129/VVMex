@@ -66,12 +66,10 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
 
     const auto geometry_kind = grid.geometry().kind();
 
-    if (geometry_kind == Core::Geometry::GeometryKind::RegularLatLon &&
+    if (scheme_->vorticity_advection_uses_state() &&
         (variable_name_ == "xi" || variable_name_ == "eta" || variable_name_ == "zeta")) {
-        // The RLL vorticity adapter constructs metric-weighted face fluxes
-        // directly from physical State winds. It does not read these legacy
-        // Cartesian scratch arguments. Avoid computing/exchanging unused
-        // Cartesian averages, and leave scalar density normalization below.
+        // The selected scheme constructs vorticity fluxes from State itself.
+        // Do not compute/exchange legacy mean-wind scratch for this path.
         scheme_->calculate_advection_tendency(state,
             advected_field,
             u_mean_field,
@@ -82,6 +80,7 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
             out_tendency,
             variable_name_,
             stage_dt);
+
         return;
     }
 
