@@ -3,6 +3,7 @@
 
 #include "core/State.hpp"
 #include "core/Parameters.hpp"
+#include "dynamics/operators/GeneralizedHorizontalVorticityTransport.hpp"
 #include "dynamics/operators/RegularLatLonTopTransport.hpp"
 #include "dynamics/operators/RegularLatLonTopDeformation.hpp"
 
@@ -18,14 +19,18 @@ namespace VVM::Dynamics::Operators {
 // zeta remains the physical vertical component for the current
 // horizontal-only generalized coordinate.
 //
-// The underlying CVVM stencils retain their established arithmetic.
-// Density-normalized physical quantities are reconstructed locally inside
-// the device operators from the canonical state without modifying xi/eta
-// State fields.
+// Horizontal transport reads canonical wind/vorticity directly and uses
+// the generalized-coordinate operator. The remaining top/deformation
+// terms still use temporary physical-component adapters. This production
+// boundary returns physical xi/eta tendencies until the complete tendency
+// orchestration is migrated. The caller supplies synchronized u_con/v_con,
+// including halos, before evaluating horizontal transport.
 class RegularLatLonVorticityTendency {
 public:
     enum class Term { Transport, Stretching, Twisting, Planetary };
+
     explicit RegularLatLonVorticityTendency(const Core::Geometry::HorizontalGeometry& geometry);
+
     static void prepare_execution();
 
     void add_from_canonical_state(const Core::State& state,
@@ -36,6 +41,7 @@ public:
         Term term) const;
 
 private:
+    Kokkos::View<GeneralizedHorizontalVorticityTransportDeviceView> horizontal_transport_;
     Kokkos::View<RegularLatLonTopTransportDeviceView> transport_;
     Kokkos::View<RegularLatLonTopDeformationDeviceView> deformation_;
 };
