@@ -3,8 +3,7 @@
 
 #include "core/Field.hpp"
 #include "core/geometry/HorizontalGeometry.hpp"
-#include "dynamics/operators/HorizontalVorticity.hpp"
-#include "dynamics/operators/HorizontalWindReconstruction.hpp"
+#include "dynamics/operators/GeneralizedWindRecovery.hpp"
 
 namespace VVM {
 namespace Dynamics {
@@ -91,8 +90,8 @@ private:
     void validate_volume(const Core::Field<3>& field, int nz, const char* role) const;
 
     Core::Geometry::HorizontalDomainLayout layout_;
-    Operators::HorizontalWindReconstructionDeviceView reconstruction_;
-    Operators::HorizontalVorticityDeviceView vorticity_;
+    Operators::GeneralizedHorizontalWindReconstructionDeviceView reconstruction_;
+    Operators::GeneralizedCovariantWindShearDeviceView vorticity_;
 };
 
 } // namespace Dynamics

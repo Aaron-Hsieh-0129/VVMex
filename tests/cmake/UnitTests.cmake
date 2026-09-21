@@ -877,9 +877,9 @@ _vvm_set_test_resources(
 include(${CMAKE_CURRENT_LIST_DIR}/vertical_wind_diagnostic.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/vertical_elliptic_solver.cmake)
 
-# RLL tendency evaluation must not mutate prognostic fields; retain canonical
-# AB2 history and exercise both parity graphs when CUDA is enabled.
-add_vvm_unit_test(test_rll_vorticity_tendency_state DEVICE MPI
+# Generalized vorticity tendency evaluation must not mutate prognostic fields;
+# retain canonical AB2 history and exercise both parity graphs when CUDA is enabled.
+add_vvm_unit_test(test_generalized_vorticity_tendency_state DEVICE MPI
     LIBRARIES vvm_dynamics vvm_core vvm_io vvm_utils Kokkos::kokkos MPI::MPI_CXX
     LABELS integration
     TIMEOUT 180)
@@ -890,4 +890,14 @@ add_vvm_unit_test(test_rll_vorticity_tendency_state DEVICE MPI
 add_vvm_unit_test(test_generalized_nonorthogonal_dynamics DEVICE
     LIBRARIES vvm_core Kokkos::kokkos MPI::MPI_CXX
     TIMEOUT 120)
+
+# Generalized local wind recovery: CVVM native-face cross metrics, true tensor
+# signs, analytic covariant column integration, and changed-input CUDA replay.
+add_vvm_unit_test(test_generalized_wind_reconstruction DEVICE MPI
+    LIBRARIES vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX
+    TIMEOUT 120)
+
+add_vvm_unit_test(test_generalized_wind_column_recovery DEVICE MPI
+    LIBRARIES vvm_dynamics vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX
+    TIMEOUT 180)
 

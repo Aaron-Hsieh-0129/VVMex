@@ -38,8 +38,9 @@ struct SignedVolumeView {
 HorizontalWindColumnRecovery::HorizontalWindColumnRecovery(
     const Core::Geometry::HorizontalGeometry& geometry)
     : layout_(geometry.layout()),
-      reconstruction_(Operators::make_horizontal_wind_reconstruction_device_view(geometry)),
-      vorticity_(Operators::make_horizontal_vorticity_device_view(geometry)) {
+      reconstruction_(
+          Operators::make_generalized_horizontal_wind_reconstruction_device_view(geometry)),
+      vorticity_(Operators::make_generalized_covariant_wind_shear_device_view(geometry)) {
 
     if (layout_.halo < 1 || layout_.local_physical_nx < 1 || layout_.local_physical_ny < 1) {
         throw std::invalid_argument("HorizontalWindColumnRecovery requires physical horizontal "
