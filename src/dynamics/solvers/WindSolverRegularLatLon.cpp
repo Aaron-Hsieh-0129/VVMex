@@ -1,6 +1,7 @@
 #include "dynamics/solvers/WindSolver.hpp"
 #include "dynamics/solvers/VerticalEllipticSolver.hpp"
 #include "dynamics/solvers/HorizontalWindStateAdapter.hpp"
+#include "dynamics/solvers/HorizontalWindTopologyConstraint.hpp"
 #include "core/RegularLatLonModelConfiguration.hpp"
 #include "dynamics/operators/RegularLatLonTerrain.hpp"
 #include "dynamics/operators/HorizontalVectorConversion.hpp"
@@ -129,13 +130,6 @@ require_cuda(cudaError_t result, const char* operation) {
         throw std::runtime_error(std::string(operation) + ": " + cudaGetErrorString(result));
     }
 }
-
-void
-require_nccl(ncclResult_t result, const char* operation) {
-    if (result != ncclSuccess) {
-        throw std::runtime_error(std::string(operation) + ": " + ncclGetErrorString(result));
-    }
-}
 #endif
 }
 
@@ -169,26 +163,7 @@ WindSolver::initialize_regular_latlon_solver(const bool periodic, const int nz) 
         std::make_unique<Core::Field<0>>("RLL prescribed zonal covariant increment",
             std::array<int, 0>{});
 
-    rll_constraint_contributions_ =
-        std::make_unique<Core::Field<1>>("RLL harmonic constraint contributions",
-            std::array<int, 1>{
-                grid_.get_global_points_x() + (periodic ? 2 * grid_.get_global_points_y() : 0)});
-
-#if defined(ENABLE_NCCL)
-    rll_harmonic_targets_device_ =
-        Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space>(
-            "RLL harmonic constraint targets",
-            2);
-
-    rll_harmonic_measurements_device_ =
-        Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space>(
-            "RLL harmonic constraint measurements",
-            3);
-
-    Kokkos::deep_copy(rll_harmonic_targets_device_, VVM::real(0.0));
-
-    Kokkos::deep_copy(rll_harmonic_measurements_device_, VVM::real(0.0));
-#endif
+    horizontal_wind_constraint_ = make_regular_lat_lon_circulation_constraint(grid_, state_);
 
     Kokkos::deep_copy(rll_spacing_->get_mutable_device_data(), params_.get_value_host(params_.dz));
 
@@ -214,19 +189,22 @@ WindSolver::solve_regular_latlon() {
     if (initial) {
         initialize_regular_latlon_solver(q2_periodic, nz);
     }
+
+    if (!horizontal_wind_constraint_) {
+        throw std::logic_error("RLL wind recovery requires an initialized "
+                               "topology constraint.");
+    }
+
+    // Periodic topology captures its incoming harmonic cycles here.
+    // Bounded-q2 is intentionally a no-op at this point.
+    horizontal_wind_constraint_->before_recovery(initial);
+
     RegularLatLonDiagnosticOptions options;
+
     if (q2_periodic) {
         options.boundary_policy = HorizontalDiagnosticBoundaryPolicy::RegularLatLonPeriodic;
-        // This target belongs to the incoming physical wind, before either
-        // terrain adaptation or the initial diagnostic can modify it.
-        if (initial) {
-            maintain_horizontal_wind_constraint(
-                HorizontalWindConstraintKind::PeriodicCycleCirculation,
-                true);
-        }
     }
-    // Assemble this invocation's field references after the initial periodic
-    // target has been captured and before diagnostic execution / graph capture.
+
     auto fields = prepare_regular_latlon_wind_recovery(initial, terrain, options);
 
     HorizontalDiagnosticWorkspace workspace{rhs_psi_field_,
@@ -234,12 +212,7 @@ WindSolver::solve_regular_latlon() {
         psi_out_field_,
         chi_out_field_};
 
-    recover_regular_latlon_horizontal_wind(initial,
-        q2_periodic,
-        terrain,
-        fields,
-        workspace,
-        options);
+    recover_regular_latlon_horizontal_wind(initial, terrain, fields, workspace, options);
 
     rll_initialized_ = true;
 }
@@ -298,389 +271,24 @@ WindSolver::prepare_regular_latlon_wind_recovery(
 }
 
 void
-WindSolver::measure_regular_latlon_channel_circulation() {
+WindSolver::snapshot_regular_latlon_top_vertical_vorticity() {
     const int h = grid_.get_halo_cells();
+
     const int nz = grid_.get_local_total_points_z();
+
     const int ny = grid_.get_local_total_points_y();
+
     const int nx = grid_.get_local_total_points_x();
-    const int gx = grid_.get_global_points_x();
-    const int top = nz - h - 1;
-
-    const auto h1_at_u = grid_.geometry()
-                             .device_view(Core::Geometry::HorizontalLocation::U)
-                             .contravariant_to_physical.a11;
-
-    const auto u = state_.get_field<3>("u").get_device_data();
-    const auto zeta = state_.get_field<3>("zeta").get_device_data();
-    const auto top_snapshot = state_.get_field<2>("rll_zeta_top").get_mutable_device_data();
-    const auto contributions = rll_constraint_contributions_->get_mutable_device_data();
-
-    Kokkos::deep_copy(contributions, VVM::real(0.0));
-    const bool owns_south = grid_.get_local_physical_start_y() == 0;
-    const int start_i = grid_.get_local_physical_start_x();
-
-    Kokkos::parallel_for("RLLSouthWallCirculation",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
-        KOKKOS_LAMBDA(const int j, const int i) {
-            if (owns_south && j == h) {
-                contributions(start_i + i - h) =
-                    Operators::HorizontalVectorConversion::physical_to_covariant(u(top, j, i),
-                        h1_at_u(j, i));
-            }
-
-            top_snapshot(j, i) = zeta(top, j, i);
-        });
-
-#if defined(ENABLE_NCCL)
-    const cudaStream_t nccl_stream = state_.get_cuda_stream();
-    const cudaStream_t kokkos_stream = Kokkos::DefaultExecutionSpace().cuda_stream();
-    const bool separate_nccl_stream = nccl_stream != kokkos_stream;
-
-    if (separate_nccl_stream) {
-        Kokkos::DefaultExecutionSpace().fence("RLL channel circulation producer ready");
-    }
-
-    require_nccl(ncclAllReduce(contributions.data(),
-                     contributions.data(),
-                     static_cast<size_t>(gx),
-                     VVM_NCCL_REAL,
-                     ncclSum,
-                     state_.get_nccl_comm(),
-                     nccl_stream),
-        "RLL channel circulation NCCL all-reduce");
-
-    if (separate_nccl_stream) {
-        require_cuda(cudaStreamSynchronize(nccl_stream),
-            "RLL channel circulation NCCL synchronization");
-    }
-
-    const auto measurements = rll_harmonic_measurements_device_;
-
-    Kokkos::parallel_for("RLLSouthWallCirculationFinalize",
-        Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, 1),
-        KOKKOS_LAMBDA(const int) {
-            Real current = VVM::real(0.0);
-
-            for (int i = 0; i < gx; ++i) {
-                current += contributions(i);
-            }
-
-            measurements(0) = current / static_cast<Real>(gx);
-        });
-
-#else
-
-    auto wall = rll_constraint_contributions_->get_host_data();
-    const int mpi_result =
-        MPI_Allreduce(MPI_IN_PLACE, wall.data(), gx, VVM_MPI_REAL, MPI_SUM, grid_.get_comm());
-    if (mpi_result != MPI_SUCCESS) {
-        throw std::runtime_error("RLL channel circulation MPI_Allreduce failed.");
-    }
-    Real current = VVM::real(0.0);
-
-    for (int i = 0; i < gx; ++i) {
-        current += wall(i);
-    }
-
-    current /= static_cast<Real>(gx);
-
-    rll_harmonic_measurements_.q1 = current;
-
-#endif
-}
-
-void
-WindSolver::capture_regular_latlon_channel_circulation_target() {
-#if defined(ENABLE_NCCL)
-
-    const auto targets = rll_harmonic_targets_device_;
-
-    const auto measurements = rll_harmonic_measurements_device_;
-
-    Kokkos::parallel_for("CaptureRLLChannelCirculationTarget",
-        Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, 1),
-        KOKKOS_LAMBDA(const int) { targets(0) = measurements(0); });
-
-#else
-
-    rll_harmonic_targets_.q1 = rll_harmonic_measurements_.q1;
-
-#endif
-}
-
-void
-WindSolver::apply_regular_latlon_channel_circulation_correction() {
-    const int h = grid_.get_halo_cells();
-    const int nz = grid_.get_local_total_points_z();
-    const int ny = grid_.get_local_total_points_y();
-    const int nx = grid_.get_local_total_points_x();
-
-    const auto h1 = grid_.geometry()
-                        .device_view(Core::Geometry::HorizontalLocation::U)
-                        .contravariant_to_physical.a11;
-
-    const auto u = state_.get_field<3>("u").get_mutable_device_data();
-
-#if defined(ENABLE_NCCL)
-
-    const auto targets = rll_harmonic_targets_device_;
-
-    const auto measurements = rll_harmonic_measurements_device_;
-
-    Kokkos::parallel_for("PreserveRLLWallCirculation",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            const Real correction = targets(0) - measurements(0);
-
-            u(k, j, i) += correction / h1(j, i);
-        });
-
-#else
-
-    const Real correction = rll_harmonic_targets_.q1 - rll_harmonic_measurements_.q1;
-
-    Kokkos::parallel_for("PreserveRLLWallCirculation",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            u(k, j, i) += correction / h1(j, i);
-        });
-
-#endif
-}
-
-void
-WindSolver::preserve_regular_latlon_channel_circulation(const bool initialize) {
-
-    measure_regular_latlon_channel_circulation();
-
-    if (initialize) {
-        capture_regular_latlon_channel_circulation_target();
-    }
-
-    // Preserve the existing behavior:
-    // initialization still executes the zero-correction kernel.
-    apply_regular_latlon_channel_circulation_correction();
-}
-
-void
-WindSolver::measure_regular_latlon_periodic_circulation() {
-    const int h = grid_.get_halo_cells();
-    const int nz = grid_.get_local_total_points_z();
-    const int ny = grid_.get_local_total_points_y();
-    const int nx = grid_.get_local_total_points_x();
-
-    const int gx = grid_.get_global_points_x();
-    const int gy = grid_.get_global_points_y();
-
-    const int si = grid_.get_local_physical_start_x();
-    const int sj = grid_.get_local_physical_start_y();
 
     const int top = nz - h - 1;
 
-    const auto u = state_.get_field<3>("u").get_device_data();
-    const auto v = state_.get_field<3>("v").get_device_data();
     const auto zeta = state_.get_field<3>("zeta").get_device_data();
+
     const auto snapshot = state_.get_field<2>("rll_zeta_top").get_mutable_device_data();
 
-    const auto h1_at_u = grid_.geometry()
-                             .device_view(Core::Geometry::HorizontalLocation::U)
-                             .contravariant_to_physical.a11;
-
-    const auto h2_at_v = grid_.geometry()
-                             .device_view(Core::Geometry::HorizontalLocation::V)
-                             .contravariant_to_physical.a22;
-
-    const auto h1_at_v = grid_.geometry()
-                             .device_view(Core::Geometry::HorizontalLocation::V)
-                             .contravariant_to_physical.a11;
-
-    const Real radius = grid_.horizontal_specification().geometry.regular_lat_lon.radius;
-
-    const auto contributions = rll_constraint_contributions_->get_mutable_device_data();
-
-    Kokkos::deep_copy(contributions, VVM::real(0.0));
-
-    Kokkos::parallel_for("RLLPeriodicCycleIntegrals",
+    Kokkos::parallel_for("SnapshotRLLTopVerticalVorticity",
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
-        KOKKOS_LAMBDA(const int j, const int i) {
-            if (sj == 0 && j == h) {
-                contributions(si + i - h) =
-                    Operators::HorizontalVectorConversion::physical_to_covariant(u(top, j, i),
-                        h1_at_u(j, i));
-            }
-
-            if (si == 0 && i == h) {
-                contributions(gx + sj + j - h) =
-                    Operators::HorizontalVectorConversion::physical_to_covariant(v(top, j, i),
-                        h2_at_v(j, i));
-
-                contributions(gx + gy + sj + j - h) = radius / h1_at_v(j, i);
-            }
-
-            snapshot(j, i) = zeta(top, j, i);
-        });
-
-    const int contribution_count = gx + 2 * gy;
-
-#if defined(ENABLE_NCCL)
-    const cudaStream_t nccl_stream = state_.get_cuda_stream();
-    const cudaStream_t kokkos_stream = Kokkos::DefaultExecutionSpace().cuda_stream();
-    const bool separate_nccl_stream = nccl_stream != kokkos_stream;
-
-    if (separate_nccl_stream) {
-        Kokkos::DefaultExecutionSpace().fence("RLL periodic circulation producer ready");
-    }
-
-    require_nccl(ncclAllReduce(contributions.data(),
-                     contributions.data(),
-                     static_cast<size_t>(contribution_count),
-                     VVM_NCCL_REAL,
-                     ncclSum,
-                     state_.get_nccl_comm(),
-                     nccl_stream),
-        "RLL periodic circulation NCCL all-reduce");
-
-    if (separate_nccl_stream) {
-        require_cuda(cudaStreamSynchronize(nccl_stream),
-            "RLL periodic circulation NCCL synchronization");
-    }
-
-    const auto measurements = rll_harmonic_measurements_device_;
-
-    Kokkos::parallel_for("RLLPeriodicCycleIntegralsFinalize",
-        Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, 1),
-        KOKKOS_LAMBDA(const int) {
-            Real zonal = VVM::real(0.0);
-
-            Real meridional = VVM::real(0.0);
-
-            Real weight = VVM::real(0.0);
-
-            for (int i = 0; i < gx; ++i) {
-                zonal += contributions(i);
-            }
-
-            for (int j = 0; j < gy; ++j) {
-                meridional += contributions(gx + j);
-
-                weight += contributions(gx + gy + j);
-            }
-
-            measurements(0) = zonal / static_cast<Real>(gx);
-            measurements(1) = meridional;
-            measurements(2) = weight;
-        });
-
-#else
-    auto values = rll_constraint_contributions_->get_host_data();
-
-    const int mpi_result = MPI_Allreduce(MPI_IN_PLACE,
-        values.data(),
-        contribution_count,
-        VVM_MPI_REAL,
-        MPI_SUM,
-        grid_.get_comm());
-
-    if (mpi_result != MPI_SUCCESS) {
-        throw std::runtime_error("RLL periodic circulation MPI_Allreduce failed.");
-    }
-
-    Real zonal = VVM::real(0.0);
-    Real meridional = VVM::real(0.0);
-    Real weight = VVM::real(0.0);
-
-    for (int i = 0; i < gx; ++i) {
-        zonal += values(i);
-    }
-
-    for (int j = 0; j < gy; ++j) {
-        meridional += values(gx + j);
-        weight += values(gx + gy + j);
-    }
-
-    zonal /= static_cast<Real>(gx);
-
-    rll_harmonic_measurements_.q1 = zonal;
-    rll_harmonic_measurements_.q2 = meridional;
-    rll_harmonic_measurements_.weight = weight;
-
-#endif
-}
-
-void
-WindSolver::capture_regular_latlon_periodic_circulation_target() {
-#if defined(ENABLE_NCCL)
-    const auto targets = rll_harmonic_targets_device_;
-    const auto measurements = rll_harmonic_measurements_device_;
-
-    Kokkos::parallel_for("CaptureRLLPeriodicCirculationTarget",
-        Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, 1),
-        KOKKOS_LAMBDA(const int) {
-            targets(0) = measurements(0);
-            targets(1) = measurements(1);
-        });
-
-#else
-    rll_harmonic_targets_.q1 = rll_harmonic_measurements_.q1;
-    rll_harmonic_targets_.q2 = rll_harmonic_measurements_.q2;
-#endif
-}
-
-void
-WindSolver::apply_regular_latlon_periodic_circulation_correction() {
-    const int h = grid_.get_halo_cells();
-    const int nz = grid_.get_local_total_points_z();
-    const int ny = grid_.get_local_total_points_y();
-    const int nx = grid_.get_local_total_points_x();
-
-    const auto u = state_.get_field<3>("u").get_mutable_device_data();
-    const auto v = state_.get_field<3>("v").get_mutable_device_data();
-    const auto hu = grid_.geometry()
-                        .device_view(Core::Geometry::HorizontalLocation::U)
-                        .contravariant_to_physical.a11;
-    const auto hv = grid_.geometry()
-                        .device_view(Core::Geometry::HorizontalLocation::V)
-                        .contravariant_to_physical.a11;
-
-#if defined(ENABLE_NCCL)
-    const auto targets = rll_harmonic_targets_device_;
-    const auto measurements = rll_harmonic_measurements_device_;
-
-    Kokkos::parallel_for("PreserveRLLPeriodicCirculation",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            const Real du = targets(0) - measurements(0);
-            const Real dv = (targets(1) - measurements(1)) / measurements(2);
-
-            u(k, j, i) += du / hu(j, i);
-            v(k, j, i) += dv / hv(j, i);
-        });
-#else
-    const Real du = rll_harmonic_targets_.q1 - rll_harmonic_measurements_.q1;
-    const Real dv = (rll_harmonic_targets_.q2 - rll_harmonic_measurements_.q2) /
-                    rll_harmonic_measurements_.weight;
-
-    Kokkos::parallel_for("PreserveRLLPeriodicCirculation",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            u(k, j, i) += du / hu(j, i);
-            v(k, j, i) += dv / hv(j, i);
-        });
-
-#endif
-}
-
-void
-WindSolver::preserve_regular_latlon_periodic_circulation(const bool initialize) {
-    measure_regular_latlon_periodic_circulation();
-
-    if (initialize) {
-        capture_regular_latlon_periodic_circulation_target();
-        // Preserve current behavior:
-        // initial periodic capture does not apply a correction.
-        return;
-    }
-    apply_regular_latlon_periodic_circulation_correction();
+        KOKKOS_LAMBDA(const int j, const int i) { snapshot(j, i) = zeta(top, j, i); });
 }
 
 void
@@ -791,7 +399,6 @@ WindSolver::execute_regular_latlon_diagnostic(const bool initial,
 
 void
 WindSolver::recover_regular_latlon_horizontal_wind(const bool initial,
-    const bool periodic,
     const bool terrain,
     RegularLatLonDiagnosticFields& fields,
     HorizontalDiagnosticWorkspace& workspace,
@@ -799,10 +406,14 @@ WindSolver::recover_regular_latlon_horizontal_wind(const bool initial,
 
     execute_regular_latlon_diagnostic(initial, fields, workspace, options);
 
-    maintain_horizontal_wind_constraint(
-        periodic ? HorizontalWindConstraintKind::PeriodicCycleCirculation
-                 : HorizontalWindConstraintKind::BoundedQ2WallCirculation,
-        periodic ? false : initial);
+    snapshot_regular_latlon_top_vertical_vorticity();
+
+    if (!horizontal_wind_constraint_) {
+        throw std::logic_error("RLL wind recovery requires an initialized "
+                               "topology constraint.");
+    }
+
+    horizontal_wind_constraint_->after_recovery(initial);
 
     finalize_regular_latlon_wind(fields.u, fields.v, terrain);
 }

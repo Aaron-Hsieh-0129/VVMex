@@ -16,6 +16,7 @@
 #include "core/vvm_types.hpp"
 #include "core/BoundaryConditionManager.hpp"
 #include "dynamics/solvers/HorizontalEllipticSolver.hpp"
+#include "dynamics/solvers/HorizontalWindTopologyConstraint.hpp"
 #include "dynamics/spatial_schemes/SpatialScheme.hpp"
 #include "utils/ConfigurationManager.hpp"
 
@@ -199,22 +200,8 @@ public:
         const HorizontalDiagnosticWorkspace& workspace,
         const RegularLatLonDiagnosticOptions& options);
 
-    void preserve_regular_latlon_periodic_circulation(bool initialize);
-    void preserve_regular_latlon_channel_circulation(bool initialize);
     void finalize_regular_latlon_wind(
         Core::Field<3>& u_field, Core::Field<3>& v_field, bool terrain);
-
-    void measure_regular_latlon_channel_circulation();
-
-    void capture_regular_latlon_channel_circulation_target();
-
-    void apply_regular_latlon_channel_circulation_correction();
-
-    void measure_regular_latlon_periodic_circulation();
-
-    void capture_regular_latlon_periodic_circulation_target();
-
-    void apply_regular_latlon_periodic_circulation_correction();
 
     // RLL diagnostic execution and CUDA graph capture/replay.
     void execute_regular_latlon_diagnostic(bool initial,
@@ -227,23 +214,9 @@ public:
     void reconstruct_cartesian_top_wind();
     void apply_cartesian_top_wind_closure();
 
+    void snapshot_regular_latlon_top_vertical_vorticity();
+
 private:
-    enum class HorizontalWindConstraintKind {
-        TopMean,
-        PeriodicCycleCirculation,
-        BoundedQ2WallCirculation
-    };
-
-    struct HorizontalWindConstraintTargets {
-        VVM::Real q1 = VVM::real(0.0);
-        VVM::Real q2 = VVM::real(0.0);
-    };
-
-    struct HorizontalWindConstraintMeasurements {
-        VVM::Real q1 = VVM::real(0.0);
-        VVM::Real q2 = VVM::real(0.0);
-        VVM::Real weight = VVM::real(0.0);
-    };
     void initialize_regular_latlon_solver(bool periodic, int nz);
 
     RegularLatLonDiagnosticFields prepare_regular_latlon_wind_recovery(
@@ -252,13 +225,9 @@ private:
     void fill_bounded_q2_potential_halos(Core::Field<2>& first, Core::Field<2>& second) const;
     void exchange_2d_solver_halos(Core::Field<2>& first, Core::Field<2>& second, int depth);
 
-    void maintain_horizontal_wind_constraint(HorizontalWindConstraintKind kind,
-        bool initialize_target);
-
     void finalize_cartesian_wind();
 
     void recover_regular_latlon_horizontal_wind(bool initial,
-        bool periodic,
         bool terrain,
         RegularLatLonDiagnosticFields& fields,
         HorizontalDiagnosticWorkspace& workspace,
@@ -295,9 +264,6 @@ private:
     std::unique_ptr<VerticalEllipticSolver> rll_vertical_solver_;
     std::unique_ptr<Core::Field<1>> rll_spacing_;
     std::unique_ptr<Core::Field<0>> rll_prescribed_zonal_covariant_increment_;
-    std::unique_ptr<Core::Field<1>> rll_constraint_contributions_;
-    HorizontalWindConstraintTargets rll_harmonic_targets_;
-    HorizontalWindConstraintMeasurements rll_harmonic_measurements_;
 
     std::unique_ptr<Core::Field<3>> rll_covariant_q1_wind_;
     std::unique_ptr<Core::Field<3>> rll_covariant_q2_wind_;
@@ -311,13 +277,7 @@ private:
     std::unique_ptr<Core::Field<3>> rll_terrain_xi_con_;
     std::unique_ptr<Core::Field<3>> rll_terrain_eta_con_;
 
-#if defined(ENABLE_NCCL)
-    Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space>
-        rll_harmonic_targets_device_;
-
-    Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space>
-        rll_harmonic_measurements_device_;
-#endif
+    std::unique_ptr<HorizontalWindTopologyConstraint> horizontal_wind_constraint_;
 
     VVM::Real rll_inverse_dz_ = VVM::real(0.0);
     VVM::Real rll_psi_north_ = VVM::real(0.0);

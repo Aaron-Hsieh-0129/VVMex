@@ -908,3 +908,10 @@ add_vvm_unit_test(test_generalized_horizontal_elliptic DEVICE MPI
     LIBRARIES vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX
     TIMEOUT 180)
 
+# Topology-owned harmonic wind constraints. The test name is intentionally
+# geometry-neutral; it verifies lifecycle semantics of the current RLL
+# periodic-cycle and bounded-q2 implementations without making them dynamics.
+add_vvm_unit_test(test_horizontal_wind_topology_constraint DEVICE MPI
+    LIBRARIES vvm_dynamics vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX
+    TIMEOUT 180)
+
