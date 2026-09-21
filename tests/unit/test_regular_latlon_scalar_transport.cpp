@@ -1,7 +1,7 @@
 #include "core/Field.hpp"
 #include "core/geometry/CartesianGeometry.hpp"
 #include "core/geometry/RegularLatLonGeometry.hpp"
-#include "dynamics/operators/RegularLatLonScalarTransport.hpp"
+#include "dynamics/operators/GeneralizedScalarTransport.hpp"
 #include "dynamics/operators/TakacsScalarTransport.hpp"
 
 #include <Kokkos_Core.hpp>
@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -27,9 +28,10 @@ using VVM::real;
 using VVM::Core::Field;
 using VVM::Core::Geometry::CartesianGeometry;
 using VVM::Core::Geometry::HorizontalDomainLayout;
+using VVM::Core::Geometry::HorizontalGeometry;
 using VVM::Core::Geometry::RegularLatLonGeometry;
+using VVM::Dynamics::Operators::GeneralizedScalarTransport;
 using VVM::Dynamics::Operators::make_takacs_scalar_transport_device_view;
-using VVM::Dynamics::Operators::RegularLatLonScalarTransport;
 
 int failures = 0;
 
@@ -204,23 +206,10 @@ void
 test_validation(const RegularLatLonGeometry& geometry) {
 
     const HorizontalDomainLayout layout = make_layout();
-
     const CartesianGeometry cartesian(layout, real(1000.0), real(1000.0));
 
-    bool rejected_cartesian = false;
-
-    try {
-        const RegularLatLonScalarTransport invalid(cartesian);
-
-        (void)invalid;
-    }
-    catch (const std::invalid_argument&) {
-        rejected_cartesian = true;
-    }
-
-    check(rejected_cartesian,
-        "RLL scalar transport must reject "
-        "Cartesian geometry");
+    const GeneralizedScalarTransport cartesian_transport(cartesian);
+    (void)cartesian_transport;
 
     const int nz = 8;
     const int ny = layout.local_total_ny();
@@ -231,11 +220,11 @@ test_validation(const RegularLatLonGeometry& geometry) {
     Field<3> mass_flux_q2("validation_mass_flux_q2", {nz, ny, nx});
     Field<3> mass_flux_vertical("validation_mass_flux_vertical", {nz, ny, nx});
     Field<1> spacing("validation_spacing", {nz});
+    Field<3> output("validation_output", {nz, ny, nx});
 
-    const RegularLatLonScalarTransport transport(geometry);
+    const GeneralizedScalarTransport transport(geometry);
 
     bool rejected_alias = false;
-
     try {
         transport.add_flux_convergence(scalar,
             mass_flux_q1,
@@ -251,18 +240,16 @@ test_validation(const RegularLatLonGeometry& geometry) {
     }
 
     check(rejected_alias,
-        "RLL scalar transport must reject "
-        "overlapping input and output storage");
+        "Generalized scalar transport must reject overlapping input and output storage");
 
     bool rejected_short_range = false;
-
     try {
         transport.add_flux_convergence(scalar,
             mass_flux_q1,
             mass_flux_q2,
             mass_flux_vertical,
             spacing,
-            mass_flux_q1,
+            output,
             2,
             4);
     }
@@ -271,12 +258,37 @@ test_validation(const RegularLatLonGeometry& geometry) {
     }
 
     check(rejected_short_range,
-        "RLL scalar transport must reject "
-        "a vertical range shorter than three cells");
+        "Generalized scalar transport must reject a vertical range shorter than three cells");
+
+    auto narrow_layout = layout;
+    narrow_layout.halo = 1;
+    const CartesianGeometry narrow(narrow_layout, real(1000.0), real(1000.0));
+
+    bool rejected_narrow_halo = false;
+    try {
+        const GeneralizedScalarTransport invalid(narrow);
+        (void)invalid;
+    }
+    catch (const std::invalid_argument&) {
+        rejected_narrow_halo = true;
+    }
+
+    check(rejected_narrow_halo, "Generalized scalar transport must reject a one-cell halo");
+
+    bool rejected_nonfinite_alpha = false;
+    try {
+        const GeneralizedScalarTransport invalid(geometry, std::numeric_limits<Real>::quiet_NaN());
+        (void)invalid;
+    }
+    catch (const std::invalid_argument&) {
+        rejected_nonfinite_alpha = true;
+    }
+
+    check(rejected_nonfinite_alpha, "Generalized scalar transport must reject nonfinite alpha");
 }
 
 void
-test_transport_and_replay(const RegularLatLonGeometry& geometry) {
+test_transport_and_replay(const HorizontalGeometry& geometry) {
 
     const HorizontalDomainLayout layout = geometry.layout();
 
@@ -386,9 +398,9 @@ test_transport_and_replay(const RegularLatLonGeometry& geometry) {
 
     Kokkos::fence();
 
-    const RegularLatLonScalarTransport transport(geometry);
+    const GeneralizedScalarTransport transport(geometry);
 
-    RegularLatLonScalarTransport::prepare_execution();
+    GeneralizedScalarTransport::prepare_execution();
 
 #if defined(KOKKOS_ENABLE_CUDA)
     static_assert(std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::Cuda>::value,
@@ -539,6 +551,9 @@ main(int argc, char** argv) {
 
             test_validation(geometry);
             test_transport_and_replay(geometry);
+
+            const CartesianGeometry cartesian(layout, real(1000.0), real(1000.0));
+            test_transport_and_replay(cartesian);
         }
         catch (const std::exception& error) {
             ++failures;

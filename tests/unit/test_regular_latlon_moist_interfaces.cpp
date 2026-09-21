@@ -4,7 +4,7 @@
 #include "core/Initializer.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "dynamics/numerical_methods/NumericalMethodFactory.hpp"
-#include "dynamics/operators/RegularLatLonScalarTransport.hpp"
+#include "dynamics/operators/GeneralizedScalarTransport.hpp"
 #include "core/geometry/HorizontalLocation.hpp"
 
 #include <filesystem>
@@ -242,7 +242,7 @@ main(int argc, char** argv) {
                     }},
             }}};
 
-        Dynamics::Operators::RegularLatLonScalarTransport transport(grid.geometry());
+        Dynamics::Operators::GeneralizedScalarTransport transport(grid.geometry());
 
         Core::Field<3> expected("expected", dims);
 

@@ -1,9 +1,9 @@
 #include "core/geometry/CartesianGeometry.hpp"
 #include "core/geometry/RegularLatLonGeometry.hpp"
 #include "dynamics/operators/HorizontalVorticity.hpp"
-#include "dynamics/operators/RegularLatLonHorizontalDeformation.hpp"
-#include "dynamics/operators/RegularLatLonHorizontalVorticityTransport.hpp"
-#include "dynamics/operators/RegularLatLonTopDeformation.hpp"
+#include "dynamics/operators/GeneralizedHorizontalDeformation.hpp"
+#include "dynamics/operators/GeneralizedHorizontalVorticityTransport.hpp"
+#include "dynamics/operators/GeneralizedTopDeformation.hpp"
 
 #include <Kokkos_Core.hpp>
 #include <mpi.h>
@@ -29,14 +29,13 @@ using VVM::Core::Geometry::CartesianGeometry;
 using VVM::Core::Geometry::HorizontalDomainLayout;
 using VVM::Core::Geometry::HorizontalGeometry;
 using VVM::Core::Geometry::RegularLatLonGeometry;
+using VVM::Dynamics::Operators::GeneralizedHorizontalDeformationDeviceView;
+using VVM::Dynamics::Operators::GeneralizedHorizontalVorticityTransportDeviceView;
+using VVM::Dynamics::Operators::GeneralizedTopDeformationDeviceView;
+using VVM::Dynamics::Operators::make_generalized_horizontal_deformation_device_view;
+using VVM::Dynamics::Operators::make_generalized_horizontal_vorticity_transport_device_view;
+using VVM::Dynamics::Operators::make_generalized_top_deformation_device_view;
 using VVM::Dynamics::Operators::make_horizontal_vorticity_device_view;
-using VVM::Dynamics::Operators::make_regular_lat_lon_horizontal_deformation_device_view;
-using VVM::Dynamics::Operators::make_regular_lat_lon_horizontal_vorticity_transport_device_view;
-using VVM::Dynamics::Operators::make_regular_lat_lon_top_deformation_device_view;
-using VVM::Dynamics::Operators::RegularLatLonHorizontalDeformationFields;
-using VVM::Dynamics::Operators::RegularLatLonHorizontalVorticityTransportDeviceView;
-using VVM::Dynamics::Operators::RegularLatLonTopDeformationDeviceView;
-using VVM::Dynamics::Operators::RegularLatLonTopDeformationFields;
 
 int failures = 0;
 
@@ -305,16 +304,33 @@ struct CapturedDeformation {
 };
 #endif
 
+template <typename Volume, typename Profile, typename Plane>
+struct HorizontalComponentFields {
+    Volume u1, u2;
+    Volume omega1_over_rho, omega2_over_rho, omega3_over_rho;
+    Plane f3_at_z;
+    Profile rho, rho_up, fn1, fn2, inverse_spacing;
+};
+
+template <typename Volume, typename Profile, typename Plane>
+struct TopComponentFields {
+    Volume w;
+    Volume omega1_over_rho, omega2_over_rho, omega3_over_rho;
+    Plane f3_at_z;
+    Profile rho, rho_up, inverse_spacing_mid, inverse_spacing_up;
+};
+
 template <typename Layout>
 struct DeformationFunctor {
     using Volume = Kokkos::View<Real***, Layout>;
     using Profile = Kokkos::View<Real*>;
     using Plane = Kokkos::View<Real**, Layout>;
 
-    RegularLatLonHorizontalVorticityTransportDeviceView transport;
-    RegularLatLonHorizontalDeformationFields<Volume, Profile, Plane> fields;
-    RegularLatLonTopDeformationDeviceView top_operation;
-    RegularLatLonTopDeformationFields<Volume, Profile, Plane> top_fields;
+    GeneralizedHorizontalVorticityTransportDeviceView transport;
+    GeneralizedHorizontalDeformationDeviceView deformation;
+    HorizontalComponentFields<Volume, Profile, Plane> fields;
+    GeneralizedTopDeformationDeviceView top_operation;
+    TopComponentFields<Volume, Profile, Plane> top_fields;
     Kokkos::View<Real****, Layout> output;
     int k_begin = 0;
     int k_top = 0;
@@ -335,25 +351,25 @@ struct DeformationFunctor {
             return;
         }
 
-        const auto xi = transport.components.calculate_xi_at_v(fields, k, j, i);
-        const auto eta = transport.components.calculate_eta_at_u(fields, k, j, i);
-        const auto xi_transport =
-            transport.calculate_xi_at_v(fields, top_fields.w, k, j, i, k_begin, k_top);
-        const auto eta_transport =
-            transport.calculate_eta_at_u(fields, top_fields.w, k, j, i, k_begin, k_top);
+        const auto omega1 = deformation.calculate_omega1_at_v(fields, k, j, i);
+        const auto omega2 = deformation.calculate_omega2_at_u(fields, k, j, i);
+        const auto transport1 =
+            transport.calculate_omega1_at_v(fields, top_fields.w, k, j, i, k_begin, k_top);
+        const auto transport2 =
+            transport.calculate_omega2_at_u(fields, top_fields.w, k, j, i, k_begin, k_top);
 
-        output(0, k, j, i) = xi.stretching;
-        output(1, k, j, i) = xi.twisting;
-        output(2, k, j, i) = xi.planetary;
-        output(3, k, j, i) = eta.stretching;
-        output(4, k, j, i) = eta.twisting;
-        output(5, k, j, i) = eta.planetary;
-        output(9, k, j, i) = xi_transport.q1;
-        output(10, k, j, i) = xi_transport.q2;
-        output(11, k, j, i) = xi_transport.vertical;
-        output(12, k, j, i) = eta_transport.q1;
-        output(13, k, j, i) = eta_transport.q2;
-        output(14, k, j, i) = eta_transport.vertical;
+        output(0, k, j, i) = omega1.stretching;
+        output(1, k, j, i) = omega1.twisting;
+        output(2, k, j, i) = omega1.planetary;
+        output(3, k, j, i) = omega2.stretching;
+        output(4, k, j, i) = omega2.twisting;
+        output(5, k, j, i) = omega2.planetary;
+        output(9, k, j, i) = transport1.q1;
+        output(10, k, j, i) = transport1.q2;
+        output(11, k, j, i) = transport1.vertical;
+        output(12, k, j, i) = transport2.q1;
+        output(13, k, j, i) = transport2.q2;
+        output(14, k, j, i) = transport2.vertical;
     }
 };
 
@@ -400,18 +416,19 @@ test_deformation(
     const Real dq2 = geometry.dq2();
 
     Functor functor;
-    functor.transport = make_regular_lat_lon_horizontal_vorticity_transport_device_view(geometry);
-    functor.top_operation = make_regular_lat_lon_top_deformation_device_view(geometry);
+    functor.transport = make_generalized_horizontal_vorticity_transport_device_view(geometry);
+    functor.deformation = make_generalized_horizontal_deformation_device_view(geometry);
+    functor.top_operation = make_generalized_top_deformation_device_view(geometry);
     functor.k_begin = h;
     functor.k_top = k_top;
 
     auto& fields = functor.fields;
-    fields.u = Volume("deformation_u", nz, ny, nx);
-    fields.v = Volume("deformation_v", nz, ny, nx);
-    fields.xi = Volume("deformation_xi", nz, ny, nx);
-    fields.eta = Volume("deformation_eta", nz, ny, nx);
-    fields.zeta = Volume("deformation_zeta", nz, ny, nx);
-    fields.f_at_z = Plane("deformation_f_at_z", ny, nx);
+    fields.u1 = Volume("deformation_u1", nz, ny, nx);
+    fields.u2 = Volume("deformation_u2", nz, ny, nx);
+    fields.omega1_over_rho = Volume("deformation_omega1_over_rho", nz, ny, nx);
+    fields.omega2_over_rho = Volume("deformation_omega2_over_rho", nz, ny, nx);
+    fields.omega3_over_rho = Volume("deformation_omega3_over_rho", nz, ny, nx);
+    fields.f3_at_z = Plane("deformation_f3_at_z", ny, nx);
     fields.rho = Profile("deformation_rho", nz);
     fields.rho_up = Profile("deformation_rho_up", nz);
     fields.fn1 = Profile("deformation_fn1", nz);
@@ -420,10 +437,10 @@ test_deformation(
 
     auto& top_fields = functor.top_fields;
     top_fields.w = Volume("deformation_w", nz, ny, nx);
-    top_fields.xi = fields.xi;
-    top_fields.eta = fields.eta;
-    top_fields.zeta = fields.zeta;
-    top_fields.f_at_z = fields.f_at_z;
+    top_fields.omega1_over_rho = fields.omega1_over_rho;
+    top_fields.omega2_over_rho = fields.omega2_over_rho;
+    top_fields.omega3_over_rho = fields.omega3_over_rho;
+    top_fields.f3_at_z = fields.f3_at_z;
     top_fields.rho = fields.rho;
     top_fields.rho_up = fields.rho_up;
     top_fields.inverse_spacing_up = fields.inverse_spacing;
@@ -431,12 +448,12 @@ test_deformation(
 
     functor.output = Kokkos::View<Real****, Layout>("deformation_output", 15, nz, ny, nx);
 
-    auto u = Kokkos::create_mirror_view(fields.u);
-    auto v = Kokkos::create_mirror_view(fields.v);
-    auto xi = Kokkos::create_mirror_view(fields.xi);
-    auto eta = Kokkos::create_mirror_view(fields.eta);
-    auto zeta = Kokkos::create_mirror_view(fields.zeta);
-    auto f = Kokkos::create_mirror_view(fields.f_at_z);
+    auto u1 = Kokkos::create_mirror_view(fields.u1);
+    auto u2 = Kokkos::create_mirror_view(fields.u2);
+    auto omega1 = Kokkos::create_mirror_view(fields.omega1_over_rho);
+    auto omega2 = Kokkos::create_mirror_view(fields.omega2_over_rho);
+    auto omega3 = Kokkos::create_mirror_view(fields.omega3_over_rho);
+    auto f = Kokkos::create_mirror_view(fields.f3_at_z);
     auto rho = Kokkos::create_mirror_view(fields.rho);
     auto rho_up = Kokkos::create_mirror_view(fields.rho_up);
     auto fn1 = Kokkos::create_mirror_view(fields.fn1);
@@ -451,12 +468,12 @@ test_deformation(
             const auto values = snapshot(view);
             result.insert(result.end(), values.begin(), values.end());
         };
-        append(fields.u);
-        append(fields.v);
-        append(fields.xi);
-        append(fields.eta);
-        append(fields.zeta);
-        append(fields.f_at_z);
+        append(fields.u1);
+        append(fields.u2);
+        append(fields.omega1_over_rho);
+        append(fields.omega2_over_rho);
+        append(fields.omega3_over_rho);
+        append(fields.f3_at_z);
         append(fields.rho);
         append(fields.rho_up);
         append(fields.fn1);
@@ -537,25 +554,23 @@ test_deformation(
                     const Real lambda_v = (i - h + real(0.5)) * dq1;
                     f(j, i) = real(1e-4) + real(2e-5) * phi_v;
                     for (int k = 0; k < nz; ++k) {
-                        u(k, j, i) = radius * std::cos(phi_u) *
-                                     (a * lambda_u + b * phi_u + c * height[k] + wave_velocity);
-                        v(k, j, i) = radius * (d * lambda_v + e * phi_v + g * height[k]);
-                        xi(k, j, i) =
-                            radius * std::cos(phi_v) * x * (wave_case ? wave(lambda_v) : real(1.0));
-                        eta(k, j, i) = -radius * y * (wave_case ? wave(lambda_u) : real(1.0));
-                        zeta(k, j, i) = z;
+                        u1(k, j, i) = a * lambda_u + b * phi_u + c * height[k] + wave_velocity;
+                        u2(k, j, i) = d * lambda_v + e * phi_v + g * height[k];
+                        omega1(k, j, i) = x * (wave_case ? wave(lambda_v) : real(1.0));
+                        omega2(k, j, i) = y * (wave_case ? wave(lambda_u) : real(1.0));
+                        omega3(k, j, i) = z;
                         w(k, j, i) =
                             (height[k_top] - height[k]) * (offset + p * lambda_v + q * phi_u);
                     }
                 }
             }
 
-            Kokkos::deep_copy(fields.u, u);
-            Kokkos::deep_copy(fields.v, v);
-            Kokkos::deep_copy(fields.xi, xi);
-            Kokkos::deep_copy(fields.eta, eta);
-            Kokkos::deep_copy(fields.zeta, zeta);
-            Kokkos::deep_copy(fields.f_at_z, f);
+            Kokkos::deep_copy(fields.u1, u1);
+            Kokkos::deep_copy(fields.u2, u2);
+            Kokkos::deep_copy(fields.omega1_over_rho, omega1);
+            Kokkos::deep_copy(fields.omega2_over_rho, omega2);
+            Kokkos::deep_copy(fields.omega3_over_rho, omega3);
+            Kokkos::deep_copy(fields.f3_at_z, f);
             Kokkos::deep_copy(top_fields.w, w);
             const auto before = input_snapshot();
             Kokkos::deep_copy(functor.output, sentinel);
@@ -636,8 +651,10 @@ test_deformation(
                                 -radius * density_factor * f_u * g};
 
                             for (int n = 0; n < 6; ++n) {
+                                const Real physical =
+                                    (n < 3 ? east_scale : -radius) * actual(n, k, j, i);
                                 error = std::max(error,
-                                    std::abs(actual(n, k, j, i) - expected[n]) /
+                                    std::abs(physical - expected[n]) /
                                         std::max(real(1e-8), std::abs(expected[n])));
                             }
 
@@ -695,8 +712,10 @@ test_deformation(
                             }
 
                             for (int n = 0; n < 6; ++n) {
+                                const Real physical =
+                                    (n < 3 ? east_scale : -radius) * actual(n + 9, k, j, i);
                                 transport_error = std::max(transport_error,
-                                    std::abs(actual(n + 9, k, j, i) - expected_transport[n]) /
+                                    std::abs(physical - expected_transport[n]) /
                                         std::max(real(1e-12), std::abs(expected_transport[n])));
                             }
                         }
@@ -783,41 +802,12 @@ main(int argc, char* argv[]) {
         test_vorticity<Kokkos::LayoutLeft>(rll, true, radius, south_edge, "LayoutLeft");
         test_vorticity<Kokkos::LayoutRight>(rll, true, radius, south_edge, "LayoutRight");
 
-        bool rejected_cartesian = false;
-        try {
-            (void)make_regular_lat_lon_horizontal_deformation_device_view(cartesian);
-        }
-        catch (const std::invalid_argument&) {
-            rejected_cartesian = true;
-        }
-        if (!rejected_cartesian) {
-            ++failures;
-            std::fputs("RLL horizontal deformation failed to reject Cartesian geometry\n", stderr);
-        }
-
-        rejected_cartesian = false;
-        try {
-            (void)make_regular_lat_lon_top_deformation_device_view(cartesian);
-        }
-        catch (const std::invalid_argument&) {
-            rejected_cartesian = true;
-        }
-        if (!rejected_cartesian) {
-            ++failures;
-            std::fputs("RLL top deformation failed to reject Cartesian geometry\n", stderr);
-        }
-
-        rejected_cartesian = false;
-        try {
-            (void)make_regular_lat_lon_horizontal_vorticity_transport_device_view(cartesian);
-        }
-        catch (const std::invalid_argument&) {
-            rejected_cartesian = true;
-        }
-        if (!rejected_cartesian) {
-            ++failures;
-            std::fputs("RLL vorticity transport failed to reject Cartesian geometry\n", stderr);
-        }
+        // Generalized component operators are geometry-driven and may also be
+        // constructed for Cartesian geometry. Existing Cartesian production
+        // remains on its exact-regression path; this only checks the operator API.
+        (void)make_generalized_horizontal_deformation_device_view(cartesian);
+        (void)make_generalized_top_deformation_device_view(cartesian);
+        (void)make_generalized_horizontal_vorticity_transport_device_view(cartesian);
 
         auto narrow_layout = layout;
         narrow_layout.halo = 1;
@@ -829,14 +819,15 @@ main(int argc, char* argv[]) {
             radius);
         bool rejected_narrow_halo = false;
         try {
-            (void)make_regular_lat_lon_horizontal_vorticity_transport_device_view(narrow);
+            (void)make_generalized_horizontal_vorticity_transport_device_view(narrow);
         }
         catch (const std::invalid_argument&) {
             rejected_narrow_halo = true;
         }
         if (!rejected_narrow_halo) {
             ++failures;
-            std::fputs("RLL vorticity transport failed to reject a one-cell halo\n", stderr);
+            std::fputs("Generalized vorticity transport failed to reject a one-cell halo\n",
+                stderr);
         }
 
         test_deformation<Kokkos::LayoutLeft>(rll, radius, south_edge, "LayoutLeft");

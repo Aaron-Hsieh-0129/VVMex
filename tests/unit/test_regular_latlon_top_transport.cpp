@@ -1,6 +1,6 @@
 #include "core/Field.hpp"
 #include "core/geometry/RegularLatLonGeometry.hpp"
-#include "dynamics/operators/RegularLatLonTopTransport.hpp"
+#include "dynamics/operators/GeneralizedTopTransport.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -9,13 +9,13 @@
 using namespace VVM;
 using Core::Field;
 using Core::Geometry::HorizontalLocation;
-using Dynamics::Operators::RegularLatLonTopTransportDeviceView;
+using Dynamics::Operators::GeneralizedTopTransportDeviceView;
 
 template <class Volume, class Profile, class Plane>
 struct Fields {
-    Volume u, v, w, zeta;
+    Volume u1, u2, w, omega3_over_rho;
     Profile rho, rho_up, inverse_spacing_mid;
-    Plane f_at_z;
+    Plane f3_at_z;
 };
 
 // Independent host transcription of the Fortran UP/UM stencil.
@@ -43,11 +43,13 @@ main(int argc, char** argv) {
         Core::Geometry::RegularLatLonGeometry geometry(layout, dx, dy, 0., south, radius);
         Field<3> u("u", {nz, ny, nx}), v("v", {nz, ny, nx}), w("w", {nz, ny, nx}),
             z("z", {nz, ny, nx});
+        Field<3> u1("u1", {nz, ny, nx}), u2("u2", {nz, ny, nx});
         Field<1> rho("rho", {nz}), rho_up("rho_up", {nz}), inv("inv", {nz});
         Field<2> f("f", {ny, nx});
         Field<3> result("result", {3, ny, nx});
         auto uh = u.get_host_data(), vh = v.get_host_data(), wh = w.get_host_data(),
              zh = z.get_host_data();
+        auto u1h = u1.get_host_data(), u2h = u2.get_host_data();
         auto rh = rho.get_host_data(), ru = rho_up.get_host_data(), ih = inv.get_host_data();
         auto fh = f.get_host_data();
         for (int k = 0; k < nz; ++k) {
@@ -58,14 +60,16 @@ main(int argc, char** argv) {
                 for (int i = 0; i < nx; ++i) {
                     uh(k, j, i) = std::sin((i - h + 1) * dx) + .2 * k;
                     vh(k, j, i) = std::cos((i - h + .5) * dx) - .3 + .01 * j;
+                    u1h(k, j, i) = uh(k, j, i) / (radius * std::cos(south + (j - h + .5) * dy));
+                    u2h(k, j, i) = vh(k, j, i) / radius;
                     wh(k, j, i) = k == top ? 0. : .3 * std::sin(i + .4 * j);
                     zh(k, j, i) = (.1 + std::cos((i - h + 1) * dx) * std::sin(.3 * j)) / rh(k);
                     fh(j, i) = .13 * std::sin(south + (j - h + 1) * dy);
                 }
             }
         }
-        Kokkos::deep_copy(u.get_mutable_device_data(), uh);
-        Kokkos::deep_copy(v.get_mutable_device_data(), vh);
+        Kokkos::deep_copy(u1.get_mutable_device_data(), u1h);
+        Kokkos::deep_copy(u2.get_mutable_device_data(), u2h);
         Kokkos::deep_copy(w.get_mutable_device_data(), wh);
         Kokkos::deep_copy(z.get_mutable_device_data(), zh);
         Kokkos::deep_copy(rho.get_mutable_device_data(), rh);
@@ -73,17 +77,17 @@ main(int argc, char** argv) {
         Kokkos::deep_copy(inv.get_mutable_device_data(), ih);
         Kokkos::deep_copy(f.get_mutable_device_data(), fh);
         Fields<Field<3>::ViewType, Field<1>::ViewType, Field<2>::ViewType> fields{
-            u.get_device_data(),
-            v.get_device_data(),
+            u1.get_device_data(),
+            u2.get_device_data(),
             w.get_device_data(),
             z.get_device_data(),
             rho.get_device_data(),
             rho_up.get_device_data(),
             inv.get_device_data(),
             f.get_device_data()};
-        Kokkos::View<RegularLatLonTopTransportDeviceView> op("op");
+        Kokkos::View<GeneralizedTopTransportDeviceView> op("op");
         auto host_op = Kokkos::create_mirror_view(op);
-        host_op() = Dynamics::Operators::make_regular_lat_lon_top_transport_device_view(geometry);
+        host_op() = Dynamics::Operators::make_generalized_top_transport_device_view(geometry);
         Kokkos::deep_copy(op, host_op);
         auto output = result.get_mutable_device_data();
         for (bool planetary : {false, true}) {
@@ -143,7 +147,8 @@ main(int argc, char** argv) {
                     for (int n = 0; n < 3; ++n) {
                         const double tolerance = 512 * std::numeric_limits<Real>::epsilon() *
                                                  std::max(1., std::abs(expected[n]));
-                        if (std::abs(actual(n, j, i) - expected[n]) > tolerance) {
+                        if (!std::isfinite(actual(n, j, i)) ||
+                            std::abs(actual(n, j, i) - expected[n]) > tolerance) {
                             ++failures;
                         }
                     }
