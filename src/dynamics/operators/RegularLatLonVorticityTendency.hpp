@@ -1,30 +1,27 @@
 #ifndef VVM_DYNAMICS_OPERATORS_REGULAR_LAT_LON_VORTICITY_TENDENCY_HPP
 #define VVM_DYNAMICS_OPERATORS_REGULAR_LAT_LON_VORTICITY_TENDENCY_HPP
 
+#include <string>
+
 #include "core/State.hpp"
 #include "core/Parameters.hpp"
 #include "dynamics/operators/GeneralizedHorizontalVorticityTransport.hpp"
+#include "dynamics/operators/GeneralizedHorizontalDeformation.hpp"
+#include "dynamics/operators/GeneralizedTopDeformation.hpp"
 #include "dynamics/operators/RegularLatLonTopTransport.hpp"
-#include "dynamics/operators/RegularLatLonTopDeformation.hpp"
 
 namespace VVM::Dynamics::Operators {
 
-// Production RLL vorticity-tendency adapter.
+// Temporary production RLL adapter. Horizontal transport and all
+// deformation read canonical vorticity directly. Horizontal wind inputs
+// to those generalized kernels are synchronized u_con/v_con, including
+// halos. Only top transport still uses the legacy physical-wind adapter.
 //
-// Persistent horizontal vorticity is canonical:
-//
-//     xi_con  =  omega^1
-//     eta_con = -omega^2
-//
-// zeta remains the physical vertical component for the current
-// horizontal-only generalized coordinate.
-//
-// Horizontal transport reads canonical wind/vorticity directly and uses
-// the generalized-coordinate operator. The remaining top/deformation
-// terms still use temporary physical-component adapters. This production
-// boundary returns physical xi/eta tendencies until the complete tendency
-// orchestration is migrated. The caller supplies synchronized u_con/v_con,
-// including halos, before evaluating horizontal transport.
+// xi_con = omega^1; eta_con = -omega^2. zeta is the relative physical
+// vertical component, equal to omega^3 for this horizontal-only mapping.
+// The output accumulator remains physical until the orchestration moves
+// to canonical tendencies; horizontal output is converted exactly once
+// here. DynamicalCore still converts the total physical tendency.
 class RegularLatLonVorticityTendency {
 public:
     enum class Term { Transport, Stretching, Twisting, Planetary };
@@ -43,7 +40,10 @@ public:
 private:
     Kokkos::View<GeneralizedHorizontalVorticityTransportDeviceView> horizontal_transport_;
     Kokkos::View<RegularLatLonTopTransportDeviceView> transport_;
-    Kokkos::View<RegularLatLonTopDeformationDeviceView> deformation_;
+
+    // Each deformation operator contains only two Real spacings.
+    GeneralizedHorizontalDeformationDeviceView horizontal_deformation_;
+    GeneralizedTopDeformationDeviceView top_deformation_;
 };
 
 } // namespace VVM::Dynamics::Operators
