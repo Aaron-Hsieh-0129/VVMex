@@ -1,34 +1,39 @@
 #ifndef VVM_DYNAMICS_OPERATORS_REGULAR_LAT_LON_TOP_TRANSPORT_HPP
 #define VVM_DYNAMICS_OPERATORS_REGULAR_LAT_LON_TOP_TRANSPORT_HPP
 
+#include <stdexcept>
+
 #include "dynamics/operators/GeneralizedTopTransport.hpp"
-#include "dynamics/operators/RegularLatLonHorizontalVorticityTransport.hpp"
 
 namespace VVM::Dynamics::Operators {
 
-// Temporary compatibility adapter for existing RLL callers.
-// Legacy fields contain physical u/v/w, zeta already divided by rho,
-// and f_at_z NOT divided by rho. Production bypasses this adapter.
-// No independent top-transport stencil remains here.
+// Legacy field adapter only. Production uses GeneralizedTopTransport
+// directly; this interface remains for existing field-level callers.
+//
+// Legacy inputs: physical u/v/w, zeta already divided by rho, and f_at_z
+// not density-normalized. All transport stencils belong to the generalized
+// operator. No horizontal-vorticity/deformation adapter is needed here.
 struct RegularLatLonTopTransportDeviceView {
     using Base = GeneralizedTopTransportDeviceView;
 
-    // Preserve the legacy public layout until its remaining consumers move.
-    RegularLatLonHorizontalVorticityTransportDeviceView horizontal;
+    Base numerical;
+
+    Core::Geometry::GeometryField2D h1_at_u;
+    Core::Geometry::GeometryField2D h2_at_v;
 
     template <typename Fields>
     struct LegacyFields {
         const Fields& fields;
-        const RegularLatLonHorizontalDeformationDeviceView& components;
+        const RegularLatLonTopTransportDeviceView& adapter;
 
         KOKKOS_INLINE_FUNCTION Real
         u1(int k, int j, int i) const noexcept {
-            return components.u1(fields, k, j, i);
+            return fields.u(k, j, i) / adapter.h1_at_u(j, i);
         }
 
         KOKKOS_INLINE_FUNCTION Real
         u2(int k, int j, int i) const noexcept {
-            return components.u2(fields, k, j, i);
+            return fields.v(k, j, i) / adapter.h2_at_v(j, i);
         }
 
         KOKKOS_INLINE_FUNCTION Real
@@ -38,6 +43,7 @@ struct RegularLatLonTopTransportDeviceView {
 
         KOKKOS_INLINE_FUNCTION Real
         omega3_over_rho(int k, int j, int i) const noexcept {
+            // The legacy zeta accessor is already density-normalized.
             return fields.zeta(k, j, i);
         }
 
@@ -64,74 +70,59 @@ struct RegularLatLonTopTransportDeviceView {
 
     KOKKOS_INLINE_FUNCTION Base
     generalized_view() const noexcept {
-        Base result;
-        result.jacobian_u = horizontal.jacobian_u;
-        result.jacobian_v = horizontal.jacobian_v;
-        result.jacobian_z = horizontal.jacobian_z;
-        result.dq1 = horizontal.components.dq1;
-        result.dq2 = horizontal.components.dq2;
-        result.face_flux = horizontal.face_flux;
-
-        return result;
+        return numerical;
     }
 
     template <typename Fields>
     KOKKOS_INLINE_FUNCTION Real
     scalar(const Fields& fields, int k, int j, int i, bool planetary) const noexcept {
-        return generalized_view().scalar(LegacyFields<Fields>{fields, horizontal.components},
-            k,
-            j,
-            i,
-            planetary);
+        return numerical.scalar(LegacyFields<Fields>{fields, *this}, k, j, i, planetary);
     }
 
     template <typename Fields>
     KOKKOS_INLINE_FUNCTION Real
     mass_flux(const Fields& fields, int k, int j, int i, int direction) const noexcept {
-        return generalized_view().mass_flux(LegacyFields<Fields>{fields, horizontal.components},
-            k,
-            j,
-            i,
-            direction);
+        return numerical.mass_flux(LegacyFields<Fields>{fields, *this}, k, j, i, direction);
     }
 
     template <typename Fields>
     KOKKOS_INLINE_FUNCTION Real
     face(const Fields& fields, int k, int j, int i, int direction, bool planetary) const noexcept {
-        return generalized_view().face(LegacyFields<Fields>{fields, horizontal.components},
-            k,
-            j,
-            i,
-            direction,
-            planetary);
+        return numerical.face(LegacyFields<Fields>{fields, *this}, k, j, i, direction, planetary);
     }
 
     template <typename Fields>
     KOKKOS_INLINE_FUNCTION Real
     vertical_mass_flux(const Fields& fields, int k, int j, int i) const noexcept {
-        return generalized_view()
-            .vertical_mass_flux(LegacyFields<Fields>{fields, horizontal.components}, k, j, i);
+        return numerical.vertical_mass_flux(LegacyFields<Fields>{fields, *this}, k, j, i);
     }
 
     template <typename Fields>
-    KOKKOS_INLINE_FUNCTION HorizontalVorticityTransportTerms
+    KOKKOS_INLINE_FUNCTION TopTransportTerms
     calculate_at_z(
         const Fields& fields, int top, int j, int i, bool planetary = false) const noexcept {
-        const auto t =
-            generalized_view().calculate_at_z(LegacyFields<Fields>{fields, horizontal.components},
-                top,
-                j,
-                i,
-                planetary);
-
-        return {t.q1, t.q2, t.vertical};
+        return numerical.calculate_at_z(LegacyFields<Fields>{fields, *this}, top, j, i, planetary);
     }
 };
 
 inline RegularLatLonTopTransportDeviceView
 make_regular_lat_lon_top_transport_device_view(const Core::Geometry::HorizontalGeometry& geometry,
     Real alpha = real(1.0)) {
-    return {make_regular_lat_lon_horizontal_vorticity_transport_device_view(geometry, alpha)};
+    using Core::Geometry::GeometryKind;
+    using Core::Geometry::HorizontalLocation;
+
+    if (geometry.kind() != GeometryKind::RegularLatLon) {
+        throw std::invalid_argument("RegularLatLonTopTransport compatibility requires "
+                                    "regular latitude-longitude geometry.");
+    }
+
+    RegularLatLonTopTransportDeviceView result;
+
+    result.numerical = make_generalized_top_transport_device_view(geometry, alpha);
+    result.h1_at_u = geometry.device_view(HorizontalLocation::U).contravariant_to_physical.a11;
+    result.h2_at_v = geometry.device_view(HorizontalLocation::V).contravariant_to_physical.a22;
+
+    return result;
 }
 
 } // namespace VVM::Dynamics::Operators
