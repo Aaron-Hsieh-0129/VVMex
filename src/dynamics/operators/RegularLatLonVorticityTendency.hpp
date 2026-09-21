@@ -7,21 +7,19 @@
 #include "core/Parameters.hpp"
 #include "dynamics/operators/GeneralizedHorizontalVorticityTransport.hpp"
 #include "dynamics/operators/GeneralizedHorizontalDeformation.hpp"
+#include "dynamics/operators/GeneralizedTopTransport.hpp"
 #include "dynamics/operators/GeneralizedTopDeformation.hpp"
-#include "dynamics/operators/RegularLatLonTopTransport.hpp"
 
 namespace VVM::Dynamics::Operators {
 
-// Temporary production RLL adapter. Horizontal transport and all
-// deformation read canonical vorticity directly. Horizontal wind inputs
-// to those generalized kernels are synchronized u_con/v_con, including
-// halos. Only top transport still uses the legacy physical-wind adapter.
+// Temporary RLL production orchestrator. All transport and deformation
+// stencils now use generalized-coordinate operators. Wind inputs are
+// synchronized u_con/v_con, including halos; w remains physical vertical wind.
 //
-// xi_con = omega^1; eta_con = -omega^2. zeta is the relative physical
-// vertical component, equal to omega^3 for this horizontal-only mapping.
-// The output accumulator remains physical until the orchestration moves
-// to canonical tendencies; horizontal output is converted exactly once
-// here. DynamicalCore still converts the total physical tendency.
+// xi_con = omega^1; eta_con = -omega^2. zeta is relative physical vertical
+// vorticity, equal to omega^3 for the current horizontal-only mapping.
+// The output accumulator remains physical: horizontal tendencies are
+// converted once here, and DynamicalCore converts the total tendency.
 class RegularLatLonVorticityTendency {
 public:
     enum class Term { Transport, Stretching, Twisting, Planetary };
@@ -39,9 +37,8 @@ public:
 
 private:
     Kokkos::View<GeneralizedHorizontalVorticityTransportDeviceView> horizontal_transport_;
-    Kokkos::View<RegularLatLonTopTransportDeviceView> transport_;
+    Kokkos::View<GeneralizedTopTransportDeviceView> transport_;
 
-    // Each deformation operator contains only two Real spacings.
     GeneralizedHorizontalDeformationDeviceView horizontal_deformation_;
     GeneralizedTopDeformationDeviceView top_deformation_;
 };

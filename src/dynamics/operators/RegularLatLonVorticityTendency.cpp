@@ -161,16 +161,11 @@ bind_horizontal_deformation_fields(const Core::State& state, const Core::Paramet
     return fields;
 }
 
-// Generalized top deformation consumes the canonical accessors. The
-// remaining legacy top transport reads physical u/v and normalized zeta.
+// Both top transport and top deformation consume canonical accessors.
+// No physical horizontal-wind adapter or extra zeta normalization is needed.
 struct TopFields : CanonicalVorticityFields {
-    Volume u, v, w;
+    Volume u1, u2, w;
     InverseSpacing inverse_spacing_mid, inverse_spacing_up;
-
-    KOKKOS_INLINE_FUNCTION Real
-    zeta(int k, int j, int i) const noexcept {
-        return omega3_over_rho(k, j, i);
-    }
 };
 
 TopFields
@@ -178,8 +173,8 @@ bind_top_fields(const Core::State& state, const Core::Parameters& params) {
     TopFields fields{};
     static_cast<CanonicalVorticityFields&>(fields) = bind_vorticity_fields(state);
 
-    fields.u = state.get_field<3>("u").get_device_data();
-    fields.v = state.get_field<3>("v").get_device_data();
+    fields.u1 = state.get_field<3>("u_con").get_device_data();
+    fields.u2 = state.get_field<3>("v_con").get_device_data();
     fields.w = state.get_field<3>("w").get_device_data();
 
     fields.inverse_spacing_mid = {params.flex_height_coef_mid.get_device_data(), params.rdz};
@@ -218,7 +213,7 @@ struct HorizontalDeformationFunctor {
 };
 
 struct TopTendencyFunctor {
-    Kokkos::View<const RegularLatLonTopTransportDeviceView> transport;
+    Kokkos::View<const GeneralizedTopTransportDeviceView> transport;
     GeneralizedTopDeformationDeviceView deformation;
     TopFields fields;
     Volume output;
@@ -248,8 +243,8 @@ struct TopTendencyFunctor {
                                               : t.planetary;
         }
 
-        // omega^3 is physical vertical vorticity for this mapping.
-        // Planetary transport and stretching have each been added once.
+        // Transport selects relative vorticity only. Planetary selects
+        // f^3/rho transport plus f^3 stretching, each exactly once.
         output(k, j, i) += value;
     }
 };
@@ -259,15 +254,20 @@ struct TopTendencyFunctor {
 RegularLatLonVorticityTendency::RegularLatLonVorticityTendency(
     const Core::Geometry::HorizontalGeometry& geometry)
     : horizontal_transport_("Generalized horizontal vorticity transport"),
-      transport_("RLL top vorticity transport"),
+      transport_("Generalized top vorticity transport"),
       horizontal_deformation_(make_generalized_horizontal_deformation_device_view(geometry)),
       top_deformation_(make_generalized_top_deformation_device_view(geometry)) {
+    if (geometry.kind() != Core::Geometry::GeometryKind::RegularLatLon) {
+        throw std::invalid_argument(
+            "RegularLatLonVorticityTendency requires regular latitude-longitude geometry.");
+    }
+
     auto ht = Kokkos::create_mirror_view(horizontal_transport_);
     ht() = make_generalized_horizontal_vorticity_transport_device_view(geometry);
     Kokkos::deep_copy(horizontal_transport_, ht);
 
     auto t = Kokkos::create_mirror_view(transport_);
-    t() = make_regular_lat_lon_top_transport_device_view(geometry);
+    t() = make_generalized_top_transport_device_view(geometry);
     Kokkos::deep_copy(transport_, t);
 
     prepare_execution();
