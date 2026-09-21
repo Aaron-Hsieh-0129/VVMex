@@ -5,6 +5,9 @@
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "dynamics/numerical_methods/NumericalMethodFactory.hpp"
 #include "dynamics/operators/GeneralizedScalarTransport.hpp"
+#include "dynamics/spatial_schemes/GeneralizedTakacs.hpp"
+#include <algorithm>
+#include <limits>
 #include "core/geometry/HorizontalLocation.hpp"
 
 #include <filesystem>
@@ -441,7 +444,7 @@ main(int argc, char** argv) {
             }
 
             // Moist=true is required here. Otherwise the factory selects
-            // RegularLatLonTakacs dry buoyancy, which intentionally rejects
+            // generalized dry buoyancy, which intentionally rejects
             // a State containing moist fields.
             auto method = factory.create(name, buoyancy, false, true, dims);
 
@@ -461,8 +464,255 @@ main(int argc, char** argv) {
             require(value(nz - h - 1, h + 1, h + 1) == 0, "buoyancy upper level excluded");
         }
 
+        // Assembly/boundary tests. Component tests own the independent
+        // numerical oracles; this checks routing, representation, accumulation,
+        // and factory guards against the already-tested component interfaces.
+        using Scheme = Dynamics::GeneralizedTakacs;
+        using Vorticity = Dynamics::Operators::GeneralizedVorticityTendency;
+        using Term = Vorticity::Term;
+        using Location = Core::Geometry::HorizontalLocation;
+
+        Scheme canonical(grid.geometry(), Scheme::BuoyancyMode::Moist);
+        Dynamics::GeneralizedTakacsBoundary weights;
+        weights.xi_weight = grid.geometry().device_view(Location::V).contravariant_to_physical.a11;
+        weights.eta_weight = grid.geometry().device_view(Location::U).contravariant_to_physical.a22;
+        Scheme weighted(grid.geometry(), Scheme::BuoyancyMode::Moist, weights);
+        Vorticity vorticity_reference(grid.geometry());
+        Dynamics::Operators::GeneralizedBuoyancy buoyancy_reference(grid.geometry());
+
+        params.max_topo_idx = h;
+        for (auto* profile : {&params.fact1_xi_eta,
+                 &params.fact2_xi_eta,
+                 &params.flex_height_coef_up,
+                 &params.flex_height_coef_mid}) {
+            Kokkos::deep_copy(profile->get_mutable_device_data(), real(1.0));
+        }
+        Kokkos::deep_copy(params.rdz, real(1.0 / 250.0));
+
+        for (const char* name : {"u_con", "v_con", "xi_con", "eta_con", "zeta"}) {
+            auto values = state.get_field<3>(name).get_host_data();
+            for (int k = 0; k < nz; ++k) {
+                for (int j = 0; j < ny; ++j) {
+                    for (int i = 0; i < nx; ++i) {
+                        const std::string n(name);
+                        values(k, j, i) =
+                            n == "u_con"     ? real(1e-6) * (1 + .02 * i + .03 * j + .04 * k)
+                            : n == "v_con"   ? real(-2e-6) * (1 + .04 * i + .05 * j - .01 * k)
+                            : n == "xi_con"  ? real(2e-8) * (1 + .01 * i + .02 * j)
+                            : n == "eta_con" ? real(-3e-8) * (1 + .03 * i - .01 * j)
+                                             : real(1e-4) * (1 + .04 * i + .02 * j + .03 * k);
+                    }
+                }
+            }
+            Kokkos::deep_copy(state.get_field<3>(name).get_mutable_device_data(), values);
+        }
+        Kokkos::deep_copy(state.get_field<2>("f_2d").get_mutable_device_data(), real(1e-4));
+        fill("w", real(0.0));
+        // Deliberately unrelated physical compatibility fields: these kernels
+        // must consume canonical State, not silently fall back to physical data.
+        fill("u", real(71.0));
+        fill("v", real(-93.0));
+        fill("xi", real(123.0));
+        fill("eta", real(-456.0));
+        for (int k = 0; k < nz; ++k) {
+            for (int j = 0; j < ny; ++j) {
+                for (int i = 0; i < nx; ++i) {
+                    vapor(k, j, i) = real(.01) + real(.0001) * j + real(.0002) * i;
+                }
+            }
+        }
+        Kokkos::deep_copy(state.get_field<3>("qv").get_mutable_device_data(), vapor);
+
+        Core::Field<3> ref("assembly_reference", dims);
+        Core::Field<3> con("assembly_canonical", dims);
+        Core::Field<3> phys("assembly_weighted", dims);
+        const Real con_seed = real(2e-15), phys_seed = real(3e-8);
+        const Real tol = real(256) * std::numeric_limits<Real>::epsilon();
+        const auto close = [&](Real actual, Real expected) {
+            return std::isfinite(actual) && std::isfinite(expected) &&
+                   std::abs(actual - expected) <=
+                       tol * std::max({std::abs(actual), std::abs(expected), real(1e-25)});
+        };
+        const auto& geometry_spec = grid.horizontal_specification().geometry;
+        const Real radius = geometry_spec.regular_lat_lon.radius;
+        const Real south = geometry_spec.regular_lat_lon.latitude_south_edge;
+
+        for (const std::string name : {"xi", "eta", "zeta"}) {
+            const std::string history = "fe_tendency_" + name;
+            if (!state.has_field(history)) {
+                state.add_field<3>(history, dims);
+            }
+            const auto mask_host =
+                state.get_field<3>(name == "xi" ? "ITYPEV" : "ITYPEU").get_host_data();
+
+            for (int term_index = 0; term_index < (name == "zeta" ? 4 : 5); ++term_index) {
+                const char* labels[] = {"advection",
+                    "stretching",
+                    "twisting",
+                    "coriolis",
+                    "buoyancy"};
+                const Term terms[] = {Term::Transport,
+                    Term::Stretching,
+                    Term::Twisting,
+                    Term::Planetary};
+                ref.set_to_zero();
+                Kokkos::deep_copy(con.get_mutable_device_data(), con_seed);
+                Kokkos::deep_copy(phys.get_mutable_device_data(), phys_seed);
+
+                if (term_index < 4) {
+                    vorticity_reference.add_from_canonical_state(state,
+                        grid,
+                        params,
+                        ref,
+                        name,
+                        terms[term_index]);
+                }
+                else {
+                    buoyancy_reference.add_moist_tendency(state.get_field<3>("th"),
+                        state.get_field<1>("thbar"),
+                        params.gravity,
+                        state.get_field<3>("qv"),
+                        state.get_field<3>("qp"),
+                        state.get_field<3>(name == "xi" ? "ITYPEV" : "ITYPEU"),
+                        ref,
+                        h,
+                        nz - h - 1,
+                        params.max_topo_idx,
+                        name == "xi");
+                }
+
+                const auto invoke = [&](const Scheme& scheme, Core::Field<3>& output) {
+                    if (term_index == 0) {
+                        scheme.calculate_advection_tendency(state,
+                            state.get_field<3>(name),
+                            state.get_field<3>("u_mean"),
+                            state.get_field<3>("v_mean"),
+                            state.get_field<3>("w_mean"),
+                            grid,
+                            params,
+                            output,
+                            name,
+                            real(0));
+                    }
+                    else if (term_index == 1) {
+                        if (name == "xi") {
+                            scheme.calculate_stretching_tendency_x(state,
+                                grid,
+                                params,
+                                output,
+                                name);
+                        }
+                        else if (name == "eta") {
+                            scheme.calculate_stretching_tendency_y(state,
+                                grid,
+                                params,
+                                output,
+                                name);
+                        }
+                        else {
+                            scheme.calculate_stretching_tendency_z(state,
+                                grid,
+                                params,
+                                output,
+                                name);
+                        }
+                    }
+                    else if (term_index == 2) {
+                        if (name == "xi") {
+                            scheme.calculate_twisting_tendency_x(state, grid, params, output, name);
+                        }
+                        else if (name == "eta") {
+                            scheme.calculate_twisting_tendency_y(state, grid, params, output, name);
+                        }
+                        else {
+                            scheme.calculate_twisting_tendency_z(state, grid, params, output, name);
+                        }
+                    }
+                    else if (term_index == 3) {
+                        if (name == "xi") {
+                            scheme.calculate_coriolis_tendency_x(state, grid, params, output);
+                        }
+                        else if (name == "eta") {
+                            scheme.calculate_coriolis_tendency_y(state, grid, params, output);
+                        }
+                        else {
+                            scheme.calculate_coriolis_tendency_z(state, grid, params, output);
+                        }
+                    }
+                    else {
+                        if (name == "xi") {
+                            scheme.calculate_buoyancy_tendency_x(state, grid, params, output);
+                        }
+                        else {
+                            scheme.calculate_buoyancy_tendency_y(state, grid, params, output);
+                        }
+                    }
+                };
+                invoke(canonical, con);
+                invoke(weighted, phys);
+                Json config_for_term;
+                config_for_term["tendency_terms"][labels[term_index]] = {{"enable", true},
+                    {"spatial_scheme", "Takacs"},
+                    {"temporal_scheme", "ForwardEuler"}};
+                auto method = factory.create(name, config_for_term, false, false, dims);
+                method->calculate_tendencies(state, grid, params);
+
+                const auto r = ref.get_host_data();
+                const auto c = con.get_host_data();
+                const auto p = phys.get_host_data();
+                const auto f = state.get_field<3>(history).get_host_data();
+                for (int k = 0; k < nz; ++k) {
+                    for (int j = 0; j < ny; ++j) {
+                        for (int i = 0; i < nx; ++i) {
+                            const Real scale =
+                                name == "xi"    ? radius * std::cos(south + (j - h + real(1)) *
+                                                                             geometry_spec.dq2)
+                                : name == "eta" ? radius
+                                                : real(1);
+                            const bool masked = term_index == 4 && k >= h && k < nz - h - 1 &&
+                                                j >= h && j < ny - h && i >= h && i < nx - h &&
+                                                k <= params.max_topo_idx &&
+                                                mask_host(k, j, i) == real(0);
+                            require(close(c(k, j, i), masked ? real(0) : con_seed + r(k, j, i)),
+                                "generalized scheme canonical routing/accumulation");
+                            require(close(p(k, j, i),
+                                        masked ? real(0) : phys_seed + scale * r(k, j, i)),
+                                "generalized scheme weights only the new increment");
+                            require(close(f(k, j, i), scale * r(k, j, i)),
+                                "factory retains physical tendency representation");
+                        }
+                    }
+                }
+                if (name == "xi" && term_index == 1) {
+                    const int saved_top = params.max_topo_idx;
+                    params.max_topo_idx = nz - h - 1;
+                    bool rejected_terrain = false;
+                    try {
+                        method->calculate_tendencies(state, grid, params);
+                    }
+                    catch (const std::invalid_argument&) {
+                        rejected_terrain = true;
+                    }
+                    params.max_topo_idx = saved_top;
+                    require(rejected_terrain, "factory retains RLL terrain guard");
+                }
+            }
+        }
+
+        for (const auto mode : {Scheme::BuoyancyMode::Disabled, Scheme::BuoyancyMode::Dry}) {
+            Scheme guarded(grid.geometry(), mode);
+            bool rejected_mode = false;
+            try {
+                guarded.calculate_buoyancy_tendency_x(state, grid, params, con);
+            }
+            catch (const std::runtime_error&) {
+                rejected_mode = true;
+            }
+            require(rejected_mode, "disabled/dry mode rejects moist buoyancy call");
+        }
+
         std::cout << "PASS: RLL moist factory, scalar normalization, "
-                     "terrain flux masks, wall fluxes and buoyancy\n";
+                     "terrain flux masks, wall fluxes, buoyancy and generalized assembly\n";
     }
     catch (const std::exception& e) {
         std::cerr << e.what() << '\n';

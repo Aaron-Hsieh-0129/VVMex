@@ -2,7 +2,7 @@
 
 #include "core/geometry/GeometryKind.hpp"
 #include "dynamics/spatial_schemes/MUSCL.hpp"
-#include "dynamics/spatial_schemes/RegularLatLonTakacs.hpp"
+#include "dynamics/spatial_schemes/GeneralizedTakacs.hpp"
 #include "dynamics/spatial_schemes/Takacs.hpp"
 #include "dynamics/spatial_schemes/WENO5.hpp"
 #include "dynamics/temporal_schemes/SSPRK2.hpp"
@@ -19,6 +19,47 @@
 
 namespace VVM {
 namespace Dynamics {
+
+namespace {
+
+void
+validate_rll_vorticity_state(
+    const Core::State& state, const Core::Grid& grid, const Core::Parameters& params) {
+    const int h = grid.get_halo_cells();
+    const int top = grid.get_local_total_points_z() - h - 1;
+    const bool terrain = state.has_field("rll_terrain_height");
+
+    if ((!terrain && params.max_topo_idx != h) ||
+        (terrain && (params.max_topo_idx < h || params.max_topo_idx >= top))) {
+        throw std::invalid_argument(
+            "RLL vorticity tendencies require flat or initialized RLL terrain below the lid.");
+    }
+}
+
+GeneralizedTakacsBoundary
+make_rll_takacs_boundary(const Core::Geometry::HorizontalGeometry& geometry) {
+    using Core::Geometry::GeometryKind;
+    using Core::Geometry::HorizontalLocation;
+
+    if (geometry.kind() != GeometryKind::RegularLatLon) {
+        throw std::invalid_argument("The RLL Takacs output boundary requires RLL geometry.");
+    }
+
+    // DynamicalCore still accumulates physical tendencies and converts the
+    // total once. These positive factors multiply only new increments;
+    // the VVM eta sign is already handled by the generalized operators.
+    GeneralizedTakacsBoundary boundary;
+
+    boundary.xi_weight = geometry.device_view(HorizontalLocation::V).contravariant_to_physical.a11;
+
+    boundary.eta_weight = geometry.device_view(HorizontalLocation::U).contravariant_to_physical.a22;
+
+    boundary.validate_vorticity = validate_rll_vorticity_state;
+
+    return boundary;
+}
+
+} // namespace
 
 TemporalSchemeType
 NumericalMethodFactory::parse_temporal_scheme(const std::string& variable_name,
@@ -59,9 +100,9 @@ NumericalMethodFactory::create_spatial_scheme(const std::string& variable_name,
 
         if (geometry_kind == Core::Geometry::GeometryKind::RegularLatLon) {
 
-            const bool scalar_advection = term_name == "advection" &&
-                                          (variable_name == "th" || is_tracer ||
-                                              RegularLatLonTakacs::is_moist_scalar(variable_name));
+            const bool scalar_advection =
+                term_name == "advection" && (variable_name == "th" || is_tracer ||
+                                                GeneralizedTakacs::is_moist_scalar(variable_name));
             const bool horizontal_buoyancy = term_name == "buoyancy" && !is_tracer &&
                                              (variable_name == "xi" || variable_name == "eta");
             const bool vorticity_term =
@@ -82,7 +123,9 @@ NumericalMethodFactory::create_spatial_scheme(const std::string& variable_name,
                 if (config_.get_value<bool>("physics.p3.enable_p3", false)) {
                     // P3 owns qp (total condensate). Full-model capability
                     // remains separately guarded until all coupled paths pass.
-                    return std::make_unique<RegularLatLonTakacs>(grid_.geometry(), false, true);
+                    return std::make_unique<GeneralizedTakacs>(grid_.geometry(),
+                        GeneralizedTakacs::BuoyancyMode::Moist,
+                        make_rll_takacs_boundary(grid_.geometry()));
                 }
 
                 // P3 being disabled does not establish a dry configuration:
@@ -115,7 +158,10 @@ NumericalMethodFactory::create_spatial_scheme(const std::string& variable_name,
                 }
             }
 
-            return std::make_unique<RegularLatLonTakacs>(grid_.geometry(), horizontal_buoyancy);
+            return std::make_unique<GeneralizedTakacs>(grid_.geometry(),
+                horizontal_buoyancy ? GeneralizedTakacs::BuoyancyMode::Dry
+                                    : GeneralizedTakacs::BuoyancyMode::Disabled,
+                make_rll_takacs_boundary(grid_.geometry()));
         }
 
         throw std::runtime_error("Spatial scheme 'Takacs' is not implemented for "
