@@ -2,7 +2,6 @@
 #define VVM_DYNAMICS_SOLVERS_VERTICAL_WIND_DIAGNOSTIC_HPP
 
 #include <cmath>
-#include <cstddef>
 #include <stdexcept>
 
 #include "core/geometry/HorizontalGeometry.hpp"
@@ -10,8 +9,11 @@
 namespace VVM {
 namespace Dynamics {
 
-// Coefficients for the existing local vertical solve. The line unknown is
-// mass flux m(k) = rhobar_up(k) * w(k), not physical w itself.
+// Coefficients for one vertical tridiagonal row. The line unknown is the
+// density-weighted vertical velocity rho_up(k) * w(k). The horizontal direct
+// coefficients are retained here because they enter the line diagonal. The
+// nonorthogonal g^12 contribution has no center coefficient in the CVVM
+// stencil and is evaluated by VerticalWindDiagnosticDeviceView.
 struct VerticalWindEllipticRow {
     Real lower = real(0.0);
     Real diagonal = real(0.0);
@@ -25,6 +27,7 @@ struct VerticalWindEllipticRow {
     template <typename View>
     KOKKOS_INLINE_FUNCTION Real
     horizontal_neighbors(const View& previous, int k, int j, int i) const noexcept {
+
         return east * previous(k, j, i + 1) + west * previous(k, j, i - 1) +
                north * previous(k, j + 1, i) + south * previous(k, j - 1, i);
     }
@@ -32,6 +35,7 @@ struct VerticalWindEllipticRow {
     template <typename View>
     KOKKOS_INLINE_FUNCTION Real
     line_rhs(const View& previous, Real weighted_rhs, int k, int j, int i) const noexcept {
+
         return shift * previous(k, j, i) + weighted_rhs + horizontal_neighbors(previous, k, j, i);
     }
 
@@ -43,69 +47,90 @@ struct VerticalWindEllipticRow {
         int k,
         int j,
         int i) const noexcept {
+
         const Real denominator = diagonal * rhobar_up(k) - shift;
+
         if (denominator == real(0.0)) {
             return previous(k, j, i);
         }
 
         const Real vertical = -lower * rhobar_up(k - 1) * previous(k - 1, j, i) -
                               upper * rhobar_up(k + 1) * previous(k + 1, j, i);
+
         return (weighted_rhs + horizontal_neighbors(previous, k, j, i) + vertical) / denominator;
     }
 };
 
-// Borrowed compact kernel arguments, not another geometry owner. Construct on
-// the host before capture. Geometry storage must outlive kernels and graphs.
-// Cartesian/RLL only: the RLL pointers address existing latitude arrays.
-// No allocation, launch, halo exchange, synchronization or iteration control.
+// Generalized stationary-horizontal-chart arguments for the vertical wind
+// diagnostic and elliptic solve.
+//
+// Metric conventions:
+//
+//     J               = sqrt(g)
+//     weighted_contra = J * g^ij
+//     g_cov           = g_ij
+//
+// For a two-dimensional horizontal metric:
+//
+//     J^2 g^11 =  g_22
+//     J^2 g^12 = -g_12
+//     J^2 g^22 =  g_11
+//
+// CVVM RELAX_3D uses both J*g^ij and J^2*g^ij. The latter is recovered
+// exactly through the 2-D metric identity above.
+//
+// No allocation, communication, synchronization, or iteration control belongs
+// to this object.
 struct VerticalWindDiagnosticDeviceView {
-    const Real* jacobian_t = nullptr;
-    const Real* jacobian_z = nullptr;
-    const Real* h1_u = nullptr;
-    const Real* h1_v = nullptr;
-    const Real* weighted_inverse_metric_u = nullptr;
-    const Real* weighted_inverse_metric_v = nullptr;
-    Real h2 = real(1.0);
+    Core::Geometry::GeometryField2D jacobian_t;
+    Core::Geometry::GeometryField2D jacobian_u;
+    Core::Geometry::GeometryField2D jacobian_v;
+    Core::Geometry::GeometryField2D jacobian_z;
+
+    Core::Geometry::SymmetricTensorDeviceView g_cov_u;
+    Core::Geometry::SymmetricTensorDeviceView g_cov_v;
+
+    Core::Geometry::SymmetricTensorDeviceView weighted_contra_u;
+    Core::Geometry::SymmetricTensorDeviceView weighted_contra_v;
+
+    // Legacy physical-vorticity compatibility factors.
+    //
+    // Production generalized dynamics should use the canonical
+    // contravariant methods below. These retain Cartesian/RLL physical
+    // compatibility paths.
+    Core::Geometry::GeometryField2D legacy_h1_u;
+    Core::Geometry::GeometryField2D legacy_h1_v;
+    Core::Geometry::GeometryField2D legacy_h2_u;
+
     Real dq1 = real(1.0);
     Real dq2 = real(1.0);
 
-    KOKKOS_INLINE_FUNCTION
-    Real
-    coefficient(const Real* values, int j) const noexcept {
-        return values ? values[j] : real(1.0);
-    }
-
-    // CVVM RELAX_3D YTEM after conversion from canonical contravariant
-    // vorticity to physical State xi and legacy eta. This RHS ALREADY contains
-    // J. Do not multiply by J again in the vertical solver.
+    // Legacy physical VVM convention:
+    //
+    //     xi  = physical omega_1
+    //     eta = -physical omega_2
+    //
+    // This path intentionally retains the previous Cartesian/RLL orthogonal
+    // factorization. Nonorthogonal geometry must use the canonical method.
     template <typename XiView, typename EtaView>
     KOKKOS_INLINE_FUNCTION Real
     calculate_weighted_rhs_at_t(
         const XiView& xi, const EtaView& eta, int k, int j, int i) const noexcept {
+
+        const Real h2 = legacy_h2_u(j, i);
+
         return -h2 * (eta(k, j, i) - eta(k, j, i - 1)) / dq1 -
-               (coefficient(h1_v, j) * xi(k, j, i) - coefficient(h1_v, j - 1) * xi(k, j - 1, i)) /
-                   dq2;
+               (legacy_h1_v(j, i) * xi(k, j, i) - legacy_h1_v(j - 1, i) * xi(k, j - 1, i)) / dq2;
     }
 
-    // Canonical persistent-vorticity form of the J-weighted vertical-wind RHS.
+    // Generalized CVVM RELAX_3D YTEM.
     //
-    // VVM State convention:
+    // Persistent VVM convention:
     //
     //     xi_con  =  omega^1
     //     eta_con = -omega^2
     //
-    // For orthogonal Cartesian/RLL geometry:
-    //
-    //     xi_physical  = h1 * xi_con
-    //     eta_physical = h2 * eta_con
-    //
-    // The factorization below deliberately mirrors calculate_weighted_rhs_at_t()
-    // as closely as possible. This keeps the representation change local while
-    // preserving the established weighted-RHS numerical structure.
-    //
-    // This is the current Cartesian/RLL orthogonal implementation. A future
-    // nonorthogonal cubed-sphere implementation must use the full metric tensor
-    // rather than extending these scalar scale-factor relations.
+    // The result already contains J and must NOT be multiplied by J again.
     template <typename XiConView, typename EtaConView>
     KOKKOS_INLINE_FUNCTION Real
     calculate_weighted_rhs_from_vvm_contravariant_at_t(const XiConView& xi_con,
@@ -114,60 +139,74 @@ struct VerticalWindDiagnosticDeviceView {
         const int j,
         const int i) const noexcept {
 
-        const Real h1_north = coefficient(h1_v, j);
-        const Real h1_south = coefficient(h1_v, j - 1);
-
-        // Recover the physical/legacy quantities locally only for the existing
-        // weighted-RHS factorization.
+        // CVVM:
         //
-        // eta_con already contains the historical VVM minus sign.
-        const Real eta_east = h2 * eta_con(k, j, i);
-        const Real eta_west = h2 * eta_con(k, j, i - 1);
+        //     Z3DX = omega^1
+        //     Z3DY = omega^2 = -eta_con
+        //     GG   = J^2 g^ij
+        //
+        // In 2-D:
+        //
+        //     GG11 =  g22
+        //     GG12 = -g12
+        //     GG22 =  g11
 
-        const Real xi_north = h1_north * xi_con(k, j, i);
-        const Real xi_south = h1_south * xi_con(k, j - 1, i);
+        const Real omega2_east = -eta_con(k, j, i);
+        const Real omega2_west = -eta_con(k, j, i - 1);
+        const Real omega1_north = xi_con(k, j, i);
+        const Real omega1_south = xi_con(k, j - 1, i);
 
-        return -h2 * (eta_east - eta_west) / dq1 -
-               (h1_north * xi_north - h1_south * xi_south) / dq2;
+        const Real direct_q1 =
+            (g_cov_u.a22(j, i) * omega2_east - g_cov_u.a22(j, i - 1) * omega2_west) / dq1;
+        const Real direct_q2 =
+            -(g_cov_v.a11(j, i) * omega1_north - g_cov_v.a11(j - 1, i) * omega1_south) / dq2;
+
+        // CVVM mixed q1 derivative:
+        //
+        //   -d_q1( GG12 * omega1 )
+        //
+        // evaluated with the native staggered four-point interpolation.
+        const Real cross_q1 = -((-g_cov_v.a12(j, i + 1)) * xi_con(k, j, i + 1) +
+                                  (-g_cov_v.a12(j - 1, i + 1)) * xi_con(k, j - 1, i + 1) -
+                                  (-g_cov_v.a12(j, i - 1)) * xi_con(k, j, i - 1) -
+                                  (-g_cov_v.a12(j - 1, i - 1)) * xi_con(k, j - 1, i - 1)) /
+                              (real(4.0) * dq1);
+
+        // CVVM mixed q2 derivative:
+        //
+        //   +d_q2( GG12 * omega2 )
+        const Real cross_q2 = ((-g_cov_u.a12(j + 1, i)) * (-eta_con(k, j + 1, i)) +
+                                  (-g_cov_u.a12(j + 1, i - 1)) * (-eta_con(k, j + 1, i - 1)) -
+                                  (-g_cov_u.a12(j - 1, i)) * (-eta_con(k, j - 1, i)) -
+                                  (-g_cov_u.a12(j - 1, i - 1)) * (-eta_con(k, j - 1, i - 1))) /
+                              (real(4.0) * dq2);
+
+        return direct_q1 + direct_q2 + cross_q1 + cross_q2;
     }
 
-    // D = div_h(omega_h); d_z(zeta) = -D. Physical State eta is minus the
-    // canonical northward vorticity. Native source staggering is retained.
+    // Legacy physical horizontal-vorticity divergence.
     template <typename XiView, typename EtaView>
     KOKKOS_INLINE_FUNCTION Real
     calculate_vorticity_divergence_at_z(
         const XiView& xi, const EtaView& eta, int k, int j, int i) const noexcept {
+
+        const Real h2 = legacy_h2_u(j, i);
+
         return (h2 * (xi(k, j, i + 1) - xi(k, j, i)) / dq1 -
-                   (coefficient(h1_u, j + 1) * eta(k, j + 1, i) -
-                       coefficient(h1_u, j) * eta(k, j, i)) /
+                   (legacy_h1_u(j + 1, i) * eta(k, j + 1, i) - legacy_h1_u(j, i) * eta(k, j, i)) /
                        dq2) /
-               coefficient(jacobian_z, j);
+               jacobian_z(j, i);
     }
 
-    // Canonical generalized-coordinate form of horizontal vorticity
-    // divergence.
+    // Generalized divergence:
     //
-    // Inputs are the actual contravariant tensor components:
+    //   div_h omega_h =
+    //       1/J [
+    //           d_q1(J omega^1)
+    //         + d_q2(J omega^2)
+    //       ].
     //
-    //     omega1 = omega^1
-    //     omega2 = omega^2
-    //
-    // For the currently supported Cartesian/RLL geometries:
-    //
-    //     div_h(omega_h)
-    //       = 1/J [
-    //             d_q1(J omega^1)
-    //           + d_q2(J omega^2)
-    //         ].
-    //
-    // Staggering:
-    //
-    //     omega^1 : V
-    //     omega^2 : U
-    //     result  : Z
-    //
-    // The VVM State convention eta_con = -omega^2 is intentionally NOT
-    // handled here. The caller owns that representation boundary.
+    // omega^1 is native at V, omega^2 is native at U.
     template <typename Omega1View, typename Omega2View>
     KOKKOS_INLINE_FUNCTION Real
     calculate_vorticity_divergence_from_contravariant_at_z(const Omega1View& omega1,
@@ -175,30 +214,15 @@ struct VerticalWindDiagnosticDeviceView {
         const int k,
         const int j,
         const int i) const noexcept {
-
-        // For Cartesian/RLL:
-        //
-        //     J_V = h1_V * h2
-        //     J_U = h1_U * h2
-        //
-        // h2 is constant for the current RLL geometry and unity in Cartesian.
-        const Real jacobian_v = h2 * coefficient(h1_v, j);
-        const Real jacobian_u_south = h2 * coefficient(h1_u, j);
-        const Real jacobian_u_north = h2 * coefficient(h1_u, j + 1);
-
         const Real flux_q1 =
-            (jacobian_v * omega1(k, j, i + 1) - jacobian_v * omega1(k, j, i)) / dq1;
+            (jacobian_v(j, i + 1) * omega1(k, j, i + 1) - jacobian_v(j, i) * omega1(k, j, i)) / dq1;
 
         const Real flux_q2 =
-            (jacobian_u_north * omega2(k, j + 1, i) - jacobian_u_south * omega2(k, j, i)) / dq2;
+            (jacobian_u(j + 1, i) * omega2(k, j + 1, i) - jacobian_u(j, i) * omega2(k, j, i)) / dq2;
 
-        return (flux_q1 + flux_q2) / coefficient(jacobian_z, j);
+        return (flux_q1 + flux_q2) / jacobian_z(j, i);
     }
 
-    // Keep zeta(top) unchanged. spacing(k) = dz/flex_up(k). The optional
-    // first upper ghost follows CVVM ZETA_DIAG and VVMex's upward formula.
-    // Caller guarantees valid halos, nonaliasing inputs/output, bottom>=0,
-    // bottom<=top, and storage through top+1 when extend_upper_ghost is true.
     template <typename XiView, typename EtaView, typename Profile, typename ZetaView>
     KOKKOS_INLINE_FUNCTION void
     integrate_zeta_column(const XiView& xi,
@@ -210,6 +234,7 @@ struct VerticalWindDiagnosticDeviceView {
         int j,
         int i,
         bool extend_upper_ghost) const noexcept {
+
         for (int k = top - 1; k >= bottom; --k) {
             zeta(k, j, i) = zeta(k + 1, j, i) +
                             spacing(k) * calculate_vorticity_divergence_at_z(xi, eta, k, j, i);
@@ -218,16 +243,10 @@ struct VerticalWindDiagnosticDeviceView {
         if (extend_upper_ghost) {
             zeta(top + 1, j, i) =
                 zeta(top, j, i) -
-                spacing(top) * calculate_vorticity_divergence_at_z(xi, eta, k_top(top), j, i);
+                spacing(top) * calculate_vorticity_divergence_at_z(xi, eta, top, j, i);
         }
     }
 
-    // Integrate physical vertical vorticity using canonical contravariant
-    // horizontal vorticity.
-    //
-    // The top zeta value remains the prescribed/diagnosed physical value.
-    // Horizontal vorticity is supplied as true omega^1 / omega^2 tensor
-    // components.
     template <typename Omega1View, typename Omega2View, typename Profile, typename ZetaView>
     KOKKOS_INLINE_FUNCTION void
     integrate_zeta_column_from_contravariant(const Omega1View& omega1,
@@ -252,16 +271,62 @@ struct VerticalWindDiagnosticDeviceView {
                 zeta(top, j, i) -
                 spacing(top) * calculate_vorticity_divergence_from_contravariant_at_z(omega1,
                                    omega2,
-                                   k_top(top),
+                                   top,
                                    j,
                                    i);
         }
     }
 
-    // Interior row; physical walls and vertical end rows belong to the caller.
-    // Profiles are rhobar(k), rhobar_up(k), flex_mid(k), flex_up(k).
-    // All density/stretching entries and inverse_dz must be finite and positive.
-    // shift is the CVVM WRXMU coefficient in the J-weighted algebraic equation.
+    // Horizontal neighbor part of CVVM RELAX_3D.
+    //
+    // Direct terms use J*g^11 and J*g^22.
+    // Mixed terms use J*g^12 and retain the exact native CVVM staggering.
+    template <typename View>
+    KOKKOS_INLINE_FUNCTION Real
+    calculate_horizontal_neighbors_at_t(
+        const View& previous, const int k, const int j, const int i) const noexcept {
+
+        const Real rdq1 = real(1.0) / dq1;
+
+        const Real rdq2 = real(1.0) / dq2;
+
+        const Real direct = weighted_contra_u.a11(j, i) * previous(k, j, i + 1) * rdq1 * rdq1 +
+                            weighted_contra_u.a11(j, i - 1) * previous(k, j, i - 1) * rdq1 * rdq1 +
+                            weighted_contra_v.a22(j, i) * previous(k, j + 1, i) * rdq2 * rdq2 +
+                            weighted_contra_v.a22(j - 1, i) * previous(k, j - 1, i) * rdq2 * rdq2;
+
+        const Real cross =
+            (weighted_contra_v.a12(j, i + 1) * (previous(k, j + 1, i + 1) - previous(k, j, i + 1)) +
+
+                weighted_contra_v.a12(j - 1, i + 1) *
+                    (previous(k, j, i + 1) - previous(k, j - 1, i + 1)) -
+
+                weighted_contra_v.a12(j, i - 1) *
+                    (previous(k, j + 1, i - 1) - previous(k, j, i - 1)) -
+
+                weighted_contra_v.a12(j - 1, i - 1) *
+                    (previous(k, j, i - 1) - previous(k, j - 1, i - 1)) +
+
+                weighted_contra_u.a12(j + 1, i) *
+                    (previous(k, j + 1, i + 1) - previous(k, j + 1, i)) +
+
+                weighted_contra_u.a12(j + 1, i - 1) *
+                    (previous(k, j + 1, i) - previous(k, j + 1, i - 1)) -
+
+                weighted_contra_u.a12(j - 1, i) *
+                    (previous(k, j - 1, i + 1) - previous(k, j - 1, i)) -
+
+                weighted_contra_u.a12(j - 1, i - 1) *
+                    (previous(k, j - 1, i) - previous(k, j - 1, i - 1))) /
+            (real(4.0) * dq1 * dq2);
+
+        return direct + cross;
+    }
+
+    // Vertical tridiagonal coefficients.
+    //
+    // The coefficients are now (j,i,k), not merely (j,k), because J and
+    // horizontal metrics may vary in both horizontal directions.
     template <typename Rho, typename RhoUp, typename FlexMid, typename FlexUp>
     KOKKOS_INLINE_FUNCTION VerticalWindEllipticRow
     calculate_row_at_t(const Rho& rho,
@@ -273,16 +338,16 @@ struct VerticalWindDiagnosticDeviceView {
         int k,
         int j,
         int i) const noexcept {
-        (void)i;
 
         VerticalWindEllipticRow row;
-        row.east = coefficient(weighted_inverse_metric_u, j) / (dq1 * dq1);
-        row.west = row.east;
-        row.north = coefficient(weighted_inverse_metric_v, j) / (dq2 * dq2);
-        row.south = coefficient(weighted_inverse_metric_v, j - 1) / (dq2 * dq2);
+
+        row.east = weighted_contra_u.a11(j, i) / (dq1 * dq1);
+        row.west = weighted_contra_u.a11(j, i - 1) / (dq1 * dq1);
+        row.north = weighted_contra_v.a22(j, i) / (dq2 * dq2);
+        row.south = weighted_contra_v.a22(j - 1, i) / (dq2 * dq2);
         row.shift = shift;
 
-        const Real vertical = coefficient(jacobian_t, j) * flex_up(k) * inverse_dz * inverse_dz;
+        const Real vertical = jacobian_t(j, i) * flex_up(k) * inverse_dz * inverse_dz;
         row.lower = -vertical * flex_mid(k) / rho(k);
         row.upper = -vertical * flex_mid(k + 1) / rho(k + 1);
         row.diagonal = (shift + row.east + row.west + row.north + row.south) / rho_up(k) -
@@ -290,76 +355,50 @@ struct VerticalWindDiagnosticDeviceView {
 
         return row;
     }
-
-private:
-    KOKKOS_INLINE_FUNCTION
-    static int
-    k_top(int top) noexcept {
-        return top;
-    }
 };
 
 inline VerticalWindDiagnosticDeviceView
 make_vertical_wind_diagnostic_device_view(const Core::Geometry::HorizontalGeometry& geometry) {
-    using namespace Core::Geometry;
 
-    if (geometry.kind() != GeometryKind::Cartesian &&
-        geometry.kind() != GeometryKind::RegularLatLon) {
-        throw std::invalid_argument("Vertical wind diagnostic supports only Cartesian and regular "
-                                    "latitude-longitude geometry.");
-    }
+    using namespace Core::Geometry;
 
     if (geometry.layout().halo < 1 || geometry.layout().local_physical_nx < 2 ||
         geometry.layout().local_physical_ny < 2) {
-        throw std::invalid_argument("Vertical wind diagnostic requires two active horizontal axes "
-                                    "and at least one halo cell.");
+        throw std::invalid_argument("Vertical wind diagnostic requires "
+                                    "two active horizontal axes and at least "
+                                    "one halo cell.");
     }
 
-    VerticalWindDiagnosticDeviceView result;
-    result.dq1 = geometry.dq1();
-    result.dq2 = geometry.dq2();
-
-    if (!std::isfinite(result.dq1) || !std::isfinite(result.dq2) || result.dq1 <= real(0.0) ||
-        result.dq2 <= real(0.0)) {
-        throw std::invalid_argument("Invalid horizontal coordinate increments.");
-    }
-
-    if (geometry.kind() == GeometryKind::Cartesian) {
-        return result;
+    if (!std::isfinite(geometry.dq1()) || !std::isfinite(geometry.dq2()) ||
+        geometry.dq1() <= real(0.0) || geometry.dq2() <= real(0.0)) {
+        throw std::invalid_argument("Invalid horizontal "
+                                    "computational-coordinate increments.");
     }
 
     const auto t = geometry.device_view(HorizontalLocation::T);
     const auto u = geometry.device_view(HorizontalLocation::U);
     const auto v = geometry.device_view(HorizontalLocation::V);
     const auto z = geometry.device_view(HorizontalLocation::Z);
-    const auto ny = static_cast<std::size_t>(geometry.layout().local_total_ny());
 
-    const auto latitude_data = [ny](const GeometryField2D& field) {
-        if (field.layout != GeometryFieldLayout::VaryingJ ||
-            field.one_dimensional.extent(0) != ny || !field.one_dimensional.data()) {
-            throw std::invalid_argument(
-                "RLL vertical diagnostic requires the existing latitude-only metric storage.");
-        }
-        return field.one_dimensional.data();
-    };
+    VerticalWindDiagnosticDeviceView result;
 
-    if (v.contravariant_to_physical.a22.layout != GeometryFieldLayout::Constant) {
-        throw std::invalid_argument(
-            "RLL vertical diagnostic requires constant meridional scale factor.");
-    }
+    result.jacobian_t = t.sqrt_g;
+    result.jacobian_u = u.sqrt_g;
+    result.jacobian_v = v.sqrt_g;
+    result.jacobian_z = z.sqrt_g;
 
-    result.h2 = v.contravariant_to_physical.a22.constant;
-    if (!std::isfinite(result.h2) || result.h2 <= real(0.0)) {
-        throw std::invalid_argument("Invalid meridional scale factor.");
-    }
+    result.g_cov_u = u.g_cov;
+    result.g_cov_v = v.g_cov;
 
-    result.jacobian_t = latitude_data(t.sqrt_g);
-    result.jacobian_z = latitude_data(z.sqrt_g);
-    result.h1_u = latitude_data(u.contravariant_to_physical.a11);
-    result.h1_v = latitude_data(v.contravariant_to_physical.a11);
-    result.weighted_inverse_metric_u = latitude_data(u.sqrt_g_g_contra.a11);
-    result.weighted_inverse_metric_v = latitude_data(v.sqrt_g_g_contra.a22);
+    result.weighted_contra_u = u.sqrt_g_g_contra;
+    result.weighted_contra_v = v.sqrt_g_g_contra;
 
+    result.legacy_h1_u = u.contravariant_to_physical.a11;
+    result.legacy_h1_v = v.contravariant_to_physical.a11;
+    result.legacy_h2_u = u.contravariant_to_physical.a22;
+
+    result.dq1 = geometry.dq1();
+    result.dq2 = geometry.dq2();
     return result;
 }
 
