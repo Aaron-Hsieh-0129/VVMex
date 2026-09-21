@@ -2,7 +2,7 @@
 #define VVM_DYNAMICS_REGULAR_LAT_LON_TAKACS_HPP
 
 #include "dynamics/operators/RegularLatLonDryBuoyancy.hpp"
-#include "dynamics/operators/RegularLatLonScalarTransport.hpp"
+#include "dynamics/operators/GeneralizedScalarTransport.hpp"
 #include "dynamics/operators/GeneralizedVorticityTendency.hpp"
 #include "dynamics/spatial_schemes/SpatialScheme.hpp"
 
@@ -149,7 +149,7 @@ private:
     void validate_dry_buoyancy(
         const Core::State& state, const Core::Grid& grid, const Core::Parameters& params) const;
 
-    Operators::RegularLatLonScalarTransport scalar_transport_;
+    Operators::GeneralizedScalarTransport scalar_transport_;
     Operators::RegularLatLonDryBuoyancy dry_buoyancy_;
     Operators::GeneralizedVorticityTendency vorticity_;
 

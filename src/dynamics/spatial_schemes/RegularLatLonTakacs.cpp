@@ -18,7 +18,7 @@ RegularLatLonTakacs::RegularLatLonTakacs(const Core::Geometry::HorizontalGeometr
     // Numerical schemes are constructed during model initialization, before
     // the time-integrator graph is captured. Prepare the exact operator
     // launch functors without evaluating a model tendency.
-    Operators::RegularLatLonScalarTransport::prepare_execution();
+    Operators::GeneralizedScalarTransport::prepare_execution();
 
     if (enable_dry_buoyancy_ || enable_moist_buoyancy_) {
         Operators::RegularLatLonDryBuoyancy::prepare_execution();
