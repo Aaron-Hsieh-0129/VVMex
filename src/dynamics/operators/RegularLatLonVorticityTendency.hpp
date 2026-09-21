@@ -1,46 +1,53 @@
 #ifndef VVM_DYNAMICS_OPERATORS_REGULAR_LAT_LON_VORTICITY_TENDENCY_HPP
 #define VVM_DYNAMICS_OPERATORS_REGULAR_LAT_LON_VORTICITY_TENDENCY_HPP
 
-#include <string>
-
-#include "core/State.hpp"
-#include "core/Parameters.hpp"
-#include "dynamics/operators/GeneralizedHorizontalVorticityTransport.hpp"
-#include "dynamics/operators/GeneralizedHorizontalDeformation.hpp"
-#include "dynamics/operators/GeneralizedTopTransport.hpp"
-#include "dynamics/operators/GeneralizedTopDeformation.hpp"
+#include "dynamics/operators/RegularLatLonVorticityTendencyBoundary.hpp"
 
 namespace VVM::Dynamics::Operators {
 
-// Temporary RLL production orchestrator. All transport and deformation
-// stencils now use generalized-coordinate operators. Wind inputs are
-// synchronized u_con/v_con, including halos; w remains physical vertical wind.
-//
-// xi_con = omega^1; eta_con = -omega^2. zeta is relative physical vertical
-// vorticity, equal to omega^3 for the current horizontal-only mapping.
-// The output accumulator remains physical: horizontal tendencies are
-// converted once here, and DynamicalCore converts the total tendency.
+// Source compatibility only. Production owns GeneralizedVorticityTendency
+// directly. This wrapper has no stencil, launch functor or device operator.
+// Remove after remaining external callers/tests migrate.
 class RegularLatLonVorticityTendency {
 public:
-    enum class Term { Transport, Stretching, Twisting, Planetary };
+    using Term = GeneralizedVorticityTendency::Term;
 
-    explicit RegularLatLonVorticityTendency(const Core::Geometry::HorizontalGeometry& geometry);
+    explicit RegularLatLonVorticityTendency(const Core::Geometry::HorizontalGeometry& geometry)
+        : generalized_(require_rll_geometry(geometry)) {}
 
-    static void prepare_execution();
+    static void
+    prepare_execution() {
+        GeneralizedVorticityTendency::prepare_execution();
+    }
 
-    void add_from_canonical_state(const Core::State& state,
+    void
+    add_from_canonical_state(const Core::State& state,
         const Core::Grid& grid,
         const Core::Parameters& params,
         Core::Field<3>& output,
         const std::string& variable,
-        Term term) const;
+        Term term) const {
+        add_regular_lat_lon_physical_vorticity_tendency(generalized_,
+            state,
+            grid,
+            params,
+            output,
+            variable,
+            term);
+    }
 
 private:
-    Kokkos::View<GeneralizedHorizontalVorticityTransportDeviceView> horizontal_transport_;
-    Kokkos::View<GeneralizedTopTransportDeviceView> transport_;
+    static const Core::Geometry::HorizontalGeometry&
+    require_rll_geometry(const Core::Geometry::HorizontalGeometry& geometry) {
+        if (geometry.kind() != Core::Geometry::GeometryKind::RegularLatLon) {
+            throw std::invalid_argument(
+                "RegularLatLonVorticityTendency compatibility requires RLL geometry.");
+        }
 
-    GeneralizedHorizontalDeformationDeviceView horizontal_deformation_;
-    GeneralizedTopDeformationDeviceView top_deformation_;
+        return geometry;
+    }
+
+    GeneralizedVorticityTendency generalized_;
 };
 
 } // namespace VVM::Dynamics::Operators

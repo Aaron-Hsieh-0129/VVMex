@@ -3,7 +3,7 @@
 
 #include "dynamics/operators/RegularLatLonDryBuoyancy.hpp"
 #include "dynamics/operators/RegularLatLonScalarTransport.hpp"
-#include "dynamics/operators/RegularLatLonVorticityTendency.hpp"
+#include "dynamics/operators/GeneralizedVorticityTendency.hpp"
 #include "dynamics/spatial_schemes/SpatialScheme.hpp"
 
 namespace VVM {
@@ -104,45 +104,55 @@ public:
         const Core::Grid& grid,
         const Core::Parameters& params,
         Core::Field<3>& output) const override {
-        vorticity_.add_from_canonical_state(state,
+        add_vorticity_tendency(state,
             grid,
             params,
             output,
             "xi",
-            Operators::RegularLatLonVorticityTendency::Term::Planetary);
+            Operators::GeneralizedVorticityTendency::Term::Planetary);
     }
+
     void
     calculate_coriolis_tendency_y(const Core::State& state,
         const Core::Grid& grid,
         const Core::Parameters& params,
         Core::Field<3>& output) const override {
-        vorticity_.add_from_canonical_state(state,
+        add_vorticity_tendency(state,
             grid,
             params,
             output,
             "eta",
-            Operators::RegularLatLonVorticityTendency::Term::Planetary);
+            Operators::GeneralizedVorticityTendency::Term::Planetary);
     }
+
     void
     calculate_coriolis_tendency_z(const Core::State& state,
         const Core::Grid& grid,
         const Core::Parameters& params,
         Core::Field<3>& output) const override {
-        vorticity_.add_from_canonical_state(state,
+        add_vorticity_tendency(state,
             grid,
             params,
             output,
             "zeta",
-            Operators::RegularLatLonVorticityTendency::Term::Planetary);
+            Operators::GeneralizedVorticityTendency::Term::Planetary);
     }
 
 private:
+    void add_vorticity_tendency(const Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& output,
+        const std::string& variable,
+        Operators::GeneralizedVorticityTendency::Term term) const;
+
     void validate_dry_buoyancy(
         const Core::State& state, const Core::Grid& grid, const Core::Parameters& params) const;
 
     Operators::RegularLatLonScalarTransport scalar_transport_;
     Operators::RegularLatLonDryBuoyancy dry_buoyancy_;
-    Operators::RegularLatLonVorticityTendency vorticity_;
+    Operators::GeneralizedVorticityTendency vorticity_;
+
     bool enable_dry_buoyancy_;
     bool enable_moist_buoyancy_;
 };

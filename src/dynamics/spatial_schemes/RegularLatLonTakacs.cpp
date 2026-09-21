@@ -1,4 +1,5 @@
 #include "dynamics/spatial_schemes/RegularLatLonTakacs.hpp"
+#include "dynamics/operators/RegularLatLonVorticityTendencyBoundary.hpp"
 
 #include <stdexcept>
 #include <string>
@@ -25,6 +26,22 @@ RegularLatLonTakacs::RegularLatLonTakacs(const Core::Geometry::HorizontalGeometr
 }
 
 void
+RegularLatLonTakacs::add_vorticity_tendency(const Core::State& state,
+    const Core::Grid& grid,
+    const Core::Parameters& params,
+    Core::Field<3>& output,
+    const std::string& variable,
+    Operators::GeneralizedVorticityTendency::Term term) const {
+    Operators::add_regular_lat_lon_physical_vorticity_tendency(vorticity_,
+        state,
+        grid,
+        params,
+        output,
+        variable,
+        term);
+}
+
+void
 RegularLatLonTakacs::calculate_advection_tendency(const Core::State& state,
     const Core::Field<3>& scalar,
     const Core::Field<3>& contravariant_mass_flux_q1,
@@ -44,12 +61,12 @@ RegularLatLonTakacs::calculate_advection_tendency(const Core::State& state,
     }
 
     if (var_name == "xi" || var_name == "eta" || var_name == "zeta") {
-        vorticity_.add_from_canonical_state(state,
+        add_vorticity_tendency(state,
             grid,
             params,
             out_tendency,
             var_name,
-            Operators::RegularLatLonVorticityTendency::Term::Transport);
+            Operators::GeneralizedVorticityTendency::Term::Transport);
         return;
     }
 
@@ -109,12 +126,12 @@ RegularLatLonTakacs::calculate_stretching_tendency_x(const Core::State& state,
     const Core::Parameters& params,
     Core::Field<3>& output,
     const std::string& variable) const {
-    vorticity_.add_from_canonical_state(state,
+    add_vorticity_tendency(state,
         grid,
         params,
         output,
         variable,
-        Operators::RegularLatLonVorticityTendency::Term::Stretching);
+        Operators::GeneralizedVorticityTendency::Term::Stretching);
 }
 void
 RegularLatLonTakacs::calculate_stretching_tendency_y(const Core::State& state,
@@ -138,12 +155,12 @@ RegularLatLonTakacs::calculate_twisting_tendency_x(const Core::State& state,
     const Core::Parameters& params,
     Core::Field<3>& output,
     const std::string& variable) const {
-    vorticity_.add_from_canonical_state(state,
+    add_vorticity_tendency(state,
         grid,
         params,
         output,
         variable,
-        Operators::RegularLatLonVorticityTendency::Term::Twisting);
+        Operators::GeneralizedVorticityTendency::Term::Twisting);
 }
 void
 RegularLatLonTakacs::calculate_twisting_tendency_y(const Core::State& state,
