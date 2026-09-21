@@ -1,7 +1,7 @@
 #ifndef VVM_DYNAMICS_REGULAR_LAT_LON_TAKACS_HPP
 #define VVM_DYNAMICS_REGULAR_LAT_LON_TAKACS_HPP
 
-#include "dynamics/operators/RegularLatLonDryBuoyancy.hpp"
+#include "dynamics/operators/GeneralizedBuoyancy.hpp"
 #include "dynamics/operators/GeneralizedScalarTransport.hpp"
 #include "dynamics/operators/GeneralizedVorticityTendency.hpp"
 #include "dynamics/spatial_schemes/SpatialScheme.hpp"
@@ -9,16 +9,10 @@
 namespace VVM {
 namespace Dynamics {
 
-// Guarded Takacs implementation for ordinary density-normalized scalars
-// and explicitly selected horizontal-vorticity buoyancy on regular
-// latitude-longitude geometry.
-//
-// xi is physical eastward vorticity at V. eta is negative physical
-// northward vorticity at U, preserving the existing State convention.
-//
-// Flat RLL vorticity transport and deformation use the shared CVVM operators.
-// Moist scalar and P3 buoyancy interfaces are available for controlled tests.
-// Full moist-model execution remains guarded pending the other physics paths.
+// RLL configuration and physical-tendency boundary for generalized scalar,
+// vorticity and buoyancy operators. The numerical kernels consume geometry
+// data, not latitude-longitude-specific equations. This adapter still
+// returns physical xi/eta increments to the existing tendency accumulator.
 class RegularLatLonTakacs final : public SpatialScheme {
 public:
     // Dry mode requires a dry State; moist mode requires physical qv, qp and
@@ -149,8 +143,14 @@ private:
     void validate_dry_buoyancy(
         const Core::State& state, const Core::Grid& grid, const Core::Parameters& params) const;
 
+    void add_buoyancy_tendency(const Core::State& state,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::Field<3>& output,
+        bool xi_component) const;
+
     Operators::GeneralizedScalarTransport scalar_transport_;
-    Operators::RegularLatLonDryBuoyancy dry_buoyancy_;
+    Operators::GeneralizedBuoyancy buoyancy_;
     Operators::GeneralizedVorticityTendency vorticity_;
 
     bool enable_dry_buoyancy_;

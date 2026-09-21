@@ -12,8 +12,11 @@ namespace Dynamics {
 RegularLatLonTakacs::RegularLatLonTakacs(const Core::Geometry::HorizontalGeometry& geometry,
     const bool enable_dry_buoyancy,
     const bool enable_moist_buoyancy)
-    : scalar_transport_(geometry), dry_buoyancy_(geometry), vorticity_(geometry),
+    : scalar_transport_(geometry), buoyancy_(geometry), vorticity_(geometry),
       enable_dry_buoyancy_(enable_dry_buoyancy), enable_moist_buoyancy_(enable_moist_buoyancy) {
+    if (geometry.kind() != Core::Geometry::GeometryKind::RegularLatLon) {
+        throw std::invalid_argument("RegularLatLonTakacs requires RLL geometry.");
+    }
 
     // Numerical schemes are constructed during model initialization, before
     // the time-integrator graph is captured. Prepare the exact operator
@@ -21,7 +24,7 @@ RegularLatLonTakacs::RegularLatLonTakacs(const Core::Geometry::HorizontalGeometr
     Operators::GeneralizedScalarTransport::prepare_execution();
 
     if (enable_dry_buoyancy_ || enable_moist_buoyancy_) {
-        Operators::RegularLatLonDryBuoyancy::prepare_execution();
+        Operators::GeneralizedBuoyancy::prepare_execution();
     }
 }
 
@@ -180,79 +183,83 @@ RegularLatLonTakacs::calculate_twisting_tendency_z(const Core::State& state,
 }
 
 void
-RegularLatLonTakacs::calculate_buoyancy_tendency_x(const Core::State& state,
+RegularLatLonTakacs::add_buoyancy_tendency(const Core::State& state,
     const Core::Grid& grid,
     const Core::Parameters& params,
-    Core::Field<3>& out_tendency) const {
+    Core::Field<3>& output,
+    bool xi_component) const {
+    using Core::Geometry::GeometryKind;
+    using Core::Geometry::HorizontalLocation;
 
+    if (grid.geometry().kind() != GeometryKind::RegularLatLon) {
+        throw std::logic_error("RLL buoyancy output conversion requires RLL geometry.");
+    }
+
+    if (!enable_moist_buoyancy_) {
+        validate_dry_buoyancy(state, grid, params);
+    }
+
+    const int h = grid.get_halo_cells();
+    const int end = grid.get_local_total_points_z() - h - 1;
+
+    const auto location = xi_component ? HorizontalLocation::V : HorizontalLocation::U;
+
+    const auto geometry = grid.geometry().device_view(location);
+
+    const auto weight = xi_component ? geometry.contravariant_to_physical.a11
+                                     : geometry.contravariant_to_physical.a22;
+
+    // xi/eta and xi_con/eta_con use the same VVM sign convention. Only a
+    // positive RLL scale is needed here. Weight the new increment, never
+    // rescale contributions already present in the physical accumulator.
     if (enable_moist_buoyancy_) {
-        if (grid.geometry().kind() != Core::Geometry::GeometryKind::RegularLatLon) {
-            throw std::logic_error("Moist RLL buoyancy requires RLL geometry.");
-        }
-        const int h = grid.get_halo_cells();
-        dry_buoyancy_.add_moist_tendency(state.get_field<3>("th"),
+        buoyancy_.add_moist_tendency(state.get_field<3>("th"),
             state.get_field<1>("thbar"),
             params.gravity,
             state.get_field<3>("qv"),
             state.get_field<3>("qp"),
-            state.get_field<3>("ITYPEV"),
-            out_tendency,
+            state.get_field<3>(xi_component ? "ITYPEV" : "ITYPEU"),
+            output,
             h,
-            grid.get_local_total_points_z() - h - 1,
+            end,
             params.max_topo_idx,
-            true);
-        return;
+            xi_component,
+            weight);
     }
+    else if (xi_component) {
+        buoyancy_.add_xi_tendency(state.get_field<3>("th"),
+            state.get_field<1>("thbar"),
+            params.gravity,
+            output,
+            h,
+            end,
+            weight);
+    }
+    else {
+        buoyancy_.add_eta_tendency(state.get_field<3>("th"),
+            state.get_field<1>("thbar"),
+            params.gravity,
+            output,
+            h,
+            end,
+            weight);
+    }
+}
 
-    validate_dry_buoyancy(state, grid, params);
-
-    const int h = grid.get_halo_cells();
-    const int nz = grid.get_local_total_points_z();
-
-    dry_buoyancy_.add_xi_tendency(state.get_field<3>("th"),
-        state.get_field<1>("thbar"),
-        params.gravity,
-        out_tendency,
-        h,
-        nz - h - 1);
+void
+RegularLatLonTakacs::calculate_buoyancy_tendency_x(const Core::State& state,
+    const Core::Grid& grid,
+    const Core::Parameters& params,
+    Core::Field<3>& output) const {
+    add_buoyancy_tendency(state, grid, params, output, true);
 }
 
 void
 RegularLatLonTakacs::calculate_buoyancy_tendency_y(const Core::State& state,
     const Core::Grid& grid,
     const Core::Parameters& params,
-    Core::Field<3>& out_tendency) const {
-
-    if (enable_moist_buoyancy_) {
-        if (grid.geometry().kind() != Core::Geometry::GeometryKind::RegularLatLon) {
-            throw std::logic_error("Moist RLL buoyancy requires RLL geometry.");
-        }
-        const int h = grid.get_halo_cells();
-        dry_buoyancy_.add_moist_tendency(state.get_field<3>("th"),
-            state.get_field<1>("thbar"),
-            params.gravity,
-            state.get_field<3>("qv"),
-            state.get_field<3>("qp"),
-            state.get_field<3>("ITYPEU"),
-            out_tendency,
-            h,
-            grid.get_local_total_points_z() - h - 1,
-            params.max_topo_idx,
-            false);
-        return;
-    }
-
-    validate_dry_buoyancy(state, grid, params);
-
-    const int h = grid.get_halo_cells();
-    const int nz = grid.get_local_total_points_z();
-
-    dry_buoyancy_.add_eta_tendency(state.get_field<3>("th"),
-        state.get_field<1>("thbar"),
-        params.gravity,
-        out_tendency,
-        h,
-        nz - h - 1);
+    Core::Field<3>& output) const {
+    add_buoyancy_tendency(state, grid, params, output, false);
 }
 
 } // namespace Dynamics
