@@ -901,3 +901,10 @@ add_vvm_unit_test(test_generalized_wind_column_recovery DEVICE MPI
     LIBRARIES vvm_dynamics vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX
     TIMEOUT 180)
 
+
+# Elliptic operators composed from native-face generalized wind recovery.
+# Local skew-chart checks; no six-panel or oblique-wall boundary assumption.
+add_vvm_unit_test(test_generalized_horizontal_elliptic DEVICE MPI
+    LIBRARIES vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX
+    TIMEOUT 180)
+

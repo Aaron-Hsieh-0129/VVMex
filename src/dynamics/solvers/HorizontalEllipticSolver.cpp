@@ -29,8 +29,14 @@ HorizontalEllipticSolver::HorizontalEllipticSolver(const Core::Grid& grid,
             "HorizontalEllipticSolver does not yet support bounded q1 topology.");
     }
 
-    if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
-        regular_lat_lon_metrics_ = make_regular_lat_lon_elliptic_metrics(grid_.geometry());
+    if (grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
+        generalized_ = decltype(generalized_)("generalized_horizontal_elliptic");
+
+        auto host = Kokkos::create_mirror_view(generalized_);
+        host() = Operators::make_generalized_horizontal_elliptic_device_view(grid_.geometry());
+        Kokkos::deep_copy(generalized_, host);
+
+        prepare_generalized_execution();
     }
 
     if (horizontal.ny > 1 && horizontal.topology.q2 == Core::HorizontalEdgeTopology::Bounded) {
@@ -146,20 +152,27 @@ HorizontalEllipticSolver::solve_at_t(
         const auto previous_data = previous->get_device_data();
         auto current_data = current->get_mutable_device_data();
 
-        Kokkos::parallel_for("RelaxHorizontalEllipticAtT",
-            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({halo, halo}, {ny - halo, nx - halo}),
-            KOKKOS_LAMBDA(const int j, const int i) {
-                const VVM::Real operator_value =
-                    laplace_beltrami.calculate_jacobian_weighted_at_t(previous_data, j, i);
-                const VVM::Real diagonal = laplace_beltrami.jacobian_weighted_diagonal_at_t(j, i);
+        if (grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
+            relax_generalized_single(false, right_hand_side, *previous, *current, options);
+        }
+        else {
+            Kokkos::parallel_for("RelaxHorizontalEllipticAtT",
+                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({halo, halo}, {ny - halo, nx - halo}),
+                KOKKOS_LAMBDA(const int j, const int i) {
+                    const VVM::Real operator_value =
+                        laplace_beltrami.calculate_jacobian_weighted_at_t(previous_data, j, i);
 
-                const VVM::Real weighted_right_hand_side =
-                    laplace_beltrami.divergence.t.sqrt_g(j, i) * right_hand_side_data(j, i);
+                    const VVM::Real diagonal =
+                        laplace_beltrami.jacobian_weighted_diagonal_at_t(j, i);
 
-                current_data(j, i) =
-                    previous_data(j, i) +
-                    (operator_value - weighted_right_hand_side) / (diagonal_shift - diagonal);
-            });
+                    const VVM::Real weighted_right_hand_side =
+                        laplace_beltrami.divergence.t.sqrt_g(j, i) * right_hand_side_data(j, i);
+
+                    current_data(j, i) =
+                        previous_data(j, i) +
+                        (operator_value - weighted_right_hand_side) / (diagonal_shift - diagonal);
+                });
+        }
 
         refresh_solution_halos(*current);
     }
@@ -198,19 +211,27 @@ HorizontalEllipticSolver::solve_at_z(
         const auto previous_data = previous->get_device_data();
         auto current_data = current->get_mutable_device_data();
 
-        Kokkos::parallel_for("RelaxHorizontalEllipticAtZ",
-            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({halo, halo}, {ny - halo, nx - halo}),
-            KOKKOS_LAMBDA(const int j, const int i) {
-                const VVM::Real operator_value =
-                    laplace_beltrami.calculate_jacobian_weighted_at_z(previous_data, j, i);
-                const VVM::Real diagonal = laplace_beltrami.jacobian_weighted_diagonal_at_z(j, i);
-                const VVM::Real weighted_right_hand_side =
-                    laplace_beltrami.divergence.z.sqrt_g(j, i) * right_hand_side_data(j, i);
+        if (grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
+            relax_generalized_single(true, right_hand_side, *previous, *current, options);
+        }
+        else {
+            Kokkos::parallel_for("RelaxHorizontalEllipticAtZ",
+                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({halo, halo}, {ny - halo, nx - halo}),
+                KOKKOS_LAMBDA(const int j, const int i) {
+                    const VVM::Real operator_value =
+                        laplace_beltrami.calculate_jacobian_weighted_at_z(previous_data, j, i);
 
-                current_data(j, i) =
-                    previous_data(j, i) +
-                    (operator_value - weighted_right_hand_side) / (diagonal_shift - diagonal);
-            });
+                    const VVM::Real diagonal =
+                        laplace_beltrami.jacobian_weighted_diagonal_at_z(j, i);
+
+                    const VVM::Real weighted_right_hand_side =
+                        laplace_beltrami.divergence.z.sqrt_g(j, i) * right_hand_side_data(j, i);
+
+                    current_data(j, i) =
+                        previous_data(j, i) +
+                        (operator_value - weighted_right_hand_side) / (diagonal_shift - diagonal);
+                });
+        }
 
         refresh_solution_halos(*current);
     }
@@ -248,7 +269,6 @@ HorizontalEllipticSolver::solve_at_z_and_t(const Core::Field<2>& right_hand_side
     const auto right_hand_side_at_t_data = right_hand_side_at_t.get_device_data();
 
     const auto laplace_beltrami = laplace_beltrami_;
-    const auto metrics = regular_lat_lon_metrics_;
 
     const VVM::Real diagonal_shift = options.diagonal_shift;
     const VVM::Real dq1 = laplace_beltrami.divergence.t.dq1;
@@ -308,117 +328,14 @@ HorizontalEllipticSolver::solve_at_z_and_t(const Core::Field<2>& right_hand_side
                         cartesian_inverse_diagonal;
                 });
         }
-        else if (geometry_kind == Core::Geometry::GeometryKind::RegularLatLon) {
-            const auto compact_policy = Kokkos::Experimental::require(base_policy,
-                Kokkos::Experimental::WorkItemProperty::HintLightWeight);
-
-            // RLL metrics depend only on j. Capture the required 1-D views.
-            // Preserve the previous gradient/divergence arithmetic, including
-            // the separate inverse-J and J factors, for this representation change.
-            Kokkos::parallel_for("RelaxHorizontalEllipticRegularLatLonAtZAndT",
-                compact_policy,
-                KOKKOS_LAMBDA(const int j, const int i) {
-                    const VVM::Real gradient_z_q1_plus =
-                        metrics.inv_sqrt_g_at_v(j) * metrics.sqrt_g_g_contra_11_at_v(j) *
-                        (previous_at_z_data(j, i + 1) - previous_at_z_data(j, i)) / metrics.dq1;
-
-                    const VVM::Real gradient_z_q1_minus =
-                        metrics.inv_sqrt_g_at_v(j) * metrics.sqrt_g_g_contra_11_at_v(j) *
-                        (previous_at_z_data(j, i) - previous_at_z_data(j, i - 1)) / metrics.dq1;
-
-                    const VVM::Real gradient_z_q2_plus =
-                        metrics.inv_sqrt_g_at_u(j + 1) * metrics.sqrt_g_g_contra_22_at_u(j + 1) *
-                        (previous_at_z_data(j + 1, i) - previous_at_z_data(j, i)) / metrics.dq2;
-
-                    const VVM::Real gradient_z_q2_minus =
-                        metrics.inv_sqrt_g_at_u(j) * metrics.sqrt_g_g_contra_22_at_u(j) *
-                        (previous_at_z_data(j, i) - previous_at_z_data(j - 1, i)) / metrics.dq2;
-
-                    const VVM::Real operator_at_z =
-                        (metrics.sqrt_g_at_v(j) * gradient_z_q1_plus -
-                            metrics.sqrt_g_at_v(j) * gradient_z_q1_minus) /
-                            metrics.dq1 +
-                        (metrics.sqrt_g_at_u(j + 1) * gradient_z_q2_plus -
-                            metrics.sqrt_g_at_u(j) * gradient_z_q2_minus) /
-                            metrics.dq2;
-
-                    const VVM::Real diagonal_at_z = -(
-                        (metrics.sqrt_g_g_contra_11_at_v(j) + metrics.sqrt_g_g_contra_11_at_v(j)) *
-                            metrics.inverse_dq1_squared +
-                        (metrics.sqrt_g_g_contra_22_at_u(j + 1) +
-                            metrics.sqrt_g_g_contra_22_at_u(j)) *
-                            metrics.inverse_dq2_squared);
-
-                    current_at_z_data(j, i) =
-                        previous_at_z_data(j, i) +
-                        (operator_at_z - metrics.sqrt_g_at_z(j) * right_hand_side_at_z_data(j, i)) /
-                            (diagonal_shift - diagonal_at_z);
-
-                    const VVM::Real gradient_t_q1_plus =
-                        metrics.inv_sqrt_g_at_u(j) * metrics.sqrt_g_g_contra_11_at_u(j) *
-                        (previous_at_t_data(j, i + 1) - previous_at_t_data(j, i)) / metrics.dq1;
-
-                    const VVM::Real gradient_t_q1_minus =
-                        metrics.inv_sqrt_g_at_u(j) * metrics.sqrt_g_g_contra_11_at_u(j) *
-                        (previous_at_t_data(j, i) - previous_at_t_data(j, i - 1)) / metrics.dq1;
-
-                    const VVM::Real gradient_t_q2_plus =
-                        metrics.inv_sqrt_g_at_v(j) * metrics.sqrt_g_g_contra_22_at_v(j) *
-                        (previous_at_t_data(j + 1, i) - previous_at_t_data(j, i)) / metrics.dq2;
-
-                    const VVM::Real gradient_t_q2_minus =
-                        metrics.inv_sqrt_g_at_v(j - 1) * metrics.sqrt_g_g_contra_22_at_v(j - 1) *
-                        (previous_at_t_data(j, i) - previous_at_t_data(j - 1, i)) / metrics.dq2;
-
-                    const VVM::Real operator_at_t =
-                        (metrics.sqrt_g_at_u(j) * gradient_t_q1_plus -
-                            metrics.sqrt_g_at_u(j) * gradient_t_q1_minus) /
-                            metrics.dq1 +
-                        (metrics.sqrt_g_at_v(j) * gradient_t_q2_plus -
-                            metrics.sqrt_g_at_v(j - 1) * gradient_t_q2_minus) /
-                            metrics.dq2;
-
-                    const VVM::Real diagonal_at_t = -(
-                        (metrics.sqrt_g_g_contra_11_at_u(j) + metrics.sqrt_g_g_contra_11_at_u(j)) *
-                            metrics.inverse_dq1_squared +
-                        (metrics.sqrt_g_g_contra_22_at_v(j) +
-                            metrics.sqrt_g_g_contra_22_at_v(j - 1)) *
-                            metrics.inverse_dq2_squared);
-
-                    current_at_t_data(j, i) =
-                        previous_at_t_data(j, i) +
-                        (operator_at_t - metrics.sqrt_g_at_t(j) * right_hand_side_at_t_data(j, i)) /
-                            (diagonal_shift - diagonal_at_t);
-                });
-        }
         else {
-            // General nonorthogonal fallback. Manual CUDA graph capture of
-            // this path is still outside the supported solver contract.
-            Kokkos::parallel_for("RelaxHorizontalEllipticGeneralAtZAndT",
-                base_policy,
-                KOKKOS_LAMBDA(const int j, const int i) {
-                    const VVM::Real operator_at_z =
-                        laplace_beltrami.calculate_jacobian_weighted_at_z(previous_at_z_data, j, i);
-                    const VVM::Real diagonal_at_z =
-                        laplace_beltrami.jacobian_weighted_diagonal_at_z(j, i);
-
-                    current_at_z_data(j, i) =
-                        previous_at_z_data(j, i) +
-                        (operator_at_z - laplace_beltrami.divergence.z.sqrt_g(j, i) *
-                                             right_hand_side_at_z_data(j, i)) /
-                            (diagonal_shift - diagonal_at_z);
-
-                    const VVM::Real operator_at_t =
-                        laplace_beltrami.calculate_jacobian_weighted_at_t(previous_at_t_data, j, i);
-                    const VVM::Real diagonal_at_t =
-                        laplace_beltrami.jacobian_weighted_diagonal_at_t(j, i);
-
-                    current_at_t_data(j, i) =
-                        previous_at_t_data(j, i) +
-                        (operator_at_t - laplace_beltrami.divergence.t.sqrt_g(j, i) *
-                                             right_hand_side_at_t_data(j, i)) /
-                            (diagonal_shift - diagonal_at_t);
-                });
+            relax_generalized_pair(right_hand_side_at_z,
+                *previous_at_z,
+                *current_at_z,
+                right_hand_side_at_t,
+                *previous_at_t,
+                *current_at_t,
+                options);
         }
 
         refresh_solution_halos(*current_at_z, *current_at_t);

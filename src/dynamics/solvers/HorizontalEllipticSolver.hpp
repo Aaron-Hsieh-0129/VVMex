@@ -8,7 +8,7 @@
 #include "core/boundary/HorizontalBoundaryStencils.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "dynamics/operators/HorizontalLaplaceBeltrami.hpp"
-#include "dynamics/solvers/RegularLatLonEllipticMetrics.hpp"
+#include "dynamics/operators/GeneralizedHorizontalElliptic.hpp"
 
 namespace VVM {
 namespace Dynamics {
@@ -86,9 +86,27 @@ private:
     Operators::HorizontalLaplaceBeltramiDeviceView laplace_beltrami_;
     Core::Field<2> scratch_at_z_;
     Core::Field<2> scratch_at_t_;
-    RegularLatLonEllipticMetrics regular_lat_lon_metrics_;
+
+    Kokkos::View<Operators::GeneralizedHorizontalEllipticDeviceView> generalized_;
 
     std::unique_ptr<Core::Boundary::HorizontalBoundaryStencils> bounded_q2_stencils_;
+
+    void prepare_generalized_execution() const;
+
+    void relax_generalized_single(bool at_z,
+        const Core::Field<2>& right_hand_side,
+        const Core::Field<2>& previous,
+        Core::Field<2>& current,
+        const Options& options) const;
+
+    void relax_generalized_pair(const Core::Field<2>& right_hand_side_at_z,
+        const Core::Field<2>& previous_at_z,
+        Core::Field<2>& current_at_z,
+        const Core::Field<2>& right_hand_side_at_t,
+        const Core::Field<2>& previous_at_t,
+        Core::Field<2>& current_at_t,
+        const Options& options,
+        bool constrain_north_wall = false) const;
 };
 
 } // namespace Dynamics
