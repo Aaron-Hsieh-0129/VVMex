@@ -296,29 +296,6 @@ WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
 }
 
 void
-WindSolver::diagnose_regular_latlon_wind(const Core::Grid& grid,
-    Core::HaloExchanger& halo,
-    VerticalEllipticSolver& vertical_solver,
-    HorizontalEllipticSolver& horizontal_solver,
-    const RegularLatLonDiagnosticFields& fields,
-    const HorizontalDiagnosticWorkspace& workspace,
-    const RegularLatLonDiagnosticOptions& options,
-    const bool terrain) {
-    // Terrain handling now belongs entirely to the preparation boundary.
-    // Keep this overload temporarily so existing direct diagnostic callers
-    // do not need to change in the same refactor.
-    (void)terrain;
-
-    diagnose_regular_latlon_wind(grid,
-        halo,
-        vertical_solver,
-        horizontal_solver,
-        fields,
-        workspace,
-        options);
-}
-
-void
 WindSolver::diagnose_horizontal_potentials(const Core::Grid& grid,
     Core::HaloExchanger& halo,
     HorizontalEllipticSolver& solver,

@@ -5,7 +5,6 @@
 #include "core/geometry/HorizontalLocation.hpp"
 #include "dynamics/operators/HorizontalVectorConversion.hpp"
 #include "dynamics/solvers/HorizontalEllipticSolver.hpp"
-#include "dynamics/solvers/HorizontalWindStateAdapter.hpp"
 #include "dynamics/solvers/VerticalEllipticSolver.hpp"
 #include "dynamics/solvers/WindSolver.hpp"
 #include "utils/ConfigurationManager.hpp"
@@ -28,7 +27,6 @@ using VVM::Core::Field;
 using VVM::Core::Grid;
 using VVM::Core::HaloExchanger;
 using VVM::Dynamics::HorizontalEllipticSolver;
-using VVM::Dynamics::HorizontalWindStateAdapter;
 using VVM::Dynamics::VerticalEllipticSolver;
 using VVM::Dynamics::WindSolver;
 using VVM::Utils::ConfigurationManager;
@@ -370,12 +368,17 @@ struct Sources {
             up(k) = stretched ? real(0.90) + real(0.03) * k : real(1.0);
         }
 
+        auto spacing_host = Kokkos::create_mirror(spacing.get_device_data());
+
+        for (int k = 0; k < nz; ++k) {
+            spacing_host(k) = real(100.0) / up(k);
+        }
+
         Kokkos::deep_copy(rhobar.get_mutable_device_data(), rho);
         Kokkos::deep_copy(rhobar_up.get_mutable_device_data(), rho_up);
         Kokkos::deep_copy(flex_mid.get_mutable_device_data(), mid);
         Kokkos::deep_copy(flex_up.get_mutable_device_data(), up);
-
-        HorizontalWindStateAdapter::initialize_spacing(real(100.0), flex_up, spacing);
+        Kokkos::deep_copy(spacing.get_mutable_device_data(), spacing_host);
     }
 
     Real
@@ -866,8 +869,7 @@ run_case(const Grid& grid, HaloExchanger& halo, bool stretched) {
             horizontal,
             state.bind(sources),
             state.workspace(),
-            options,
-            false);
+            options);
     };
 
     sources.initialize_step(grid, halo, 0);

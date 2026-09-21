@@ -474,6 +474,7 @@ set_tests_properties(test_horizontal_configuration_consumers PROPERTIES
 # exists for: write a restart file, rename it, load it, and the recovered time
 # and step do not move.
 add_vvm_file_unit_test(test_restart_metadata_io 2)
+
 # Grid owns a valid Cartesian geometry after decomposition. The multirank run
 # also verifies that each rank receives the correct global coordinate origin.
 add_vvm_device_unit_test(test_grid_geometry ${TEST_DIR}/configs/2dbubble.json 2)
@@ -544,7 +545,7 @@ set_tests_properties(test_wind_vertical_integration PROPERTIES
 
 _vvm_set_test_resources(test_wind_vertical_integration 1)
 
-# wind column recovery 
+# wind column recovery
 vvm_add_test_executable(test_horizontal_wind_column_recovery
     LIBRARIES vvm_dynamics vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX)
 
@@ -717,79 +718,6 @@ if(VVM_TEST_MULTIRANK)
     endforeach()
 endif()
 
-# wind adapter 
-vvm_add_test_executable(test_horizontal_wind_state_adapter
-    LIBRARIES vvm_dynamics vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX)
-
-set(wind_adapter_ranks 1)
-if(VVM_TEST_MULTIRANK)
-    list(APPEND wind_adapter_ranks 2 4)
-endif()
-
-foreach(ranks IN LISTS wind_adapter_ranks)
-    foreach(geometry IN ITEMS cartesian rll)
-        if(geometry STREQUAL "cartesian")
-            set(adapter_config "${TEST_DIR}/configs/grid_structured_cartesian.json")
-        else()
-            set(adapter_config "${TEST_DIR}/configs/horizontal_elliptic_regular_latlon.json")
-        endif()
-
-        set(adapter_test "test_horizontal_wind_state_adapter_${geometry}_r${ranks}")
-
-        add_test(
-            NAME ${adapter_test}
-            COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks}
-                    ${VVM_MPI_BIND_ARGS} ${MPIEXEC_PREFLAGS}
-                    ${GPU_WRAP} $<TARGET_FILE:test_horizontal_wind_state_adapter>
-                    "${adapter_config}" ${MPIEXEC_POSTFLAGS}
-        )
-
-        set_tests_properties(${adapter_test} PROPERTIES
-            WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
-            LABELS "unit"
-            TIMEOUT 300
-        )
-
-        _vvm_set_test_resources(${adapter_test} ${ranks})
-    endforeach()
-endforeach()
-
-vvm_add_test_executable(test_wind_solver_horizontal_diagnostic
-    LIBRARIES vvm_dynamics vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX)
-
-set(horizontal_diagnostic_ranks 1)
-if(VVM_TEST_MULTIRANK)
-    list(APPEND horizontal_diagnostic_ranks 2 4)
-endif()
-
-foreach(ranks IN LISTS horizontal_diagnostic_ranks)
-    foreach(geometry IN ITEMS cartesian rll)
-        if(geometry STREQUAL "cartesian")
-            set(diagnostic_config "${TEST_DIR}/configs/grid_structured_cartesian.json")
-        else()
-            set(diagnostic_config "${TEST_DIR}/configs/horizontal_elliptic_regular_latlon.json")
-        endif()
-
-        set(diagnostic_test "test_wind_solver_horizontal_diagnostic_${geometry}_r${ranks}")
-
-        add_test(
-            NAME ${diagnostic_test}
-            COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks}
-                    ${VVM_MPI_BIND_ARGS} ${MPIEXEC_PREFLAGS}
-                    ${GPU_WRAP} $<TARGET_FILE:test_wind_solver_horizontal_diagnostic>
-                    "${diagnostic_config}" ${MPIEXEC_POSTFLAGS}
-        )
-
-        set_tests_properties(${diagnostic_test} PROPERTIES
-            WORKING_DIRECTORY "${VVM_TEST_WORKDIR}"
-            LABELS "unit"
-            TIMEOUT 300
-        )
-
-        _vvm_set_test_resources(${diagnostic_test} ${ranks})
-    endforeach()
-endforeach()
-
 # Field-level regular latitude-longitude Takacs scalar transport.
 add_vvm_unit_test(test_regular_latlon_scalar_transport DEVICE
     LIBRARIES vvm_dynamics)
@@ -901,7 +829,6 @@ add_vvm_unit_test(test_generalized_wind_column_recovery DEVICE MPI
     LIBRARIES vvm_dynamics vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX
     TIMEOUT 180)
 
-
 # Elliptic operators composed from native-face generalized wind recovery.
 # Local skew-chart checks; no six-panel or oblique-wall boundary assumption.
 add_vvm_unit_test(test_generalized_horizontal_elliptic DEVICE MPI
@@ -914,4 +841,3 @@ add_vvm_unit_test(test_generalized_horizontal_elliptic DEVICE MPI
 add_vvm_unit_test(test_horizontal_wind_topology_constraint DEVICE MPI
     LIBRARIES vvm_dynamics vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX
     TIMEOUT 180)
-

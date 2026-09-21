@@ -26,7 +26,6 @@ namespace Dynamics {
 enum class WSolverMethod { TRIDIAGONAL, JACOBI };
 
 class VerticalEllipticSolver;
-class HorizontalWindStateAdapter;
 
 class WindSolver {
 public:
@@ -64,24 +63,6 @@ public:
     // Currently implemented only for Cartesian geometry.
     void integrate_uv_from_top();
 
-    struct HorizontalDiagnosticFields {
-        Core::Field<2>& psi;
-        Core::Field<2>& psi_previous;
-        Core::Field<2>& chi;
-        Core::Field<2>& chi_previous;
-        const Core::Field<3>& zeta;
-        const Core::Field<3>& w;
-        const Core::Field<3>& xi;
-        const Core::Field<3>& eta;
-        Core::Field<3>& u;
-        Core::Field<3>& v;
-        const Core::Field<1>& rhobar;
-        const Core::Field<1>& rhobar_up;
-        const Core::Field<1>& flex_mid;
-        const Core::Field<1>& spacing;
-        const Core::Field<0>& zonal_covariant_increment;
-    };
-
     struct HorizontalPotentialDiagnosticFields {
         Core::Field<2>& psi;
         Core::Field<2>& psi_previous;
@@ -102,32 +83,6 @@ public:
         Core::Field<2>& solution_psi;
         Core::Field<2>& solution_chi;
     };
-
-    static void reconstruct_horizontal_top_wind(const HorizontalWindStateAdapter& adapter,
-        const HorizontalDiagnosticFields& fields,
-        int top);
-
-    static void apply_prescribed_zonal_covariant_increment(
-        const Core::Grid& grid, const HorizontalDiagnosticFields& fields, int top);
-
-    static void integrate_horizontal_wind_from_top(const HorizontalWindStateAdapter& adapter,
-        const HorizontalDiagnosticFields& fields,
-        int bottom,
-        int top);
-
-    static void prepare_horizontal_diagnostic_execution();
-
-    static void diagnose_horizontal_wind(const Core::Grid& grid,
-        Core::HaloExchanger& halo,
-        HorizontalEllipticSolver& solver,
-        const HorizontalDiagnosticFields& fields,
-        const HorizontalDiagnosticWorkspace& workspace,
-        const HorizontalEllipticSolver::Options& options,
-        VVM::Real inverse_dz,
-        int bottom,
-        int top,
-        HorizontalDiagnosticBoundaryPolicy boundary_policy =
-            HorizontalDiagnosticBoundaryPolicy::CvvmMode2Reference);
 
     static void diagnose_horizontal_potentials(const Core::Grid& grid,
         Core::HaloExchanger& halo,
@@ -180,17 +135,6 @@ public:
     };
 
     static void prepare_regular_latlon_diagnostic_execution();
-
-    // This remains a guarded diagnostic component. It does not enable complete
-    // RLL time stepping or select/evolve the prescribed channel circulation.
-    static void diagnose_regular_latlon_wind(const Core::Grid& grid,
-        Core::HaloExchanger& halo,
-        VerticalEllipticSolver& vertical_solver,
-        HorizontalEllipticSolver& horizontal_solver,
-        const RegularLatLonDiagnosticFields& fields,
-        const HorizontalDiagnosticWorkspace& workspace,
-        const RegularLatLonDiagnosticOptions& options,
-        bool terrain);
 
     static void diagnose_regular_latlon_wind(const Core::Grid& grid,
         Core::HaloExchanger& halo,
