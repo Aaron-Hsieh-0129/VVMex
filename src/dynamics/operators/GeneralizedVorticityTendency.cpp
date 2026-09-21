@@ -9,7 +9,6 @@ namespace {
 using Volume = Core::Field<3>::ViewType;
 using Profile = Core::Field<1>::ViewType;
 using Plane = Core::Field<2>::ViewType;
-using Weight = Core::Geometry::GeometryField2D;
 using Term = GeneralizedVorticityTendency::Term;
 using Policy = Kokkos::MDRangePolicy<Kokkos::Rank<3>>;
 
@@ -159,8 +158,9 @@ bind_top_fields(const Core::State& state, const Core::Parameters& params) {
 
 struct HorizontalTransportFunctor {
     Kokkos::View<const GeneralizedHorizontalVorticityTransportDeviceView> transport;
+
     CanonicalHorizontalTransportFields fields;
-    Weight weight;
+
     Volume output;
 
     bool first_component = true;
@@ -168,8 +168,10 @@ struct HorizontalTransportFunctor {
     int end = 0;
     bool evaluate = true;
 
-    KOKKOS_INLINE_FUNCTION void
+    KOKKOS_INLINE_FUNCTION
+    void
     operator()(int k, int j, int i) const {
+
         if (!evaluate) {
             return;
         }
@@ -179,24 +181,25 @@ struct HorizontalTransportFunctor {
                 ? transport().calculate_omega1_at_v(fields, fields.w, k, j, i, begin, end)
                 : transport().calculate_omega2_at_u(fields, fields.w, k, j, i, begin, end);
 
-        // Convert the true omega^2 tendency to VVM's eta_con sign ONCE.
-        const Real scale = first_component ? weight(j, i) : -weight(j, i);
+        // Convert true omega^2 tendency to the
+        // historical VVM eta_con = -omega^2 sign.
+        const Real sign = first_component ? real(1.0) : real(-1.0);
 
-        output(k, j, i) += scale * (t.q1 + t.q2 + t.vertical);
+        output(k, j, i) += sign * (t.q1 + t.q2 + t.vertical);
     }
 };
 
 struct HorizontalDeformationFunctor {
     GeneralizedHorizontalDeformationDeviceView deformation;
     CanonicalHorizontalDeformationFields fields;
-    Weight weight;
     Volume output;
 
     bool first_component = true;
     Term term = Term::Stretching;
     bool evaluate = true;
 
-    KOKKOS_INLINE_FUNCTION void
+    KOKKOS_INLINE_FUNCTION
+    void
     operator()(int k, int j, int i) const {
         if (!evaluate) {
             return;
@@ -209,9 +212,9 @@ struct HorizontalDeformationFunctor {
                            : term == Term::Twisting ? t.twisting
                                                     : t.planetary;
 
-        const Real scale = first_component ? weight(j, i) : -weight(j, i);
+        const Real sign = first_component ? real(1.0) : real(-1.0);
 
-        output(k, j, i) += scale * value;
+        output(k, j, i) += sign * value;
     }
 };
 
@@ -219,14 +222,15 @@ struct TopTendencyFunctor {
     Kokkos::View<const GeneralizedTopTransportDeviceView> transport;
     GeneralizedTopDeformationDeviceView deformation;
     TopFields fields;
-    Weight weight;
     Volume output;
 
     Term term = Term::Transport;
     bool evaluate = true;
 
-    KOKKOS_INLINE_FUNCTION void
+    KOKKOS_INLINE_FUNCTION
+    void
     operator()(int k, int j, int i) const {
+
         if (!evaluate) {
             return;
         }
@@ -247,9 +251,7 @@ struct TopTendencyFunctor {
                                               : t.planetary;
         }
 
-        // Relative transport and planetary transport are separate calls.
-        // Planetary transport and stretching are each included exactly once.
-        output(k, j, i) += weight(j, i) * value;
+        output(k, j, i) += value;
     }
 };
 
@@ -308,35 +310,22 @@ GeneralizedVorticityTendency::add_from_canonical_state(const Core::State& state,
     Core::Field<3>& output,
     const std::string& variable,
     Term term) const {
-    add_weighted_from_canonical_state(state,
-        grid,
-        params,
-        output,
-        variable,
-        term,
-        Weight::constant_value(real(1.0)));
-}
 
-void
-GeneralizedVorticityTendency::add_weighted_from_canonical_state(const Core::State& state,
-    const Core::Grid& grid,
-    const Core::Parameters& params,
-    Core::Field<3>& output,
-    const std::string& variable,
-    Term term,
-    const Weight& weight) const {
     const int component = variable == "xi"     ? 0
                           : variable == "eta"  ? 1
                           : variable == "zeta" ? 2
                                                : -1;
 
     if (component < 0) {
-        throw std::invalid_argument("Generalized vorticity tendencies require xi, eta or zeta.");
+        throw std::invalid_argument("Generalized vorticity tendencies "
+                                    "require xi, eta or zeta.");
     }
 
     if (term != Term::Transport && term != Term::Stretching && term != Term::Twisting &&
         term != Term::Planetary) {
-        throw std::invalid_argument("Invalid generalized vorticity tendency term.");
+
+        throw std::invalid_argument("Invalid generalized vorticity "
+                                    "tendency term.");
     }
 
     const int h = grid.get_halo_cells();
@@ -346,9 +335,11 @@ GeneralizedVorticityTendency::add_weighted_from_canonical_state(const Core::Stat
     const int top = nz - h - 1;
 
     if (h < 2 || top - h < 2 || ny <= 2 * h || nx <= 2 * h) {
-        throw std::invalid_argument(
-            "Generalized vorticity tendencies require two horizontal halos, "
-            "a nonempty horizontal domain and at least three wind levels.");
+
+        throw std::invalid_argument("Generalized vorticity tendencies "
+                                    "require two horizontal halos, "
+                                    "a nonempty horizontal domain and "
+                                    "at least three wind levels.");
     }
 
     const auto data = output.get_device_data();
@@ -356,7 +347,9 @@ GeneralizedVorticityTendency::add_weighted_from_canonical_state(const Core::Stat
     if (data.extent(0) != static_cast<std::size_t>(nz) ||
         data.extent(1) != static_cast<std::size_t>(ny) ||
         data.extent(2) != static_cast<std::size_t>(nx)) {
-        throw std::invalid_argument("Vorticity tendency output does not match the Grid extent.");
+
+        throw std::invalid_argument("Vorticity tendency output does "
+                                    "not match the Grid extent.");
     }
 
     if (component != 2) {
@@ -368,7 +361,6 @@ GeneralizedVorticityTendency::add_weighted_from_canonical_state(const Core::Stat
                 policy,
                 HorizontalTransportFunctor{horizontal_transport_,
                     bind_horizontal_transport_fields(state, params),
-                    weight,
                     output.get_mutable_device_data(),
                     component == 0,
                     h,
@@ -379,7 +371,6 @@ GeneralizedVorticityTendency::add_weighted_from_canonical_state(const Core::Stat
                 policy,
                 HorizontalDeformationFunctor{horizontal_deformation_,
                     bind_horizontal_deformation_fields(state, params),
-                    weight,
                     output.get_mutable_device_data(),
                     component == 0,
                     term});
@@ -394,7 +385,6 @@ GeneralizedVorticityTendency::add_weighted_from_canonical_state(const Core::Stat
         TopTendencyFunctor{top_transport_,
             top_deformation_,
             bind_top_fields(state, params),
-            weight,
             output.get_mutable_device_data(),
             term});
 }

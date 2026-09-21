@@ -37,19 +37,6 @@ public:
         const std::string& variable,
         Term term) const;
 
-    // Accumulate weight(j,i) * the selected canonical tendency.
-    // This is a scalar accumulation weight, NOT a general basis transform.
-    // A physical-output boundary may use it only when that component's
-    // transformation is diagonal. Nonorthogonal physical conversion needs
-    // BOTH components and stagger-aware interpolation outside this class.
-    void add_weighted_from_canonical_state(const Core::State& state,
-        const Core::Grid& grid,
-        const Core::Parameters& params,
-        Core::Field<3>& output,
-        const std::string& variable,
-        Term term,
-        const Core::Geometry::GeometryField2D& weight) const;
-
 private:
     Kokkos::View<GeneralizedHorizontalVorticityTransportDeviceView> horizontal_transport_;
     Kokkos::View<GeneralizedTopTransportDeviceView> top_transport_;

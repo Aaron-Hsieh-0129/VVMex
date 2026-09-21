@@ -513,17 +513,6 @@ WindSolver::relax_2d_batched() {
     const auto geometry_kind = grid_.geometry().kind();
 
 #if defined(ENABLE_NCCL)
-    // The future nonorthogonal cubed-sphere kernel still carries a large
-    // generalized functor and is not safe for manual stream capture yet.
-    if (geometry_kind == Core::Geometry::GeometryKind::CubedSphere) {
-        horizontal_elliptic_solver_.solve_at_z_and_t(rhs_psi_field_,
-            psi_out_field_,
-            rhs_chi_field_,
-            chi_out_field_,
-            horizontal_elliptic_options_);
-        return;
-    }
-
     cudaStream_t stream = Kokkos::Cuda().cuda_stream();
 
     if (relax_2d_graph_created_) {
@@ -616,8 +605,8 @@ WindSolver::relax_2d_batched() {
         }
     }
     else {
-        // Regular latitude–longitude uses the compact metric-aware orthogonal
-        // solver. Psi is at Z and chi is at T.
+        // Non-Cartesian geometries use the generalized metric-aware solver.
+        // Psi is at Z and chi is at T.
         horizontal_elliptic_solver_.solve_at_z_and_t(rhs_psi_field_,
             psi_out_field_,
             rhs_chi_field_,

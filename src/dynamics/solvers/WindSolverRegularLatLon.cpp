@@ -1,6 +1,5 @@
 #include "dynamics/solvers/WindSolver.hpp"
 #include "dynamics/solvers/VerticalEllipticSolver.hpp"
-#include "dynamics/solvers/HorizontalWindStateAdapter.hpp"
 #include "dynamics/solvers/HorizontalWindTopologyConstraint.hpp"
 #include "core/RegularLatLonModelConfiguration.hpp"
 #include "dynamics/operators/RegularLatLonTerrain.hpp"

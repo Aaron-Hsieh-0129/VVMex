@@ -20,7 +20,6 @@ using Policy = Kokkos::MDRangePolicy<Kokkos::DefaultExecutionSpace, Kokkos::Rank
 
 struct BuoyancyFunctor {
     GeneralizedBuoyancyDeviceView operation;
-    GeneralizedBuoyancy::Weight weight;
 
     Volume th;
     Profile thbar;
@@ -67,7 +66,7 @@ struct BuoyancyFunctor {
             xi_component ? operation.calculate_omega1_at_v(j, i, lower, upper, gravity())
                          : -operation.calculate_omega2_at_u(j, i, lower, upper, gravity());
 
-        output(k, j, i) += weight(j, i) * canonical;
+        output(k, j, i) += canonical;
 
         if (moist && k <= max_topo_idx && face_mask(k, j, i) == real(0.0)) {
             output(k, j, i) = real(0.0);
@@ -175,9 +174,9 @@ GeneralizedBuoyancy::add_xi_tendency(const Core::Field<3>& th,
     const Kokkos::View<Real>& gravity,
     Core::Field<3>& output,
     int k_begin,
-    int k_end,
-    const Weight& weight) const {
-    add_tendency(th, thbar, gravity, output, k_begin, k_end, true, weight);
+    int k_end) const {
+
+    add_tendency(th, thbar, gravity, output, k_begin, k_end, true);
 }
 
 void
@@ -186,9 +185,9 @@ GeneralizedBuoyancy::add_eta_tendency(const Core::Field<3>& th,
     const Kokkos::View<Real>& gravity,
     Core::Field<3>& output,
     int k_begin,
-    int k_end,
-    const Weight& weight) const {
-    add_tendency(th, thbar, gravity, output, k_begin, k_end, false, weight);
+    int k_end) const {
+
+    add_tendency(th, thbar, gravity, output, k_begin, k_end, false);
 }
 
 void
@@ -202,8 +201,8 @@ GeneralizedBuoyancy::add_moist_tendency(const Core::Field<3>& th,
     int k_begin,
     int k_end,
     int max_topo_idx,
-    bool xi_component,
-    const Weight& weight) const {
+    bool xi_component) const {
+
     add_tendency(th,
         thbar,
         gravity,
@@ -211,7 +210,6 @@ GeneralizedBuoyancy::add_moist_tendency(const Core::Field<3>& th,
         k_begin,
         k_end,
         xi_component,
-        weight,
         &qv,
         &qp,
         &face_mask,
@@ -226,7 +224,6 @@ GeneralizedBuoyancy::add_tendency(const Core::Field<3>& th,
     int k_begin,
     int k_end,
     bool xi_component,
-    const Weight& weight,
     const Core::Field<3>* qv,
     const Core::Field<3>* qp,
     const Core::Field<3>* face_mask,
@@ -265,7 +262,6 @@ GeneralizedBuoyancy::add_tendency(const Core::Field<3>& th,
     BuoyancyFunctor functor{};
 
     functor.operation = operator_;
-    functor.weight = weight;
     functor.th = th_data;
     functor.thbar = thbar_data;
     functor.gravity = gravity;

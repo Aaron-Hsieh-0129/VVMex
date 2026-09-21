@@ -54,19 +54,9 @@ GeneralizedBuoyancyDeviceView make_generalized_buoyancy_device_view(
 // xi_con = omega^1, eta_con = -omega^2. Inputs th, qv, qp are physical;
 // qp is the condensate diagnostic supplied by physics, not recomputed here.
 //
-// An optional weight multiplies ONLY the new canonical increment. It is
-// not a general basis transform. The current RLL physical-output boundary
-// may supply h1_at_v or h2_at_u; nonorthogonal physical conversion needs
-// both components and stagger-aware interpolation outside this class.
-//
-// Writes [k_begin,k_end) on physical horizontal cells; reads T levels up
-// to k_end. Caller owns halos, positive finite thbar/J, finite gravity and
-// weights, and non-overlapping input/output storage. No allocation,
-// communication or synchronization occurs in valid tendency calls.
+// Caller owns halos, positive finite thbar/J and finite gravity
 class GeneralizedBuoyancy {
 public:
-    using Weight = Core::Geometry::GeometryField2D;
-
     explicit GeneralizedBuoyancy(const Core::Geometry::HorizontalGeometry& geometry);
 
     static void prepare_execution();
@@ -76,20 +66,15 @@ public:
         const Kokkos::View<Real>& gravity,
         Core::Field<3>& output,
         int k_begin,
-        int k_end,
-        const Weight& weight = Weight::constant_value(real(1.0))) const;
+        int k_end) const;
 
     void add_eta_tendency(const Core::Field<3>& th,
         const Core::Field<1>& thbar,
         const Kokkos::View<Real>& gravity,
         Core::Field<3>& output,
         int k_begin,
-        int k_end,
-        const Weight& weight = Weight::constant_value(real(1.0))) const;
+        int k_end) const;
 
-    // face_mask is ITYPEV for xi or ITYPEU for eta. Preserve the existing
-    // immersed-boundary rule: at/below max_topo_idx, a zero face mask resets
-    // the WHOLE accumulated tendency at that cell, not just this increment.
     void add_moist_tendency(const Core::Field<3>& th,
         const Core::Field<1>& thbar,
         const Kokkos::View<Real>& gravity,
@@ -100,8 +85,7 @@ public:
         int k_begin,
         int k_end,
         int max_topo_idx,
-        bool xi_component,
-        const Weight& weight = Weight::constant_value(real(1.0))) const;
+        bool xi_component) const;
 
 private:
     void add_tendency(const Core::Field<3>& th,
@@ -111,7 +95,6 @@ private:
         int k_begin,
         int k_end,
         bool xi_component,
-        const Weight& weight,
         const Core::Field<3>* qv = nullptr,
         const Core::Field<3>* qp = nullptr,
         const Core::Field<3>* face_mask = nullptr,
@@ -120,6 +103,7 @@ private:
     void validate_volume(const Core::Field<3>& field, int nz, const char* role) const;
 
     Core::Geometry::HorizontalDomainLayout layout_;
+
     GeneralizedBuoyancyDeviceView operator_;
 };
 

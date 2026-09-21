@@ -72,7 +72,6 @@ void
 WindSolver::prepare_regular_latlon_diagnostic_execution() {
     VerticalEllipticSolver::prepare_execution();
     HorizontalWindColumnRecovery::prepare_execution();
-    prepare_horizontal_diagnostic_execution();
 
 #if defined(KOKKOS_ENABLE_CUDA)
     Kokkos::parallel_for("PrepareWindSolverRegularLatLonDiagnostic",
