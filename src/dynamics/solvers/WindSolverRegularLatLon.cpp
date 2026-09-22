@@ -318,19 +318,55 @@ WindSolver::commit_regular_latlon_recovered_wind(const GeneralizedWindDiagnostic
     auto& u_field = state_.get_field<3>("u");
     auto& v_field = state_.get_field<3>("v");
 
+    auto& u_con_field = state_.get_field<3>("u_con");
+    auto& v_con_field = state_.get_field<3>("v_con");
+
     auto u = u_field.get_mutable_device_data();
     auto v = v_field.get_mutable_device_data();
 
-    Kokkos::parallel_for("CommitRegularLatLonPhysicalWindFromCovariant",
+    auto u_con = u_con_field.get_mutable_device_data();
+    auto v_con = v_con_field.get_mutable_device_data();
+
+    Kokkos::parallel_for("CommitRegularLatLonRecoveredWind",
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({bottom, h, h}, {top + 1, ny - h, nx - h}),
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            u(k, j, i) = HorizontalVectorConversion::covariant_to_physical(q1_cov(k, j, i),
-                inverse_h1_at_u(j, i));
+            // Recovered generalized diagnostic output is covariant:
+            //
+            //     u_1, u_2
+            //
+            // RLL physical compatibility representation:
+            //
+            //     U = u_1 / h1
+            //     V = u_2 / h2
+            //
+            // Persistent canonical representation:
+            //
+            //     u^1 = U / h1
+            //     u^2 = V / h2
+            //
+            // Keep the same operation sequence as the previous
+            // physical -> canonical synchronization, but without the
+            // full-volume state round-trip.
+            const Real physical_u =
+                HorizontalVectorConversion::covariant_to_physical(q1_cov(k, j, i),
+                    inverse_h1_at_u(j, i));
 
-            v(k, j, i) = HorizontalVectorConversion::covariant_to_physical(q2_cov(k, j, i),
+            const Real physical_v =
+                HorizontalVectorConversion::covariant_to_physical(q2_cov(k, j, i),
+                    inverse_h2_at_v(j, i));
+
+            u(k, j, i) = physical_u;
+            v(k, j, i) = physical_v;
+
+            u_con(k, j, i) = HorizontalVectorConversion::physical_to_contravariant(physical_u,
+                inverse_h1_at_u(j, i));
+            v_con(k, j, i) = HorizontalVectorConversion::physical_to_contravariant(physical_v,
                 inverse_h2_at_v(j, i));
         });
 
+    // Keep the existing physical representation boundary behavior unchanged
+    // in D3. Canonical halo/ghost values are finalized after these physical
+    // boundaries have reached their final values.
     halo_exchanger_.exchange_multiple_halos(std::vector<Core::Field<3>*>{&u_field, &v_field});
 
     switch (options.boundary_policy) {
@@ -339,6 +375,7 @@ WindSolver::commit_regular_latlon_recovered_wind(const GeneralizedWindDiagnostic
             throw std::logic_error("Bounded-q2 RLL wind commit requires "
                                    "horizontal boundary stencils.");
         }
+
         bounded_q2_stencils_->fill_regular_lat_lon_free_slip_physical_wind_halos(u_field, v_field);
         break;
 
@@ -347,12 +384,12 @@ WindSolver::commit_regular_latlon_recovered_wind(const GeneralizedWindDiagnostic
             throw std::logic_error("Reference RLL wind commit requires "
                                    "horizontal boundary stencils.");
         }
+
         bounded_q2_stencils_->fill_constant_q2_halos(u_field);
         bounded_q2_stencils_->fill_constant_q2_halos(v_field);
         break;
 
     case HorizontalDiagnosticBoundaryPolicy::PeriodicQ2:
-        // MPI/halo exchange above supplies both horizontal directions.
         break;
 
     default:
@@ -404,10 +441,10 @@ WindSolver::finalize_regular_latlon_wind(
             bounded_q2_stencils_.get());
     }
 
-    // Keep persistent canonical wind synchronized with the final physical RLL
-    // representation, including any PeriodicQ2 or bounded-q2 circulation
-    // correction applied after generalized recovery.
-    sync_regular_lat_lon_contravariant_wind_from_physical();
+    // Physical u/v now contain their final vertical ghosts, MPI halos and
+    // bounded-q2 wall values. Convert only those boundary/ghost regions into
+    // canonical storage.
+    finalize_regular_latlon_contravariant_wind_boundaries();
 }
 
 void
@@ -503,22 +540,27 @@ WindSolver::recover_regular_latlon_horizontal_wind(const bool initial,
 }
 
 void
-WindSolver::sync_regular_lat_lon_contravariant_wind_from_physical() {
+WindSolver::finalize_regular_latlon_contravariant_wind_boundaries() {
     using Core::Geometry::HorizontalLocation;
     using Operators::HorizontalVectorConversion;
 
     if (grid_.geometry().kind() != Core::Geometry::GeometryKind::RegularLatLon) {
-
-        throw std::logic_error("RLL physical-to-contravariant wind synchronization "
+        throw std::logic_error("RLL contravariant wind boundary finalization "
                                "requires RegularLatLon geometry.");
     }
 
-    const auto u = state_.get_field<3>("u").get_device_data();
+    const int h = grid_.get_halo_cells();
+    const int nz = grid_.get_local_total_points_z();
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
 
+    const int bottom = h - 1;
+    const int top = nz - h - 1;
+
+    const auto u = state_.get_field<3>("u").get_device_data();
     const auto v = state_.get_field<3>("v").get_device_data();
 
     auto u_con = state_.get_field<3>("u_con").get_mutable_device_data();
-
     auto v_con = state_.get_field<3>("v_con").get_mutable_device_data();
 
     const auto inverse_h1_at_u =
@@ -527,15 +569,27 @@ WindSolver::sync_regular_lat_lon_contravariant_wind_from_physical() {
     const auto inverse_h2_at_v =
         grid_.geometry().device_view(HorizontalLocation::V).physical_to_contravariant.a22;
 
-    const int nz = grid_.get_local_total_points_z();
-
-    const int ny = grid_.get_local_total_points_y();
-
-    const int nx = grid_.get_local_total_points_x();
-
-    Kokkos::parallel_for("SyncRegularLatLonContravariantWindFromPhysical",
+    Kokkos::parallel_for("FinalizeRegularLatLonContravariantWindBoundaries",
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
+            // commit_regular_latlon_recovered_wind() already established
+            // canonical wind throughout the recovered physical volume:
+            //
+            //     k = bottom ... top
+            //     j = h      ... ny-h-1
+            //     i = h      ... nx-h-1
+            //
+            // Do not overwrite that canonical interior through the physical
+            // representation again. Only obtain final ghost/halo values from
+            // physical u/v after all physical boundary conditions have been
+            // applied.
+            const bool recovered_interior =
+                k >= bottom && k <= top && j >= h && j < ny - h && i >= h && i < nx - h;
+
+            if (recovered_interior) {
+                return;
+            }
+
             u_con(k, j, i) = HorizontalVectorConversion::physical_to_contravariant(u(k, j, i),
                 inverse_h1_at_u(j, i));
 
