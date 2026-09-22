@@ -253,16 +253,23 @@ State::State(const Utils::ConfigurationManager& config, const Grid& grid)
             "",
             "VVM convention: zeta_con = omega^3"});
 
+    const std::string horizontal_mass_flux_con_units = rll ? "kg m-3 s-1" : "kg m-2 s-1";
     add_field<3>("u_mean",
         {nz_total, ny_total, nx_total},
         FieldMetadata{GridStaggering::StaggeredX,
-            "kg m-2 s-1",
-            "mean x wind for Takacs advection"});
+            horizontal_mass_flux_con_units,
+            "density-weighted contravariant q1 mass flux for advection",
+            "",
+            "rho * u^1; horizontal Jacobian not included"});
+
     add_field<3>("v_mean",
         {nz_total, ny_total, nx_total},
         FieldMetadata{GridStaggering::StaggeredY,
-            "kg m-2 s-1",
-            "mean y wind for Takacs advection"});
+            horizontal_mass_flux_con_units,
+            "density-weighted contravariant q2 mass flux for advection",
+            "",
+            "rho * u^2; horizontal Jacobian not included"});
+
     add_field<3>("w_mean",
         {nz_total, ny_total, nx_total},
         FieldMetadata{GridStaggering::StaggeredZ,

@@ -195,11 +195,36 @@ main(int argc, char** argv) {
 
         fill("qp", real(0.));
 
-        fill("u", real(3.));
+        // Keep physical compatibility winds deliberately unrelated to the
+        // canonical dynamical-core components. Scalar advection must consume
+        // u_con/v_con directly.
+        fill("u", real(37.));
 
-        fill("v", real(1.));
+        fill("v", real(-41.));
 
         fill("w", real(0.));
+
+        {
+            const auto inverse_h1_at_u = grid.geometry()
+                                             .device_view(Core::Geometry::HorizontalLocation::U)
+                                             .physical_to_contravariant.a11;
+
+            const auto inverse_h2_at_v = grid.geometry()
+                                             .device_view(Core::Geometry::HorizontalLocation::V)
+                                             .physical_to_contravariant.a22;
+
+            auto u_con = state.get_field<3>("u_con").get_mutable_device_data();
+
+            auto v_con = state.get_field<3>("v_con").get_mutable_device_data();
+
+            Kokkos::parallel_for("InitializeCanonicalScalarAdvectionWind",
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
+                KOKKOS_LAMBDA(const int k, const int j, const int i) {
+                    u_con(k, j, i) = inverse_h1_at_u(j, i) * real(3.0);
+
+                    v_con(k, j, i) = inverse_h2_at_v(j, i) * real(1.0);
+                });
+        }
 
         for (const char* name : {"rhobar", "rhobar_up"}) {
 
@@ -382,29 +407,44 @@ main(int argc, char** argv) {
 
         const auto mass_v = state.get_field<3>("v_mean").get_host_data();
 
-        // Scalar horizontal mass flux now follows the common generalized-coordinate
-        // contract:
+        // Scalar horizontal mass flux follows the canonical generalized-coordinate
+        // contract directly:
         //
-        //     u_mean = rho * u^1
-        //     v_mean = rho * u^2
+        //     u_mean = ITYPEU * rho * u^1
+        //     v_mean = ITYPEV * rho * u^2
         //
-        // The native terrain mask is applied while the flux is still physical;
-        // metric conversion afterwards must preserve masked zero values.
-        const auto inverse_h1_at_u_device = grid.geometry()
-                                                .device_view(Core::Geometry::HorizontalLocation::U)
-                                                .physical_to_contravariant.a11.one_dimensional;
+        // No physical U/V intermediate is allowed here.
+        const auto canonical_u = state.get_field<3>("u_con").get_host_data();
+        const auto canonical_v = state.get_field<3>("v_con").get_host_data();
 
-        const auto inverse_h1_at_u =
-            Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), inverse_h1_at_u_device);
+        const Real expected_active_u = real(2.0) * canonical_u(h, h + 1, h + 1);
 
-        const Real expected_active_u = inverse_h1_at_u(h + 1) * real(6.0);
+        const Real expected_active_v = real(2.0) * canonical_v(h, h + 1, h + 1);
 
         require(mass_u(h, h + 2, h + 3) == real(0.0) &&
-                    mass_u(h, h + 1, h + 1) == expected_active_u,
-            "contravariant terrain mass-flux mask");
+                    mass_u(h, h + 1, h + 1) == expected_active_u &&
+                    mass_v(h, h + 1, h + 1) == expected_active_v,
+            "canonical terrain mass-flux construction");
 
         require(mass_v(h, h - 1, h) == real(0.0) && mass_v(h, ny - h - 1, h) == real(0.0),
-            "no normal scalar wall flux");
+            "no normal canonical scalar wall flux");
+
+        // The bounded-q2 q1 halo must preserve the historical physical
+        // zero-gradient wall condition even though storage is now canonical.
+        const auto h1_at_u_device = grid.geometry()
+                                        .device_view(Core::Geometry::HorizontalLocation::U)
+                                        .contravariant_to_physical.a11.one_dimensional;
+
+        const auto h1_at_u =
+            Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), h1_at_u_device);
+
+        const Real expected_south_q1_halo = mass_u(h, h, h + 1) * h1_at_u(h) / h1_at_u(h - 1);
+
+        const Real boundary_tolerance = real(64.0) * std::numeric_limits<Real>::epsilon() *
+                                        std::max(real(1.0), std::abs(expected_south_q1_halo));
+
+        require(std::abs(mass_u(h, h - 1, h + 1) - expected_south_q1_halo) <= boundary_tolerance,
+            "canonical q1 mass-flux halo preserves physical wall condition");
 
         // --------------------------------------------------------------------
         // Moist buoyancy

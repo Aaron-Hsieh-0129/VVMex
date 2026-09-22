@@ -272,6 +272,97 @@ public:
         }
     }
 
+    // Fill RLL bounded-q2 halos for canonical scalar-advection mass fluxes:
+    //
+    //   F^1 = rho * u^1
+    //   F^2 = rho * u^2
+    //
+    // The historical scalar-advection boundary sequence first applied the
+    // centered physical q1 condition to rho*U and only then divided by h1.
+    // Reproducing the same wall condition directly in canonical storage gives
+    //
+    //   F^1_ext = F^1_int * h1_int / h1_ext.
+    //
+    // The q2 component is normal to the channel wall and remains homogeneous
+    // Dirichlet.
+    //
+    // This is deliberately topology/geometry-specific boundary logic. The
+    // generalized transport operator itself remains free of RLL h1/h2 assumptions.
+    template <typename Q1Layout, typename Q2Layout>
+    void
+    fill_regular_lat_lon_contravariant_scalar_mass_flux_halos(Field<3, Q1Layout>& q1_mass_flux,
+        Field<3, Q2Layout>& q2_mass_flux) const {
+
+        if (grid_.geometry().kind() != Geometry::GeometryKind::RegularLatLon) {
+
+            throw std::invalid_argument("RLL canonical scalar mass-flux boundaries "
+                                        "require regular latitude-longitude geometry.");
+        }
+
+        const int halo = grid_.get_halo_cells();
+
+        if (halo == 0 || grid_.get_global_points_y() == 1) {
+            return;
+        }
+
+        auto q1 = q1_mass_flux.get_mutable_device_data();
+        auto q2 = q2_mass_flux.get_mutable_device_data();
+
+        if (q1.extent(0) != q2.extent(0) || q1.extent(1) != q2.extent(1) ||
+            q1.extent(2) != q2.extent(2)) {
+
+            throw std::invalid_argument("RLL canonical scalar mass-flux fields "
+                                        "must have matching extents.");
+        }
+
+        const int nz = static_cast<int>(q1.extent(0));
+
+        const int ny = static_cast<int>(q1.extent(1));
+
+        const int nx = static_cast<int>(q1.extent(2));
+
+        const bool is_south_boundary = grid_.get_local_physical_start_y() == 0;
+
+        const bool is_north_boundary =
+            grid_.get_local_physical_end_y() == grid_.get_global_points_y() - 1;
+
+        const auto h1_at_u = grid_.geometry()
+                                 .device_view(Geometry::HorizontalLocation::U)
+                                 .contravariant_to_physical.a11;
+
+        if (is_south_boundary) {
+            Kokkos::parallel_for("FillRLLCanonicalScalarMassFluxQ1South",
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, halo, nx}),
+                KOKKOS_LAMBDA(const int k, const int distance, const int i) {
+                    const int exterior_j = halo - 1 - distance;
+
+                    const int interior_j = halo + distance;
+
+                    q1(k, exterior_j, i) =
+                        q1(k, interior_j, i) * h1_at_u(interior_j, i) / h1_at_u(exterior_j, i);
+                });
+        }
+
+        if (is_north_boundary) {
+            const int first_north_halo_j = ny - halo;
+
+            const int last_physical_j = first_north_halo_j - 1;
+
+            Kokkos::parallel_for("FillRLLCanonicalScalarMassFluxQ1North",
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, halo, nx}),
+                KOKKOS_LAMBDA(const int k, const int distance, const int i) {
+                    const int exterior_j = first_north_halo_j + distance;
+
+                    const int interior_j = last_physical_j - distance;
+
+                    q1(k, exterior_j, i) =
+                        q1(k, interior_j, i) * h1_at_u(interior_j, i) / h1_at_u(exterior_j, i);
+                });
+        }
+
+        fill_positive_face_q2_homogeneous_dirichlet_halos(q2_mass_flux);
+    }
+
     // Apply the RLL physical free-slip wall rule to physical eastward and
     // northward wind:
     //

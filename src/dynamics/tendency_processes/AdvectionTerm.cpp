@@ -1,6 +1,8 @@
 #include "AdvectionTerm.hpp"
-#include "core/haloexchange/HaloExchanger.hpp"
+
 #include "core/BoundaryConditionManager.hpp"
+#include "core/boundary/HorizontalBoundaryStencils.hpp"
+#include "core/haloexchange/HaloExchanger.hpp"
 
 namespace VVM {
 namespace Dynamics {
@@ -17,6 +19,7 @@ AdvectionTerm::AdvectionTerm(std::unique_ptr<SpatialScheme> scheme,
       mean_wind_state_(std::move(mean_wind_state)) {
 
     thermodynamics_vars_ = {"th", "qv", "qc", "qr", "qi", "nc", "nr", "ni"};
+
     dynamics_vars_ = {"xi", "eta", "zeta"};
 
     if (variable_name_ == "xi") {
@@ -40,6 +43,7 @@ AdvectionTerm::compute_tendency(Core::State& state,
     const Core::Grid& grid,
     const Core::Parameters& params,
     Core::Field<3>& out_tendency) const {
+
     compute_tendency_impl(state, grid, params, out_tendency, VVM::real(0.0));
 }
 
@@ -49,6 +53,7 @@ AdvectionTerm::compute_stage_tendency(Core::State& state,
     const Core::Parameters& params,
     Core::Field<3>& out_tendency,
     VVM::Real stage_dt) const {
+
     compute_tendency_impl(state, grid, params, out_tendency, stage_dt);
 }
 
@@ -58,8 +63,8 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
     const Core::Parameters& params,
     Core::Field<3>& out_tendency,
     VVM::Real stage_dt) const {
-    // Get scalar field that needs to be advected
     const auto& advected_field = advected_ref_.get(state, variable_name_);
+
     auto& u_mean_field = u_mean_ref_.get(state, "u_mean");
     auto& v_mean_field = v_mean_ref_.get(state, "v_mean");
     auto& w_mean_field = w_mean_ref_.get(state, "w_mean");
@@ -68,8 +73,8 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
 
     if (scheme_->vorticity_advection_uses_state() &&
         (variable_name_ == "xi" || variable_name_ == "eta" || variable_name_ == "zeta")) {
-        // The selected scheme constructs vorticity fluxes from State itself.
-        // Do not compute/exchange legacy mean-wind scratch for this path.
+        // Generalized vorticity advection constructs its fluxes directly from
+        // canonical State and does not use the legacy mean-wind scratch.
         scheme_->calculate_advection_tendency(state,
             advected_field,
             u_mean_field,
@@ -84,20 +89,22 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
         return;
     }
 
-    const bool use_contravariant_horizontal_wind =
-        geometry_kind == Core::Geometry::GeometryKind::Cartesian;
-
-    auto& u_field =
-        use_contravariant_horizontal_wind ? u_con_ref_.get(state, "u_con") : u_ref_.get(state, "u");
-
-    auto& v_field =
-        use_contravariant_horizontal_wind ? v_con_ref_.get(state, "v_con") : v_ref_.get(state, "v");
-
+    // Horizontal advection mass fluxes always consume canonical coordinate
+    // components:
+    //
+    //     F^1 = rho * u^1
+    //     F^2 = rho * u^2
+    //
+    // Cartesian remains numerically unchanged because u_con/v_con are the
+    // Cartesian physical components.
+    auto& u_field = u_con_ref_.get(state, "u_con");
+    auto& v_field = v_con_ref_.get(state, "v_con");
     auto& w_field = w_ref_.get(state, "w");
 
     const auto& u = u_field.get_device_data();
     const auto& v = v_field.get_device_data();
     const auto& w = w_field.get_device_data();
+
     const auto& rhobar_field = rhobar_ref_.get(state, "rhobar");
     const auto& rhobar = rhobar_field.get_device_data();
     const auto& rhobar_up_field = rhobar_up_ref_.get(state, "rhobar_up");
@@ -123,17 +130,20 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
         mean_wind_state_ && mean_wind_state_->holds(mean_wind_variant_, state.get_step());
 
     if (mean_winds_ready) {
-        // Reuse the current variant.
+        // Reuse current scratch variant.
     }
     else if (variable_name_ == "xi") {
         const auto& fact1_xi_eta = params.fact1_xi_eta.get_device_data();
+
         const auto& fact2_xi_eta = params.fact2_xi_eta.get_device_data();
 
         Kokkos::parallel_for("calculate_mean_wind_xi_team",
             TeamPolicy(league_size, Kokkos::AUTO),
             KOKKOS_LAMBDA(const MemberType& team) {
                 const int league_rank = team.league_rank();
+
                 const int j = h + league_rank / num_i;
+
                 const int i = h + league_rank % num_i;
 
                 Kokkos::parallel_for(Kokkos::TeamThreadRange(team, h - 1, nz - h - 1),
@@ -144,13 +154,15 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
                             (fact1_xi_eta(k) * rhobar(k + 1) *
                                     (u(k + 1, j, i) + u(k + 1, j + 1, i)) +
                                 fact2_xi_eta(k) * rhobar(k) * (u(k, j, i) + u(k, j + 1, i)));
+
                         v_mean_data(k, j, i) =
                             real(0.25) *
                             (fact1_xi_eta(k) * rhobar(k + 1) *
                                     (v(k + 1, j, i) + v(k + 1, j + 1, i)) +
                                 fact2_xi_eta(k) * rhobar(k) * (v(k, j, i) + v(k, j + 1, i)));
                     }
-                    // WARNING: I think the w needs to have fact but it turns out the source code doesn't have this. The code follows it for now.
+
+                    // Preserve original Cartesian arithmetic.
                     w_mean_data(k, j, i) =
                         real(0.25) * (rhobar_up(k + 1) * (w(k + 1, j, i) + w(k + 1, j + 1, i)) +
                                          rhobar_up(k) * (w(k, j, i) + w(k, j + 1, i)));
@@ -159,6 +171,7 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
     }
     else if (variable_name_ == "eta") {
         const auto& fact1_xi_eta = params.fact1_xi_eta.get_device_data();
+
         const auto& fact2_xi_eta = params.fact2_xi_eta.get_device_data();
 
         Kokkos::parallel_for("calculate_mean_wind_eta_team",
@@ -176,13 +189,15 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
                             (fact1_xi_eta(k) * rhobar(k + 1) *
                                     (u(k + 1, j, i) + u(k + 1, j, i + 1)) +
                                 fact2_xi_eta(k) * rhobar(k) * (u(k, j, i) + u(k, j, i + 1)));
+
                         v_mean_data(k, j, i) =
                             real(0.25) *
                             (fact1_xi_eta(k) * rhobar(k + 1) *
                                     (v(k + 1, j, i) + v(k + 1, j, i + 1)) +
                                 fact2_xi_eta(k) * rhobar(k) * (v(k, j, i) + v(k, j, i + 1)));
                     }
-                    // WARNING: I think the w needs to have fact but it turns out the source code doesn't have this. The code follows it for now.
+
+                    // Preserve original Cartesian arithmetic.
                     w_mean_data(k, j, i) =
                         real(0.25) * (rhobar_up(k + 1) * (w(k + 1, j, i) + w(k + 1, j, i + 1)) +
                                          rhobar_up(k) * (w(k, j, i) + w(k, j, i + 1)));
@@ -203,12 +218,14 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
                         u_mean_data(k, j, i) =
                             real(0.25) * rhobar(k) *
                             (u(k, j, i) + u(k, j, i + 1) + u(k, j + 1, i) + u(k, j + 1, i + 1));
+
                         v_mean_data(k, j, i) =
                             real(0.25) * rhobar(k) *
                             (v(k, j, i) + v(k, j, i + 1) + v(k, j + 1, i) + v(k, j + 1, i + 1));
                     }
-                    // The original code adopts Tackas 3rd order difference for boundary zeta, so it needs two w.
+
                     if (k >= nz - h - 3 && k < nz - h) {
+
                         w_mean_data(k, j, i) =
                             real(0.25) * rhobar_up(k) *
                             (w(k, j, i) + w(k, j, i + 1) + w(k, j + 1, i) + w(k, j + 1, i + 1));
@@ -216,31 +233,38 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
                 });
             });
     }
-    else if (grid.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+    else if (geometry_kind == Core::Geometry::GeometryKind::RegularLatLon) {
         const auto mu = state.get_field<3>("ITYPEU").get_device_data();
         const auto mv = state.get_field<3>("ITYPEV").get_device_data();
         const auto mw = state.get_field<3>("ITYPEW").get_device_data();
-        // First construct the established PHYSICAL mass fluxes.
+
+        // RLL terrain masks act directly on canonical mass flux:
         //
-        // The RLL physical -> contravariant conversion is deliberately delayed
-        // until after halo exchange and physical boundary conditions. This preserves
-        // the original numerical ordering:
+        //     u_mean = ITYPEU * rho    * u^1
+        //     v_mean = ITYPEV * rho    * u^2
+        //     w_mean = ITYPEW * rho_up * w
         //
-        //     rho * U
-        //         -> halo / physical BC
-        //         -> (1 / h1) * (rho * U)
-        //
-        // rather than changing it to rho * (U / h1).
+        // No physical U/V intermediate remains.
         const auto policy = Kokkos::Experimental::require(
             Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, h, h}, {nz - h, ny - h, nx - h}),
             Kokkos::Experimental::WorkItemProperty::HintLightWeight);
-        Kokkos::parallel_for("RLLScalarMaskedMassFlux", policy, KOKKOS_LAMBDA(int k, int j, int i) {
-            u_mean_data(k, j, i) = mu(k, j, i) == real(1.) ? rhobar(k) * u(k, j, i) : real(0.);
-            v_mean_data(k, j, i) = mv(k, j, i) == real(1.) ? rhobar(k) * v(k, j, i) : real(0.);
-            w_mean_data(k, j, i) = mw(k, j, i) == real(1.) ? rhobar_up(k) * w(k, j, i) : real(0.);
-        });
+
+        Kokkos::parallel_for("CanonicalScalarMaskedMassFlux",
+            policy,
+            KOKKOS_LAMBDA(int k, int j, int i) {
+                u_mean_data(k, j, i) =
+                    mu(k, j, i) == real(1.0) ? rhobar(k) * u(k, j, i) : real(0.0);
+
+                v_mean_data(k, j, i) =
+                    mv(k, j, i) == real(1.0) ? rhobar(k) * v(k, j, i) : real(0.0);
+
+                w_mean_data(k, j, i) =
+                    mw(k, j, i) == real(1.0) ? rhobar_up(k) * w(k, j, i) : real(0.0);
+            });
     }
     else {
+        // Cartesian exact scalar path. Because u_con/v_con are identical to
+        // physical Cartesian components, preserve the existing arithmetic.
         Kokkos::parallel_for("calculate_mean_wind_scalar_team",
             TeamPolicy(league_size, Kokkos::AUTO),
             KOKKOS_LAMBDA(const MemberType& team) {
@@ -257,40 +281,33 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
     }
 
     if (!mean_winds_ready) {
-        // No need of vertical boundary process
         halo_exchanger_.exchange_halos(u_mean_field);
         halo_exchanger_.exchange_halos(v_mean_field);
         halo_exchanger_.exchange_halos(w_mean_field);
-        bc_manager_.apply_horizontal_bcs(u_mean_field);
-        bc_manager_.apply_horizontal_bcs(v_mean_field);
-        bc_manager_.apply_horizontal_bcs(w_mean_field);
 
-        if (geometry_kind == Core::Geometry::GeometryKind::RegularLatLon) {
-            using Core::Geometry::HorizontalLocation;
-            const auto u_geometry = grid.geometry().device_view(HorizontalLocation::U);
-            const auto v_geometry = grid.geometry().device_view(HorizontalLocation::V);
-            const auto inverse_h1_at_u = u_geometry.physical_to_contravariant.a11;
-            const auto inverse_h2_at_v = v_geometry.physical_to_contravariant.a22;
+        const bool rll_bounded_q2 =
+            geometry_kind == Core::Geometry::GeometryKind::RegularLatLon &&
+            grid.horizontal_specification().topology.q2 == Core::HorizontalEdgeTopology::Bounded;
 
-            // The physical mass fluxes already have their halos and physical
-            // boundary conditions applied. Convert the complete usable storage
-            // to the common scalar-advection contract:
+        if (rll_bounded_q2) {
+            // The old RLL scalar path applied the physical wall condition
+            // before converting rho*U -> rho*u^1.
             //
-            //     rho * U -> rho * u^1
-            //     rho * V -> rho * u^2
-            //
-            // Keep metric-first multiplication because this matches the
-            // established RLL adapter arithmetic exactly.
-            const auto conversion_policy = Kokkos::Experimental::require(
-                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {nz - h, ny, nx}),
-                Kokkos::Experimental::WorkItemProperty::HintLightWeight);
+            // We now store canonical mass flux directly, but reproduce the
+            // same physical wall condition through its equivalent canonical
+            // halo relation.
+            Core::Boundary::HorizontalBoundaryStencils boundary(grid);
 
-            Kokkos::parallel_for("RLLScalarMassFluxToContravariant",
-                conversion_policy,
-                KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                    u_mean_data(k, j, i) = inverse_h1_at_u(j, i) * u_mean_data(k, j, i);
-                    v_mean_data(k, j, i) = inverse_h2_at_v(j, i) * v_mean_data(k, j, i);
-                });
+            boundary.fill_regular_lat_lon_contravariant_scalar_mass_flux_halos(u_mean_field,
+                v_mean_field);
+
+            // w remains a physical vertical mass flux.
+            bc_manager_.apply_horizontal_bcs(w_mean_field);
+        }
+        else {
+            bc_manager_.apply_horizontal_bcs(u_mean_field);
+            bc_manager_.apply_horizontal_bcs(v_mean_field);
+            bc_manager_.apply_horizontal_bcs(w_mean_field);
         }
 
         if (mean_wind_state_) {
@@ -311,7 +328,6 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
 
     auto& tendency = out_tendency.get_mutable_device_data();
 
-    // Divide rho in tendency for thermodynamics variables
     if (normalize_by_rhobar_ < 0) {
         normalize_by_rhobar_ =
             (force_anelastic_scalar_normalization_ || state.is_tracer(variable_name_) ||
@@ -337,7 +353,6 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
                 });
             });
     }
-    return;
 }
 
 } // namespace Dynamics
