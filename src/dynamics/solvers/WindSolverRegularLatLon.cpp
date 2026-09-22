@@ -1,6 +1,8 @@
 #include "dynamics/solvers/WindSolver.hpp"
 #include "dynamics/solvers/VerticalEllipticSolver.hpp"
 #include "dynamics/solvers/HorizontalWindTopologyConstraint.hpp"
+#include "dynamics/solvers/GeneralizedWindDiagnostic.hpp"
+#include "core/geometry/HorizontalLocation.hpp"
 #include "core/RegularLatLonModelConfiguration.hpp"
 #include "dynamics/operators/RegularLatLonTerrain.hpp"
 #include "dynamics/operators/HorizontalVectorConversion.hpp"
@@ -175,7 +177,7 @@ WindSolver::initialize_regular_latlon_solver(const bool periodic, const int nz) 
         rll_inverse_dz_,
         params_.get_value_host(params_.WRXMU));
 
-    prepare_regular_latlon_diagnostic_execution();
+    GeneralizedWindDiagnostic::prepare_execution();
 }
 
 void
@@ -198,7 +200,7 @@ WindSolver::solve_regular_latlon() {
     // Bounded-q2 is intentionally a no-op at this point.
     horizontal_wind_constraint_->before_recovery(initial);
 
-    RegularLatLonDiagnosticOptions options;
+    GeneralizedWindDiagnosticOptions options;
 
     if (q2_periodic) {
         options.boundary_policy = HorizontalDiagnosticBoundaryPolicy::PeriodicQ2;
@@ -216,16 +218,22 @@ WindSolver::solve_regular_latlon() {
     rll_initialized_ = true;
 }
 
-WindSolver::RegularLatLonDiagnosticFields
+GeneralizedWindDiagnosticFields
 WindSolver::prepare_regular_latlon_wind_recovery(
-    const bool initial, const bool terrain, RegularLatLonDiagnosticOptions& options) {
+    const bool initial, const bool terrain, GeneralizedWindDiagnosticOptions& options) {
+
     options.vertical_iterations = config_.get_value<int>("dynamics.solver.vertical_iterations");
+
     options.horizontal = horizontal_elliptic_options_;
+
     options.horizontal.psi_q2_plus = rll_psi_north_;
+
     options.horizontal.iterations =
         initial ? config_.get_value<int>("dynamics.solver.initial_iterations")
                 : params_.solver_iteration;
+
     options.inverse_dz = rll_inverse_dz_;
+
     if (terrain) {
         adapt_terrain(state_,
             grid_,
@@ -247,21 +255,17 @@ WindSolver::prepare_regular_latlon_wind_recovery(
     const Core::Field<3>& active_eta_con =
         terrain ? *rll_terrain_eta_con_ : state_.get_field<3>("eta_con");
 
-    return RegularLatLonDiagnosticFields{state_.get_field<2>("psi"),
+    return GeneralizedWindDiagnosticFields{state_.get_field<2>("psi"),
         state_.get_field<2>("psinm1"),
         state_.get_field<2>("chi"),
         state_.get_field<2>("chinm1"),
         state_.get_field<3>("zeta"),
         state_.get_field<3>("w"),
         state_.get_field<3>("W3DNM1"),
-        // Canonical persistent representation.
         active_xi_con,
         active_eta_con,
-        // Solver-private covariant scratch.
         *rll_covariant_q1_wind_,
         *rll_covariant_q2_wind_,
-        state_.get_field<3>("u"),
-        state_.get_field<3>("v"),
         state_.get_field<1>("rhobar"),
         state_.get_field<1>("rhobar_up"),
         params_.flex_height_coef_mid,
@@ -288,6 +292,91 @@ WindSolver::snapshot_regular_latlon_top_vertical_vorticity() {
     Kokkos::parallel_for("SnapshotRLLTopVerticalVorticity",
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
         KOKKOS_LAMBDA(const int j, const int i) { snapshot(j, i) = zeta(top, j, i); });
+}
+
+void
+WindSolver::commit_regular_latlon_recovered_wind(const GeneralizedWindDiagnosticFields& fields,
+    const GeneralizedWindDiagnosticOptions& options) {
+
+    using Core::Geometry::HorizontalLocation;
+    using Operators::HorizontalVectorConversion;
+
+    const int h = grid_.get_halo_cells();
+
+    const int nz = grid_.get_local_total_points_z();
+
+    const int ny = grid_.get_local_total_points_y();
+
+    const int nx = grid_.get_local_total_points_x();
+
+    const int bottom = h - 1;
+
+    const int top = nz - h - 1;
+
+    const auto inverse_h1_at_u =
+        grid_.geometry().device_view(HorizontalLocation::U).physical_to_contravariant.a11;
+
+    const auto inverse_h2_at_v =
+        grid_.geometry().device_view(HorizontalLocation::V).physical_to_contravariant.a22;
+
+    const auto q1_cov = fields.covariant_q1_wind.get_device_data();
+
+    const auto q2_cov = fields.covariant_q2_wind.get_device_data();
+
+    auto& u_field = state_.get_field<3>("u");
+
+    auto& v_field = state_.get_field<3>("v");
+
+    auto u = u_field.get_mutable_device_data();
+
+    auto v = v_field.get_mutable_device_data();
+
+    Kokkos::parallel_for("CommitRegularLatLonPhysicalWindFromCovariant",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({bottom, h, h}, {top + 1, ny - h, nx - h}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) {
+            u(k, j, i) = HorizontalVectorConversion::covariant_to_physical(q1_cov(k, j, i),
+                inverse_h1_at_u(j, i));
+
+            v(k, j, i) = HorizontalVectorConversion::covariant_to_physical(q2_cov(k, j, i),
+                inverse_h2_at_v(j, i));
+        });
+
+    halo_exchanger_.exchange_multiple_halos(std::vector<Core::Field<3>*>{&u_field, &v_field});
+
+    switch (options.boundary_policy) {
+
+    case HorizontalDiagnosticBoundaryPolicy::FreeSlipBoundedQ2:
+
+        if (!bounded_q2_stencils_) {
+            throw std::logic_error("Bounded-q2 RLL wind commit requires "
+                                   "horizontal boundary stencils.");
+        }
+
+        bounded_q2_stencils_->fill_regular_lat_lon_free_slip_physical_wind_halos(u_field, v_field);
+
+        break;
+
+    case HorizontalDiagnosticBoundaryPolicy::CvvmMode2Reference:
+
+        if (!bounded_q2_stencils_) {
+            throw std::logic_error("Reference RLL wind commit requires "
+                                   "horizontal boundary stencils.");
+        }
+
+        bounded_q2_stencils_->fill_constant_q2_halos(u_field);
+
+        bounded_q2_stencils_->fill_constant_q2_halos(v_field);
+
+        break;
+
+    case HorizontalDiagnosticBoundaryPolicy::PeriodicQ2:
+
+        // MPI/halo exchange above supplies both horizontal directions.
+        break;
+
+    default:
+        throw std::invalid_argument("Unknown horizontal diagnostic boundary policy.");
+    }
 }
 
 void
@@ -336,13 +425,13 @@ WindSolver::finalize_regular_latlon_wind(
 }
 
 void
-WindSolver::execute_regular_latlon_diagnostic(const bool initial,
-    RegularLatLonDiagnosticFields& fields,
+WindSolver::execute_generalized_wind_diagnostic(const bool initial,
+    GeneralizedWindDiagnosticFields& fields,
     HorizontalDiagnosticWorkspace& workspace,
-    const RegularLatLonDiagnosticOptions& options) {
+    const GeneralizedWindDiagnosticOptions& options) {
 
     const auto diagnose = [&]() {
-        diagnose_regular_latlon_wind(grid_,
+        GeneralizedWindDiagnostic::diagnose(grid_,
             halo_exchanger_,
             *rll_vertical_solver_,
             horizontal_elliptic_solver_,
@@ -358,8 +447,9 @@ WindSolver::execute_regular_latlon_diagnostic(const bool initial,
         return;
     }
 
-    // AB2 exchanges its two prognostic allocations. Capture once for each
-    // backing allocation; all private solver/history storage stays fixed.
+    // AB2 exchanges the backing zeta allocation.
+    // Capture one graph for each allocation while all
+    // solver-private storage remains fixed.
     const auto key = fields.zeta.get_device_data().data();
 
     auto found = rll_graphs_.find(key);
@@ -367,14 +457,16 @@ WindSolver::execute_regular_latlon_diagnostic(const bool initial,
     const auto stream = Kokkos::DefaultExecutionSpace().cuda_stream();
 
     if (found == rll_graphs_.end()) {
+
         require_cuda(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal),
-            "Begin RLL diagnostic capture");
+            "Begin generalized wind diagnostic capture");
 
         diagnose();
 
         cudaGraph_t graph = nullptr;
 
-        require_cuda(cudaStreamEndCapture(stream, &graph), "End RLL diagnostic capture");
+        require_cuda(cudaStreamEndCapture(stream, &graph),
+            "End generalized wind diagnostic capture");
 
         cudaGraphExec_t executable = nullptr;
 
@@ -382,12 +474,13 @@ WindSolver::execute_regular_latlon_diagnostic(const bool initial,
 
         cudaGraphDestroy(graph);
 
-        require_cuda(result, "Instantiate RLL diagnostic graph");
+        require_cuda(result, "Instantiate generalized wind diagnostic graph");
 
         found = rll_graphs_.emplace(key, executable).first;
     }
 
-    require_cuda(cudaGraphLaunch(found->second, stream), "Replay RLL diagnostic graph");
+    require_cuda(cudaGraphLaunch(found->second, stream),
+        "Replay generalized wind diagnostic graph");
 
 #else
 
@@ -399,11 +492,22 @@ WindSolver::execute_regular_latlon_diagnostic(const bool initial,
 void
 WindSolver::recover_regular_latlon_horizontal_wind(const bool initial,
     const bool terrain,
-    RegularLatLonDiagnosticFields& fields,
+    GeneralizedWindDiagnosticFields& fields,
     HorizontalDiagnosticWorkspace& workspace,
-    const RegularLatLonDiagnosticOptions& options) {
+    const GeneralizedWindDiagnosticOptions& options) {
 
-    execute_regular_latlon_diagnostic(initial, fields, workspace, options);
+    // Pure generalized-coordinate numerical diagnostic.
+    execute_generalized_wind_diagnostic(initial, fields, workspace, options);
+
+    // Geometry/representation boundary:
+    //
+    //     covariant generalized wind
+    //             ↓
+    //     physical RLL east/north wind
+    //
+    // This MUST happen before after_recovery(), because the current
+    // RLL topology constraint measures/corrects physical State u/v.
+    commit_regular_latlon_recovered_wind(fields, options);
 
     snapshot_regular_latlon_top_vertical_vorticity();
 
@@ -414,7 +518,9 @@ WindSolver::recover_regular_latlon_horizontal_wind(const bool initial,
 
     horizontal_wind_constraint_->after_recovery(initial);
 
-    finalize_regular_latlon_wind(fields.u, fields.v, terrain);
+    // after_recovery() may change physical u.
+    // Re-establish vertical ghosts, horizontal halos and RLL wall BCs.
+    finalize_regular_latlon_wind(state_.get_field<3>("u"), state_.get_field<3>("v"), terrain);
 }
 
 } // namespace VVM::Dynamics

@@ -108,11 +108,6 @@ public:
         Core::Field<3>& u_field, Core::Field<3>& v_field, bool terrain);
 
     // RLL diagnostic execution and CUDA graph capture/replay.
-    void execute_regular_latlon_diagnostic(bool initial,
-        RegularLatLonDiagnosticFields& fields,
-        HorizontalDiagnosticWorkspace& workspace,
-        const RegularLatLonDiagnosticOptions& options);
-
     void diagnose_cartesian_horizontal_potentials();
 
     void reconstruct_cartesian_top_wind();
@@ -120,22 +115,30 @@ public:
 
     void snapshot_regular_latlon_top_vertical_vorticity();
 
+    GeneralizedWindDiagnosticFields prepare_regular_latlon_wind_recovery(
+        bool initial, bool terrain, GeneralizedWindDiagnosticOptions& options);
+
+    void execute_generalized_wind_diagnostic(bool initial,
+        GeneralizedWindDiagnosticFields& fields,
+        HorizontalDiagnosticWorkspace& workspace,
+        const GeneralizedWindDiagnosticOptions& options);
+
+    void commit_regular_latlon_recovered_wind(const GeneralizedWindDiagnosticFields& fields,
+        const GeneralizedWindDiagnosticOptions& options);
+
+    void recover_regular_latlon_horizontal_wind(bool initial,
+        bool terrain,
+        GeneralizedWindDiagnosticFields& fields,
+        HorizontalDiagnosticWorkspace& workspace,
+        const GeneralizedWindDiagnosticOptions& options);
+
 private:
     void initialize_regular_latlon_solver(bool periodic, int nz);
-
-    RegularLatLonDiagnosticFields prepare_regular_latlon_wind_recovery(
-        bool initial, bool terrain, RegularLatLonDiagnosticOptions& options);
 
     void fill_bounded_q2_potential_halos(Core::Field<2>& first, Core::Field<2>& second) const;
     void exchange_2d_solver_halos(Core::Field<2>& first, Core::Field<2>& second, int depth);
 
     void finalize_cartesian_wind();
-
-    void recover_regular_latlon_horizontal_wind(bool initial,
-        bool terrain,
-        RegularLatLonDiagnosticFields& fields,
-        HorizontalDiagnosticWorkspace& workspace,
-        const RegularLatLonDiagnosticOptions& options);
 
     const Core::Grid& grid_;
     const Utils::ConfigurationManager& config_;
