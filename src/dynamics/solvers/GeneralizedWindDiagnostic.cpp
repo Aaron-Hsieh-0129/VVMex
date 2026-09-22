@@ -312,12 +312,12 @@ GeneralizedWindDiagnostic::diagnose_horizontal_potentials(const Core::Grid& grid
 
         if (free_slip_boundary) {
             boundary.fill_positive_face_q2_dirichlet_halos(fields.psi,
-                options.channel_psi_south,
-                options.channel_psi_north);
+                options.psi_q2_minus,
+                options.psi_q2_plus);
 
             boundary.fill_positive_face_q2_dirichlet_halos(fields.psi_previous,
-                options.channel_psi_south,
-                options.channel_psi_north);
+                options.psi_q2_minus,
+                options.psi_q2_plus);
 
             boundary.fill_centered_q2_neumann_halos(fields.chi);
             boundary.fill_centered_q2_neumann_halos(fields.chi_previous);

@@ -16,10 +16,6 @@ enum class HorizontalDiagnosticBoundaryPolicy {
     CvvmMode2Reference,
     FreeSlipBoundedQ2,
     PeriodicQ2,
-
-    // Temporary compatibility names for existing callers/tests.
-    RegularLatLonFreeSlipChannel = FreeSlipBoundedQ2,
-    RegularLatLonPeriodic = PeriodicQ2
 };
 
 struct HorizontalPotentialDiagnosticFields {

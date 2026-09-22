@@ -24,9 +24,8 @@ struct RelaxationFunctor {
     Plane current_t;
 
     Real shift = real(0.0);
-    Real north_value = real(0.0);
-
-    int north_row = -1;
+    Real q2_plus_value = real(0.0);
+    int q2_plus_row = -1;
 
     bool update_z = false;
     bool update_t = false;
@@ -39,8 +38,8 @@ struct RelaxationFunctor {
         }
 
         if (update_z) {
-            current_z(j, i) = j == north_row
-                                  ? north_value
+            current_z(j, i) = j == q2_plus_row
+                                  ? q2_plus_value
                                   : operation().relaxed_at_z(previous_z, rhs_z(j, i), shift, j, i);
         }
 
@@ -107,7 +106,7 @@ HorizontalEllipticSolver::relax_generalized_pair(const Core::Field<2>& right_han
     const Core::Field<2>& previous_at_t,
     Core::Field<2>& current_at_t,
     const Options& options,
-    bool constrain_north_wall) const {
+    const bool constrain_q2_plus_wall) const {
     RelaxationFunctor functor{};
 
     functor.operation = generalized_;
@@ -123,11 +122,11 @@ HorizontalEllipticSolver::relax_generalized_pair(const Core::Field<2>& right_han
     functor.previous_t = previous_at_t.get_device_data();
     functor.current_t = current_at_t.get_mutable_device_data();
 
-    if (constrain_north_wall &&
+    if (constrain_q2_plus_wall &&
         grid_.get_local_physical_end_y() == grid_.get_global_points_y() - 1) {
-        functor.north_row = grid_.get_local_total_points_y() - grid_.get_halo_cells() - 1;
 
-        functor.north_value = options.channel_psi_north;
+        functor.q2_plus_row = grid_.get_local_total_points_y() - grid_.get_halo_cells() - 1;
+        functor.q2_plus_value = options.psi_q2_plus;
     }
 
     launch(functor,

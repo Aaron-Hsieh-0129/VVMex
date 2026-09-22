@@ -201,7 +201,7 @@ WindSolver::solve_regular_latlon() {
     RegularLatLonDiagnosticOptions options;
 
     if (q2_periodic) {
-        options.boundary_policy = HorizontalDiagnosticBoundaryPolicy::RegularLatLonPeriodic;
+        options.boundary_policy = HorizontalDiagnosticBoundaryPolicy::PeriodicQ2;
     }
 
     auto fields = prepare_regular_latlon_wind_recovery(initial, terrain, options);
@@ -221,7 +221,7 @@ WindSolver::prepare_regular_latlon_wind_recovery(
     const bool initial, const bool terrain, RegularLatLonDiagnosticOptions& options) {
     options.vertical_iterations = config_.get_value<int>("dynamics.solver.vertical_iterations");
     options.horizontal = horizontal_elliptic_options_;
-    options.horizontal.channel_psi_north = rll_psi_north_;
+    options.horizontal.psi_q2_plus = rll_psi_north_;
     options.horizontal.iterations =
         initial ? config_.get_value<int>("dynamics.solver.initial_iterations")
                 : params_.solver_iteration;

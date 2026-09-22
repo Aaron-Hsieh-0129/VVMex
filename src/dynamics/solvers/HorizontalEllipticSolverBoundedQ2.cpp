@@ -65,8 +65,8 @@ HorizontalEllipticSolver::solve_bounded_q2_free_slip_at_z_and_t(
         halo_exchanger_.exchange_multiple_halos({&z, &t}, 1);
 
         boundary.fill_positive_face_q2_dirichlet_halos(z,
-            options.channel_psi_south,
-            options.channel_psi_north);
+            options.psi_q2_minus,
+            options.psi_q2_plus);
 
         boundary.fill_centered_q2_neumann_halos(t);
     };

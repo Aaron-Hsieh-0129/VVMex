@@ -27,12 +27,13 @@ public:
         int iterations = 0;
         VVM::Real diagonal_shift = VVM::real(0.0);
 
-        // Standalone solves normally require an initial halo refresh. WindSolver
-        // sets this to false for periodic domains because solve_uv() constructs
-        // the initial guess over the complete local array, including valid halos.
         bool refresh_initial_halos = true;
-        VVM::Real channel_psi_south = VVM::real(0.0);
-        VVM::Real channel_psi_north = VVM::real(0.0);
+        // Dirichlet values for psi on bounded q2 edges.
+        //
+        // q2_minus: lower computational-q2 edge
+        // q2_plus : upper computational-q2 edge
+        VVM::Real psi_q2_minus = VVM::real(0.0);
+        VVM::Real psi_q2_plus = VVM::real(0.0);
     };
 
     HorizontalEllipticSolver(const Core::Grid& grid, Core::HaloExchanger& halo_exchanger);
@@ -111,7 +112,7 @@ private:
         const Core::Field<2>& previous_at_t,
         Core::Field<2>& current_at_t,
         const Options& options,
-        bool constrain_north_wall = false) const;
+        bool constrain_q2_plus_wall = false) const;
 };
 
 } // namespace Dynamics

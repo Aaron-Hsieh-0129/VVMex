@@ -177,13 +177,9 @@ GeneralizedScalarTransport::add_flux_convergence(const Core::Field<3>& scalar_q,
     }
 
     validate_volume(scalar_q, nz, "scalar_q");
-
     validate_volume(contravariant_mass_flux_q1, nz, "contravariant_mass_flux_q1");
-
     validate_volume(contravariant_mass_flux_q2, nz, "contravariant_mass_flux_q2");
-
     validate_volume(vertical_mass_flux, nz, "vertical_mass_flux");
-
     validate_volume(out_flux_convergence, nz, "out_flux_convergence");
 
     if (static_cast<int>(vertical_cell_spacing.get_device_data().extent(0)) < k_end) {
@@ -192,13 +188,9 @@ GeneralizedScalarTransport::add_flux_convergence(const Core::Field<3>& scalar_q,
     }
 
     auto scalar_data = scalar_q.get_device_data();
-
     auto contravariant_mass_flux_q1_data = contravariant_mass_flux_q1.get_device_data();
-
     auto contravariant_mass_flux_q2_data = contravariant_mass_flux_q2.get_device_data();
-
     auto vertical_mass_flux_data = vertical_mass_flux.get_device_data();
-
     auto vertical_cell_spacing_data = vertical_cell_spacing.get_device_data();
 
     auto output_data = out_flux_convergence.get_mutable_device_data();

@@ -964,8 +964,7 @@ run_case(const Grid& grid, HaloExchanger& halo, bool stretched) {
     options.horizontal.diagonal_shift = shift;
     options.horizontal.refresh_initial_halos = true;
     options.inverse_dz = real(0.01);
-    options.boundary_policy =
-        WindSolver::HorizontalDiagnosticBoundaryPolicy::RegularLatLonFreeSlipChannel;
+    options.boundary_policy = WindSolver::HorizontalDiagnosticBoundaryPolicy::FreeSlipBoundedQ2;
 
     const auto execute = [&](VerticalEllipticSolver& vertical,
                              HorizontalEllipticSolver& horizontal,
