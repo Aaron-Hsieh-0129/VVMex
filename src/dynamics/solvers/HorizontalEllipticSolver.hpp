@@ -61,13 +61,18 @@ public:
         Core::Field<2>& solution_at_t,
         const Options& options);
 
-    // RLL tropical-channel specialization of the same paired fixed-iteration
-    // solver. Psi is homogeneous Dirichlet at the V/Z wall faces and chi is
-    // homogeneous Neumann at the centered T rows.
+    // Generalized paired solve for a periodic-q1 / bounded-q2 free-slip domain.
     //
-    // This does not select or evolve the channel circulation. A compatible
-    // covariant zonal increment remains a separate wind-diagnostic input.
-    void solve_regular_lat_lon_channel_at_z_and_t(const Core::Field<2>& right_hand_side_at_z,
+    // Psi uses prescribed Dirichlet values on the q2 wall faces, while chi uses
+    // homogeneous Neumann conditions on the centered q2 rows.
+    //
+    // This routine owns only the elliptic/topological boundary treatment. It does
+    // not select or evolve harmonic circulation and contains no RLL metric
+    // assumptions.
+    //
+    // Cartesian keeps its existing exact-regression path and does not use this
+    // generalized specialization.
+    void solve_bounded_q2_free_slip_at_z_and_t(const Core::Field<2>& right_hand_side_at_z,
         Core::Field<2>& solution_at_z,
         const Core::Field<2>& right_hand_side_at_t,
         Core::Field<2>& solution_at_t,

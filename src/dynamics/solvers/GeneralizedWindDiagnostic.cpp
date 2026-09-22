@@ -271,7 +271,7 @@ GeneralizedWindDiagnostic::diagnose_horizontal_potentials(const Core::Grid& grid
     solver.make_extrapolated_guess(fields.chi, fields.chi_previous, workspace.solution_chi);
 
     if (free_slip_boundary) {
-        solver.solve_regular_lat_lon_channel_at_z_and_t(workspace.rhs_psi,
+        solver.solve_bounded_q2_free_slip_at_z_and_t(workspace.rhs_psi,
             workspace.solution_psi,
             workspace.rhs_chi,
             workspace.solution_chi,
