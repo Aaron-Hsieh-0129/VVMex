@@ -422,6 +422,11 @@ WindSolver::finalize_regular_latlon_wind(
             halo_exchanger_,
             bounded_q2_stencils_.get());
     }
+
+    // Keep persistent canonical wind synchronized with the final physical RLL
+    // representation, including any PeriodicQ2 or bounded-q2 circulation
+    // correction applied after generalized recovery.
+    sync_regular_lat_lon_contravariant_wind_from_physical();
 }
 
 void
@@ -521,6 +526,48 @@ WindSolver::recover_regular_latlon_horizontal_wind(const bool initial,
     // after_recovery() may change physical u.
     // Re-establish vertical ghosts, horizontal halos and RLL wall BCs.
     finalize_regular_latlon_wind(state_.get_field<3>("u"), state_.get_field<3>("v"), terrain);
+}
+
+void
+WindSolver::sync_regular_lat_lon_contravariant_wind_from_physical() {
+    using Core::Geometry::HorizontalLocation;
+    using Operators::HorizontalVectorConversion;
+
+    if (grid_.geometry().kind() != Core::Geometry::GeometryKind::RegularLatLon) {
+
+        throw std::logic_error("RLL physical-to-contravariant wind synchronization "
+                               "requires RegularLatLon geometry.");
+    }
+
+    const auto u = state_.get_field<3>("u").get_device_data();
+
+    const auto v = state_.get_field<3>("v").get_device_data();
+
+    auto u_con = state_.get_field<3>("u_con").get_mutable_device_data();
+
+    auto v_con = state_.get_field<3>("v_con").get_mutable_device_data();
+
+    const auto inverse_h1_at_u =
+        grid_.geometry().device_view(HorizontalLocation::U).physical_to_contravariant.a11;
+
+    const auto inverse_h2_at_v =
+        grid_.geometry().device_view(HorizontalLocation::V).physical_to_contravariant.a22;
+
+    const int nz = grid_.get_local_total_points_z();
+
+    const int ny = grid_.get_local_total_points_y();
+
+    const int nx = grid_.get_local_total_points_x();
+
+    Kokkos::parallel_for("SyncRegularLatLonContravariantWindFromPhysical",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) {
+            u_con(k, j, i) = HorizontalVectorConversion::physical_to_contravariant(u(k, j, i),
+                inverse_h1_at_u(j, i));
+
+            v_con(k, j, i) = HorizontalVectorConversion::physical_to_contravariant(v(k, j, i),
+                inverse_h2_at_v(j, i));
+        });
 }
 
 } // namespace VVM::Dynamics

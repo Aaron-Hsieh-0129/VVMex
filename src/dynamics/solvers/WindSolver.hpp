@@ -86,6 +86,8 @@ public:
         HorizontalDiagnosticWorkspace& workspace,
         const GeneralizedWindDiagnosticOptions& options);
 
+    void sync_regular_lat_lon_contravariant_wind_from_physical();
+
 private:
     void initialize_regular_latlon_solver(bool periodic, int nz);
 

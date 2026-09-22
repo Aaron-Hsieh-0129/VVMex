@@ -534,18 +534,33 @@ DynamicalCore::compute_zeta_vertical_structure(Core::State& state) const {
 
 void
 DynamicalCore::compute_wind_fields() {
+    using Core::Geometry::GeometryKind;
     const auto geometry_kind = grid_.geometry().kind();
 
-    // xi_con / eta_con are already the persistent prognostic state.
+    // WindSolver owns geometry-specific wind recovery and representation
+    // finalization.
     wind_solver_->solve(bc_manager_);
-    mean_wind_state_->invalidate();
-    update_contravariant_wind_shadow_state();
 
-    if (geometry_kind == Core::Geometry::GeometryKind::RegularLatLon) {
-        // The RLL diagnostic reconstructs physical zeta.
+    mean_wind_state_->invalidate();
+
+    if (geometry_kind == GeometryKind::Cartesian) {
+        // Preserve the existing exact Cartesian path. Cartesian physical and
+        // contravariant horizontal components are identical.
+        update_contravariant_wind_shadow_state();
+    }
+    else if (geometry_kind == GeometryKind::RegularLatLon) {
+        // The RLL WindSolver has already committed its final physical wind,
+        // including topology correction and wall treatment, into u_con/v_con.
+        //
+        // The current horizontal-only generalized coordinate leaves the
+        // vertical vorticity component unchanged.
         Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
             zeta_con_ref_.get(state_, "zeta_con").get_mutable_device_data(),
             zeta_ref_.get(state_, "zeta").get_device_data());
+    }
+    else {
+        throw std::logic_error("Wind-field finalization is not implemented for geometry '" +
+                               std::string(grid_.geometry().name()) + "'.");
     }
 }
 
