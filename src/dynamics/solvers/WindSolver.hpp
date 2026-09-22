@@ -77,8 +77,7 @@ public:
         HorizontalDiagnosticWorkspace& workspace,
         const GeneralizedWindDiagnosticOptions& options);
 
-    void commit_regular_latlon_recovered_wind(const GeneralizedWindDiagnosticFields& fields,
-        const GeneralizedWindDiagnosticOptions& options);
+    void commit_regular_latlon_recovered_wind(const GeneralizedWindDiagnosticFields& fields);
 
     void recover_regular_latlon_horizontal_wind(bool initial,
         bool terrain,

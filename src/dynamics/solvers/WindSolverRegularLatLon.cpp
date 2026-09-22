@@ -294,8 +294,7 @@ WindSolver::snapshot_regular_latlon_top_vertical_vorticity() {
 }
 
 void
-WindSolver::commit_regular_latlon_recovered_wind(const GeneralizedWindDiagnosticFields& fields,
-    const GeneralizedWindDiagnosticOptions& options) {
+WindSolver::commit_regular_latlon_recovered_wind(const GeneralizedWindDiagnosticFields& fields) {
     using Core::Geometry::HorizontalLocation;
     using Operators::HorizontalVectorConversion;
 
@@ -309,44 +308,22 @@ WindSolver::commit_regular_latlon_recovered_wind(const GeneralizedWindDiagnostic
 
     const auto inverse_h1_at_u =
         grid_.geometry().device_view(HorizontalLocation::U).physical_to_contravariant.a11;
+
     const auto inverse_h2_at_v =
         grid_.geometry().device_view(HorizontalLocation::V).physical_to_contravariant.a22;
 
     const auto q1_cov = fields.covariant_q1_wind.get_device_data();
     const auto q2_cov = fields.covariant_q2_wind.get_device_data();
 
-    auto& u_field = state_.get_field<3>("u");
-    auto& v_field = state_.get_field<3>("v");
+    auto u = state_.get_field<3>("u").get_mutable_device_data();
+    auto v = state_.get_field<3>("v").get_mutable_device_data();
 
-    auto& u_con_field = state_.get_field<3>("u_con");
-    auto& v_con_field = state_.get_field<3>("v_con");
-
-    auto u = u_field.get_mutable_device_data();
-    auto v = v_field.get_mutable_device_data();
-
-    auto u_con = u_con_field.get_mutable_device_data();
-    auto v_con = v_con_field.get_mutable_device_data();
+    auto u_con = state_.get_field<3>("u_con").get_mutable_device_data();
+    auto v_con = state_.get_field<3>("v_con").get_mutable_device_data();
 
     Kokkos::parallel_for("CommitRegularLatLonRecoveredWind",
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({bottom, h, h}, {top + 1, ny - h, nx - h}),
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            // Recovered generalized diagnostic output is covariant:
-            //
-            //     u_1, u_2
-            //
-            // RLL physical compatibility representation:
-            //
-            //     U = u_1 / h1
-            //     V = u_2 / h2
-            //
-            // Persistent canonical representation:
-            //
-            //     u^1 = U / h1
-            //     u^2 = V / h2
-            //
-            // Keep the same operation sequence as the previous
-            // physical -> canonical synchronization, but without the
-            // full-volume state round-trip.
             const Real physical_u =
                 HorizontalVectorConversion::covariant_to_physical(q1_cov(k, j, i),
                     inverse_h1_at_u(j, i));
@@ -355,46 +332,23 @@ WindSolver::commit_regular_latlon_recovered_wind(const GeneralizedWindDiagnostic
                 HorizontalVectorConversion::covariant_to_physical(q2_cov(k, j, i),
                     inverse_h2_at_v(j, i));
 
+            // Physical compatibility representation.
             u(k, j, i) = physical_u;
             v(k, j, i) = physical_v;
 
+            // Persistent canonical representation.
+            //
+            // Keep exactly the same arithmetic used by the D3 path:
+            //
+            //     covariant -> physical -> contravariant
+            //
+            // D4 only removes duplicated boundary communication.
             u_con(k, j, i) = HorizontalVectorConversion::physical_to_contravariant(physical_u,
                 inverse_h1_at_u(j, i));
+
             v_con(k, j, i) = HorizontalVectorConversion::physical_to_contravariant(physical_v,
                 inverse_h2_at_v(j, i));
         });
-
-    // Keep the existing physical representation boundary behavior unchanged
-    // in D3. Canonical halo/ghost values are finalized after these physical
-    // boundaries have reached their final values.
-    halo_exchanger_.exchange_multiple_halos(std::vector<Core::Field<3>*>{&u_field, &v_field});
-
-    switch (options.boundary_policy) {
-    case HorizontalDiagnosticBoundaryPolicy::FreeSlipBoundedQ2:
-        if (!bounded_q2_stencils_) {
-            throw std::logic_error("Bounded-q2 RLL wind commit requires "
-                                   "horizontal boundary stencils.");
-        }
-
-        bounded_q2_stencils_->fill_regular_lat_lon_free_slip_physical_wind_halos(u_field, v_field);
-        break;
-
-    case HorizontalDiagnosticBoundaryPolicy::CvvmMode2Reference:
-        if (!bounded_q2_stencils_) {
-            throw std::logic_error("Reference RLL wind commit requires "
-                                   "horizontal boundary stencils.");
-        }
-
-        bounded_q2_stencils_->fill_constant_q2_halos(u_field);
-        bounded_q2_stencils_->fill_constant_q2_halos(v_field);
-        break;
-
-    case HorizontalDiagnosticBoundaryPolicy::PeriodicQ2:
-        break;
-
-    default:
-        throw std::invalid_argument("Unknown horizontal diagnostic boundary policy.");
-    }
 }
 
 void
@@ -534,7 +488,7 @@ WindSolver::recover_regular_latlon_horizontal_wind(const bool initial,
 
     // Cross the RLL representation boundary only after the topology
     // correction has been applied.
-    commit_regular_latlon_recovered_wind(fields, options);
+    commit_regular_latlon_recovered_wind(fields);
 
     finalize_regular_latlon_wind(state_.get_field<3>("u"), state_.get_field<3>("v"), terrain);
 }
