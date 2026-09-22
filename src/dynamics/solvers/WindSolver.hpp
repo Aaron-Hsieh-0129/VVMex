@@ -17,6 +17,7 @@
 #include "core/BoundaryConditionManager.hpp"
 #include "dynamics/solvers/HorizontalEllipticSolver.hpp"
 #include "dynamics/solvers/HorizontalWindTopologyConstraint.hpp"
+#include "dynamics/solvers/GeneralizedWindDiagnostic.hpp"
 #include "dynamics/spatial_schemes/SpatialScheme.hpp"
 #include "utils/ConfigurationManager.hpp"
 
@@ -29,11 +30,9 @@ class VerticalEllipticSolver;
 
 class WindSolver {
 public:
-    enum class HorizontalDiagnosticBoundaryPolicy {
-        CvvmMode2Reference,
-        RegularLatLonFreeSlipChannel,
-        RegularLatLonPeriodic
-    };
+    using HorizontalDiagnosticBoundaryPolicy = VVM::Dynamics::HorizontalDiagnosticBoundaryPolicy;
+    using HorizontalDiagnosticWorkspace = VVM::Dynamics::HorizontalDiagnosticWorkspace;
+    using RegularLatLonDiagnosticOptions = VVM::Dynamics::GeneralizedWindDiagnosticOptions;
 
     WindSolver(const Core::Grid& grid,
         const Utils::ConfigurationManager& config,
@@ -62,37 +61,6 @@ public:
     // modify top means, or exchange horizontal halos.
     // Currently implemented only for Cartesian geometry.
     void integrate_uv_from_top();
-
-    struct HorizontalPotentialDiagnosticFields {
-        Core::Field<2>& psi;
-        Core::Field<2>& psi_previous;
-        Core::Field<2>& chi;
-        Core::Field<2>& chi_previous;
-
-        const Core::Field<3>& zeta;
-        const Core::Field<3>& w;
-
-        const Core::Field<1>& rhobar;
-        const Core::Field<1>& rhobar_up;
-        const Core::Field<1>& flex_mid;
-    };
-
-    struct HorizontalDiagnosticWorkspace {
-        Core::Field<2>& rhs_psi;
-        Core::Field<2>& rhs_chi;
-        Core::Field<2>& solution_psi;
-        Core::Field<2>& solution_chi;
-    };
-
-    static void diagnose_horizontal_potentials(const Core::Grid& grid,
-        Core::HaloExchanger& halo,
-        HorizontalEllipticSolver& solver,
-        const HorizontalPotentialDiagnosticFields& fields,
-        const HorizontalDiagnosticWorkspace& workspace,
-        const HorizontalEllipticSolver::Options& options,
-        VVM::Real inverse_dz,
-        int top,
-        HorizontalDiagnosticBoundaryPolicy boundary_policy);
 
     struct RegularLatLonDiagnosticFields {
         Core::Field<2>& psi;
@@ -124,14 +92,6 @@ public:
         const Core::Field<1>& flex_mid;
         const Core::Field<1>& spacing;
         const Core::Field<0>& zonal_covariant_increment;
-    };
-
-    struct RegularLatLonDiagnosticOptions {
-        int vertical_iterations = 0;
-        HorizontalEllipticSolver::Options horizontal;
-        VVM::Real inverse_dz = VVM::real(0.0);
-        HorizontalDiagnosticBoundaryPolicy boundary_policy =
-            HorizontalDiagnosticBoundaryPolicy::RegularLatLonFreeSlipChannel;
     };
 
     static void prepare_regular_latlon_diagnostic_execution();
