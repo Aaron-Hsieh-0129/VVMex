@@ -6,7 +6,7 @@
 #include "dynamics/operators/HorizontalVectorConversion.hpp"
 #include "dynamics/solvers/HorizontalEllipticSolver.hpp"
 #include "dynamics/solvers/VerticalEllipticSolver.hpp"
-#include "dynamics/solvers/WindSolver.hpp"
+#include "dynamics/solvers/GeneralizedWindDiagnostic.hpp"
 #include "utils/ConfigurationManager.hpp"
 
 #include <Kokkos_Core.hpp>
@@ -26,9 +26,13 @@ using VVM::real;
 using VVM::Core::Field;
 using VVM::Core::Grid;
 using VVM::Core::HaloExchanger;
+using VVM::Dynamics::GeneralizedWindDiagnostic;
+using VVM::Dynamics::GeneralizedWindDiagnosticFields;
+using VVM::Dynamics::GeneralizedWindDiagnosticOptions;
+using VVM::Dynamics::HorizontalDiagnosticBoundaryPolicy;
+using VVM::Dynamics::HorizontalDiagnosticWorkspace;
 using VVM::Dynamics::HorizontalEllipticSolver;
 using VVM::Dynamics::VerticalEllipticSolver;
-using VVM::Dynamics::WindSolver;
 using VVM::Utils::ConfigurationManager;
 
 constexpr Real sentinel = real(-12345.0);
@@ -361,16 +365,14 @@ struct Sources {
         auto mid = Kokkos::create_mirror(flex_mid.get_device_data());
         auto up = Kokkos::create_mirror(flex_up.get_device_data());
 
+        auto spacing_host = Kokkos::create_mirror(spacing.get_device_data());
+
         for (int k = 0; k < nz; ++k) {
             rho(k) = stretched ? real(1.40) - real(0.02) * k : real(1.0);
             rho_up(k) = stretched ? real(1.39) - real(0.02) * k : real(1.0);
             mid(k) = stretched ? real(1.10) + real(0.02) * k : real(1.0);
             up(k) = stretched ? real(0.90) + real(0.03) * k : real(1.0);
-        }
 
-        auto spacing_host = Kokkos::create_mirror(spacing.get_device_data());
-
-        for (int k = 0; k < nz; ++k) {
             spacing_host(k) = real(100.0) / up(k);
         }
 
@@ -378,6 +380,7 @@ struct Sources {
         Kokkos::deep_copy(rhobar_up.get_mutable_device_data(), rho_up);
         Kokkos::deep_copy(flex_mid.get_mutable_device_data(), mid);
         Kokkos::deep_copy(flex_up.get_mutable_device_data(), up);
+
         Kokkos::deep_copy(spacing.get_mutable_device_data(), spacing_host);
     }
 
@@ -711,7 +714,7 @@ struct DiagnosticState {
         Kokkos::deep_copy(v.get_mutable_device_data(), sentinel);
     }
 
-    WindSolver::RegularLatLonDiagnosticFields
+    GeneralizedWindDiagnosticFields
     bind(const Sources& sources) {
         return {psi,
             psi_previous,
@@ -724,8 +727,6 @@ struct DiagnosticState {
             sources.eta_con,
             covariant_q1_wind,
             covariant_q2_wind,
-            u,
-            v,
             sources.rhobar,
             sources.rhobar_up,
             sources.flex_mid,
@@ -733,9 +734,67 @@ struct DiagnosticState {
             sources.zonal_covariant_increment};
     }
 
-    WindSolver::HorizontalDiagnosticWorkspace
+    HorizontalDiagnosticWorkspace
     workspace() {
         return {rhs_psi, rhs_chi, solution_psi, solution_chi};
+    }
+
+    void
+    commit_regular_latlon_physical_wind(const Grid& grid,
+        HaloExchanger& halo,
+        VVM::Core::Boundary::HorizontalBoundaryStencils& boundary,
+        const HorizontalDiagnosticBoundaryPolicy boundary_policy) {
+
+        const int h = grid.get_halo_cells();
+        const int nz = grid.get_local_total_points_z();
+        const int ny = grid.get_local_total_points_y();
+        const int nx = grid.get_local_total_points_x();
+        const int bottom = h - 1;
+        const int top = nz - h - 1;
+
+        const auto inverse_h1_at_u = grid.geometry()
+                                         .device_view(VVM::Core::Geometry::HorizontalLocation::U)
+                                         .physical_to_contravariant.a11;
+
+        const auto inverse_h2_at_v = grid.geometry()
+                                         .device_view(VVM::Core::Geometry::HorizontalLocation::V)
+                                         .physical_to_contravariant.a22;
+
+        const auto q1_cov = covariant_q1_wind.get_device_data();
+        const auto q2_cov = covariant_q2_wind.get_device_data();
+
+        auto physical_u = u.get_mutable_device_data();
+        auto physical_v = v.get_mutable_device_data();
+
+        Kokkos::parallel_for("TestCommitRegularLatLonPhysicalWind",
+            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({bottom, h, h}, {top + 1, ny - h, nx - h}),
+            KOKKOS_LAMBDA(const int k, const int j, const int i) {
+                physical_u(k, j, i) =
+                    VVM::Dynamics::Operators::HorizontalVectorConversion::covariant_to_physical(
+                        q1_cov(k, j, i),
+                        inverse_h1_at_u(j, i));
+
+                physical_v(k, j, i) =
+                    VVM::Dynamics::Operators::HorizontalVectorConversion::covariant_to_physical(
+                        q2_cov(k, j, i),
+                        inverse_h2_at_v(j, i));
+            });
+
+        halo.exchange_multiple_halos(std::vector<Field<3>*>{&u, &v});
+
+        switch (boundary_policy) {
+        case HorizontalDiagnosticBoundaryPolicy::FreeSlipBoundedQ2:
+            boundary.fill_regular_lat_lon_free_slip_physical_wind_halos(u, v);
+            break;
+
+        case HorizontalDiagnosticBoundaryPolicy::CvvmMode2Reference:
+            boundary.fill_constant_q2_halos(u);
+            boundary.fill_constant_q2_halos(v);
+            break;
+
+        case HorizontalDiagnosticBoundaryPolicy::PeriodicQ2:
+            break;
+        }
     }
 
     std::vector<Real>
@@ -851,24 +910,31 @@ run_case(const Grid& grid, HaloExchanger& halo, bool stretched) {
 
     HorizontalEllipticSolver replayed_horizontal(grid, halo);
 
-    WindSolver::RegularLatLonDiagnosticOptions options;
+    VVM::Core::Boundary::HorizontalBoundaryStencils boundary(grid);
+
+    GeneralizedWindDiagnosticOptions options;
     options.vertical_iterations = 4;
     options.horizontal.iterations = 4;
     options.horizontal.diagonal_shift = shift;
     options.horizontal.refresh_initial_halos = true;
     options.inverse_dz = real(0.01);
-    options.boundary_policy = WindSolver::HorizontalDiagnosticBoundaryPolicy::FreeSlipBoundedQ2;
+    options.boundary_policy = HorizontalDiagnosticBoundaryPolicy::FreeSlipBoundedQ2;
 
     const auto execute = [&](VerticalEllipticSolver& vertical,
                              HorizontalEllipticSolver& horizontal,
                              DiagnosticState& state) {
-        WindSolver::diagnose_regular_latlon_wind(grid,
+        auto fields = state.bind(sources);
+        auto workspace = state.workspace();
+
+        GeneralizedWindDiagnostic::diagnose(grid,
             halo,
             vertical,
             horizontal,
-            state.bind(sources),
-            state.workspace(),
+            fields,
+            workspace,
             options);
+
+        state.commit_regular_latlon_physical_wind(grid, halo, boundary, options.boundary_policy);
     };
 
     sources.initialize_step(grid, halo, 0);
@@ -877,7 +943,7 @@ run_case(const Grid& grid, HaloExchanger& halo, bool stretched) {
     direct.prepare_step(grid, sources, 0);
     replayed.prepare_step(grid, sources, 0);
 
-    WindSolver::prepare_regular_latlon_diagnostic_execution();
+    GeneralizedWindDiagnostic::prepare_execution();
 
     // Explicitly prepare the same solver and communication operations outside
     // capture, consistent with the existing VVMex composed replay contract.

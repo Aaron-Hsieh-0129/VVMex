@@ -30,10 +30,6 @@ class VerticalEllipticSolver;
 
 class WindSolver {
 public:
-    using HorizontalDiagnosticBoundaryPolicy = VVM::Dynamics::HorizontalDiagnosticBoundaryPolicy;
-    using HorizontalDiagnosticWorkspace = VVM::Dynamics::HorizontalDiagnosticWorkspace;
-    using RegularLatLonDiagnosticOptions = VVM::Dynamics::GeneralizedWindDiagnosticOptions;
-
     WindSolver(const Core::Grid& grid,
         const Utils::ConfigurationManager& config,
         const Core::Parameters& params,
@@ -61,48 +57,6 @@ public:
     // modify top means, or exchange horizontal halos.
     // Currently implemented only for Cartesian geometry.
     void integrate_uv_from_top();
-
-    struct RegularLatLonDiagnosticFields {
-        Core::Field<2>& psi;
-        Core::Field<2>& psi_previous;
-        Core::Field<2>& chi;
-        Core::Field<2>& chi_previous;
-
-        Core::Field<3>& zeta;
-        Core::Field<3>& w;
-        Core::Field<3>& w_previous;
-
-        // Persistent canonical representation:
-        //
-        //     xi_con  =  omega^1
-        //     eta_con = -omega^2
-        //
-        // Used by the generalized flat-RLL horizontal wind-column recovery.
-        const Core::Field<3>& xi_con;
-        const Core::Field<3>& eta_con;
-        // Solver-private covariant wind scratch.
-        //
-        // These are not model State fields.
-        Core::Field<3>& covariant_q1_wind;
-        Core::Field<3>& covariant_q2_wind;
-        Core::Field<3>& u;
-        Core::Field<3>& v;
-        const Core::Field<1>& rhobar;
-        const Core::Field<1>& rhobar_up;
-        const Core::Field<1>& flex_mid;
-        const Core::Field<1>& spacing;
-        const Core::Field<0>& zonal_covariant_increment;
-    };
-
-    static void prepare_regular_latlon_diagnostic_execution();
-
-    static void diagnose_regular_latlon_wind(const Core::Grid& grid,
-        Core::HaloExchanger& halo,
-        VerticalEllipticSolver& vertical_solver,
-        HorizontalEllipticSolver& horizontal_solver,
-        const RegularLatLonDiagnosticFields& fields,
-        const HorizontalDiagnosticWorkspace& workspace,
-        const RegularLatLonDiagnosticOptions& options);
 
     void finalize_regular_latlon_wind(
         Core::Field<3>& u_field, Core::Field<3>& v_field, bool terrain);
