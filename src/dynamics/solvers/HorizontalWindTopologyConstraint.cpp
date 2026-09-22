@@ -67,8 +67,12 @@ select_mode(const Core::Grid& grid) {
 
 class RegularLatLonCirculationConstraint final : public HorizontalWindTopologyConstraint {
 public:
-    RegularLatLonCirculationConstraint(const Core::Grid& grid, Core::State& state)
-        : grid_(grid), state_(state), mode_(select_mode(grid)) {
+    RegularLatLonCirculationConstraint(const Core::Grid& grid,
+        Core::State& state,
+        Core::Field<3>& covariant_q1_wind,
+        Core::Field<3>& covariant_q2_wind)
+        : grid_(grid), state_(state), covariant_q1_wind_(covariant_q1_wind),
+          covariant_q2_wind_(covariant_q2_wind), mode_(select_mode(grid)) {
 
         const int gx = grid_.get_global_points_x();
 
@@ -107,24 +111,21 @@ public:
             return;
         }
 
-        // Periodic harmonic cycles belong to the
-        // incoming physical wind, so capture them
-        // before the first diagnostic/recovery.
+        // The periodic-cycle target belongs to the incoming model state.
+        // At this point the generalized diagnostic has not yet produced its
+        // covariant scratch wind, so capture the target from the physical
+        // compatibility representation.
         if (mode_ == RegularLatLonConstraintMode::PeriodicCycles) {
-
-            measure();
+            measure_periodic_cycles_from_physical();
             capture_target();
         }
     }
 
     void
     after_recovery(bool initial) override {
-        measure();
+        measure_recovered_covariant_wind();
 
-        // For the bounded-q2 channel, the reference
-        // circulation is defined by the first
-        // diagnosed wind rather than the incoming
-        // initial physical wind.
+        // For bounded q2, the target is the first diagnosed wind.
         if (mode_ == RegularLatLonConstraintMode::BoundedQ2Wall && initial) {
 
             capture_target();
@@ -135,10 +136,52 @@ public:
                                    "target has not been initialized.");
         }
 
-        // Preserve historical behavior. During the
-        // initial bounded-q2 solve this executes a
-        // zero correction after capturing the target.
         apply_correction();
+    }
+
+    void
+    measure_periodic_cycles_from_covariant() {
+        using Core::Geometry::HorizontalLocation;
+
+        const int h = grid_.get_halo_cells();
+        const int nz = grid_.get_local_total_points_z();
+        const int ny = grid_.get_local_total_points_y();
+        const int nx = grid_.get_local_total_points_x();
+
+        const int gx = grid_.get_global_points_x();
+        const int gy = grid_.get_global_points_y();
+
+        const int si = grid_.get_local_physical_start_x();
+        const int sj = grid_.get_local_physical_start_y();
+
+        const int top = nz - h - 1;
+
+        const auto q1_cov = covariant_q1_wind_.get_device_data();
+        const auto q2_cov = covariant_q2_wind_.get_device_data();
+
+        const auto h1_at_v =
+            grid_.geometry().device_view(HorizontalLocation::V).contravariant_to_physical.a11;
+
+        const Real radius = grid_.horizontal_specification().geometry.regular_lat_lon.radius;
+
+        const auto contributions = contributions_->get_mutable_device_data();
+
+        Kokkos::deep_copy(contributions, real(0.0));
+
+        Kokkos::parallel_for("RLLPeriodicCovariantCycleIntegrals",
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
+            KOKKOS_LAMBDA(const int j, const int i) {
+                if (sj == 0 && j == h) {
+                    contributions(si + i - h) = q1_cov(top, j, i);
+                }
+
+                if (si == 0 && i == h) {
+                    contributions(gx + sj + j - h) = q2_cov(top, j, i);
+                    contributions(gx + gy + sj + j - h) = radius / h1_at_v(j, i);
+                }
+            });
+
+        reduce_periodic_cycles(gx, gy);
     }
 
 private:
@@ -154,13 +197,12 @@ private:
     };
 
     void
-    measure() {
+    measure_recovered_covariant_wind() {
         if (mode_ == RegularLatLonConstraintMode::PeriodicCycles) {
-
-            measure_periodic_cycles();
+            measure_periodic_cycles_from_covariant();
         }
         else {
-            measure_bounded_q2_wall();
+            measure_bounded_q2_wall_from_covariant();
         }
     }
 
@@ -224,10 +266,7 @@ public:
     }
 
     void
-    measure_bounded_q2_wall() {
-        using Core::Geometry::HorizontalLocation;
-        using Operators::HorizontalVectorConversion;
-
+    measure_bounded_q2_wall_from_covariant() {
         const int h = grid_.get_halo_cells();
 
         const int nz = grid_.get_local_total_points_z();
@@ -240,27 +279,22 @@ public:
 
         const int top = nz - h - 1;
 
-        const bool owns_south = grid_.get_local_physical_start_y() == 0;
+        const bool owns_q2_minus = grid_.get_local_physical_start_y() == 0;
 
         const int start_i = grid_.get_local_physical_start_x();
 
-        const auto h1_at_u =
-            grid_.geometry().device_view(HorizontalLocation::U).contravariant_to_physical.a11;
-
-        const auto u = state_.get_field<3>("u").get_device_data();
+        const auto q1_cov = covariant_q1_wind_.get_device_data();
 
         const auto contributions = contributions_->get_mutable_device_data();
 
         Kokkos::deep_copy(contributions, real(0.0));
 
-        Kokkos::parallel_for("RLLSouthWallCirculation",
+        Kokkos::parallel_for("RLLBoundedQ2CovariantCirculation",
             Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
             KOKKOS_LAMBDA(const int j, const int i) {
-                if (owns_south && j == h) {
+                if (owns_q2_minus && j == h) {
 
-                    contributions(start_i + i - h) =
-                        HorizontalVectorConversion::physical_to_covariant(u(top, j, i),
-                            h1_at_u(j, i));
+                    contributions(start_i + i - h) = q1_cov(top, j, i);
                 }
             });
 
@@ -318,8 +352,6 @@ public:
 
     void
     apply_bounded_q2_wall_correction() {
-        using Core::Geometry::HorizontalLocation;
-
         const int h = grid_.get_halo_cells();
 
         const int nz = grid_.get_local_total_points_z();
@@ -328,10 +360,11 @@ public:
 
         const int nx = grid_.get_local_total_points_x();
 
-        const auto h1 =
-            grid_.geometry().device_view(HorizontalLocation::U).contravariant_to_physical.a11;
+        const int bottom = h - 1;
 
-        auto u = state_.get_field<3>("u").get_mutable_device_data();
+        const int top = nz - h - 1;
+
+        auto q1_cov = covariant_q1_wind_.get_mutable_device_data();
 
 #if defined(ENABLE_NCCL)
 
@@ -339,60 +372,52 @@ public:
 
         const auto measurements = measurements_device_;
 
-        Kokkos::parallel_for("PreserveRLLWallCirculation",
-            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
+        Kokkos::parallel_for("PreserveBoundedQ2CovariantCirculation",
+            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({bottom, h, h}, {top + 1, ny - h, nx - h}),
             KOKKOS_LAMBDA(const int k, const int j, const int i) {
                 const Real correction = targets(0) - measurements(0);
 
-                u(k, j, i) += correction / h1(j, i);
+                q1_cov(k, j, i) += correction;
             });
 
 #else
 
         const Real correction = targets_.q1 - measurements_.q1;
 
-        Kokkos::parallel_for("PreserveRLLWallCirculation",
-            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
+        Kokkos::parallel_for("PreserveBoundedQ2CovariantCirculation",
+            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({bottom, h, h}, {top + 1, ny - h, nx - h}),
             KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                u(k, j, i) += correction / h1(j, i);
+                q1_cov(k, j, i) += correction;
             });
 
 #endif
     }
 
     void
-    measure_periodic_cycles() {
+    measure_periodic_cycles_from_physical() {
         using Core::Geometry::HorizontalLocation;
         using Operators::HorizontalVectorConversion;
 
         const int h = grid_.get_halo_cells();
-
         const int nz = grid_.get_local_total_points_z();
-
         const int ny = grid_.get_local_total_points_y();
-
         const int nx = grid_.get_local_total_points_x();
 
         const int gx = grid_.get_global_points_x();
-
         const int gy = grid_.get_global_points_y();
 
         const int si = grid_.get_local_physical_start_x();
-
         const int sj = grid_.get_local_physical_start_y();
 
         const int top = nz - h - 1;
 
         const auto u = state_.get_field<3>("u").get_device_data();
-
         const auto v = state_.get_field<3>("v").get_device_data();
 
         const auto h1_at_u =
             grid_.geometry().device_view(HorizontalLocation::U).contravariant_to_physical.a11;
-
         const auto h2_at_v =
             grid_.geometry().device_view(HorizontalLocation::V).contravariant_to_physical.a22;
-
         const auto h1_at_v =
             grid_.geometry().device_view(HorizontalLocation::V).contravariant_to_physical.a11;
 
@@ -516,56 +541,47 @@ public:
         using Core::Geometry::HorizontalLocation;
 
         const int h = grid_.get_halo_cells();
-
         const int nz = grid_.get_local_total_points_z();
-
         const int ny = grid_.get_local_total_points_y();
-
         const int nx = grid_.get_local_total_points_x();
 
-        auto u = state_.get_field<3>("u").get_mutable_device_data();
+        const int bottom = h - 1;
+        const int top = nz - h - 1;
 
-        auto v = state_.get_field<3>("v").get_mutable_device_data();
+        auto q1_cov = covariant_q1_wind_.get_mutable_device_data();
+        auto q2_cov = covariant_q2_wind_.get_mutable_device_data();
 
-        const auto hu =
-            grid_.geometry().device_view(HorizontalLocation::U).contravariant_to_physical.a11;
-
-        // This deliberately uses h1 at V, matching
-        // the retained RLL meridional harmonic basis
-        // and its historical normalization.
-        const auto hv =
+        const auto h1_at_v =
             grid_.geometry().device_view(HorizontalLocation::V).contravariant_to_physical.a11;
+        const auto h2_at_v =
+            grid_.geometry().device_view(HorizontalLocation::V).contravariant_to_physical.a22;
 
 #if defined(ENABLE_NCCL)
-
         const auto targets = targets_device_;
 
         const auto measurements = measurements_device_;
 
-        Kokkos::parallel_for("PreserveRLLPeriodicCirculation",
-            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
+        Kokkos::parallel_for("PreserveRLLPeriodicCovariantCirculation",
+            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({bottom, h, h}, {top + 1, ny - h, nx - h}),
             KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                const Real du = targets(0) - measurements(0);
+                const Real dq1 = targets(0) - measurements(0);
 
-                const Real dv = (targets(1) - measurements(1)) / measurements(2);
+                const Real harmonic_q2 = (targets(1) - measurements(1)) / measurements(2);
 
-                u(k, j, i) += du / hu(j, i);
-
-                v(k, j, i) += dv / hv(j, i);
+                q1_cov(k, j, i) += dq1;
+                q2_cov(k, j, i) += (harmonic_q2 / h1_at_v(j, i)) * h2_at_v(j, i);
             });
 
 #else
 
-        const Real du = targets_.q1 - measurements_.q1;
+        const Real dq1 = targets_.q1 - measurements_.q1;
+        const Real harmonic_q2 = (targets_.q2 - measurements_.q2) / measurements_.weight;
 
-        const Real dv = (targets_.q2 - measurements_.q2) / measurements_.weight;
-
-        Kokkos::parallel_for("PreserveRLLPeriodicCirculation",
-            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
+        Kokkos::parallel_for("PreserveRLLPeriodicCovariantCirculation",
+            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({bottom, h, h}, {top + 1, ny - h, nx - h}),
             KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                u(k, j, i) += du / hu(j, i);
-
-                v(k, j, i) += dv / hv(j, i);
+                q1_cov(k, j, i) += dq1;
+                q2_cov(k, j, i) += (harmonic_q2 / h1_at_v(j, i)) * h2_at_v(j, i);
             });
 
 #endif
@@ -611,6 +627,9 @@ private:
     const Core::Grid& grid_;
     Core::State& state_;
 
+    Core::Field<3>& covariant_q1_wind_;
+    Core::Field<3>& covariant_q2_wind_;
+
     RegularLatLonConstraintMode mode_;
 
     std::unique_ptr<Core::Field<1>> contributions_;
@@ -632,9 +651,15 @@ private:
 } // namespace
 
 std::unique_ptr<HorizontalWindTopologyConstraint>
-make_regular_lat_lon_circulation_constraint(const Core::Grid& grid, Core::State& state) {
+make_regular_lat_lon_circulation_constraint(const Core::Grid& grid,
+    Core::State& state,
+    Core::Field<3>& covariant_q1_wind,
+    Core::Field<3>& covariant_q2_wind) {
 
-    return std::make_unique<RegularLatLonCirculationConstraint>(grid, state);
+    return std::make_unique<RegularLatLonCirculationConstraint>(grid,
+        state,
+        covariant_q1_wind,
+        covariant_q2_wind);
 }
 
 } // namespace VVM::Dynamics

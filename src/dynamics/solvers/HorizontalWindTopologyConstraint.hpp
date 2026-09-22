@@ -5,6 +5,7 @@
 
 #include "core/Grid.hpp"
 #include "core/State.hpp"
+#include "core/Field.hpp"
 
 namespace VVM::Dynamics {
 
@@ -38,7 +39,10 @@ public:
 // The implementation remains RLL-specific because these cycles/walls are
 // topology-specific. WindSolver itself only sees the lifecycle interface.
 std::unique_ptr<HorizontalWindTopologyConstraint> make_regular_lat_lon_circulation_constraint(
-    const Core::Grid& grid, Core::State& state);
+    const Core::Grid& grid,
+    Core::State& state,
+    Core::Field<3>& covariant_q1_wind,
+    Core::Field<3>& covariant_q2_wind);
 
 } // namespace VVM::Dynamics
 

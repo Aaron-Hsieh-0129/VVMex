@@ -164,7 +164,10 @@ WindSolver::initialize_regular_latlon_solver(const bool periodic, const int nz) 
         std::make_unique<Core::Field<0>>("RLL prescribed zonal covariant increment",
             std::array<int, 0>{});
 
-    horizontal_wind_constraint_ = make_regular_lat_lon_circulation_constraint(grid_, state_);
+    horizontal_wind_constraint_ = make_regular_lat_lon_circulation_constraint(grid_,
+        state_,
+        *rll_covariant_q1_wind_,
+        *rll_covariant_q2_wind_);
 
     Kokkos::deep_copy(rll_spacing_->get_mutable_device_data(), params_.get_value_host(params_.dz));
 
@@ -276,17 +279,13 @@ WindSolver::prepare_regular_latlon_wind_recovery(
 void
 WindSolver::snapshot_regular_latlon_top_vertical_vorticity() {
     const int h = grid_.get_halo_cells();
-
     const int nz = grid_.get_local_total_points_z();
-
     const int ny = grid_.get_local_total_points_y();
-
     const int nx = grid_.get_local_total_points_x();
 
     const int top = nz - h - 1;
 
     const auto zeta = state_.get_field<3>("zeta").get_device_data();
-
     const auto snapshot = state_.get_field<2>("rll_zeta_top").get_mutable_device_data();
 
     Kokkos::parallel_for("SnapshotRLLTopVerticalVorticity",
@@ -297,38 +296,29 @@ WindSolver::snapshot_regular_latlon_top_vertical_vorticity() {
 void
 WindSolver::commit_regular_latlon_recovered_wind(const GeneralizedWindDiagnosticFields& fields,
     const GeneralizedWindDiagnosticOptions& options) {
-
     using Core::Geometry::HorizontalLocation;
     using Operators::HorizontalVectorConversion;
 
     const int h = grid_.get_halo_cells();
-
     const int nz = grid_.get_local_total_points_z();
-
     const int ny = grid_.get_local_total_points_y();
-
     const int nx = grid_.get_local_total_points_x();
 
     const int bottom = h - 1;
-
     const int top = nz - h - 1;
 
     const auto inverse_h1_at_u =
         grid_.geometry().device_view(HorizontalLocation::U).physical_to_contravariant.a11;
-
     const auto inverse_h2_at_v =
         grid_.geometry().device_view(HorizontalLocation::V).physical_to_contravariant.a22;
 
     const auto q1_cov = fields.covariant_q1_wind.get_device_data();
-
     const auto q2_cov = fields.covariant_q2_wind.get_device_data();
 
     auto& u_field = state_.get_field<3>("u");
-
     auto& v_field = state_.get_field<3>("v");
 
     auto u = u_field.get_mutable_device_data();
-
     auto v = v_field.get_mutable_device_data();
 
     Kokkos::parallel_for("CommitRegularLatLonPhysicalWindFromCovariant",
@@ -344,33 +334,24 @@ WindSolver::commit_regular_latlon_recovered_wind(const GeneralizedWindDiagnostic
     halo_exchanger_.exchange_multiple_halos(std::vector<Core::Field<3>*>{&u_field, &v_field});
 
     switch (options.boundary_policy) {
-
     case HorizontalDiagnosticBoundaryPolicy::FreeSlipBoundedQ2:
-
         if (!bounded_q2_stencils_) {
             throw std::logic_error("Bounded-q2 RLL wind commit requires "
                                    "horizontal boundary stencils.");
         }
-
         bounded_q2_stencils_->fill_regular_lat_lon_free_slip_physical_wind_halos(u_field, v_field);
-
         break;
 
     case HorizontalDiagnosticBoundaryPolicy::CvvmMode2Reference:
-
         if (!bounded_q2_stencils_) {
             throw std::logic_error("Reference RLL wind commit requires "
                                    "horizontal boundary stencils.");
         }
-
         bounded_q2_stencils_->fill_constant_q2_halos(u_field);
-
         bounded_q2_stencils_->fill_constant_q2_halos(v_field);
-
         break;
 
     case HorizontalDiagnosticBoundaryPolicy::PeriodicQ2:
-
         // MPI/halo exchange above supplies both horizontal directions.
         break;
 
@@ -500,19 +481,8 @@ WindSolver::recover_regular_latlon_horizontal_wind(const bool initial,
     GeneralizedWindDiagnosticFields& fields,
     HorizontalDiagnosticWorkspace& workspace,
     const GeneralizedWindDiagnosticOptions& options) {
-
-    // Pure generalized-coordinate numerical diagnostic.
+    // Produce recovered covariant horizontal wind.
     execute_generalized_wind_diagnostic(initial, fields, workspace, options);
-
-    // Geometry/representation boundary:
-    //
-    //     covariant generalized wind
-    //             ↓
-    //     physical RLL east/north wind
-    //
-    // This MUST happen before after_recovery(), because the current
-    // RLL topology constraint measures/corrects physical State u/v.
-    commit_regular_latlon_recovered_wind(fields, options);
 
     snapshot_regular_latlon_top_vertical_vorticity();
 
@@ -521,10 +491,14 @@ WindSolver::recover_regular_latlon_horizontal_wind(const bool initial,
                                "topology constraint.");
     }
 
+    // Circulation constraints now operate directly on the recovered
+    // covariant wind.
     horizontal_wind_constraint_->after_recovery(initial);
 
-    // after_recovery() may change physical u.
-    // Re-establish vertical ghosts, horizontal halos and RLL wall BCs.
+    // Cross the RLL representation boundary only after the topology
+    // correction has been applied.
+    commit_regular_latlon_recovered_wind(fields, options);
+
     finalize_regular_latlon_wind(state_.get_field<3>("u"), state_.get_field<3>("v"), terrain);
 }
 
