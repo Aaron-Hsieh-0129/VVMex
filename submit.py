@@ -41,6 +41,15 @@ DEFAULT_PARTITION = "normal"
 DEFAULT_EXPORT = "ALL"
 DEFAULT_EXCLUSIVE = True
 
+# Runtime network defaults belong to the selected machine, not the build cache.
+# Explicit environment values take precedence; CLI options are applied last.
+PRESET_RUNTIME_DEFAULTS = {
+    "nano4": {"NCCL_SOCKET_IFNAME": "=vlan1721"},
+}
+# nano4's submission plugin enforces this cap but does not advertise it in
+# scontrol's DefCpuPerGPU/MaxCPUsPerNode fields.
+PRESET_CPUS_PER_GPU_LIMIT = {"nano4": 12}
+
 
 # ==============================================================================
 # Path / environment helpers
@@ -198,6 +207,9 @@ def setup_environment(preset_name):
         gpu_enabled = str(cache_vars.get("VVM_ENABLE_GPU", "ON")).strip().upper() \
             not in ("OFF", "0", "FALSE", "NO")
         env["VVM_BACKEND"] = "gpu" if gpu_enabled else "cpu"
+        if gpu_enabled:
+            for name, value in PRESET_RUNTIME_DEFAULTS.get(preset_name, {}).items():
+                env.setdefault(name, value)
 
         binary_dir = binary_dir_raw.replace("${sourceDir}", vvm_root)
         env["VVM_BINARY"] = os.path.join(binary_dir, "vvm")
@@ -501,7 +513,7 @@ def query_cpus_per_node(partition):
 
 
 def infer_cpus_per_task(cpus, partition, tasks_per_node, gpus_per_node=0,
-                        compute_per_node=0, io_per_node=0, io_cpus=1):
+                        compute_per_node=0, io_per_node=0, io_cpus=1, preset=None):
     """
     CPU request policy when --cpus is not given.
 
@@ -537,6 +549,9 @@ def infer_cpus_per_task(cpus, partition, tasks_per_node, gpus_per_node=0,
     cpus_per_gpu = resources.get("def_cpu_per_gpu")
     if not cpus_per_gpu and resources.get("gpus"):
         cpus_per_gpu = resources["cpus"] // resources["gpus"]
+    site_limit = PRESET_CPUS_PER_GPU_LIMIT.get(preset)
+    if site_limit:
+        cpus_per_gpu = min(cpus_per_gpu, site_limit) if cpus_per_gpu else site_limit
 
     if gpus_per_node > 0 and cpus_per_gpu:
         gpu_budget = gpus_per_node * cpus_per_gpu
@@ -1131,6 +1146,16 @@ def parse_args():
     )
 
     parser.add_argument("-t", "--time", type=str, default=DEFAULT_TIME, help="Wall time limit")
+    parser.add_argument(
+        "--nccl-socket-ifname", default=None,
+        help="NCCL bootstrap/socket interface selector, e.g. '=vlan1721'. "
+             "Default: environment, then '=vlan1721' for nano4, otherwise NCCL auto-selection. "
+             "Prefer an exact reachable interface; exclusions can also select loopback.",
+    )
+    parser.add_argument(
+        "--nccl-ib-hca", default=None,
+        help="Optional NCCL InfiniBand HCA selector (independent of the socket interface).",
+    )
     parser.add_argument("--out", type=str, default=DEFAULT_OUT,
                         help="Standard output log (default: <output.output_dir>/"
                              + DEFAULT_LOG_OUT_NAME.replace("%", "%%") + ")")
@@ -1196,6 +1221,11 @@ def main():
     args = parse_args()
 
     env = setup_environment(args.preset)
+    for option, variable in (("nccl_socket_ifname", "NCCL_SOCKET_IFNAME"),
+                             ("nccl_ib_hca", "NCCL_IB_HCA")):
+        value = getattr(args, option, None)
+        if value is not None:
+            env[variable] = value
 
     vvm_root = env.get("VVM_ROOT")
     if not vvm_root:
@@ -1329,6 +1359,7 @@ def main():
         compute_per_node,
         io_per_node,
         args.io_cpus,
+        preset=args.preset,
     )
     if cpus_origin != "explicit":
         print(f"[Info] CPUs per task: {args.cpus}  ({cpus_origin})")
@@ -1372,6 +1403,9 @@ def main():
     print(f" Total tasks/node  : {tasks_per_node}")
     print(f" Backend           : {env.get('VVM_BACKEND', 'gpu')}")
     print(f" Binary            : {env.get('VVM_BINARY', '<default>')}")
+    if not cpu_backend:
+        print(f" NCCL socket iface : {env.get('NCCL_SOCKET_IFNAME') or '<auto>'}")
+        print(f" NCCL IB HCA       : {env.get('NCCL_IB_HCA') or '<auto>'}")
     if cpu_backend:
         print(" GPUs/node         : none (CPU build)")
     else:

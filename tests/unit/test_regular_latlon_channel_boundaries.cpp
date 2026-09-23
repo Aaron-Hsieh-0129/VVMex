@@ -1,4 +1,5 @@
 #include "core/Field.hpp"
+#include "core/BoundaryConditionManager.hpp"
 #include "core/Grid.hpp"
 #include "core/boundary/HorizontalBoundaryStencils.hpp"
 #include "core/geometry/HorizontalLocation.hpp"
@@ -43,6 +44,40 @@ using VVM::Dynamics::VerticalEllipticSolver;
 using VVM::Utils::ConfigurationManager;
 
 constexpr Real sentinel = real(-12345.0);
+
+void check_canonical_vorticity_boundaries(const Grid& grid) {
+    const int nz = grid.get_local_total_points_z();
+    const int ny = grid.get_local_total_points_y();
+    const int nx = grid.get_local_total_points_x();
+    Field<3> physical("xi", {nz, ny, nx});
+    Field<3> canonical("xi_con", {nz, ny, nx});
+    const auto h1 = grid.geometry().device_view(HorizontalLocation::V)
+        .contravariant_to_physical.a11;
+    auto p = physical.get_mutable_device_data();
+    auto c = canonical.get_mutable_device_data();
+    Kokkos::parallel_for("InitializeCanonicalBoundaryRegression",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
+        KOKKOS_LAMBDA(int k, int j, int i) {
+            p(k,j,i) = real(1.0) + real(0.01) * (k+j+i);
+            c(k,j,i) = p(k,j,i) / h1(j,i);
+        });
+    VVM::Core::BoundaryConditionManager bc(grid, true);
+    bc.apply_horizontal_bcs(physical);
+    bc.apply_horizontal_bcs(canonical);
+    Real error = 0;
+    Kokkos::parallel_reduce("CheckCanonicalBoundaryRegression",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
+        KOKKOS_LAMBDA(int k, int j, int i, Real& maximum) {
+            const Real difference = Kokkos::abs(c(k,j,i)*h1(j,i)-p(k,j,i));
+            if (difference > maximum) maximum = difference;
+        }, Kokkos::Max<Real>(error));
+    if (error > real(100.0) * std::numeric_limits<Real>::epsilon()) {
+        std::fprintf(stderr, "Canonical xi wall condition disagrees with physical xi: %g\n",
+            static_cast<double>(error));
+        MPI_Abort(MPI_COMM_WORLD, 2);
+    }
+}
+
 
 [[noreturn]] void
 fatal(const char* message) {
@@ -1209,6 +1244,7 @@ main(int argc, char** argv) {
             ConfigurationManager config(argv[1]);
 
             Grid grid(config);
+            check_canonical_vorticity_boundaries(grid);
 
 #if defined(ENABLE_NCCL)
             ncclUniqueId id;

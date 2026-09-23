@@ -236,12 +236,18 @@ node's CPU count divided by its GPU count. A partition-level `MaxCPUsPerNode`
 caps the budget as well. CPU-backend runs request no GPUs, so no cap applies and
 they still fill the node.
 
+The `nano4` preset additionally caps automatic requests at 12 CPUs per GPU,
+matching its submission plugin even when `scontrol` reports 104 usable CPUs
+and no per-GPU limit. Thus 8 compute ranks with no I/O ranks request 12 CPUs
+per task; 8 compute plus 8 I/O ranks request 6. Explicit `--cpus` still wins.
+
 It reads `CPUEfctv` rather than `CPUTot` on purpose. A node can advertise more
 CPUs than a job is permitted to hold, and requesting the difference gets the job
 rejected rather than scheduled. Where SLURM cannot answer -- `--local`, no SLURM
 at all -- it falls back to `1` and prints the reason. A `--partition` SLURM does
 not know is replaced by the cluster's default partition, since every query above
 depends on the partition being real:
+
 
 ```text
 [Info] partition 'normal' not found; using default partition 'gpu'
@@ -370,6 +376,28 @@ The snapshot is itself a git repository. Its single commit reproduces the source
 repository's `HEAD` exactly, and any uncommitted local edits are left in the working
 tree, so `git -C <output_dir>/code_snapshot diff` shows precisely what the run
 carried on top of that commit.
+
+## NCCL networking across nodes
+
+Selecting `--preset nano4` automatically sets `NCCL_SOCKET_IFNAME='=vlan1721'`
+for GPU runs, including submissions through the interactive wizard. The
+32-GPU tropical run therefore needs no network option:
+
+```bash
+./submit.py -c rundata/input_configs/rll_tropical.json --preset nano4 \
+  --compute 32 --io 32 --nodes 4 -p 32gpus
+```
+
+An exclusion such as `^ibp25s0` can select loopback (`127.0.0.1`), which cannot
+connect different nodes. Prefer an exact interface verified on the compute
+nodes. NCCL logs should report that interface in `Bootstrap: Using`.
+This option leaves InfiniBand data transfers enabled; `--nccl-ib-hca` selects
+RDMA adapters independently when needed. Both options override their matching
+environment variables and are forwarded explicitly to MPI ranks. Precedence is
+CLI option, existing environment variable, machine default, then NCCL automatic
+selection. Other presets have no machine network default. To select a different
+interface, use `--nccl-socket-ifname '=INTERFACE'`; an explicit empty value
+(`--nccl-socket-ifname ''`) clears the preset/environment selector.
 
 ## Direct MPI commands
 

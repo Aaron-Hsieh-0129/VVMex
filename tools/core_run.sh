@@ -597,12 +597,24 @@ if [ "$VVM_BACKEND" = "cpu" ]; then
 else
     MPIRUN_MAP_ARGS=(--map-by "ppr:${TASKS_PER_NODE}:node" --rank-by node --bind-to none)
 fi
+# Forward selectors explicitly to every node, including when MPI does not
+# propagate the submitting shell environment. Keep RDMA enabled: the socket
+# interface is also used for bootstrap when the data transport is InfiniBand.
+MPI_NCCL_ENV_ARGS=()
+export NCCL_DEBUG="${NCCL_DEBUG:-INFO}"
+for name in NCCL_DEBUG NCCL_SOCKET_IFNAME NCCL_SOCKET_FAMILY NCCL_IB_HCA; do
+    if [ -n "${!name:-}" ]; then
+        MPI_NCCL_ENV_ARGS+=(-x "$name")
+        echo "[NCCL] ${name}=${!name}"
+    fi
+done
+
 mpirun -np $VVM_TOTAL_TASKS \
  --oversubscribe "${MPIRUN_MAP_ARGS[@]}" \
  -x OMP_NUM_THREADS=${PE} \
  -x OMP_PROC_BIND=false \
  -x CUDA_DEVICE_ORDER=${CUDA_DEVICE_ORDER} \
- -x NCCL_DEBUG=INFO \
+ "${MPI_NCCL_ENV_ARGS[@]}" \
  -x HDF5_USE_FILE_LOCKING=FALSE \
  -x VVM_GPUS \
  -x VVM_BACKEND \

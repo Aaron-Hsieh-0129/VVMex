@@ -35,26 +35,242 @@ with open(CONFIG_PATH, 'r') as f:
 # Set to True : Read high-resolution Taiwan topography and perform coarsening
 # Set to False: Enter "Idealized Simulation" mode for user-defined ridge & land types
 USE_TAIWAN_TOPO = False
-roll_idx_x = 0 # config['grid']['nx']//4
-roll_idx_y = 0 # config['grid']['ny']//4
+
+# ==============================================================================
+# Configuration Compatibility Layer
+# ==============================================================================
+# New schema:
+#   grid.horizontal.{nx, ny, n_halo_cells, geometry, topology, ...}
+#   grid.vertical.{nz, type, dz, dz1, ...}
+#
+# Legacy schema (still supported):
+#   grid.{nx, ny, nz, dx, dy, dz, dz1, n_halo_cells,
+#         vertical_coordinate_type, rcemip_grid_data_path, ...}
+#
+# Keep all schema translation here. The initialization logic below should only
+# consume the normalized GRID_CONFIG object.
+LEGACY_EARTH_RADIUS_M = 6.37E6
+
+
+def _as_mapping(value, path):
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"Configuration '{path}' must be an object")
+    return value
+
+
+def _first_not_none(*values):
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _require_positive_int(value, path):
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value <= 0:
+        raise ValueError(f"Configuration '{path}' must be a positive integer")
+    return int(value)
+
+
+def _require_positive_float(value, path):
+    if isinstance(value, bool) or not isinstance(value, (int, float, np.integer, np.floating)):
+        raise ValueError(f"Configuration '{path}' must be a positive number")
+    value = float(value)
+    if not np.isfinite(value) or value <= 0.0:
+        raise ValueError(f"Configuration '{path}' must be a positive finite number")
+    return value
+
+
+def _validate_bounds(bounds, path, lower_limit=None, upper_limit=None):
+    if (not isinstance(bounds, (list, tuple)) or len(bounds) != 2 or
+            any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in bounds)):
+        raise ValueError(f"Configuration '{path}' must contain exactly two numeric values")
+
+    lower = float(bounds[0])
+    upper = float(bounds[1])
+    if not np.isfinite(lower) or not np.isfinite(upper) or upper <= lower:
+        raise ValueError(f"Configuration '{path}' must be finite and strictly increasing")
+    if lower_limit is not None and lower < lower_limit:
+        raise ValueError(f"Configuration '{path}' lower bound must be >= {lower_limit}")
+    if upper_limit is not None and upper > upper_limit:
+        raise ValueError(f"Configuration '{path}' upper bound must be <= {upper_limit}")
+    return (lower, upper)
+
+
+def resolve_grid_configuration(experiment_config):
+    """Normalize the new and legacy grid schemas into one internal structure."""
+    grid = _as_mapping(experiment_config.get('grid'), 'grid')
+    if not grid:
+        raise ValueError("Missing required configuration object 'grid'")
+
+    horizontal_present = 'horizontal' in grid
+    vertical_present = 'vertical' in grid
+    horizontal = _as_mapping(grid.get('horizontal'), 'grid.horizontal')
+    vertical = _as_mapping(grid.get('vertical'), 'grid.vertical')
+
+    # Each field independently falls back to the legacy location. This also
+    # permits a transitional/mixed config while users migrate existing cases.
+    nx = _require_positive_int(
+        _first_not_none(horizontal.get('nx'), grid.get('nx')),
+        'grid.horizontal.nx (or legacy grid.nx)')
+    ny = _require_positive_int(
+        _first_not_none(horizontal.get('ny'), grid.get('ny')),
+        'grid.horizontal.ny (or legacy grid.ny)')
+    nz = _require_positive_int(
+        _first_not_none(vertical.get('nz'), grid.get('nz')),
+        'grid.vertical.nz (or legacy grid.nz)')
+    halo = _require_positive_int(
+        _first_not_none(horizontal.get('n_halo_cells'), grid.get('n_halo_cells')),
+        'grid.horizontal.n_halo_cells (or legacy grid.n_halo_cells)')
+
+    dz = _require_positive_float(
+        _first_not_none(vertical.get('dz'), grid.get('dz')),
+        'grid.vertical.dz (or legacy grid.dz)')
+    dz1 = _require_positive_float(
+        _first_not_none(vertical.get('dz1'), grid.get('dz1'), dz),
+        'grid.vertical.dz1 (or legacy grid.dz1)')
+
+    vertical_type = _first_not_none(
+        vertical.get('type'), grid.get('vertical_coordinate_type'), 'default')
+    if not isinstance(vertical_type, str) or not vertical_type:
+        raise ValueError("Vertical coordinate type must be a non-empty string")
+
+    rcemip_grid_data_path = _first_not_none(
+        vertical.get('rcemip_grid_data_path'), grid.get('rcemip_grid_data_path'))
+
+    geometry = _as_mapping(
+        _first_not_none(horizontal.get('geometry'), grid.get('geometry')),
+        'grid.horizontal.geometry')
+    geometry_kind = geometry.get('kind')
+    if geometry_kind is not None and not isinstance(geometry_kind, str):
+        raise ValueError("Configuration 'grid.horizontal.geometry.kind' must be a string")
+    geometry_kind = geometry_kind.lower() if isinstance(geometry_kind, str) else None
+
+    dx = _first_not_none(horizontal.get('dx'), grid.get('dx'))
+    dy = _first_not_none(horizontal.get('dy'), grid.get('dy'))
+
+    longitude_bounds = None
+    latitude_bounds = None
+    earth_radius_m = None
+
+    if geometry_kind in ('regular_latlon', 'latlon', 'rll'):
+        longitude_bounds = _validate_bounds(
+            geometry.get('longitude_bounds_deg'),
+            'grid.horizontal.geometry.longitude_bounds_deg')
+        latitude_bounds = _validate_bounds(
+            geometry.get('latitude_bounds_deg'),
+            'grid.horizontal.geometry.latitude_bounds_deg',
+            lower_limit=-90.0, upper_limit=90.0)
+        earth_radius_m = _require_positive_float(
+            geometry.get('earth_radius_m', 6371220.0),
+            'grid.horizontal.geometry.earth_radius_m')
+
+        # dx/dy are no longer mandatory in the new RLL schema. Derive useful
+        # representative physical spacings for legacy generator operations
+        # (e.g. Taiwan topography coarsening). dx is the equatorial zonal
+        # spacing; dy is the meridional spacing implied by configured bounds.
+        if dx is None:
+            dlon_deg = (longitude_bounds[1] - longitude_bounds[0]) / nx
+            dx = earth_radius_m * np.deg2rad(dlon_deg)
+        if dy is None:
+            dlat_deg = (latitude_bounds[1] - latitude_bounds[0]) / ny
+            dy = earth_radius_m * np.deg2rad(dlat_deg)
+
+    if dx is None or dy is None:
+        missing = []
+        if dx is None:
+            missing.append('dx')
+        if dy is None:
+            missing.append('dy')
+        raise ValueError(
+            "Horizontal spacing is required for non-regular-latlon grids; missing "
+            + ', '.join(missing)
+            + ". Use grid.horizontal.{dx,dy} in the new schema or grid.{dx,dy} in the legacy schema.")
+
+    dx = _require_positive_float(dx, 'horizontal dx')
+    dy = _require_positive_float(dy, 'horizontal dy')
+
+    schema = 'nested' if horizontal_present or vertical_present else 'legacy'
+    return {
+        'schema': schema,
+        'nx': nx,
+        'ny': ny,
+        'nz': nz,
+        'dx': dx,
+        'dy': dy,
+        'dz': dz,
+        'dz1': dz1,
+        'n_halo_cells': halo,
+        'vertical_type': vertical_type,
+        'rcemip_grid_data_path': rcemip_grid_data_path,
+        'geometry_kind': geometry_kind,
+        'geometry': geometry,
+        'earth_radius_m': earth_radius_m,
+        'longitude_bounds_deg': longitude_bounds,
+        'latitude_bounds_deg': latitude_bounds,
+    }
+
+
+def build_horizontal_coordinates(grid_config):
+    """Build horizontal coordinate centers and roll offsets in degrees."""
+    nx = grid_config['nx']
+    ny = grid_config['ny']
+
+    if grid_config['geometry_kind'] in ('regular_latlon', 'latlon', 'rll'):
+        lon_min, lon_max = grid_config['longitude_bounds_deg']
+        lat_min, lat_max = grid_config['latitude_bounds_deg']
+        dlon_deg = (lon_max - lon_min) / nx
+        dlat_deg = (lat_max - lat_min) / ny
+
+        # geometry.*_bounds_deg are interpreted as cell-edge bounds; NetCDF
+        # coordinates are cell centers.
+        lon = lon_min + (np.arange(nx, dtype='f8') + 0.5) * dlon_deg
+        lat = lat_min + (np.arange(ny, dtype='f8') + 0.5) * dlat_deg
+        return lon, lat, dlon_deg, dlat_deg
+
+    # Preserve the exact legacy pseudo lon/lat construction for Cartesian and
+    # legacy configurations so existing initialization files remain unchanged.
+    dx = grid_config['dx']
+    dy = grid_config['dy']
+    lon = ((np.arange(1, nx + 1, dtype='f8') * dx - 0.5 * (dx * nx)) /
+           LEGACY_EARTH_RADIUS_M / (2.0 * np.pi) * 360.0)
+    lat = ((np.arange(1, ny + 1, dtype='f8') * dy - 0.5 * (dy * ny)) /
+           LEGACY_EARTH_RADIUS_M / (2.0 * np.pi) * 360.0)
+
+    # Keep the old roll conversion exactly for legacy behavior.
+    return lon, lat, dx / 111000.0, dy / 111000.0
+
+
+GRID_CONFIG = resolve_grid_configuration(config)
+print(f"[Info] Grid configuration schema: {GRID_CONFIG['schema']}")
+if GRID_CONFIG['geometry_kind']:
+    print(f"[Info] Horizontal geometry: {GRID_CONFIG['geometry_kind']}")
 
 
 # ==============================================================================
 # Auto-read Configuration and Create Pure Physical Grid
 # ==============================================================================
 
-NX = config['grid']['nx']
-NY = config['grid']['ny']
-NZ = config['grid']['nz']
-DX = config['grid']['dx']
-DY = config['grid']['dy']
-DZ = config['grid']['dz']
-DZ1 = config['grid']['dz1']
-HALO = config['grid']['n_halo_cells']
+NX = GRID_CONFIG['nx']
+NY = GRID_CONFIG['ny']
+NZ = GRID_CONFIG['nz']
+DX = GRID_CONFIG['dx']
+DY = GRID_CONFIG['dy']
+DZ = GRID_CONFIG['dz']
+DZ1 = GRID_CONFIG['dz1']
+HALO = GRID_CONFIG['n_halo_cells']
 NSOIL = 4
 
+
+# Roll Data (User can change this)
+roll_idx_x = 0  # GRID_CONFIG['nx']//4
+roll_idx_y = 0  # GRID_CONFIG['ny']//4
+
 FILENAME = os.environ.get('VVM_INIT_OUTPUT', config['netcdf_reader']['source_file'])
-os.makedirs(os.path.dirname(FILENAME), exist_ok=True)
+output_directory = os.path.dirname(FILENAME)
+if output_directory:
+    os.makedirs(output_directory, exist_ok=True)
 
 # Initialize 1D longitude and latitude arrays
 lon_1d = np.zeros(NX, dtype='f8')
@@ -66,7 +282,7 @@ cz2 = (DZ - DZ1) / (DZ * (domain - DZ))
 cz1 = 1.0 - cz2 * domain
 
 z_up = np.zeros(NZ, dtype='f8')
-v_coord_type = config['grid'].get('vertical_coordinate_type', 'default')
+v_coord_type = GRID_CONFIG['vertical_type']
 
 if v_coord_type == 'taiwanvvm':
     # --- TaiwanVVM Fortran-based Vertical Coordinate Logic ---
@@ -92,7 +308,11 @@ if v_coord_type == 'taiwanvvm':
 elif v_coord_type == 'rcemip':
     z_up[0] = 0.0  # Layer 0 is the surface (physical height 0)
     
-    source_file = config['grid']['rcemip_grid_data_path']
+    source_file = GRID_CONFIG['rcemip_grid_data_path']
+    if not source_file:
+        raise ValueError(
+            "RCEMIP vertical coordinate requires 'grid.vertical.rcemip_grid_data_path' "
+            "or legacy 'grid.rcemip_grid_data_path'")
     
     if not os.path.exists(source_file):
         raise FileNotFoundError(f"RCEMIP source file not found: {source_file}")
@@ -614,6 +834,9 @@ if USE_TAIWAN_TOPO and os.path.exists(SOURCE_TW_DATA):
         for j in range(ey, NY): 
             lat_1d[j] = lat_1d[j - 1] + dum_lat
 
+        lon_roll_step_deg = dum_lon
+        lat_roll_step_deg = dum_lat
+
         # Coarsening and Variable Conversion
         temp_height[sy:ey, sx:ex] = get_mean_2d(raw_h, COARSE_FACTOR)[:dy_len, :dx_len]
         temp_lu = get_mode_2d(ds.variables['lu'][:], COARSE_FACTOR)[:dy_len, :dx_len]
@@ -657,9 +880,10 @@ if USE_TAIWAN_TOPO and os.path.exists(SOURCE_TW_DATA):
 else:
     print("--- Mode: Idealized Simulation (User-Defined Ridge & Land Types) ---")
     
-    # Initialize idealized coordinates
-    lon_1d = (np.arange(1, NX + 1) * DX - 0.5 * (DX * NX)) / 6.37E6 / (2. * np.pi) * 360.
-    lat_1d = (np.arange(1, NY + 1) * DY - 0.5 * (DY * NY)) / 6.37E6 / (2. * np.pi) * 360.
+    # Initialize horizontal coordinates. New regular_latlon cases use the
+    # configured geographic bounds; legacy cases retain the old dx/dy mapping.
+    lon_1d, lat_1d, lon_roll_step_deg, lat_roll_step_deg = build_horizontal_coordinates(
+        GRID_CONFIG)
     
     # Generate idealized fields
     base_topo   = get_ideal_topo_data(NY, NX)
@@ -729,11 +953,11 @@ lon_2d, lat_2d = np.meshgrid(lon_1d, lat_1d)
 
 variables_config = {
     'lon': {
-        'data': lon_2d+DX*roll_idx_x/111000, 'dims': ('ny', 'nx'), 'units': 'degrees_east', 'dtype': 'f8',
+        'data': lon_2d + lon_roll_step_deg * roll_idx_x, 'dims': ('ny', 'nx'), 'units': 'degrees_east', 'dtype': 'f8',
         'long_name': 'Longitude (2D matrix)'
     },
     'lat': {
-        'data': lat_2d+DY*roll_idx_y/111000, 'dims': ('ny', 'nx'), 'units': 'degrees_north', 'dtype': 'f8',
+        'data': lat_2d + lat_roll_step_deg * roll_idx_y, 'dims': ('ny', 'nx'), 'units': 'degrees_north', 'dtype': 'f8',
         'long_name': 'Latitude (2D matrix)'
     },
     'topo': {
@@ -853,6 +1077,22 @@ if missing_requested:
         "The spatial generator does not define configured NetCDF variables: "
         f"{missing_requested}")
 
+def get_chunksizes(dims, dimension_sizes):
+    if dims == ('ny', 'nx'):
+        return (
+            min(256, dimension_sizes['ny']),
+            min(256, dimension_sizes['nx']),
+        )
+
+    if dims == ('nz', 'ny', 'nx'):
+        return (
+            min(4, dimension_sizes['nz']),
+            min(128, dimension_sizes['ny']),
+            min(256, dimension_sizes['nx']),
+        )
+
+    return None
+
 with nc.Dataset(FILENAME, 'w', format='NETCDF4') as ds:
     print(f"\nWriting Initialization Data to: {FILENAME} ...")
     
@@ -884,17 +1124,38 @@ with nc.Dataset(FILENAME, 'w', format='NETCDF4') as ds:
     time.standard_name = 'time'
     time.axis = 'T'
 
-
     for var_name, info in variables_config.items():
-        var = ds.createVariable(var_name, info['dtype'], info['dims'])
-        
+        dims = info['dims']
+        compress = len(dims) >= 2
+
+        kwargs = {}
+
+        if compress:
+            kwargs.update({
+                'zlib': True,
+                'complevel': 4,
+                'shuffle': True,
+            })
+
+            chunksizes = get_chunksizes(dims, dimension_sizes)
+            if chunksizes is not None:
+                kwargs['chunksizes'] = chunksizes
+
+        var = ds.createVariable(
+            var_name,
+            info['dtype'],
+            dims,
+            **kwargs,
+        )
+
         if 'units' in info:
             var.units = info['units']
-            
+
         if 'long_name' in info:
             var.long_name = info['long_name']
-            
+
         var[:] = info['data']
+
     required = {'lon', 'lat', 'topo'}.union(requested_spatial)
     missing = sorted(required.difference(ds.variables))
     if missing:
@@ -974,3 +1235,4 @@ print("Spatial initialization file generated successfully!")
 #  7: 90 - 120%
 #  8: 120 - 150%
 #  9: > 150%      (Cliff)
+
