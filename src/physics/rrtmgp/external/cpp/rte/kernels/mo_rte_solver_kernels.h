@@ -529,11 +529,13 @@ inline void sw_two_stream(int ncol, int nlay, int ngpt, Mu0T const &mu0, TauT co
     //   k = 0 for isotropic, conservative scattering; this lower limit on k
     //   gives relative error with respect to conservative solution
     //   of < 0.1% in Rdif down to tau = 10^-9
-    // Aaron - differs from original RTE, which hard-codes 1.e-12 for both precisions.
-    // Rdir/Tdir below cancel two O(1) terms down to O(k*mu0), so this floor has to
-    // keep that remainder above the working precision; 1e-12 leaves float none. 1e-5
-    // is the smallest floor that converges float (see rrtmgp-modifications.md), and
-    // staying small keeps it off optically thick cloud layers. Double is unchanged.
+    // Aaron: Use a precision-dependent floor to limit cancellation in FP32 Rdir/Tdir.
+    // Aaron: 1e-5 balances thin-layer accuracy against thick-cloud bias; FP64 keeps 1e-12.
+    // Aaron: See docs/developer-guides/rrtmgp-modifications.md for the comparison.
+    // Aaron: Original code retained for comparison:
+    // RealT k = sqrt(Kokkos::fmax((gamma1 - gamma2) *
+    //                        (gamma1 + gamma2),
+    //                        1.e-12));
     constexpr RealT k_min = (sizeof(RealT) >= sizeof(double)) ? RealT(1.e-12) : RealT(1.e-5);
     RealT k = sqrt(Kokkos::fmax((gamma1 - gamma2) *
                            (gamma1 + gamma2),

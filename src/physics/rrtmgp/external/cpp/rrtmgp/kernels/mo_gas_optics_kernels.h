@@ -457,8 +457,10 @@ void gas_optical_depths_minor(int max_gpt_diff, int ncol, int nlay, int ngpt, in
           if (scale_by_complement(imnr)) { // scale by densities of all gases but the special one
             scaling = scaling * (1. - mycol_gas_imnr * vmr_fact * dry_fact);
           } else {
-            // Aaron - differs from original RRTMGP. Left to right this forms
-            // scaling*mycol_gas_imnr ~ 1e46, which overflows single precision to inf
+            // Aaron: Group the density ratio first in FP32 to avoid an intermediate near 1e46.
+            // Aaron: Preserve the original left-to-right evaluation in FP64.
+            // Aaron: Original code retained for comparison:
+            // scaling = scaling *       mycol_gas_imnr * vmr_fact * dry_fact;
             if constexpr (sizeof(RealT) >= sizeof(double)) {
               scaling = scaling *       mycol_gas_imnr * vmr_fact * dry_fact;
             } else {

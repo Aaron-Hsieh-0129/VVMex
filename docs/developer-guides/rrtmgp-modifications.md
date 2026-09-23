@@ -1,4 +1,4 @@
-# RRTMGP single-precision modifications
+# RRTMGP modifications
 
 VVMex uses the Kokkos-based **RRTMGP radiation scheme** from E3SM EAMxx, vendored under
 `src/physics/rrtmgp/external/`. Two kernels there carry constants and expression groupings
@@ -6,9 +6,10 @@ that are only valid in double precision. They are unreachable in a default (FP64
 a single-precision build hits both: the first aborts the run, the second corrupts the
 shortwave silently.
 
-Both changes are selected at compile time on `sizeof(RealT)`. **A double-precision build
-compiles to byte-identical device code**, verified by comparing `cuobjdump -sass` output for
-`eamxx_rrtmgp_interface.cpp` before and after. Nothing about the FP64 reference path moves.
+The two precision fixes are selected at compile time on `sizeof(RealT)`. For these
+fixes alone, a double-precision build compiles to byte-identical device code, verified
+by comparing `cuobjdump -sass` output for `eamxx_rrtmgp_interface.cpp` before and after.
+The large-domain indexing changes below apply to both precisions.
 
 ## Modification comparison
 
@@ -16,6 +17,8 @@ compiles to byte-identical device code**, verified by comparing `cuobjdump -sass
 | ------ | ------------------ | ------------------------------ |
 | `gas_optical_depths_minor` | Minor-gas density scaling groups the O(1) ratio first in single precision. | `scaling * col_gas * vmr_fact * dry_fact`, evaluated left to right. |
 | `sw_two_stream` | Two-stream eigenvalue floor `k_min` is `1e-5` in single precision. | `k_min` hard-coded to `1.e-12`. |
+| `FLATTEN_MD_KERNEL2/3/4` | Flattened bounds, indices, and unflattening products use 64-bit integers. | Products and indices use 32-bit `int`, which can overflow for large column chunks. |
+| `inc_2stream_by_2stream_bybnd` | Launches one work item per column, layer, and g-point, then finds its band. | Launches an additional band dimension, with most work items doing nothing. |
 
 ## `gas_optical_depths_minor` — optical depth overflows to `inf`
 
@@ -119,6 +122,32 @@ scattering solution once `k*tau` stops being small. For a thick cloud layer with
 0.13%. In a cloud-resolving model that difference matters more than the remaining 1e-5 in
 clear sky, so `1e-5` is used.
 
+## Large-domain integer overflow
+
+The flattened Kokkos kernels previously computed their iteration counts with
+32-bit `int` products. A large radiation chunk can exceed `INT_MAX`
+(2,147,483,647 work items), even though each individual dimension fits in an
+`int`. Overflow can produce invalid loop bounds and Kokkos warnings, leaving
+radiation work incomplete; suppressing the warnings does not correct it.
+
+In `rrtmgp_conversion.h`, `FLATTEN_MD_KERNEL2/3/4` now use `std::int64_t` for
+the dimension products and lambda indices, with an explicit
+`Kokkos::RangePolicy<Kokkos::IndexType<std::int64_t>>`. The unflattening helpers
+also accept 64-bit indices and promote intermediate dimension products before
+multiplication, for both `LayoutLeft` and `LayoutRight`. Individual dimensions
+and recovered per-dimension indices remain `int`.
+
+In `inc_2stream_by_2stream_bybnd`, the launch changed from
+`ncol * nlay * ngpt * nbnd` to `ncol * nlay * ngpt`. Each work item searches for
+the band containing its g-point and stops after applying the existing optical
+property formulas. RRTMGP's band limits assign each g-point to one band, so the
+extra launch dimension was redundant. This reduces the launch size by `nbnd`
+and preserves the optical-property calculations.
+
+These changes apply to both single- and double-precision builds and require
+rebuilding VVMex. They address integer indexing overflow, separately from the
+floating-point issues above.
+
 ## Finding the changes
 
 The minor-gas grouping is in
@@ -127,3 +156,8 @@ The two-stream floor is in
 `src/physics/rrtmgp/external/cpp/rte/kernels/mo_rte_solver_kernels.h`.
 Neither changes a double-precision build. See
 [Reproducibility](reproducibility.md) for other precision-dependent behavior.
+
+The flattened-index changes are in
+`src/physics/rrtmgp/external/cpp/rrtmgp_conversion.h`.
+The band-loop change is in
+`src/physics/rrtmgp/external/cpp/rte/kernels/mo_optical_props_kernels.h`.
