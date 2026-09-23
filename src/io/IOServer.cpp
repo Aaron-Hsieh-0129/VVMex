@@ -195,6 +195,15 @@ run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& config) 
     if (data_transport == "WAN") {
         inIO.SetParameter("WANDataTransport", "sockets");
     }
+    // A single deferred batch expands into fields x overlapping writer blocks
+    // remote requests. Large WAN batches trigger EVPath read-handler crashes
+    // on the tested ADIOS2 2.11 stack. Complete each field before the next, bounding
+    // the outstanding reads without changing the selection or output values.
+    const auto read_mode = data_transport == "WAN"
+        ? adios2::Mode::Sync : adios2::Mode::Deferred;
+    if (rank == 0 && data_transport == "WAN") {
+        std::cout << "  [IO-Server] WAN reads: one field at a time" << std::endl;
+    }
     if (!control_transport.empty()) {
         inIO.SetParameter("ControlTransport", control_transport);
     }
@@ -292,7 +301,7 @@ run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& config) 
             // Scalar
             if (shape.empty()) {
                 buffers[name].resize(1);
-                reader.Get(varIn, buffers[name].data(), adios2::Mode::Deferred);
+                reader.Get(varIn, buffers[name].data(), read_mode);
                 if (name == "time") {
                     has_time_variable = true;
                 }
@@ -321,7 +330,7 @@ run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& config) 
             }
 
             buffers[name].resize(elements);
-            reader.Get(varIn, buffers[name].data(), adios2::Mode::Deferred);
+            reader.Get(varIn, buffers[name].data(), read_mode);
         };
 
         try {
@@ -346,7 +355,7 @@ run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& config) 
                     }
                     current_step_vars.push_back(name);
                     int_scalars[name] = 0;
-                    reader.Get(intVarIn, &int_scalars[name], adios2::Mode::Deferred);
+                    reader.Get(intVarIn, &int_scalars[name], read_mode);
                     continue;
                 }
 
