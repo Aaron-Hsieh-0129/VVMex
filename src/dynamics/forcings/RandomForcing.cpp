@@ -26,7 +26,10 @@ RandomForcing::initialize(Core::State& state) {
     int nz = grid_.get_local_total_points_z();
     int h = grid_.get_halo_cells();
 
-    for (int k = h; k < nz; ++k) {
+    k_start_ = nz - h;
+    k_end_ = h - 1;
+
+    for (int k = h; k < nz - h; ++k) {
         VVM::Real z = z_mid_host(k);
         if (z >= z_start_m) {
             k_start_ = k;
@@ -34,7 +37,7 @@ RandomForcing::initialize(Core::State& state) {
             break;
         }
     }
-    for (int k = nz - h; k > 0; k--) {
+    for (int k = nz - h - 1; k >= h; k--) {
         VVM::Real z = z_mid_host(k);
         if (z <= z_end_m) {
             k_end_ = k;
