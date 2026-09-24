@@ -248,19 +248,20 @@ Initializer::initialize_background_state() const {
         auto pressure_up = state_.get_field<1>("pbar_up").get_mutable_device_data();
         auto pressure_depth = state_.get_field<1>("dpbar_mid").get_mutable_device_data();
         Kokkos::parallel_for("RLLSoundingPrognostics",
-            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0,0,0}, {nz,ny,nx}),
+            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
             KOKKOS_LAMBDA(int k, int j, int i) {
-                th(k,j,i) = theta_profile(k);
-                qv(k,j,i) = vapor_profile(k);
+                th(k, j, i) = theta_profile(k);
+                qv(k, j, i) = vapor_profile(k);
             });
         Kokkos::parallel_for("RLLSoundingInterfacePressure",
-            Kokkos::RangePolicy<>(0,nz), KOKKOS_LAMBDA(int k) {
-                pressure_up(k) = k+1 < nz ? real(.5)*(pressure(k)+pressure(k+1)) : pressure(k);
+            Kokkos::RangePolicy<>(0, nz),
+            KOKKOS_LAMBDA(int k) {
+                pressure_up(k) =
+                    k + 1 < nz ? real(.5) * (pressure(k) + pressure(k + 1)) : pressure(k);
             });
         Kokkos::parallel_for("RLLSoundingPressureDepth",
-            Kokkos::RangePolicy<>(1,nz), KOKKOS_LAMBDA(int k) {
-                pressure_depth(k) = pressure_up(k-1)-pressure_up(k);
-            });
+            Kokkos::RangePolicy<>(1, nz),
+            KOKKOS_LAMBDA(int k) { pressure_depth(k) = pressure_up(k - 1) - pressure_up(k); });
     }
 }
 
@@ -293,7 +294,10 @@ Initializer::initialize_case_terrain() const {
         auto f = state_.get_field<2>("f_2d").get_host_data();
         for (int j = 0; j < ny; ++j) {
             int gj = grid_.get_local_physical_start_y() + j - h;
-            if (periodic) gj = (gj % grid_.get_global_points_y() + grid_.get_global_points_y()) % grid_.get_global_points_y();
+            if (periodic) {
+                gj = (gj % grid_.get_global_points_y() + grid_.get_global_points_y()) %
+                     grid_.get_global_points_y();
+            }
             const Real phi_z = south + (gj + real(1.)) * dphi;
             for (int i = 0; i < nx; ++i) {
                 f(j, i) = real(2.) * omega * std::sin(phi_z);
@@ -307,26 +311,33 @@ Initializer::initialize_case_terrain() const {
             // rescale or convert it a second time.
             const auto terrain = state_.get_field<2>("topo").get_host_data();
             int local_invalid = 0, invalid = 0;
-            for (int j = h; j < ny-h; ++j) {
-                for (int i = h; i < nx-h; ++i) {
-                    if (!valid_rll_terrain_index(terrain(j,i), h, nz)) local_invalid = 1;
+            for (int j = h; j < ny - h; ++j) {
+                for (int i = h; i < nx - h; ++i) {
+                    if (!valid_rll_terrain_index(terrain(j, i), h, nz)) {
+                        local_invalid = 1;
+                    }
                 }
             }
             MPI_Allreduce(&local_invalid, &invalid, 1, MPI_INT, MPI_MAX, grid_.get_comm());
             if (invalid) {
-                throw std::runtime_error("RLL NetCDF topo must contain finite, nonnegative integer grid indices below the lid; metre-valued heights are not supported.");
+                throw std::runtime_error(
+                    "RLL NetCDF topo must contain finite, nonnegative integer grid indices below "
+                    "the lid; metre-valued heights are not supported.");
             }
-            state_.add_field<2>("rll_terrain_height", {ny,nx},
+            state_.add_field<2>("rll_terrain_height",
+                {ny, nx},
                 {GridStaggering::Centered, "m", "height of spatial-input terrain on model levels"});
             auto elevation = state_.get_field<2>("rll_terrain_height").get_host_data();
             const auto z = parameters_.z_up.get_host_data();
-            for (int j = h; j < ny-h; ++j) {
-                for (int i = h; i < nx-h; ++i) {
-                    const int level = terrain(j,i) == real(0.) ? h-1 : static_cast<int>(terrain(j,i));
-                    elevation(j,i) = z(level);
+            for (int j = h; j < ny - h; ++j) {
+                for (int i = h; i < nx - h; ++i) {
+                    const int level =
+                        terrain(j, i) == real(0.) ? h - 1 : static_cast<int>(terrain(j, i));
+                    elevation(j, i) = z(level);
                 }
             }
-            Kokkos::deep_copy(state_.get_field<2>("rll_terrain_height").get_mutable_device_data(), elevation);
+            Kokkos::deep_copy(state_.get_field<2>("rll_terrain_height").get_mutable_device_data(),
+                elevation);
             halo_exchanger_.exchange_halos(state_.get_field<2>("topo"));
             halo_exchanger_.exchange_halos(state_.get_field<2>("rll_terrain_height"));
             if (!periodic) {
@@ -391,7 +402,8 @@ Initializer::initialize_case_terrain() const {
             elevation);
         halo_exchanger_.exchange_halos(state_.get_field<2>("topo"));
         if (!periodic) {
-            Boundary::HorizontalBoundaryStencils(grid_).fill_centered_q2_neumann_halos(state_.get_field<2>("topo"));
+            Boundary::HorizontalBoundaryStencils(grid_).fill_centered_q2_neumann_halos(
+                state_.get_field<2>("topo"));
         }
         return;
     }
@@ -544,7 +556,9 @@ Initializer::finalize_rll_terrain_masks() const {
     // exchanging that halo does not transfer the write to its owner.
     auto& mask_w_field = state_.get_field<3>("ITYPEW");
     halo_exchanger_.exchange_halos(mask_w_field);
-    if (boundary) boundary->fill_centered_q2_neumann_halos(mask_w_field);
+    if (boundary) {
+        boundary->fill_centered_q2_neumann_halos(mask_w_field);
+    }
 
     const auto mask_w = mask_w_field.get_device_data();
     const auto mask_u = state_.get_field<3>("ITYPEU").get_mutable_device_data();
@@ -558,11 +572,15 @@ Initializer::finalize_rll_terrain_masks() const {
         });
 
     halo_exchanger_.exchange_halos(state_.get_field<2>("topo"));
-    if (boundary) boundary->fill_centered_q2_neumann_halos(state_.get_field<2>("topo"));
+    if (boundary) {
+        boundary->fill_centered_q2_neumann_halos(state_.get_field<2>("topo"));
+    }
 
     for (const char* name : {"ITYPEU", "ITYPEV", "ITYPEW"}) {
         halo_exchanger_.exchange_halos(state_.get_field<3>(name));
-        if (boundary) boundary->fill_centered_q2_neumann_halos(state_.get_field<3>(name));
+        if (boundary) {
+            boundary->fill_centered_q2_neumann_halos(state_.get_field<3>(name));
+        }
     }
 }
 
@@ -998,7 +1016,7 @@ Initializer::initialize_poisson() const {
     auto h_bn_new = parameters_.bn_new.get_host_data();
     auto h_cn_new = parameters_.cn_new.get_host_data();
 
-    for (int k = 0; k <= nz; k++) {
+    for (int k = 0; k < nz; k++) {
         if (k == h) {
             h_cn_new(h) = h_CGAU(h) / h_BGAU(h);
         }
@@ -1150,7 +1168,7 @@ Initializer::assign_vars() const {
     auto& pbar_up = state_.get_field<1>("pbar_up").get_mutable_device_data();
     auto& dpbar_mid = state_.get_field<1>("dpbar_mid").get_mutable_device_data();
     Kokkos::parallel_for("assign_pbar_up",
-        Kokkos::RangePolicy<>(1, nz),
+        Kokkos::RangePolicy<>(1, nz - 1),
         KOKKOS_LAMBDA(const int k) {
             if (k == 1) {
                 pbar_up(k) = pbar(k);
@@ -1413,26 +1431,28 @@ Initializer::initialize_perturbation() const {
 
 void
 Initializer::initialize_geographic_coordinates() const {
-    if (grid_.geometry().kind() == Geometry::GeometryKind::RegularLatLon) {
-        // Geometry is authoritative on RLL, including local halos. Spatial
-        // input and the Cartesian fixed-location override must not replace it.
+    if (grid_.geometry().kind() != Geometry::GeometryKind::Cartesian) {
+
         const auto geometry = grid_.geometry().device_view(GridStaggering::Centered);
+
         const auto longitude = geometry.longitude;
         const auto latitude = geometry.latitude;
+
         auto lon = state_.get_field<2>("lon").get_mutable_device_data();
         auto lat = state_.get_field<2>("lat").get_mutable_device_data();
+
         const Real degrees = real(180.) / std::acos(real(-1.));
-        Kokkos::parallel_for("InitializeRLLGeographicCoordinates",
+
+        Kokkos::parallel_for("InitializeMappedGeographicCoordinates",
             Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0},
                 {grid_.get_local_total_points_y(), grid_.get_local_total_points_x()}),
-            KOKKOS_LAMBDA(int j, int i) {
+            KOKKOS_LAMBDA(const int j, const int i) {
                 lon(j, i) = longitude(j, i) * degrees;
                 lat(j, i) = latitude(j, i) * degrees;
             });
         return;
     }
-    // Without the fixed-location override, preserve coordinates supplied by
-    // the existing spatial initial-condition reader.
+
     if (!grid_.horizontal_specification().fix_lonlat) {
         return;
     }

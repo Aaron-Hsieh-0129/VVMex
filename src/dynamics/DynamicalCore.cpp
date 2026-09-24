@@ -380,9 +380,10 @@ DynamicalCore::sync_physical_horizontal_vorticity_from_contravariant() {
 
 void
 DynamicalCore::compute_diagnostic_fields() const {
-    // RLL deformation reads physical wind/vorticity directly and does not use
-    // the Cartesian shear-strain scratch fields.
-    if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+    // Generalized-coordinate turbulence calculates deformation directly
+    // from u^i and g_ij. The old diagnostic_scheme_ is retained only for
+    // the legacy Cartesian path.
+    if (grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
         return;
     }
     auto& R_xi_field = R_xi_ref_.get(state_, "R_xi");

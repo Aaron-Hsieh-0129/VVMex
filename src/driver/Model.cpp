@@ -441,7 +441,7 @@ Model::run_step(VVM::Real dt) {
         }
     }
 
-    if (microphysics_ && grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+    if (microphysics_ && grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
         // Buoyancy must see condensate after diffusion/sponge, not P3's earlier snapshot.
         microphysics_->refresh_total_condensate(state_);
     }
