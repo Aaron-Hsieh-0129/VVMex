@@ -260,14 +260,8 @@ void
 DynamicalCore::sync_contravariant_vorticity_from_physical() {
     using Core::Geometry::GeometryKind;
     using Core::Geometry::HorizontalLocation;
-    using Operators::HorizontalVectorConversion;
 
     const auto geometry_kind = grid_.geometry().kind();
-
-    if (geometry_kind != GeometryKind::Cartesian && geometry_kind != GeometryKind::RegularLatLon) {
-        throw std::logic_error("Contravariant vorticity synchronization currently supports only "
-                               "Cartesian and regular latitude-longitude geometry.");
-    }
 
     const auto& xi = xi_ref_.get(state_, "xi").get_device_data();
     const auto& eta = eta_ref_.get(state_, "eta").get_device_data();
@@ -279,6 +273,11 @@ DynamicalCore::sync_contravariant_vorticity_from_physical() {
 
     auto exec = Kokkos::DefaultExecutionSpace();
 
+    // ------------------------------------------------------------
+    // Cartesian:
+    //
+    // physical == contravariant
+    // ------------------------------------------------------------
     if (geometry_kind == GeometryKind::Cartesian) {
         Kokkos::deep_copy(exec, xi_con, xi);
         Kokkos::deep_copy(exec, eta_con, eta);
@@ -286,62 +285,74 @@ DynamicalCore::sync_contravariant_vorticity_from_physical() {
         return;
     }
 
-    // Regular latitude-longitude:
+    // ------------------------------------------------------------
+    // Generalized horizontal geometry.
     //
-    //     xi      = physical omega_1
-    //     eta     = -physical omega_2
+    // Stored variables:
     //
-    // therefore
+    //     xi      = +omega_phys_1 @ V
+    //     eta     = -omega_phys_2 @ U
     //
-    //     xi_con  =  omega^1 = xi  / h1
-    //     eta_con = -omega^2 = eta / h2
+    //     xi_con  = +omega^1      @ V
+    //     eta_con = -omega^2      @ U
     //
-    // No additional sign change belongs here.
-    //
-    // Native staggering:
-    //
-    //     xi  -> V
-    //     eta -> U
+    // For a non-orthogonal coordinate system, the full 2x2
+    // transformation must be used.
+    // ------------------------------------------------------------
+
     const auto u_geometry = grid_.geometry().device_view(HorizontalLocation::U);
     const auto v_geometry = grid_.geometry().device_view(HorizontalLocation::V);
 
-    const auto inverse_h1_at_v = v_geometry.physical_to_contravariant.a11;
-
-    const auto inverse_h2_at_u = u_geometry.physical_to_contravariant.a22;
+    const auto A_u = u_geometry.physical_to_contravariant;
+    const auto A_v = v_geometry.physical_to_contravariant;
 
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
+    const int h = grid_.get_halo_cells();
 
-    Kokkos::parallel_for("UpdateContravariantHorizontalVorticityShadow",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
+    Kokkos::parallel_for("SyncContravariantHorizontalVorticityFromPhysical",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            xi_con(k, j, i) = HorizontalVectorConversion::physical_to_contravariant(xi(k, j, i),
-                inverse_h1_at_v(j, i));
+            // ----------------------------------------------------
+            // U -> V interpolation:
+            //
+            // eta = -omega_phys_2
+            // ----------------------------------------------------
 
-            eta_con(k, j, i) = HorizontalVectorConversion::physical_to_contravariant(eta(k, j, i),
-                inverse_h2_at_u(j, i));
+            const VVM::Real eta_at_v =
+                VVM::real(0.25) *
+                (eta(k, j, i) + eta(k, j + 1, i) + eta(k, j, i - 1) + eta(k, j + 1, i - 1));
+
+            // omega_phys_2 = -eta
+            const VVM::Real omega2_phys_at_v = -eta_at_v;
+
+            xi_con(k, j, i) = A_v.a11(j, i) * xi(k, j, i) + A_v.a12(j, i) * omega2_phys_at_v;
+
+            // ----------------------------------------------------
+            // V -> U interpolation:
+            //
+            // xi = +omega_phys_1
+            // ----------------------------------------------------
+
+            const VVM::Real xi_at_u = VVM::real(0.25) * (xi(k, j, i) + xi(k, j, i + 1) +
+                                                            xi(k, j - 1, i) + xi(k, j - 1, i + 1));
+
+            const VVM::Real omega2_con_at_u =
+                A_u.a21(j, i) * xi_at_u + A_u.a22(j, i) * (-eta(k, j, i));
+
+            eta_con(k, j, i) = -omega2_con_at_u;
+
+            // Vertical direction remains Cartesian in VVMex.
+            zeta_con(k, j, i) = zeta(k, j, i);
         });
-
-    // The current Cartesian/RLL vertical coordinate does not require a
-    // component transformation for vertical relative vorticity.
-    Kokkos::deep_copy(exec, zeta_con, zeta);
 }
 
 void
 DynamicalCore::sync_physical_horizontal_vorticity_from_contravariant() {
     using Core::Geometry::GeometryKind;
     using Core::Geometry::HorizontalLocation;
-    using Operators::HorizontalVectorConversion;
-
     const auto geometry_kind = grid_.geometry().kind();
-
-    if (geometry_kind != GeometryKind::Cartesian && geometry_kind != GeometryKind::RegularLatLon) {
-
-        throw std::logic_error("Physical vorticity compatibility synchronization currently "
-                               "supports only Cartesian and regular latitude-longitude "
-                               "geometry.");
-    }
 
     const auto& xi_con = xi_con_ref_.get(state_, "xi_con").get_device_data();
     const auto& eta_con = eta_con_ref_.get(state_, "eta_con").get_device_data();
@@ -360,21 +371,38 @@ DynamicalCore::sync_physical_horizontal_vorticity_from_contravariant() {
     const auto u_geometry = grid_.geometry().device_view(HorizontalLocation::U);
     const auto v_geometry = grid_.geometry().device_view(HorizontalLocation::V);
 
-    const auto h1_at_v = v_geometry.contravariant_to_physical.a11;
-    const auto h2_at_u = u_geometry.contravariant_to_physical.a22;
+    const auto B_u = u_geometry.contravariant_to_physical;
+    const auto B_v = v_geometry.contravariant_to_physical;
 
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
+    const int h = grid_.get_halo_cells();
 
     Kokkos::parallel_for("SyncPhysicalHorizontalVorticityFromContravariant",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            xi(k, j, i) = HorizontalVectorConversion::contravariant_to_physical(xi_con(k, j, i),
-                h1_at_v(j, i));
+            // ----------------------------------------------------
+            // U -> V interpolation of eta_con.
+            //
+            // eta_con = -omega^2
+            // ----------------------------------------------------
 
-            eta(k, j, i) = HorizontalVectorConversion::contravariant_to_physical(eta_con(k, j, i),
-                h2_at_u(j, i));
+            const VVM::Real eta_con_at_v =
+                VVM::real(0.25) * (eta_con(k, j, i) + eta_con(k, j + 1, i) + eta_con(k, j, i - 1) +
+                                      eta_con(k, j + 1, i - 1));
+
+            xi(k, j, i) = B_v.a11(j, i) * xi_con(k, j, i) - B_v.a12(j, i) * eta_con_at_v;
+
+            // ----------------------------------------------------
+            // V -> U interpolation of xi_con.
+            // ----------------------------------------------------
+
+            const VVM::Real xi_con_at_u =
+                VVM::real(0.25) * (xi_con(k, j, i) + xi_con(k, j, i + 1) + xi_con(k, j - 1, i) +
+                                      xi_con(k, j - 1, i + 1));
+
+            eta(k, j, i) = -B_u.a21(j, i) * xi_con_at_u + B_u.a22(j, i) * eta_con(k, j, i);
         });
 }
 
