@@ -536,6 +536,9 @@ Model::run_step(VVM::Real dt) {
         VVM::Utils::Timer timer("halo_exchange");
         halo_exchanger_.exchange_multiple_halos(dynamics_boundary_fields_);
         for (const auto& target : dynamics_boundary_targets_) {
+            if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+                bc_manager_.apply_horizontal_bcs(*target.field);
+            }
             bc_manager_.apply_vorticity_bc(*target.field);
         }
         dycore_->compute_zeta_vertical_structure(state_);
