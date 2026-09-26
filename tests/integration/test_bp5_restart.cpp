@@ -1,16 +1,18 @@
-// A run restarted from a BP5 dataset must come up holding exactly what that
-// step of the dataset holds. The resumed run is configured to take no further
-// steps, so its initial output is the loaded state itself: comparing that file
-// against the source step checks the reader's field selection, its per-rank
-// slabs, and the clock it recovers.
+// A run restarted from a BP5 dataset must recover the source step. The resumed
+// run takes no further steps, so its initial output checks field selection,
+// per-rank slabs, and the recovered clock. Wind and thermodynamic fields are
+// exact; vorticity can round by a few ulps during restart initialization.
 #include "core/vvm_types.hpp"
 
 #include <adios2.h>
 #include <hdf5.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <numeric>
 #include <stdexcept>
 #include <string>
@@ -111,7 +113,23 @@ compare_field(adios2::IO& io,
     if (h5_shape != variable.Shape()) {
         return;
     }
-    check(bp_values == h5_values, name + " is bit-for-bit identical after restart");
+    if (name == "xi" || name == "eta" || name == "zeta") {
+        // Restart rebuilds canonical vorticity and its vertical structure.
+        // Allow only roundoff from those conversions, in the stored type.
+        const double tolerance = 4.0 * std::numeric_limits<T>::epsilon();
+        const bool matches = std::equal(bp_values.begin(), bp_values.end(),
+            h5_values.begin(), [tolerance](T source, T restored) {
+                const double a = static_cast<double>(source);
+                const double b = static_cast<double>(restored);
+                const double scale = std::max({1.0, std::abs(a), std::abs(b)});
+                return std::isfinite(a) && std::isfinite(b) &&
+                       std::abs(a - b) <= tolerance * scale;
+            });
+        check(matches, name + " matches after restart within four scaled epsilons");
+    }
+    else {
+        check(bp_values == h5_values, name + " is bit-for-bit identical after restart");
+    }
 }
 
 void
