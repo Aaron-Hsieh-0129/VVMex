@@ -99,7 +99,6 @@ for name, jet, perturbation in (("rest", 0, 0), ("jet", 1, 0), ("coupled", 1, 1)
     run(name, config)
 
 negative = [
-    ("restart", ("restart", "enable"), True, "Unsupported RLL option"),
     ("diffusion", ("dynamics", "prognostic_variables", "zeta", "tendency_terms", "diffusion"), {"enable": True}, "RLL vorticity currently supports"),
     ("disabled_transport", ("dynamics", "prognostic_variables", "zeta", "tendency_terms", "advection", "enable"), False, "requires enabled advection"),
     ("missing_vorticity", ("dynamics", "prognostic_variables", "xi"), {}, "requires all three vorticity"),

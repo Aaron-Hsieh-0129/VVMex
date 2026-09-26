@@ -832,5 +832,21 @@ WindSolver::prepare_cartesian_wind_recovery_inputs(
     bc_manager.apply_horizontal_bcs(eta_topo_ref_.get(state_, "eta_topo"));
 }
 
+void
+WindSolver::initialize_restart_history() {
+    // Use the physical restart wind as the first extrapolation history.
+    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+        W3DNM1_ref_.get(state_, "W3DNM1").get_mutable_device_data(),
+        w_ref_.get(state_, "w").get_device_data());
+
+    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+        psinm1_ref_.get(state_, "psinm1").get_mutable_device_data(),
+        psi_ref_.get(state_, "psi").get_device_data());
+
+    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+        chinm1_ref_.get(state_, "chinm1").get_mutable_device_data(),
+        chi_ref_.get(state_, "chi").get_device_data());
+}
+
 } // namespace Dynamics
 } // namespace VVM

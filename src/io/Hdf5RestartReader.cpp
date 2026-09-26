@@ -102,15 +102,25 @@ Hdf5RestartReader::read_and_initialize(Core::State& state) {
         throw std::runtime_error("[Hdf5RestartReader] Failed to open restart file " + source_file_);
     }
 
+    const auto checkpoint_name = [&](const std::string& name) {
+        const bool solver_history = name == "psi" || name == "psinm1" ||
+                                    name == "chi" || name == "chinm1" ||
+                                    name == "W3DNM1";
+        if (solver_history &&
+            H5Lexists(file_id, ("/Step0/restart/" + name).c_str(), H5P_DEFAULT) > 0) {
+            return std::string("restart/") + name;
+        }
+        return name;
+    };
     try {
         for (const auto& var_name : vars_1d) {
             read_field(file_id, var_name, state.get_field<1>(var_name));
         }
         for (const auto& var_name : vars_2d) {
-            read_field(file_id, var_name, state.get_field<2>(var_name));
+            read_field(file_id, checkpoint_name(var_name), state.get_field<2>(var_name));
         }
         for (const auto& var_name : vars_3d) {
-            read_field(file_id, var_name, state.get_field<3>(var_name));
+            read_field(file_id, checkpoint_name(var_name), state.get_field<3>(var_name));
         }
     }
     catch (...) {

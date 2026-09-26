@@ -24,6 +24,8 @@ public:
 
     virtual void before_recovery(bool initial) = 0;
     virtual void after_recovery(bool initial) = 0;
+    // Restore the circulation target from a checkpoint's physical wind.
+    virtual void seed_from_physical_wind() = 0;
 };
 
 // Current RLL topology implementation:

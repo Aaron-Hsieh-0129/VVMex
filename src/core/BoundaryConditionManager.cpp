@@ -415,8 +415,8 @@ BoundaryConditionManager::apply_horizontal_bcs(Field<Dim>& field) const {
         if constexpr (Dim == 3) {
             Boundary::HorizontalBoundaryStencils boundary(grid_);
             const auto name = field.get_name();
-            if (name == "xi" || name == "xi_con" || name == "zeta" ||
-                name == "zeta_con" || name == "v" || name == "v_con" || name == "v_mean") {
+            if (name == "xi" || name == "xi_con" || name == "zeta" || name == "zeta_con" ||
+                name == "v" || name == "v_con" || name == "v_mean") {
                 boundary.fill_positive_face_q2_homogeneous_dirichlet_halos(field);
                 if (name == "xi_con") {
                     // The prognostic omega^1 = xi / h1 lives at V points.
@@ -424,8 +424,8 @@ BoundaryConditionManager::apply_horizontal_bcs(Field<Dim>& field) const {
                     // exterior metric. In particular, omega^1 must vanish at
                     // the wall, just like its physical compatibility field.
                     const auto h1 = grid_.geometry()
-                        .device_view(Geometry::HorizontalLocation::V)
-                        .contravariant_to_physical.a11;
+                                        .device_view(Geometry::HorizontalLocation::V)
+                                        .contravariant_to_physical.a11;
                     auto data = field.get_mutable_device_data();
                     const int h = grid_.get_halo_cells();
                     const int nz = data.extent(0), ny = data.extent(1), nx = data.extent(2);
@@ -438,7 +438,8 @@ BoundaryConditionManager::apply_horizontal_bcs(Field<Dim>& field) const {
                                     h1(wall + distance, i) / h1(wall - distance, i);
                             });
                     }
-                    if (h > 0 && grid_.get_local_physical_end_y() == grid_.get_global_points_y() - 1) {
+                    if (h > 0 &&
+                        grid_.get_local_physical_end_y() == grid_.get_global_points_y() - 1) {
                         Kokkos::parallel_for("ReflectCanonicalXiNorth",
                             Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 1, 0}, {nz, h + 1, nx}),
                             KOKKOS_LAMBDA(int k, int distance, int i) {

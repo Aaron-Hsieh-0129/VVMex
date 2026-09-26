@@ -243,11 +243,18 @@ Bp5RestartReader::read_and_initialize(Core::State& state) {
     for (const auto& name : variables.vars_1d) {
         read_field(dataset, name, state.get_field<1>(name));
     }
+    const auto checkpoint_name = [&](const std::string& name) {
+        const bool solver_history = name == "psi" || name == "psinm1" ||
+                                    name == "chi" || name == "chinm1" ||
+                                    name == "W3DNM1";
+        const std::string hidden = "restart/" + name;
+        return solver_history && !dataset.io().VariableType(hidden).empty() ? hidden : name;
+    };
     for (const auto& name : variables.vars_2d) {
-        read_field(dataset, name, state.get_field<2>(name));
+        read_field(dataset, checkpoint_name(name), state.get_field<2>(name));
     }
     for (const auto& name : variables.vars_3d) {
-        read_field(dataset, name, state.get_field<3>(name));
+        read_field(dataset, checkpoint_name(name), state.get_field<3>(name));
     }
 
     for (const auto& name : variables.vars_1d) {

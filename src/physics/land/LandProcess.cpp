@@ -310,7 +310,8 @@ void LandProcess::postprocessing_and_unpacking() {
     auto& cmx = cmx_ref_.get(state_, "cmx").get_mutable_device_data();
     auto& chx = chx_ref_.get(state_, "chx").get_mutable_device_data();
     auto& sfemis = sfemis_ref_.get(state_, "sfemis").get_mutable_device_data();
-
+    auto& albedo = albedo_ref_.get(state_, "albedo").get_mutable_device_data();
+    auto& lai = lai_ref_.get(state_, "lai").get_mutable_device_data();
 
     Kokkos::parallel_for("UnpackToVVM", 
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {m_nx, m_ny}),
@@ -327,9 +328,11 @@ void LandProcess::postprocessing_and_unpacking() {
             cmx(vj, vi) = m_cmx(i, j);
             chx(vj, vi) = m_chx(i, j);
             // NOTE: The following varaibles don't need to be unpacked unless they need to be output
-            // canopy_v(vj, vi) = m_canopy(i, j);
-            // snwdph_v(vj, vi) = m_snwdph(i, j);
-            // sneqv_v(vj, vi) = m_sneqv(i, j);
+            canopy_v(vj, vi) = m_canopy(i, j);
+            snwdph_v(vj, vi) = m_snwdph(i, j);
+            sneqv_v(vj, vi) = m_sneqv(i, j);
+            albedo(vj, vi) =  m_alb(i, j) * real(100.);
+            lai(vj, vi) = m_lai(i, j);
             zorl(vj, vi) = m_zorl(i, j);
             sfemis(vj, vi) = m_sfemis(i, j);
             st1_v(vj, vi) = m_stc(i, 0, j);

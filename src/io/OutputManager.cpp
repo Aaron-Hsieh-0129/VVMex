@@ -22,6 +22,11 @@ namespace IO {
 
 namespace {
 std::string
+checkpoint_source_name(const std::string& name) {
+    return name.rfind("restart/", 0) == 0 ? name.substr(8) : name;
+}
+
+std::string
 uppercase_transport_name(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
         return static_cast<char>(std::toupper(c));
@@ -121,6 +126,18 @@ OutputManager::OutputManager(const Utils::ConfigurationManager& config,
     }
     else {
         engine_type_ = "HDF5";
+    }
+
+    if (engine_type_ == "HDF5" || engine_type_ == "SST") {
+        // Stored in the file for restart (including HDF5 output relayed by
+        // SST), without adding solver scratch to the user's fields_to_output
+        // or the GrADS variable list.
+        for (const char* name : {"psi", "psinm1", "chi", "chinm1", "W3DNM1"}) {
+            if (std::find(fields_to_output_.begin(), fields_to_output_.end(), name) ==
+                fields_to_output_.end()) {
+                fields_to_output_.push_back(std::string("restart/") + name);
+            }
+        }
     }
 
     element_type_ = resolve_output_element_type(configured_output_precision(config));
@@ -326,7 +343,7 @@ OutputManager::define_variables() {
 
     for (const auto& field_name : fields_to_output_) {
         auto it = state_.begin();
-        while (it != state_.end() && it->first != field_name) {
+        while (it != state_.end() && it->first != checkpoint_source_name(field_name)) {
             ++it;
         }
 
@@ -476,7 +493,7 @@ OutputManager::write(size_t step, VVM::Real time) {
         if (field_counts_.count(field_name)) {
             const auto& adios_count = field_counts_.at(field_name);
             auto it = state_.begin();
-            while (it != state_.end() && it->first != field_name) {
+            while (it != state_.end() && it->first != checkpoint_source_name(field_name)) {
                 ++it;
             }
 
@@ -717,7 +734,7 @@ OutputManager::attach_hdf5_field_metadata(const std::string& filename) {
         }
 
         auto it = state_.begin();
-        while (it != state_.end() && it->first != field_name) {
+        while (it != state_.end() && it->first != checkpoint_source_name(field_name)) {
             ++it;
         }
 
@@ -819,8 +836,11 @@ OutputManager::grads_variables(const std::string& dataset_prefix, std::size_t le
     std::unordered_set<std::string> taken;
 
     for (const auto& field_name : fields_to_output_) {
+        if (field_name.rfind("restart/", 0) == 0) {
+            continue;
+        }
         auto it = state_.begin();
-        while (it != state_.end() && it->first != field_name) {
+        while (it != state_.end() && it->first != checkpoint_source_name(field_name)) {
             ++it;
         }
         if (it == state_.end()) {

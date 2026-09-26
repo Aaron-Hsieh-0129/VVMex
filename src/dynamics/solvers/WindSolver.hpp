@@ -45,6 +45,7 @@ public:
     void solve_w();
     void recover_cartesian_horizontal_wind(); // original solve_uv
     void solve_regular_latlon();
+    void initialize_regular_latlon_restart_state();
 
     void relax_2d_batched();
 
@@ -190,6 +191,8 @@ private:
     bool relax_2d_graph_created_ = false;
     cudaGraphExec_t relax_2d_graph_exec_ = nullptr;
 #endif
+
+    void initialize_restart_history();
 };
 
 } // namespace Dynamics

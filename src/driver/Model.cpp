@@ -164,6 +164,49 @@ Model::init() {
         random_forcing_->initialize(state_);
     }
 
+    const bool restart_enabled = config_.get_value<bool>("restart.enable", false);
+    if (restart_enabled) {
+        ensure_field_cache();
+        // Thermodynamic physical state
+        halo_exchanger_.exchange_multiple_halos(thermo_boundary_fields_);
+
+        for (const auto& target : thermo_boundary_targets_) {
+            if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+                bc_manager_.apply_horizontal_bcs(*target.field);
+            }
+
+            if (target.zero_gradient_top) {
+                bc_manager_.apply_zero_gradient(*target.field);
+            }
+            else {
+                bc_manager_.apply_zero_gradient_bottom_zero_top(*target.field);
+            }
+        }
+
+        // ---------------------------------------------------------
+        // Physical vorticity
+        // ---------------------------------------------------------
+        halo_exchanger_.exchange_multiple_halos(dynamics_boundary_fields_);
+        for (const auto& target : dynamics_boundary_targets_) {
+            if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+                bc_manager_.apply_horizontal_bcs(*target.field);
+            }
+            if (target.name == "zeta") {
+                // Both wind solvers use physical top zeta as the horizontal
+                // elliptic right-hand side. Preserve it across a restart.
+                bc_manager_.apply_zero_gradient(*target.field);
+            }
+            else {
+                bc_manager_.apply_vorticity_bc(*target.field);
+            }
+        }
+
+        // qp is diagnostic and is not part of the checkpoint.
+        if (microphysics_) {
+            microphysics_->refresh_total_condensate(state_);
+        }
+    }
+
     if (rank == 0) {
         std::cout << "=== Model Initialization Complete ===\n" << std::endl;
     }
@@ -181,16 +224,19 @@ Model::init() {
     }
 
     dycore_->sync_contravariant_vorticity_from_physical();
-    if (config_.get_value<bool>("initial_conditions.diagnose_wind_from_vorticity", false) ||
-        Core::is_rll_idealized(config_)) {
+    if (restart_enabled) {
+        dycore_->update_contravariant_wind_shadow_state();
+    }
+    else if (config_.get_value<bool>("initial_conditions.diagnose_wind_from_vorticity", false) ||
+             Core::is_rll_idealized(config_)) {
         dycore_->compute_wind_fields();
     }
     else {
         dycore_->update_contravariant_wind_shadow_state();
     }
-
     dycore_->compute_diagnostic_fields();
-    if (config_.get_value<bool>("restart.enable", false)) {
+
+    if (restart_enabled) {
         dycore_->initialize_restart_history();
     }
 }
@@ -539,7 +585,14 @@ Model::run_step(VVM::Real dt) {
             if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
                 bc_manager_.apply_horizontal_bcs(*target.field);
             }
-            bc_manager_.apply_vorticity_bc(*target.field);
+            if (target.name == "zeta") {
+                // Both wind solvers use physical top zeta as the horizontal
+                // elliptic right-hand side. Preserve it across a restart.
+                bc_manager_.apply_zero_gradient(*target.field);
+            }
+            else {
+                bc_manager_.apply_vorticity_bc(*target.field);
+            }
         }
         dycore_->compute_zeta_vertical_structure(state_);
 

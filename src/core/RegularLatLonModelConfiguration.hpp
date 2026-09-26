@@ -25,8 +25,9 @@ is_rll_idealized(const Utils::ConfigurationManager& config) {
 
 inline bool
 is_rll_spatial_terrain(const Utils::ConfigurationManager& config) {
-    return is_rll_mountain(config) && config.get_value<std::string>(
-        "initial_conditions.rll_mountain.terrain_source", "analytic") == "netcdf";
+    return is_rll_mountain(config) &&
+           config.get_value<std::string>("initial_conditions.rll_mountain.terrain_source",
+               "analytic") == "netcdf";
 }
 
 inline bool
@@ -34,12 +35,12 @@ valid_rll_terrain_index(double level, int halo, int total_nz) {
     // Same index convention as Cartesian input: zero means flat; nonzero
     // values are absolute vertical indices, not elevations in metres.
     return std::isfinite(level) && level >= 0. && level == std::floor(level) &&
-        (level == 0. || level >= halo-1) && level <= total_nz-2*halo-3;
+           (level == 0. || level >= halo - 1) && level <= total_nz - 2 * halo - 3;
 }
 
 // Limited channel and explicitly experimental periodic mountain configurations.
 // A profile-backed moist rll_mountain may
-// couple radiation/surface/turbulence/P3 and grid-index spatial terrain; restart and
+// couple radiation/surface/turbulence/P3 and grid-index spatial terrain;
 // horizontal Cartesian forcing remain unsupported.
 inline void
 validate_jung2019_rll(const Utils::ConfigurationManager& config,
@@ -50,18 +51,19 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
         h.topology.q1 != HorizontalEdgeTopology::Periodic ||
         (h.topology.q2 == HorizontalEdgeTopology::Periodic &&
             (!is_rll_mountain(config) || !h.geometry.regular_lat_lon.periodic_latitude)) ||
-        h.n_halo_cells < 2 || h.nx < 8 ||
-        h.ny < 4 || v.nz < 3 || !v.uses_uniform_analytic_coordinate()) {
+        h.n_halo_cells < 2 || h.nx < 8 || h.ny < 4 || v.nz < 3 ||
+        !v.uses_uniform_analytic_coordinate()) {
         throw std::runtime_error("Full-model RLL requires the supported Jung 2019 flat "
                                  "uniform-level periodic-longitude channel configuration.");
     }
     if (h.topology.q2 == HorizontalEdgeTopology::Periodic &&
         (!config.get_value<bool>("initial_conditions.rll_mountain.zonal_flow", false) ||
             config.get_value<double>("initial_conditions.jung2019.perturbation_scale", 1.) != 0.)) {
-        throw std::runtime_error("Experimental periodic RLL requires the zonal mountain initializer without Jung perturbations.");
+        throw std::runtime_error("Experimental periodic RLL requires the zonal mountain "
+                                 "initializer without Jung perturbations.");
     }
-    const auto terrain_source = config.get_value<std::string>(
-        "initial_conditions.rll_mountain.terrain_source", "analytic");
+    const auto terrain_source =
+        config.get_value<std::string>("initial_conditions.rll_mountain.terrain_source", "analytic");
     if (terrain_source != "analytic" && terrain_source != "netcdf") {
         throw std::runtime_error("RLL terrain_source must be analytic or netcdf.");
     }
@@ -89,34 +91,44 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
         throw std::runtime_error("Mountain terrain requires simulation.idealized_test = "
                                  "rll_mountain; Jung reproduction remains flat.");
     }
-    const bool profile_atmosphere = is_rll_mountain(config) &&
-        config.has_key("initial_conditions.source_file") &&
+    const bool profile_atmosphere =
+        is_rll_mountain(config) && config.has_key("initial_conditions.source_file") &&
         config.get_value<std::string>("initial_conditions.format", "") == "txt" &&
         config.get_value<bool>("physics.p3.enable_p3", false);
     if (is_rll_spatial_terrain(config)) {
-        const auto fields = config.get_value<nlohmann::json>(
-            "netcdf_reader.variables_to_read.2d", nlohmann::json::array());
+        const auto fields = config.get_value<nlohmann::json>("netcdf_reader.variables_to_read.2d",
+            nlohmann::json::array());
         bool has_topo = false;
-        for (const auto& name : fields) has_topo = has_topo || name == "topo";
+        for (const auto& name : fields) {
+            has_topo = has_topo || name == "topo";
+        }
         if (!profile_atmosphere || v.nz < 8 ||
             config.get_value<std::string>("netcdf_reader.source_file", "").empty() || !has_topo) {
-            throw std::runtime_error("RLL NetCDF terrain requires a profile-backed atmosphere, nz >= 8, a spatial source_file and topo in variables_to_read.2d.");
+            throw std::runtime_error(
+                "RLL NetCDF terrain requires a profile-backed atmosphere, nz >= 8, a spatial "
+                "source_file and topo in variables_to_read.2d.");
         }
-        if (config.get_value<bool>("initial_conditions.reapply_spatial_initial_conditions", false)) {
-            throw std::runtime_error("RLL NetCDF terrain cannot be reapplied after terrain masks are initialized.");
+        if (config.get_value<bool>("initial_conditions.reapply_spatial_initial_conditions",
+                false)) {
+            throw std::runtime_error(
+                "RLL NetCDF terrain cannot be reapplied after terrain masks are initialized.");
         }
     }
     if (!profile_atmosphere &&
         (config.get_value<bool>("physics.rrtmgp.enable_rrtmgp", false) ||
-         config.get_value<bool>("dynamics.forcings.sponge_layer.enable", false))) {
-        throw std::runtime_error("RLL radiation and sponge require a profile-backed moist mountain atmosphere.");
+            config.get_value<bool>("dynamics.forcings.sponge_layer.enable", false))) {
+        throw std::runtime_error(
+            "RLL radiation and sponge require a profile-backed moist mountain atmosphere.");
     }
     if (config.get_value<bool>("dynamics.forcings.sponge_layer.enable", false)) {
-        const double base = config.get_value<double>("dynamics.forcings.sponge_layer.sponge_layer_base", -1.);
-        const double timescale = config.get_value<double>("dynamics.forcings.sponge_layer.inv_CRAD", -1.);
+        const double base =
+            config.get_value<double>("dynamics.forcings.sponge_layer.sponge_layer_base", -1.);
+        const double timescale =
+            config.get_value<double>("dynamics.forcings.sponge_layer.inv_CRAD", -1.);
         if (!std::isfinite(base) || base <= v.dz || base >= (v.nz - 1.5) * v.dz ||
             !std::isfinite(timescale) || timescale <= 0.) {
-            throw std::runtime_error("RLL sponge requires a positive timescale and a base inside the atmosphere.");
+            throw std::runtime_error(
+                "RLL sponge requires a positive timescale and a base inside the atmosphere.");
         }
     }
     // RandomForcing perturbs potential temperature using global cell indices and
@@ -127,15 +139,16 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
         throw std::runtime_error(
             "RLL random perturbation requires a profile-backed moist mountain atmosphere.");
     }
-    for (const char* key : {"dynamics.forcings.areamn.enable",
-             "dynamics.forcings.lateral_boundary_nudging.enable",
-             "restart.enable"}) {
+    for (const char* key :
+        {"dynamics.forcings.areamn.enable", "dynamics.forcings.lateral_boundary_nudging.enable"}) {
         if (config.get_value<bool>(key, false)) {
             throw std::runtime_error(std::string("Unsupported RLL option: ") + key);
         }
     }
+
     if ((!profile_atmosphere && (config.has_key("netcdf_reader.source_file") ||
-        config.has_key("initial_conditions.source_file"))) || config.has_key("dynamics.tracers")) {
+                                    config.has_key("initial_conditions.source_file"))) ||
+        config.has_key("dynamics.tracers")) {
         throw std::runtime_error("Jung RLL uses analytic initial conditions; external input and "
                                  "tracers are not enabled.");
     }
@@ -143,11 +156,14 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
         const auto input = config.get_value<nlohmann::json>("netcdf_reader.variables_to_read");
         for (const auto& group : input.items()) {
             if (group.key() != "2d") {
-                throw std::runtime_error("RLL spatial input currently supports surface fields only.");
+                throw std::runtime_error(
+                    "RLL spatial input currently supports surface fields only.");
             }
             for (const auto& name : group.value()) {
-                if ((name == "topo" && !is_rll_spatial_terrain(config)) || name == "lon" || name == "lat") {
-                    throw std::runtime_error("RLL mountain terrain and coordinates must remain analytic; exclude topo/lon/lat from spatial input.");
+                if ((name == "topo" && !is_rll_spatial_terrain(config)) || name == "lon" ||
+                    name == "lat") {
+                    throw std::runtime_error("RLL mountain terrain and coordinates must remain "
+                                             "analytic; exclude topo/lon/lat from spatial input.");
                 }
             }
         }
@@ -155,15 +171,16 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
     const auto engine = config.get_value<std::string>("output.engine", "HDF5");
     // The shared HDF5/SST writer exports geometry-derived RLL coordinates.
     const bool supported_engine = engine == "HDF5" ||
-        (is_rll_mountain(config) && engine == "BP5") ||
-        (profile_atmosphere && engine == "SST");
+                                  (is_rll_mountain(config) && engine == "BP5") ||
+                                  (profile_atmosphere && engine == "SST");
     if (!supported_engine) {
         throw std::runtime_error(
             "Unsupported RLL output engine: " + engine +
             ". Use HDF5, BP5 for rll_mountain, or SST for a profile-backed moist rll_mountain.");
     }
     if (h.fix_lonlat) {
-        throw std::runtime_error("RLL requires geometry-derived geographic coordinates (fix_lonlat=false).");
+        throw std::runtime_error(
+            "RLL requires geometry-derived geographic coordinates (fix_lonlat=false).");
     }
     const int experiment = config.get_value<int>("initial_conditions.jung2019.case");
     if (experiment != 1 && experiment != 2) {
@@ -187,11 +204,11 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
     const auto variables = config.get_value<nlohmann::json>("dynamics.prognostic_variables");
     if (profile_atmosphere) {
         for (const char* scalar : {"th", "qv"}) {
-            if (!variables.contains(scalar) ||
-                !variables.at(scalar).contains("tendency_terms") ||
+            if (!variables.contains(scalar) || !variables.at(scalar).contains("tendency_terms") ||
                 !variables.at(scalar).at("tendency_terms").contains("advection") ||
                 !variables.at(scalar).at("tendency_terms").at("advection").value("enable", true)) {
-                throw std::runtime_error("A profile-backed RLL atmosphere requires th and qv advection.");
+                throw std::runtime_error(
+                    "A profile-backed RLL atmosphere requires th and qv advection.");
             }
         }
     }
@@ -294,7 +311,8 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
             if (term.key() != "advection" && term.key() != "stretching" &&
                 term.key() != "twisting" &&
                 !(is_rll_mountain(config) && term.key() == "coriolis") &&
-                !(profile_atmosphere && (name == "xi" || name == "eta") && term.key() == "buoyancy")) {
+                !(profile_atmosphere && (name == "xi" || name == "eta") &&
+                    term.key() == "buoyancy")) {
 
                 throw std::runtime_error("RLL vorticity currently supports "
                                          "advection, stretching and twisting"
@@ -303,12 +321,14 @@ validate_jung2019_rll(const Utils::ConfigurationManager& config,
 
             const auto temporal = term.value().value("temporal_scheme", std::string(""));
             const bool forward_buoyancy = profile_atmosphere && term.key() == "buoyancy" &&
-                (name == "xi" || name == "eta") && temporal == "ForwardEuler";
+                                          (name == "xi" || name == "eta") &&
+                                          temporal == "ForwardEuler";
             if (term.value().value("spatial_scheme", std::string("")) != "Takacs" ||
                 (temporal != "AdamsBashforth2" && !forward_buoyancy)) {
 
-                throw std::runtime_error("RLL vorticity requires Takacs transport "
-                                         "and AdamsBashforth2 (profile buoyancy may use ForwardEuler).");
+                throw std::runtime_error(
+                    "RLL vorticity requires Takacs transport "
+                    "and AdamsBashforth2 (profile buoyancy may use ForwardEuler).");
             }
         }
     }

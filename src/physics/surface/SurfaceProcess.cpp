@@ -1,7 +1,8 @@
 #include "SurfaceProcess.hpp"
-#include <iostream>
-#include <cmath>
+
 #include <algorithm>
+#include <cmath>
+#include <iostream>
 
 namespace VVM {
 namespace Physics {
@@ -16,19 +17,76 @@ SurfaceProcess::SurfaceProcess(const Utils::ConfigurationManager& config,
     v_coord_type_ = Core::vertical_coordinate_type_to_string(grid_.vertical_specification().type);
 
     if (v_coord_type_ == "rcemip") {
-        speed1_filter_ = 1;
+        speed1_filter_ = real(1.0);
     }
     else {
-        speed1_filter_ = 1e-3;
+        speed1_filter_ = real(1e-3);
     }
-    return;
+
+    // These fields must exist before Initializer::load_restart().
+    register_restart_fields(state);
+}
+
+void
+SurfaceProcess::register_restart_fields(Core::State& state) {
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
+
+    // These four fluxes are held and reused between calls to
+    // compute_coefficients().  Therefore they must survive restart.
+    if (!state.has_field("sfc_flux_th")) {
+        state.add_field<2>("sfc_flux_th",
+            {ny, nx},
+            Core::FieldMetadata{Core::GridStaggering::Surface,
+                "kg K m-2 s-1",
+                "density-weighted surface potential-temperature flux"});
+    }
+
+    if (!state.has_field("sfc_flux_qv")) {
+        state.add_field<2>("sfc_flux_qv",
+            {ny, nx},
+            Core::FieldMetadata{Core::GridStaggering::Surface,
+                "kg m-2 s-1",
+                "surface water-vapor mass flux"});
+    }
+
+    if (!state.has_field("sfc_flux_u")) {
+        state.add_field<2>("sfc_flux_u",
+            {ny, nx},
+            Core::FieldMetadata{Core::GridStaggering::Surface,
+                "kg m-1 s-2",
+                "surface x-momentum flux"});
+    }
+
+    if (!state.has_field("sfc_flux_v")) {
+        state.add_field<2>("sfc_flux_v",
+            {ny, nx},
+            Core::FieldMetadata{Core::GridStaggering::Surface,
+                "kg m-1 s-2",
+                "surface y-momentum flux"});
+    }
+
+    // VEN2D is also persistent because calculate_tendencies() and the
+    // staggered momentum-flux construction reuse the most recently computed
+    // surface momentum exchange coefficient.
+    if (!state.has_field("VEN2D")) {
+        state.add_field<2>("VEN2D",
+            {ny, nx},
+            Core::FieldMetadata{Core::GridStaggering::Surface,
+                "m s-1",
+                "surface momentum exchange coefficient"});
+    }
 }
 
 void
 SurfaceProcess::initialize(Core::State& state) {
-    int nz = grid_.get_local_total_points_z();
-    int ny = grid_.get_local_total_points_y();
-    int nx = grid_.get_local_total_points_x();
+    const int nz = grid_.get_local_total_points_z();
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
+
+    // Idempotent protection.  Under the normal Model lifecycle these fields
+    // were already registered by the constructor before restart loading.
+    register_restart_fields(state);
 
     const auto tendency_metadata = [&state](const std::string& var_name) {
         const auto& metadata = state.get_field<3>(var_name).get_metadata();
@@ -50,6 +108,7 @@ SurfaceProcess::initialize(Core::State& state) {
         return Core::FieldMetadata{metadata.grid_staggering, units, long_name};
     };
 
+    // Runtime tendency fields
     for (const char* var_name : {"th", "qv", "xi", "eta"}) {
         const std::string fe_tendency_name = "fe_tendency_" + std::string(var_name);
 
@@ -58,6 +117,9 @@ SurfaceProcess::initialize(Core::State& state) {
         }
     }
 
+    // Hydrometeors required by the surface formulation
+    // P3 normally creates these before this point.  Keep the fallback for
+    // configurations that use surface physics without P3.
     if (!state.has_field("qc")) {
         state.add_field<3>("qc",
             {nz, ny, nx},
@@ -65,6 +127,7 @@ SurfaceProcess::initialize(Core::State& state) {
                 "kg kg-1",
                 "cloud liquid water mass mixing ratio"});
     }
+
     if (!state.has_field("qi")) {
         state.add_field<3>("qi",
             {nz, ny, nx},
@@ -73,59 +136,24 @@ SurfaceProcess::initialize(Core::State& state) {
                 "total ice mass mixing ratio"});
     }
 
-    if (!state.has_field("sfc_flux_th")) {
-        state.add_field<2>("sfc_flux_th",
-            {ny, nx},
-            Core::FieldMetadata{Core::GridStaggering::Surface,
-                "kg K m-2 s-1",
-                "density-weighted surface potential-temperature flux"});
-    }
-    if (!state.has_field("sfc_flux_qv")) {
-        state.add_field<2>("sfc_flux_qv",
-            {ny, nx},
-            Core::FieldMetadata{Core::GridStaggering::Surface,
-                "kg m-2 s-1",
-                "surface water-vapor mass flux"});
-    }
-    if (!state.has_field("sfc_flux_u")) {
-        state.add_field<2>("sfc_flux_u",
-            {ny, nx},
-            Core::FieldMetadata{Core::GridStaggering::Surface,
-                "kg m-1 s-2",
-                "surface x-momentum flux"});
-    }
-    if (!state.has_field("sfc_flux_v")) {
-        state.add_field<2>("sfc_flux_v",
-            {ny, nx},
-            Core::FieldMetadata{Core::GridStaggering::Surface,
-                "kg m-1 s-2",
-                "surface y-momentum flux"});
-    }
-
+    // Surface runtime/static fields
     if (!state.has_field("gwet")) {
         state.add_field<2>("gwet",
             {ny, nx},
-            Core::FieldMetadata{Core::GridStaggering::Surface,
-                "1",
-                "surface wetness"}); // Surface Wetness
+            Core::FieldMetadata{Core::GridStaggering::Surface, "1", "surface wetness"});
     }
+
     if (!state.has_field("zrough")) {
         state.add_field<2>("zrough",
             {ny, nx},
-            Core::FieldMetadata{Core::GridStaggering::Surface,
-                "m",
-                "surface roughness length"}); // Roughness Length
+            Core::FieldMetadata{Core::GridStaggering::Surface, "m", "surface roughness length"});
     }
-    if (!state.has_field("VEN2D")) {
-        state.add_field<2>("VEN2D",
-            {ny, nx},
-            Core::FieldMetadata{Core::GridStaggering::Surface,
-                "m s-1",
-                "surface momentum exchange coefficient"}); // Roughness Length
-    }
-    Kokkos::deep_copy(gwet_ref_.get(state, "gwet").get_mutable_device_data(), -1.);
-    Kokkos::deep_copy(zrough_ref_.get(state, "zrough").get_mutable_device_data(), 2e-4);
 
+    // These are configuration/default fields rather than held restart state.
+    Kokkos::deep_copy(gwet_ref_.get(state, "gwet").get_mutable_device_data(), real(-1.0));
+    Kokkos::deep_copy(zrough_ref_.get(state, "zrough").get_mutable_device_data(), real(2e-4));
+
+    // Diagnostics
     if (!state.has_field("ustar")) {
         state.add_field<2>("ustar",
             {ny, nx},
@@ -133,6 +161,7 @@ SurfaceProcess::initialize(Core::State& state) {
                 "m s-1",
                 "surface friction velocity"});
     }
+
     if (!state.has_field("molen")) {
         state.add_field<2>("molen",
             {ny, nx},

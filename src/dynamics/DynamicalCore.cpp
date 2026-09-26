@@ -427,6 +427,18 @@ void
 DynamicalCore::initialize_restart_history() {
     const int rank = grid_.get_mpi_rank();
 
+    // Preserve loaded RLL wind and seed the solver's circulation target.
+    wind_solver_->initialize_regular_latlon_restart_state();
+    if (grid_.geometry().kind() == Core::Geometry::GeometryKind::Cartesian) {
+        // The Cartesian top-wind means are scalar solver state. Recover them
+        // from the saved physical top wind, which is their value after the
+        // solver's mean correction, before the first resumed prediction.
+        state_.calculate_horizontal_mean(u_ref_.get(state_, "u"),
+            utopmn_ref_.get(state_, "utopmn").get_mutable_device_data());
+        state_.calculate_horizontal_mean(v_ref_.get(state_, "v"),
+            vtopmn_ref_.get(state_, "vtopmn").get_mutable_device_data());
+    }
+
     if (rank == 0) {
         std::cout << "  [WARNING] Restart files do not preserve the previous AB2 "
                      "tendency. The first step after restart uses first-order "

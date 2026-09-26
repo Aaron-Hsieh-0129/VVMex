@@ -264,7 +264,6 @@ contains
                 cmx(i,j) = cd(i,j)
                 chx(i,j) = cdq(i,j)
 
-                alb(i,j) = albedo2(i,j)
             end do
         end do
         

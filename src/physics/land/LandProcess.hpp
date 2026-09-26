@@ -90,6 +90,7 @@ private:
     Core::FieldRef<1> rhobar_ref_;
     Core::FieldRef<2> Tg_ref_;
     Core::FieldRef<2> albedo_ref_;
+    Core::FieldRef<2> noah_albedo_ref_;
     Core::FieldRef<2> canopy_ref_;
     Core::FieldRef<2> chx_ref_;
     Core::FieldRef<2> cmx_ref_;

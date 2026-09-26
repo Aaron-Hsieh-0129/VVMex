@@ -2,6 +2,8 @@
 #include "PnetcdfRestartMetadata.hpp"
 #include "core/Field.hpp"
 #include "core/RegularLatLonModelConfiguration.hpp"
+#include "io/RestartVariables.hpp"
+
 #include <iostream>
 #include <algorithm>
 #include <sstream>
@@ -242,12 +244,14 @@ PnetcdfReader::read_variable_2d(
     if (var_name == "topo" && Core::is_rll_spatial_terrain(config_)) {
         MPI_Offset length = 0;
         if (ncmpi_inq_attlen(ncid, varid, "units", &length) != NC_NOERR || length != 4) {
-            throw std::runtime_error("RLL spatial topo requires units='grid', not metre-valued elevation.");
+            throw std::runtime_error(
+                "RLL spatial topo requires units='grid', not metre-valued elevation.");
         }
         char units[4];
         check_ncmpi_error(ncmpi_get_att_text(ncid, varid, "units", units), "Read terrain units");
         if (std::string(units, 4) != "grid") {
-            throw std::runtime_error("RLL spatial topo requires units='grid', not metre-valued elevation.");
+            throw std::runtime_error(
+                "RLL spatial topo requires units='grid', not metre-valued elevation.");
         }
     }
 
@@ -462,30 +466,42 @@ PnetcdfReader::read_and_initialize(VVM::Core::State& state) {
     }
 
     std::vector<std::string> vars_1d;
-    std::string key_1d = config_prefix_ + ".variables_to_read.1d";
-    if (config_.has_key(key_1d)) {
-        vars_1d = config_.get_value<std::vector<std::string>>(key_1d);
-    }
-
     std::vector<std::string> vars_2d;
-    std::string key_2d = config_prefix_ + ".variables_to_read.2d";
-    if (config_.has_key(key_2d)) {
-        vars_2d = config_.get_value<std::vector<std::string>>(key_2d);
-    }
-
     std::vector<std::string> vars_3d;
-    std::string key_3d = config_prefix_ + ".variables_to_read.3d";
+
+    const std::string key_1d = config_prefix_ + ".variables_to_read.1d";
+    const std::string key_2d = config_prefix_ + ".variables_to_read.2d";
+    const std::string key_3d = config_prefix_ + ".variables_to_read.3d";
+
     const bool has_explicit_3d_list = config_.has_key(key_3d);
-    if (has_explicit_3d_list) {
-        vars_3d = config_.get_value<std::vector<std::string>>(key_3d);
+
+    if (config_prefix_ == "restart") {
+        const RestartVariables restart =
+            select_restart_variables(config_, state, rank_, "PnetcdfReader");
+
+        vars_1d = restart.vars_1d;
+        vars_2d = restart.vars_2d;
+        vars_3d = restart.vars_3d;
     }
-    else if (config_prefix_ == "restart") {
-        auto prognostic_config = config_.get_value<nlohmann::json>("dynamics.prognostic_variables");
-        for (const auto& item : prognostic_config.items()) {
-            const std::string& var_name = item.key();
-            if (state.has_field(var_name)) {
-                append_unique(vars_3d, var_name);
-            }
+    else {
+        if (config_.has_key(key_1d)) {
+            vars_1d = config_.get_value<std::vector<std::string>>(key_1d);
+        }
+
+        if (config_.has_key(key_2d)) {
+            vars_2d = config_.get_value<std::vector<std::string>>(key_2d);
+        }
+
+        if (has_explicit_3d_list) {
+            vars_3d = config_.get_value<std::vector<std::string>>(key_3d);
+        }
+
+        for (const auto& tracer_name : state.get_tracer_names()) {
+            append_unique(vars_3d, tracer_name);
+        }
+
+        for (const auto& source_name : state.get_tracer_source_names()) {
+            append_unique(vars_3d, source_name);
         }
     }
 

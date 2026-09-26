@@ -10,6 +10,13 @@ if(VVM_TEST_RLL)
         vvm_add_model_test(test_rll_bp5_history
             SCRIPT check_rll_bp5.py OUTPUT rll_bp5_tests
             TIMEOUT 600 LABELS rll bp5)
+        vvm_add_model_test(test_rll_bp5_restart
+            SCRIPT check_rll_restart.py OUTPUT rll_bp5_restart_tests
+            TIMEOUT 600 LABELS rll bp5 restart)
+        _vvm_set_test_resources(test_rll_bp5_restart 2)
+        vvm_add_model_test(test_wind_restart_modes
+            SCRIPT check_wind_restart_modes.py OUTPUT wind_restart_modes_tests
+            TIMEOUT 600 LABELS rll bp5 restart)
     endif()
 endif()
 

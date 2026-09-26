@@ -221,6 +221,19 @@ WindSolver::solve_regular_latlon() {
     rll_initialized_ = true;
 }
 
+void
+WindSolver::initialize_regular_latlon_restart_state() {
+    if (grid_.geometry().kind() != Core::Geometry::GeometryKind::RegularLatLon ||
+        rll_initialized_) {
+        return;
+    }
+    const bool periodic = grid_.horizontal_specification().topology.q2 ==
+                          Core::HorizontalEdgeTopology::Periodic;
+    initialize_regular_latlon_solver(periodic, grid_.get_local_total_points_z());
+    horizontal_wind_constraint_->seed_from_physical_wind();
+    rll_initialized_ = true;
+}
+
 GeneralizedWindDiagnosticFields
 WindSolver::prepare_regular_latlon_wind_recovery(
     const bool initial, const bool terrain, GeneralizedWindDiagnosticOptions& options) {

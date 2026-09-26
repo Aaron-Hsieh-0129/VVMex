@@ -49,6 +49,7 @@ private:
 
     struct FieldRecord {
         std::string name;
+        std::string source_name;
         std::string description;
         FieldSelection selection;
         FieldVariable variable;

@@ -140,6 +140,17 @@ public:
     }
 
     void
+    seed_from_physical_wind() override {
+        if (mode_ == RegularLatLonConstraintMode::PeriodicCycles) {
+            measure_periodic_cycles_from_physical();
+        }
+        else {
+            measure_bounded_q2_wall_from_physical();
+        }
+        capture_target();
+    }
+
+    void
     measure_periodic_cycles_from_covariant() {
         using Core::Geometry::HorizontalLocation;
 
@@ -298,6 +309,32 @@ public:
                 }
             });
 
+        reduce_bounded_q2_wall(gx);
+    }
+
+    void
+    measure_bounded_q2_wall_from_physical() {
+        const int h = grid_.get_halo_cells();
+        const int top = grid_.get_local_total_points_z() - h - 1;
+        const int ny = grid_.get_local_total_points_y();
+        const int nx = grid_.get_local_total_points_x();
+        const int gx = grid_.get_global_points_x();
+        const int start_i = grid_.get_local_physical_start_x();
+        const bool owns_south = grid_.get_local_physical_start_y() == 0;
+
+        const auto u = state_.get_field<3>("u").get_device_data();
+        const auto h1 = grid_.geometry()
+                            .device_view(Core::Geometry::HorizontalLocation::U)
+                            .contravariant_to_physical.a11;
+        const auto contributions = contributions_->get_mutable_device_data();
+        Kokkos::deep_copy(contributions, real(0.0));
+        Kokkos::parallel_for("RLLRestartSouthWallCirculation",
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
+            KOKKOS_LAMBDA(const int j, const int i) {
+                if (owns_south && j == h) {
+                    contributions(start_i + i - h) = u(top, j, i) * h1(j, i);
+                }
+            });
         reduce_bounded_q2_wall(gx);
     }
 

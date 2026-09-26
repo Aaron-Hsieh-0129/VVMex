@@ -239,7 +239,12 @@ Bp5HistoryWriter::skip_field(const std::string& field_name, const char* reason) 
 
 void
 Bp5HistoryWriter::define_field(const std::string& field_name) {
-    const Core::AnyField* entry = state_.find_any(field_name);
+    constexpr const char* checkpoint_prefix = "restart/";
+    const bool checkpoint_field = field_name.rfind(checkpoint_prefix, 0) == 0;
+    const std::string source_name =
+        checkpoint_field ? field_name.substr(std::char_traits<char>::length(checkpoint_prefix))
+                         : field_name;
+    const Core::AnyField* entry = state_.find_any(source_name);
     if (entry == nullptr) {
         skip_field(field_name, "not registered in this run's state");
         return;
@@ -299,6 +304,7 @@ Bp5HistoryWriter::define_field(const std::string& field_name) {
             const auto& metadata = field.get_metadata();
             define_metadata(field_name, metadata);
             fields_.push_back({field_name,
+                source_name,
                 describe_field(field_name, metadata),
                 std::move(selection),
                 std::move(variable)});
@@ -368,9 +374,19 @@ Bp5HistoryWriter::define_schema() {
         output_bounds.data(),
         output_bounds.size());
 
-    fields_.reserve(field_names_.size());
+    fields_.reserve(field_names_.size() + 5);
     for (const auto& field_name : field_names_) {
         define_field(field_name);
+    }
+    {
+        // These are checkpoint internals, not user-selected history fields.
+        // Normal BP5 output stays restartable without exposing solver scratch
+        // names in output.fields_to_output.
+        for (const char* name : {"psi", "psinm1", "chi", "chinm1", "W3DNM1"}) {
+            if (std::find(field_names_.begin(), field_names_.end(), name) == field_names_.end()) {
+                define_field(std::string("restart/") + name);
+            }
+        }
     }
 }
 
@@ -425,6 +441,9 @@ Bp5HistoryWriter::write_grads_ctl_file(const Utils::ConfigurationManager& config
     std::unordered_set<std::string> taken;
     std::vector<std::string> profile_fields;
     for (const auto& field : fields_) {
+        if (field.name.rfind("restart/", 0) == 0) {
+            continue;
+        }
         GradsVariable variable;
         variable.dataset_name = field.name;
         variable.description = field.description;
@@ -593,7 +612,7 @@ Bp5HistoryWriter::write(std::size_t step, VVM::Real time) {
             const auto start = std::chrono::steady_clock::now();
             Kokkos::fence("bp5_history_source_ready");
             for (const auto& field : fields_) {
-                inputs.push_back(field_source_.prepare(field.name,
+                inputs.push_back(field_source_.prepare(field.source_name,
                     field.selection,
                     effective_buffer_mode_,
                     element_type_));

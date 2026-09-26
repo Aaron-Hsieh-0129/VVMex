@@ -206,8 +206,8 @@ configure_regular_lat_lon_geometry(HorizontalDomainSpec& horizontal,
     }
 
     const bool periodic_latitude = horizontal.topology.q2 == HorizontalEdgeTopology::Periodic;
-    if (periodic_latitude && !config.get_value<bool>(
-            "grid.horizontal.geometry.experimental_periodic_latitude", false)) {
+    if (periodic_latitude &&
+        !config.get_value<bool>("grid.horizontal.geometry.experimental_periodic_latitude", false)) {
         configuration_error("periodic RLL latitude requires experimental_periodic_latitude=true.");
     }
 
