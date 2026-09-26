@@ -585,9 +585,10 @@ Model::run_step(VVM::Real dt) {
             if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
                 bc_manager_.apply_horizontal_bcs(*target.field);
             }
-            if (target.name == "zeta") {
-                // Both wind solvers use physical top zeta as the horizontal
-                // elliptic right-hand side. Preserve it across a restart.
+            if (target.name == "zeta" &&
+                grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+                // RLL advances physical top zeta as the horizontal elliptic
+                // right-hand side. Keep that value for the wind recovery.
                 bc_manager_.apply_zero_gradient(*target.field);
             }
             else {
