@@ -186,6 +186,7 @@ read_and_check(const std::filesystem::path& dataset, int x_end, int y_end) {
         auto y_var = io.InquireVariable<VVM::Real>("coordinates/y");
         auto z_var = io.InquireVariable<VVM::Real>("coordinates/z_mid");
         auto one_var = io.InquireVariable<Elem>("thbar");
+        auto profile_var = io.InquireVariable<Elem>("grads_profiles/thbar");
         auto two_var = io.InquireVariable<Elem>("topo");
         auto three_var = io.InquireVariable<Elem>("u");
         auto four_var = io.InquireVariable<Elem>("bp5_test_4d");
@@ -200,9 +201,10 @@ read_and_check(const std::filesystem::path& dataset, int x_end, int y_end) {
 
         check(time_var && model_time_var && model_step_var, "clock variables exist");
         check(x_var && y_var && z_var, "coordinate variables exist");
-        check(one_var && two_var && three_var && four_var, "all configured fields exist");
+        check(one_var && profile_var && two_var && three_var && four_var,
+            "all configured fields and the GrADS profile view exist");
         if (!(time_var && model_time_var && model_step_var && x_var && y_var && z_var && one_var &&
-                two_var && three_var && four_var)) {
+                profile_var && two_var && three_var && four_var)) {
             reader.EndStep();
             ++observed_steps;
             continue;
@@ -212,6 +214,7 @@ read_and_check(const std::filesystem::path& dataset, int x_end, int y_end) {
         check_shape(y_var.Shape(), {kNy}, "coordinates/y");
         check_shape(z_var.Shape(), {kNz}, "coordinates/z_mid");
         check_shape(one_var.Shape(), {kNz}, "thbar");
+        check_shape(profile_var.Shape(), {4, 1, 1}, "grads_profiles/thbar");
         check_shape(two_var.Shape(), {kNy, kNx}, "topo");
         check_shape(three_var.Shape(), {kNz, kNy, kNx}, "u");
         check_shape(four_var.Shape(), {2, kNz, kNy, kNx}, "bp5_test_4d");
@@ -245,6 +248,7 @@ read_and_check(const std::filesystem::path& dataset, int x_end, int y_end) {
         const int x_count = x_end + 1;
         const int y_count = y_end + 1;
         one_var.SetSelection({{z_start}, {z_count}});
+        profile_var.SetSelection({{0, 0, 0}, {z_count, 1, 1}});
         two_var.SetSelection(
             {{0, 0}, {static_cast<std::size_t>(y_count), static_cast<std::size_t>(x_count)}});
         three_var.SetSelection({{z_start, 0, 0},
@@ -252,10 +256,12 @@ read_and_check(const std::filesystem::path& dataset, int x_end, int y_end) {
         four_var.SetSelection({{0, z_start, 0, 0},
             {2, z_count, static_cast<std::size_t>(y_count), static_cast<std::size_t>(x_count)}});
         std::vector<Elem> one(z_count);
+        std::vector<Elem> profile(z_count);
         std::vector<Elem> two(y_count * x_count);
         std::vector<Elem> three(z_count * y_count * x_count);
         std::vector<Elem> four(2 * z_count * y_count * x_count);
         reader.Get(one_var, one.data(), adios2::Mode::Sync);
+        reader.Get(profile_var, profile.data(), adios2::Mode::Sync);
         reader.Get(two_var, two.data(), adios2::Mode::Sync);
         reader.Get(three_var, three.data(), adios2::Mode::Sync);
         reader.Get(four_var, four.data(), adios2::Mode::Sync);
@@ -265,6 +271,7 @@ read_and_check(const std::filesystem::path& dataset, int x_end, int y_end) {
         for (int k = 0; k < z_count; ++k) {
             check(one[k] == static_cast<Elem>(expected_1d(observed_steps, z_start + k)),
                 "1-D field value");
+            check(profile[k] == one[k], "GrADS profile view matches native 1-D field");
         }
         for (int j = 0; j < y_count; ++j) {
             for (int i = 0; i < x_count; ++i) {
@@ -409,6 +416,19 @@ main(int argc, char** argv) {
             writer.close();
             MPI_Barrier(MPI_COMM_WORLD);
             if (g_rank == 0) {
+                std::ifstream profile_ctl(case_dir / "vvm_profiles.ctl");
+                const std::string descriptor((std::istreambuf_iterator<char>(profile_ctl)),
+                    std::istreambuf_iterator<char>());
+                check(profile_ctl.is_open(), "GrADS profile CTL exists");
+                check(descriptor.find("XDEF 1 LINEAR ") != std::string::npos,
+                    "profile CTL has a singleton X axis");
+                check(descriptor.find("YDEF 1 LINEAR ") != std::string::npos,
+                    "profile CTL has a singleton Y axis");
+                check(descriptor.find("ZDEF 4 LEVELS 75 100 125 150") != std::string::npos,
+                    "profile CTL describes only the selected vertical levels");
+                check(descriptor.find("grads_profiles/thbar=>thbar 4 z,y,x ") !=
+                          std::string::npos,
+                    "profile CTL maps thbar to its GrADS-compatible view");
                 const int x_end = empty_rank_case ? 1 : 6;
                 const int y_end = empty_rank_case ? 1 : 5;
                 const bool on_disk_is_float32 =

@@ -6,6 +6,7 @@
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 
 namespace VVM::IO {
@@ -25,6 +26,13 @@ format_axis_number(VVM::Real value) {
         formatted.erase(0, 1);
     }
     return formatted;
+}
+
+std::string
+format_level_number(VVM::Real value) {
+    std::ostringstream ss;
+    ss << std::setprecision(std::numeric_limits<VVM::Real>::max_digits10) << value;
+    return ss.str();
 }
 
 GradsAxis
@@ -187,7 +195,7 @@ write_grads_ctl(const std::filesystem::path& path, const GradsCtl& ctl) {
          << format_axis_number(ctl.y.increment) << "\n";
     file << "ZDEF " << ctl.z_levels.size() << " LEVELS ";
     for (std::size_t k = 0; k < ctl.z_levels.size(); ++k) {
-        file << static_cast<int>(ctl.z_levels[k]);
+        file << format_level_number(ctl.z_levels[k]);
         if (k + 1 == ctl.z_levels.size()) {
             continue;
         }

@@ -55,6 +55,12 @@ private:
         FieldVariable variable;
     };
 
+    struct ProfileRecord {
+        std::size_t field_index;
+        std::string dataset_name;
+        FieldVariable variable;
+    };
+
     const Core::Grid& grid_;
     const Core::Parameters& parameters_;
     Core::State& state_;
@@ -79,6 +85,7 @@ private:
     adios2::Variable<VVM::Real> y_variable_;
     adios2::Variable<VVM::Real> z_variable_;
     std::vector<FieldRecord> fields_;
+    std::vector<ProfileRecord> profiles_;
 
     std::vector<VVM::Real> x_coordinates_;
     std::vector<VVM::Real> y_coordinates_;

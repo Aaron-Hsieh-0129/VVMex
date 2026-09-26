@@ -308,6 +308,46 @@ Bp5HistoryWriter::define_field(const std::string& field_name) {
                 describe_field(field_name, metadata),
                 std::move(selection),
                 std::move(variable)});
+            if constexpr (FieldType::DimValue == 1) {
+                if (!checkpoint_field) {
+                    const auto& selected = fields_.back().selection;
+                    const auto& bounds = schema_.bounds();
+                    const std::string profile_name = "grads_profiles/" + field_name;
+                    const adios2::Dims shape{bounds.nz(), 1, 1};
+                    const adios2::Dims start{0, 0, 0};
+                    const adios2::Dims count{selected.count[0],
+                        selected.count[0] == 0 ? 0u : 1u,
+                        selected.count[0] == 0 ? 0u : 1u};
+                    FieldVariable profile;
+                    if (element_type_ == OutputElementType::Float32) {
+                        auto typed = io_.DefineVariable<float>(profile_name,
+                            shape,
+                            start,
+                            count,
+                            adios2::ConstantDims);
+                        if (effective_buffer_mode_ == CpuBufferMode::Direct && selected.count[0] != 0) {
+                            typed.SetMemorySelection({{selected.memory_start[0], 0, 0},
+                                {selected.memory_count[0], 1, 1}});
+                        }
+                        profile = typed;
+                    }
+                    else {
+                        auto typed = io_.DefineVariable<double>(profile_name,
+                            shape,
+                            start,
+                            count,
+                            adios2::ConstantDims);
+                        if (effective_buffer_mode_ == CpuBufferMode::Direct && selected.count[0] != 0) {
+                            typed.SetMemorySelection({{selected.memory_start[0], 0, 0},
+                                {selected.memory_count[0], 1, 1}});
+                        }
+                        profile = typed;
+                    }
+                    define_metadata(profile_name, metadata);
+                    io_.DefineAttribute<std::string>("source_profile", field_name, profile_name);
+                    profiles_.push_back({fields_.size() - 1, profile_name, std::move(profile)});
+                }
+            }
         }
     }, *entry);
 }
@@ -439,7 +479,14 @@ Bp5HistoryWriter::write_grads_ctl_file(const Utils::ConfigurationManager& config
     ctl.time_increment = grads_time_increment(output_interval);
 
     std::unordered_set<std::string> taken;
-    std::vector<std::string> profile_fields;
+    GradsCtl profile_ctl = ctl;
+    profile_ctl.title = "VVMex vertical profiles";
+    profile_ctl.nx = 1;
+    profile_ctl.ny = 1;
+    const auto& bounds = schema_.bounds();
+    profile_ctl.z_levels.assign(z_coordinates_.begin() + bounds.z_start,
+        z_coordinates_.begin() + bounds.z_end + 1);
+    std::unordered_set<std::string> profile_taken;
     for (const auto& field : fields_) {
         if (field.name.rfind("restart/", 0) == 0) {
             continue;
@@ -460,24 +507,40 @@ Bp5HistoryWriter::write_grads_ctl_file(const Utils::ConfigurationManager& config
             variable.dimensions = "0,z,y,x";
         }
         else {
-            profile_fields.push_back(field.name);
             continue;
         }
         variable.grads_name = unique_grads_variable_name(field.name, taken);
         ctl.variables.push_back(std::move(variable));
     }
-    if (!profile_fields.empty()) {
-        std::string note = "Profile (z-only) variables in the dataset, not usable from GrADS:";
-        for (const auto& name : profile_fields) {
-            note += " " + name;
-        }
-        ctl.notes.push_back(note);
+    for (const auto& profile : profiles_) {
+        const auto& field = fields_[profile.field_index];
+        GradsVariable variable;
+        variable.dataset_name = profile.dataset_name;
+        variable.grads_name = unique_grads_variable_name(field.name, profile_taken);
+        variable.levels = bounds.nz();
+        variable.dimensions = "z,y,x";
+        variable.description = field.description;
+        profile_ctl.variables.push_back(std::move(variable));
     }
 
-    const std::filesystem::path ctl_path =
-        std::filesystem::path(config.get_value<std::string>("output.output_dir")) / "vvm.ctl";
+    const auto output_dir = std::filesystem::path(config.get_value<std::string>("output.output_dir"));
+    const std::filesystem::path ctl_path = output_dir / "vvm.ctl";
+    if (!profiles_.empty()) {
+        ctl.notes.push_back("Vertical profiles: open vvm_profiles.ctl with this dataset.");
+    }
     write_grads_ctl(ctl_path, ctl);
     std::cout << "  [BP5] GrADS descriptor: " << ctl_path.string() << std::endl;
+    if (!profiles_.empty()) {
+        const auto profile_path = output_dir / "vvm_profiles.ctl";
+        write_grads_ctl(profile_path, profile_ctl);
+        std::cout << "  [BP5] GrADS profile descriptor: " << profile_path.string() << std::endl;
+    }
+    else {
+        // A replacement run may have selected profiles previously. Do not
+        // leave a descriptor that points to views absent from this dataset.
+        std::error_code ignored;
+        std::filesystem::remove(output_dir / "vvm_profiles.ctl", ignored);
+    }
 }
 
 void
@@ -537,6 +600,12 @@ Bp5HistoryWriter::validate_coverage() {
     std::size_t local_bytes = 0;
     for (const auto& field : fields_) {
         local_bytes += field.selection.elements() * output_element_size(element_type_);
+    }
+    if (rank_ == 0) {
+        for (const auto& profile : profiles_) {
+            local_bytes += fields_[profile.field_index].selection.elements() *
+                           output_element_size(element_type_);
+        }
     }
     unsigned long long local = static_cast<unsigned long long>(local_bytes);
     unsigned long long global = 0;
@@ -657,6 +726,21 @@ Bp5HistoryWriter::write(std::size_t step, VVM::Real time) {
                         writer_.Put(variable, static_cast<const double*>(inputs[i].data), put_mode);
                     }
                 }, fields_[i].variable);
+            }
+            for (auto& profile : profiles_) {
+                const auto& input = inputs[profile.field_index];
+                if (input.elements == 0) {
+                    continue;
+                }
+                std::visit([&](auto& variable) {
+                    using VariableType = std::decay_t<decltype(variable)>;
+                    if constexpr (std::is_same_v<VariableType, adios2::Variable<float>>) {
+                        writer_.Put(variable, static_cast<const float*>(input.data), put_mode);
+                    }
+                    else {
+                        writer_.Put(variable, static_cast<const double*>(input.data), put_mode);
+                    }
+                }, profile.variable);
             }
             put_s = seconds_since(start);
         }

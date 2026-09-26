@@ -233,10 +233,12 @@ Two consequences of what GrADS accepts are worth knowing:
 
 - GrADS variable names are lowercase and at most 15 characters, so a field whose
   name is neither gets an alias (`Tg=>tg`). Use the name on the right in GrADS.
-- Every GrADS variable must map one x and one y dimension, so z-only profile
-  fields (`thbar`, `rhobar`, …) cannot appear at all — declaring one would fail
-  the whole `open`. They are listed in a comment line instead and remain
-  readable from the dataset through ADIOS2.
+- GrADS requires every BP5 variable to have x and y dimensions. For each
+  selected z-only field (`thbar`, `rhobar`, …), BP5 keeps the native 1D array
+  and writes a compact `(z,1,1)` view under `grads_profiles/` in the same
+  dataset. `bpopen` selects the main horizontal grid, so open
+  `vvm_profiles.ctl` to plot these profiles in GrADS. Use
+  `set x 1`, `set y 1`, `set z 1 <number_of_levels>`, then `d thbar`.
 
 ### BP5 precision and buffering
 

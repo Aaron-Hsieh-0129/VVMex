@@ -103,8 +103,8 @@ test_descriptor(const std::filesystem::path& root) {
     check(!contains(lines, "OPTIONS template"), "a single multi-step dataset is not templated");
     check(contains(lines, "XDEF 4 LINEAR -1.5000000 .5000000"), "writes the x axis");
     check(contains(lines, "YDEF 3 LINEAR -1.5000000 .5000000"), "writes the y axis");
-    // Levels are whole metres; GrADS only uses them as labels.
-    check(contains(lines, "ZDEF 3 LEVELS 50 150 300"), "writes the z levels");
+    check(contains(lines, "ZDEF 3 LEVELS 50 150.5 300"),
+        "writes the actual z levels, including fractional heights");
     check(contains(lines, "TDEF 7 LINEAR 00z01JAN1998 5mn"), "writes the time axis");
     check(contains(lines, "* thbar is a profile"), "notes become comment lines");
     check(contains(lines, "VARS 3"), "counts only real variable records");
