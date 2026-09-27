@@ -366,6 +366,105 @@ public:
             });
     }
 
+    // Compute two 2-D point means with one rank exchange. Each local reduction
+    // retains its existing Kokkos reduction order, and the final sums retain
+    // the rank order used by calculate_horizontal_mean().
+    void
+    calculate_horizontal_means(const Field<2>& first,
+        const Field<2>& second,
+        ScalarView first_result,
+        ScalarView second_result) const {
+#if defined(VVM_DETERMINISTIC_FP)
+        calculate_horizontal_mean(first, first_result);
+        calculate_horizontal_mean(second, second_result);
+#else
+        const int h = grid_.get_halo_cells();
+        const int ny = grid_.get_local_physical_points_y();
+        const int nx = grid_.get_local_physical_points_x();
+        const VVM::Real total = static_cast<VVM::Real>(grid_.get_global_points_x()) *
+                                static_cast<VVM::Real>(grid_.get_global_points_y());
+        if (total == VVM::real(0.0)) {
+            Kokkos::deep_copy(first_result, VVM::real(0.0));
+            Kokkos::deep_copy(second_result, VVM::real(0.0));
+            return;
+        }
+        if (pair_local_sums_.extent(0) != 2) {
+            pair_local_sums_ = decltype(pair_local_sums_)("horizontal_mean_pair_local", 2);
+        }
+        const auto a = first.get_device_data();
+        const auto b = second.get_device_data();
+        Kokkos::parallel_reduce("horizontal_mean_pair_first",
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny + h, nx + h}),
+            KOKKOS_LAMBDA(int j, int i, VVM::Real& sum) { sum += a(j, i); },
+            Kokkos::subview(pair_local_sums_, 0));
+        Kokkos::parallel_reduce("horizontal_mean_pair_second",
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny + h, nx + h}),
+            KOKKOS_LAMBDA(int j, int i, VVM::Real& sum) { sum += b(j, i); },
+            Kokkos::subview(pair_local_sums_, 1));
+
+        int comm_size = 1;
+#if defined(ENABLE_NCCL)
+        const bool separate_stream = nccl_stream_ != Kokkos::DefaultExecutionSpace().cuda_stream();
+        if (separate_stream) {
+            Kokkos::DefaultExecutionSpace().fence("horizontal mean pair producer ready");
+        }
+        const auto count_result = ncclCommCount(nccl_comm_, &comm_size);
+        if (count_result != ncclSuccess) {
+            throw std::runtime_error("horizontal mean pair communicator size query failed");
+        }
+#else
+        MPI_Comm_size(grid_.get_comm(), &comm_size);
+#endif
+        if (pair_rank_sums_.extent(0) != static_cast<size_t>(2 * comm_size)) {
+            pair_rank_sums_ =
+                decltype(pair_rank_sums_)("horizontal_mean_pair_ranks", 2 * comm_size);
+        }
+#if defined(ENABLE_NCCL)
+        const auto result = ncclAllGather(pair_local_sums_.data(),
+            pair_rank_sums_.data(),
+            2,
+            VVM_NCCL_REAL,
+            nccl_comm_,
+            nccl_stream_);
+        if (result != ncclSuccess) {
+            throw std::runtime_error("horizontal mean pair NCCL all-gather failed");
+        }
+        if (separate_stream) {
+            cudaStreamSynchronize(nccl_stream_);
+        }
+#else
+        auto host_local =
+            Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), pair_local_sums_);
+        std::vector<VVM::Real> host_ranks(static_cast<size_t>(2 * comm_size));
+        const int result = MPI_Allgather(host_local.data(),
+            2,
+            VVM_MPI_REAL,
+            host_ranks.data(),
+            2,
+            VVM_MPI_REAL,
+            grid_.get_comm());
+        if (result != MPI_SUCCESS) {
+            throw std::runtime_error("horizontal mean pair MPI_Allgather failed");
+        }
+        Kokkos::deep_copy(pair_rank_sums_,
+            Kokkos::View<const VVM::Real*, Kokkos::HostSpace>(host_ranks.data(), 2 * comm_size));
+#endif
+        auto rank_sums = pair_rank_sums_;
+        Kokkos::parallel_for("horizontal_mean_pair_finalize",
+            Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, 1),
+            KOKKOS_LAMBDA(int) {
+                VVM::Real first_sum = VVM::real(0.0);
+                VVM::Real second_sum = VVM::real(0.0);
+                for (int rank = 0; rank < comm_size; ++rank) {
+                    first_sum += rank_sums(2 * rank);
+                    second_sum += rank_sums(2 * rank + 1);
+                }
+                first_result() = first_sum / total;
+                second_result() = second_sum / total;
+            });
+#endif
+    }
+
     // Global area-weighted horizontal mean over the physical, halo-free
     // points of every rank:
     //
@@ -712,6 +811,8 @@ private:
     // Per-rank partial sums for calculate_horizontal_mean(), kept across calls
     // so the mean does not allocate every time it is asked for.
     mutable Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space> rank_sums_;
+    mutable Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space> pair_local_sums_;
+    mutable Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space> pair_rank_sums_;
 #if defined(VVM_DETERMINISTIC_FP)
     mutable Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space> row_sums_;
 #endif

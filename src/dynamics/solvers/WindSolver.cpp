@@ -202,6 +202,7 @@ WindSolver::solve_w() {
 
     // Linear extrapolation of initial guess
     auto& W3DNM1 = W3DNM1_ref_.get(state_, "W3DNM1").get_mutable_device_data();
+    auto w_deep = w_deep_field_.get_mutable_device_data();
     Kokkos::parallel_for("W3DNP1",
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
         KOKKOS_LAMBDA(int k, int j, int i) {
@@ -211,15 +212,16 @@ WindSolver::solve_w() {
                 VVM::Real w_np1 = real(2.0) * w_val - W3DNM1(k, j, i);
                 W3DNM1(k, j, i) = w_val;
                 w(k, j, i) = w_np1;
+                w_deep(k, j, i) = w_np1;
             }
             else {
                 W3DNM1(k, j, i) = w_val;
+                w_deep(k, j, i) = w_val;
             }
         });
 
     const auto& bn_new = params_.bn_new.get_device_data();
     const auto& cn_new = params_.cn_new.get_device_data();
-
 #if defined(ENABLE_NCCL)
     cudaStream_t stream = Kokkos::Cuda().cuda_stream();
     if (solve_w_graph_created_) {
@@ -228,17 +230,6 @@ WindSolver::solve_w() {
     }
     cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
 #endif
-
-    // Copy w into the solver-private iterate buffer. The buffers are private purely so
-    // their layout can be chosen for this kernel (see DeepField in the header); w itself
-    // is a State field and must keep the model-wide default layout. Halos included, so
-    // the first sweep sees exactly what iterating on w directly would have seen.
-    {
-        auto w_deep = w_deep_field_.get_mutable_device_data();
-        Kokkos::parallel_for("gather_w_priv",
-            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
-            KOKKOS_LAMBDA(int k, int j, int i) { w_deep(k, j, i) = w(k, j, i); });
-    }
 
     // cur holds the newest iterate. Swapping Field pointers (rather than mutating the
     // Views in place) keeps the sequence deterministic, which is what makes the
@@ -270,7 +261,9 @@ WindSolver::solve_w() {
                         const int j = jlo + idx / ni;
                         const int i = ilo + idx % ni;
 
-                        // Forward elimination)
+                        // Keep division here: reciprocal multiplication changes rounding
+                        // and the wind difference grows across model steps.
+                        // Forward elimination
                         tmp(idx, h) =
                             (WRXMU() * P(h, j, i) + (P(h, j, i + 1) + P(h, j, i - 1)) * rdx2() +
                                 (P(h, j + 1, i) + P(h, j - 1, i)) * rdy2() + YTEM(h, j, i)) /
@@ -296,7 +289,7 @@ WindSolver::solve_w() {
                         C(nz - h - 1, j, i) = real(0.0);
                     });
             }
-            exchange_w_solver_halos(*cur, 1);
+            exchange_w_solver_faces(*cur);
         }
     }
     else {
@@ -330,9 +323,7 @@ WindSolver::solve_w() {
                         }
                     });
             }
-            // Full-depth here, matching the original Jacobi path (the tridiagonal
-            // path exchanged depth 1).
-            exchange_w_solver_halos(*cur, -1);
+            exchange_w_solver_faces(*cur);
         }
     }
 
@@ -432,10 +423,7 @@ WindSolver::diagnose_cartesian_horizontal_potentials() {
             });
     }
 
-    halo_exchanger_.exchange_halos(psi_field);
-    halo_exchanger_.exchange_halos(chi_field);
-    halo_exchanger_.exchange_halos(psinm1_field);
-    halo_exchanger_.exchange_halos(chinm1_field);
+    halo_exchanger_.exchange_multiple_halos({&psi_field, &chi_field, &psinm1_field, &chinm1_field});
 
     fill_bounded_q2_potential_halos(psi_field, chi_field);
     fill_bounded_q2_potential_halos(psinm1_field, chinm1_field);
@@ -591,7 +579,7 @@ WindSolver::relax_2d_batched() {
                                inv_C0;
                 });
 
-            exchange_2d_solver_halos(*psi_cur, *chi_cur, 1);
+            exchange_2d_solver_faces(*psi_cur, *chi_cur);
         }
 
         if (psi_cur != &psi_out_field_) {
@@ -647,11 +635,25 @@ WindSolver::exchange_2d_solver_halos(
 }
 
 void
+WindSolver::exchange_2d_solver_faces(Core::Field<2>& first, Core::Field<2>& second) {
+    halo_exchanger_.exchange_face_halos(first, second, 1);
+    fill_bounded_q2_potential_halos(first, second);
+}
+
+void
 WindSolver::exchange_w_solver_halos(WindSolver::DeepField& field, const int depth) {
     halo_exchanger_.exchange_halos(field, depth);
 
     // The q2 wall is external to MPI communication. Apply the physical
     // zero-normal-gradient condition after every iterative halo exchange.
+    if (bounded_q2_stencils_) {
+        bounded_q2_stencils_->fill_constant_q2_halos(field);
+    }
+}
+
+void
+WindSolver::exchange_w_solver_faces(WindSolver::DeepField& field) {
+    halo_exchanger_.exchange_face_halos(field, 1);
     if (bounded_q2_stencils_) {
         bounded_q2_stencils_->fill_constant_q2_halos(field);
     }
@@ -710,8 +712,7 @@ WindSolver::apply_cartesian_top_wind_closure() {
     auto& utopm = utop_mean_tmp_ref_.get(state_, "utop_mean_tmp").get_mutable_device_data();
     auto& vtopm = vtop_mean_tmp_ref_.get(state_, "vtop_mean_tmp").get_mutable_device_data();
 
-    state_.calculate_horizontal_mean(utop_field, utopm);
-    state_.calculate_horizontal_mean(vtop_field, vtopm);
+    state_.calculate_horizontal_means(utop_field, vtop_field, utopm, vtopm);
 
     const auto& utopmn = utopmn_ref_.get(state_, "utopmn").get_device_data();
     const auto& vtopmn = vtopmn_ref_.get(state_, "vtopmn").get_device_data();
