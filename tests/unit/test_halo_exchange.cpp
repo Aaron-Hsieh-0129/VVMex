@@ -198,6 +198,82 @@ main(int argc, char* argv[]) {
         halo.exchange_halos(field);
         report("default exchange fills the whole halo", count_wrong(h));
 
+        // The wind solver exchanges LayoutRight work arrays through the same
+        // single-field API. Check both its full and depth-one Y-face paths.
+        {
+            VVM::Core::Field<3, Kokkos::LayoutRight> right_field("right_halo_test", {nz, ny, nx});
+            auto right = right_field.get_mutable_device_data();
+            const auto fill_right = [&]() {
+                Kokkos::parallel_for("fill_right_halo_test",
+                    Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
+                    KOKKOS_LAMBDA(int k, int j, int i) {
+                        const bool physical = j >= h && j < ny - h && i >= h && i < nx - h;
+                        right(k, j, i) =
+                            physical ? expected_value(k, j0 + j - h, i0 + i - h) : unfilled;
+                    });
+            };
+            const auto wrong_right = [&](const int depth) {
+                int bad = 0;
+                Kokkos::parallel_reduce("check_right_halo_test",
+                    Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, 0, 0}, {nz - h, ny, nx}),
+                    KOKKOS_LAMBDA(int k, int j, int i, int& acc) {
+                        if (j < h - depth || j >= ny - h + depth || i < h - depth ||
+                            i >= nx - h + depth) {
+                            return;
+                        }
+                        int gj = (j0 + j - h) % gny;
+                        int gi = (i0 + i - h) % gnx;
+                        if (gj < 0) {
+                            gj += gny;
+                        }
+                        if (gi < 0) {
+                            gi += gnx;
+                        }
+                        if (right(k, j, i) != expected_value(k, gj, gi)) {
+                            ++acc;
+                        }
+                    },
+                    bad);
+                Kokkos::fence();
+                return bad;
+            };
+            fill_right();
+            halo.exchange_halos(right_field);
+            report("LayoutRight full exchange fills the halo", wrong_right(h));
+            if (h > 1) {
+                fill_right();
+                halo.exchange_halos(right_field, 1);
+                report("LayoutRight depth-1 exchange fills the inner halo", wrong_right(1));
+            }
+            fill_right();
+            halo.exchange_face_halos(right_field, 1);
+            int bad_faces = 0;
+            Kokkos::parallel_reduce("check_right_faces",
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, 0, 0}, {nz - h, ny, nx}),
+                KOKKOS_LAMBDA(int k, int j, int i, int& acc) {
+                    const bool physical_j = j >= h && j < ny - h;
+                    const bool physical_i = i >= h && i < nx - h;
+                    const bool x_face = physical_j && (i == h - 1 || i == nx - h);
+                    const bool y_face = physical_i && (j == h - 1 || j == ny - h);
+                    if (!x_face && !y_face) {
+                        return;
+                    }
+                    int gj = (j0 + j - h) % gny;
+                    int gi = (i0 + i - h) % gnx;
+                    if (gj < 0) {
+                        gj += gny;
+                    }
+                    if (gi < 0) {
+                        gi += gnx;
+                    }
+                    if (right(k, j, i) != expected_value(k, gj, gi)) {
+                        ++acc;
+                    }
+                },
+                bad_faces);
+            report("LayoutRight face exchange fills stencil neighbors", bad_faces);
+        }
+
         // The outer layer specifically -- this is the one a depth-of-1 fallback
         // silently leaves stale.
         {
@@ -288,6 +364,12 @@ main(int argc, char* argv[]) {
         {
             auto& field2d = state.get_field<2>("utop");
             auto view2d = field2d.get_mutable_device_data();
+            VVM::Core::Field<2> second2d("halo_pair_second", {ny, nx});
+            VVM::Core::Field<2> third2d("halo_batch_third", {ny, nx});
+            VVM::Core::Field<2> fourth2d("halo_batch_fourth", {ny, nx});
+            auto second_view = second2d.get_mutable_device_data();
+            auto third_view = third2d.get_mutable_device_data();
+            auto fourth_view = fourth2d.get_mutable_device_data();
 
             auto fill2d = [&]() {
                 Kokkos::parallel_for("fill2d",
@@ -296,10 +378,16 @@ main(int argc, char* argv[]) {
                         const bool physical = (j >= h && j < ny - h && i >= h && i < nx - h);
                         view2d(j, i) =
                             physical ? expected_value(0, j0 + (j - h), i0 + (i - h)) : unfilled;
+                        second_view(j, i) =
+                            physical ? expected_value(0, j0 + j - h, i0 + i - h) + 10 : unfilled;
+                        third_view(j, i) =
+                            physical ? expected_value(0, j0 + j - h, i0 + i - h) + 20 : unfilled;
+                        fourth_view(j, i) =
+                            physical ? expected_value(0, j0 + j - h, i0 + i - h) + 30 : unfilled;
                     });
                 Kokkos::fence();
             };
-            auto wrong2d = [&](int depth) {
+            auto wrong2d = [&](int depth, int fields_to_check) {
                 int bad = 0;
                 Kokkos::parallel_reduce("check2d",
                     Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
@@ -320,6 +408,18 @@ main(int argc, char* argv[]) {
                         if (view2d(j, i) != expected_value(0, gj, gi)) {
                             ++acc;
                         }
+                        if (fields_to_check >= 2 &&
+                            second_view(j, i) != expected_value(0, gj, gi) + 10) {
+                            ++acc;
+                        }
+                        if (fields_to_check >= 3 &&
+                            third_view(j, i) != expected_value(0, gj, gi) + 20) {
+                            ++acc;
+                        }
+                        if (fields_to_check >= 4 &&
+                            fourth_view(j, i) != expected_value(0, gj, gi) + 30) {
+                            ++acc;
+                        }
                     },
                     bad);
                 Kokkos::fence();
@@ -328,13 +428,64 @@ main(int argc, char* argv[]) {
 
             fill2d();
             halo.exchange_halos(field2d);
-            report("2D default exchange fills the whole halo", wrong2d(h));
+            report("2D default exchange fills the whole halo", wrong2d(h, 1));
 
             // What relax_2d_batched() does every iteration.
             fill2d();
-            std::vector<VVM::Core::Field<2>*> batch{&field2d};
+            std::vector<VVM::Core::Field<2>*> batch{&field2d, &second2d};
             halo.exchange_multiple_halos(batch, 1);
-            report("2D batched depth-1 exchange fills the inner layer", wrong2d(1));
+            report("2D paired depth-1 exchange fills the inner layer", wrong2d(1, 2));
+
+            fill2d();
+            halo.exchange_face_halos(field2d, second2d, 1);
+            int bad_pair_faces = 0;
+            Kokkos::parallel_reduce("check_pair_faces",
+                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
+                KOKKOS_LAMBDA(int j, int i, int& acc) {
+                    const bool physical_j = j >= h && j < ny - h;
+                    const bool physical_i = i >= h && i < nx - h;
+                    const bool x_face = physical_j && (i == h - 1 || i == nx - h);
+                    const bool y_face = physical_i && (j == h - 1 || j == ny - h);
+                    if (!x_face && !y_face) {
+                        return;
+                    }
+                    int gj = (j0 + j - h) % gny;
+                    int gi = (i0 + i - h) % gnx;
+                    if (gj < 0) {
+                        gj += gny;
+                    }
+                    if (gi < 0) {
+                        gi += gnx;
+                    }
+                    const auto expected = expected_value(0, gj, gi);
+                    if (view2d(j, i) != expected) {
+                        ++acc;
+                    }
+                    if (second_view(j, i) != expected + 10) {
+                        ++acc;
+                    }
+                },
+                bad_pair_faces);
+            report("2D paired face exchange fills stencil neighbors", bad_pair_faces);
+
+            fill2d();
+            halo.exchange_multiple_halos({&field2d, &second2d, &third2d, &fourth2d});
+            report("2D four-field exchange fills the whole halo", wrong2d(h, 4));
+
+            VVM::Core::ScalarView mean_first("mean_first");
+            VVM::Core::ScalarView mean_second("mean_second");
+            VVM::Core::ScalarView reference_first("reference_first");
+            VVM::Core::ScalarView reference_second("reference_second");
+            state.calculate_horizontal_means(field2d, second2d, mean_first, mean_second);
+            state.calculate_horizontal_mean(field2d, reference_first);
+            state.calculate_horizontal_mean(second2d, reference_second);
+            VVM::Real paired_a, paired_b, reference_a, reference_b;
+            Kokkos::deep_copy(paired_a, mean_first);
+            Kokkos::deep_copy(paired_b, mean_second);
+            Kokkos::deep_copy(reference_a, reference_first);
+            Kokkos::deep_copy(reference_b, reference_second);
+            report("paired horizontal means preserve rank-order results",
+                static_cast<int>(paired_a != reference_a || paired_b != reference_b));
         }
 
         int global_failures = 0;

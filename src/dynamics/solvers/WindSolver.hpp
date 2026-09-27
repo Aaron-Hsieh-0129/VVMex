@@ -93,6 +93,7 @@ private:
 
     void fill_bounded_q2_potential_halos(Core::Field<2>& first, Core::Field<2>& second) const;
     void exchange_2d_solver_halos(Core::Field<2>& first, Core::Field<2>& second, int depth);
+    void exchange_2d_solver_faces(Core::Field<2>& first, Core::Field<2>& second);
 
     void finalize_cartesian_wind();
 
@@ -104,6 +105,7 @@ private:
 
     using DeepField = Core::Field<3, Kokkos::LayoutRight>;
     void exchange_w_solver_halos(DeepField& field, int depth);
+    void exchange_w_solver_faces(DeepField& field);
 
     mutable DeepField YTEM_field_;
     mutable DeepField w_deep_field_;
@@ -117,6 +119,8 @@ private:
     mutable Core::Field<2> chi_tmp_field_;
 
     Kokkos::View<VVM::Real**> tri_tmp_;
+    Kokkos::View<VVM::Real*> tri_inv_bn_;
+    Kokkos::View<VVM::Real*> tri_inv_rho_;
 
     Core::HaloExchanger& halo_exchanger_;
 
