@@ -1190,7 +1190,7 @@ Initializer::assign_vars() const {
     const auto& qvbar = state_.get_field<1>("qvbar").get_device_data();
     auto& qv = state_.get_field<3>("qv").get_mutable_device_data();
     Kokkos::parallel_for("assign_qv",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {nz - h, ny - h, nx - h}),
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
         KOKKOS_LAMBDA(int k, int j, int i) { qv(k, j, i) = qvbar(k); });
 
     // Assign th
