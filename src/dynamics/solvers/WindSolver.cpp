@@ -95,8 +95,6 @@ WindSolver::WindSolver(const Core::Grid& grid,
         const int h = grid_.get_halo_cells();
         const size_t ncols = static_cast<size_t>(ny - 2 * h) * static_cast<size_t>(nx - 2 * h);
         tri_tmp_ = Kokkos::View<VVM::Real**>("tri_tmp", ncols, nz);
-        tri_inv_bn_ = Kokkos::View<VVM::Real*>("tri_inv_bn", nz);
-        tri_inv_rho_ = Kokkos::View<VVM::Real*>("tri_inv_rho", nz);
     }
 
     if (!state_.has_field("utop_mean_tmp")) {
@@ -224,17 +222,6 @@ WindSolver::solve_w() {
 
     const auto& bn_new = params_.bn_new.get_device_data();
     const auto& cn_new = params_.cn_new.get_device_data();
-    if (w_solver_method_ == WSolverMethod::TRIDIAGONAL) {
-        auto inv_bn = tri_inv_bn_;
-        auto inv_rho = tri_inv_rho_;
-        Kokkos::parallel_for("prepare_tridiagonal_reciprocals",
-            Kokkos::RangePolicy<>(h, nz - h - 1),
-            KOKKOS_LAMBDA(int k) {
-                inv_bn(k) = real(1.0) / (k == h ? BGAU(k) : bn_new(k));
-                inv_rho(k) = real(1.0) / rhobar_up(k);
-            });
-    }
-
 #if defined(ENABLE_NCCL)
     cudaStream_t stream = Kokkos::Cuda().cuda_stream();
     if (solve_w_graph_created_) {
@@ -267,8 +254,6 @@ WindSolver::solve_w() {
                 const int nj = jhi - jlo, ni = ihi - ilo;
                 const int ncols = nj * ni;
                 auto tmp = tri_tmp_;
-                auto inv_bn = tri_inv_bn_;
-                auto inv_rho = tri_inv_rho_;
 
                 Kokkos::parallel_for("fused_tridiagonal_solver",
                     Kokkos::RangePolicy<>(0, ncols),
@@ -276,24 +261,26 @@ WindSolver::solve_w() {
                         const int j = jlo + idx / ni;
                         const int i = ilo + idx % ni;
 
+                        // Keep division here: reciprocal multiplication changes rounding
+                        // and the wind difference grows across model steps.
                         // Forward elimination
                         tmp(idx, h) =
                             (WRXMU() * P(h, j, i) + (P(h, j, i + 1) + P(h, j, i - 1)) * rdx2() +
-                                (P(h, j + 1, i) + P(h, j - 1, i)) * rdy2() + YTEM(h, j, i)) *
-                            inv_bn(h);
+                                (P(h, j + 1, i) + P(h, j - 1, i)) * rdy2() + YTEM(h, j, i)) /
+                            BGAU(h);
                         for (int k = h + 1; k <= nz - h - 2; k++) {
                             const VVM::Real rhs_k =
                                 WRXMU() * P(k, j, i) + (P(k, j, i + 1) + P(k, j, i - 1)) * rdx2() +
                                 (P(k, j + 1, i) + P(k, j - 1, i)) * rdy2() + YTEM(k, j, i);
-                            tmp(idx, k) = (rhs_k - AGAU(k) * tmp(idx, k - 1)) * inv_bn(k);
+                            tmp(idx, k) = (rhs_k - AGAU(k) * tmp(idx, k - 1)) / bn_new(k);
                         }
 
                         // Backward substitution
                         VVM::Real pm_next = tmp(idx, nz - h - 2);
-                        C(nz - h - 2, j, i) = pm_next * inv_rho(nz - h - 2);
+                        C(nz - h - 2, j, i) = pm_next / rhobar_up(nz - h - 2);
                         for (int k = nz - h - 3; k >= h; k--) {
                             const VVM::Real pm_k = tmp(idx, k) - cn_new(k) * pm_next;
-                            C(k, j, i) = pm_k * inv_rho(k);
+                            C(k, j, i) = pm_k / rhobar_up(k);
                             pm_next = pm_k;
                         }
 

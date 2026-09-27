@@ -119,8 +119,6 @@ private:
     mutable Core::Field<2> chi_tmp_field_;
 
     Kokkos::View<VVM::Real**> tri_tmp_;
-    Kokkos::View<VVM::Real*> tri_inv_bn_;
-    Kokkos::View<VVM::Real*> tri_inv_rho_;
 
     Core::HaloExchanger& halo_exchanger_;
 
