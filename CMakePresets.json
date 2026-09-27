@@ -99,10 +99,11 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "NVHPC_DIR": "/work/aaron900129/nvhpc_24_9/Linux_x86_64/24.9",
-        "HDF5_DIR": "/work/aaron900129/hdf5_install",
-        "NETCDF_C_DIR": "/work/aaron900129/netcdf-c_install",
-        "NETCDF_Fortran_DIR": "/work/aaron900129/netcdf-fortran_install",
-        "PNETCDF_DIR": "/work/aaron900129/pnetcdf_install",
+        "VVM_GCC_TOOLCHAIN": "/work/aaron900129/gcc11",
+        "HDF5_DIR": "/work/aaron900129/libs_VVMex",
+        "NETCDF_C_DIR": "/work/aaron900129/libs_VVMex",
+        "NETCDF_Fortran_DIR": "/work/aaron900129/libs_VVMex",
+        "PNETCDF_DIR": "/work/aaron900129/libs_VVMex",
         "Kokkos_DIR": "/work/aaron900129/libs_VVMex",
         "ADIOS2_DIR": "/work/aaron900129/libs_VVMex",
         "VVM_ENABLE_GPU": "ON",
@@ -114,7 +115,7 @@
         "RRTMGP_USE_DOUBLE_PRECISION": "ON",
         "SCREAM_PACK_SIZE": "1",
         "SCREAM_SMALL_PACK_SIZE": "1",
-        "SCREAM_P3_SMALL_KERNELS": "OFF"
+        "SCREAM_P3_SMALL_KERNELS": "ON"
       }
     },
     {
