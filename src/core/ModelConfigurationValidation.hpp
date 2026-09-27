@@ -30,7 +30,7 @@ validate_model_numerical_configuration(const Utils::ConfigurationManager& config
     // RLL Grid, geometry, and standalone operator/solver tests remain usable.
     if (horizontal.geometry.kind != Geometry::GeometryKind::Cartesian) {
         if (is_rll_idealized(config)) {
-            validate_jung2019_rll(config, specification);
+            validate_rll_idealized(config, specification);
         }
         else {
             throw std::runtime_error(

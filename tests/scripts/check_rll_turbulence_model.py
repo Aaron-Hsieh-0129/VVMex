@@ -4,7 +4,7 @@
 Full-model smoke test for Shutts-Gray turbulence on regular latitude-longitude
 geometry.
 
-This test is intentionally independent of the existing Jung/RLL integration
+This test is intentionally independent of the existing RLL barotropic jet integration
 tests.  It generates its own configuration and checks that:
 
   1. The RLL model accepts physics.turbulence.enable_turbulence = true.
@@ -76,7 +76,7 @@ output_dir = work / "output"
 # ============================================================================
 # Self-contained RLL turbulence configuration
 #
-# Do not load or modify any existing Jung test configuration.
+# Do not load or modify any existing barotropic jet test configuration.
 # ============================================================================
 
 config = {
@@ -112,16 +112,16 @@ config = {
 
     # One complete timestep is sufficient for this smoke test.
     "simulation": {
-        "idealized_test": "jung2019_barotropic",
+        "idealized_test": "barotropic_jet",
         "dt_s": 60.0,
         "total_time_s": 60.0,
         "output_interval_s": 60.0,
     },
 
-    # Use the coupled Jung state so the model is not merely an all-zero
+    # Use the coupled barotropic jet state so the model is not merely an all-zero
     # dynamics configuration.
     "initial_conditions": {
-        "jung2019": {
+        "barotropic_jet": {
             "case": 1,
             "jet_scale": 1.0,
             "perturbation_scale": 1.0,
@@ -132,7 +132,7 @@ config = {
         "solver": {
             "w_solver_method": "tridiagonal",
 
-            # This is only a smoke test, not the Jung reproduction test.
+            # This is only a smoke test, not the barotropic jet reproduction test.
             "iteration": 40,
             "vertical_iterations": 10,
             "initial_iterations": 100,
@@ -257,7 +257,7 @@ config = {
         "Cp": 1004.5,
         "Lv": 2500000.0,
 
-        # Jung configuration currently uses the nonrotating RLL path.
+        # The barotropic jet configuration currently uses the nonrotating RLL path.
         "OMEGA": 0.0,
     },
 }

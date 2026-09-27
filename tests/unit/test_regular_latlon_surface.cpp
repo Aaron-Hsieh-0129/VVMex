@@ -238,14 +238,14 @@ make_configuration() {
   },
 
   "simulation": {
-    "idealized_test": "jung2019_barotropic",
+    "idealized_test": "barotropic_jet",
     "dt_s": 1.0,
     "total_time_s": 1.0,
     "output_interval_s": 1.0
   },
 
   "initial_conditions": {
-    "jung2019": {
+    "barotropic_jet": {
       "case": 1
     }
   },

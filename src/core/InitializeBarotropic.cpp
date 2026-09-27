@@ -21,17 +21,17 @@ jet(Real latitude, int experiment, Real amplitude) {
 }
 
 void
-Initializer::initialize_jung2019() const {
-    validate_jung2019_rll(config_, GridSpecification::from_config(config_));
+Initializer::initialize_barotropic_jet() const {
+    validate_rll_idealized(config_, GridSpecification::from_config(config_));
     const int h = grid_.get_halo_cells();
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
-    const int experiment = config_.get_value<int>("initial_conditions.jung2019.case");
+    const int experiment = config_.get_value<int>("initial_conditions.barotropic_jet.case");
     const Real jet_scale =
-        config_.get_value<Real>("initial_conditions.jung2019.jet_scale", real(1.0));
+        config_.get_value<Real>("initial_conditions.barotropic_jet.jet_scale", real(1.0));
     const Real perturbation_scale =
-        config_.get_value<Real>("initial_conditions.jung2019.perturbation_scale", real(1.0));
+        config_.get_value<Real>("initial_conditions.barotropic_jet.perturbation_scale", real(1.0));
     const Real pi = std::acos(real(-1.0));
     const auto& geometry = grid_.horizontal_specification().geometry;
     const Real radius = geometry.regular_lat_lon.radius;
@@ -109,10 +109,10 @@ Initializer::initialize_jung2019() const {
 
     state_.add_field<2>("rll_background_u",
         {ny, nx},
-        {GridStaggering::StaggeredX, "m s-1", "prescribed Jung background eastward wind"});
+        {GridStaggering::StaggeredX, "m s-1", "prescribed barotropic jet background eastward wind"});
     state_.add_field<2>("rll_background_zeta",
         {ny, nx},
-        {GridStaggering::StaggeredXY, "s-1", "discrete curl of prescribed Jung background wind"});
+        {GridStaggering::StaggeredXY, "s-1", "discrete curl of prescribed barotropic jet background wind"});
     state_.add_field<2>("rll_zeta_top",
         {ny, nx},
         {GridStaggering::StaggeredXY, "s-1", "relative vertical vorticity at native top Z points"});

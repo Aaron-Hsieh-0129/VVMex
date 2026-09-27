@@ -4,7 +4,7 @@
 Full-model P3 integration test on regular latitude-longitude geometry.
 
 Unlike the previous uniform-column test, this test restores the normal
-Jung jet and analytic perturbation and runs two complete model timesteps.
+a barotropic jet and an analytic perturbation, then runs two complete model timesteps.
 
 It verifies that:
   1. Nonuniform RLL dynamics and P3 run together.
@@ -14,7 +14,7 @@ It verifies that:
   5. P3 prognostic fields remain finite and physically admissible.
   6. qp remains consistent with qc + qr + qi.
   7. A dry atmosphere does not spontaneously generate hydrometeor mass.
-  8. The Jung jet and vorticity perturbation are actually present.
+  8. The barotropic jet and vorticity perturbation are actually present.
 """
 
 import argparse
@@ -128,15 +128,15 @@ config = {
     # This goes beyond the one-step uniform P3 smoke test and exercises
     # the multi-step prognostic transport path.
     "simulation": {
-        "idealized_test": "jung2019_barotropic",
+        "idealized_test": "barotropic_jet",
         "dt_s": 10.0,
         "total_time_s": 20.0,
         "output_interval_s": 20.0,
     },
 
-    # Restore the normal nonuniform Jung state.
+    # Restore the normal nonuniform barotropic jet state.
     "initial_conditions": {
-        "jung2019": {
+        "barotropic_jet": {
             "case": 1,
             "jet_scale": 1.0,
             "perturbation_scale": 1.0,
@@ -400,7 +400,7 @@ if args.periodic:
     horizontal['topology']['q2'] = 'periodic'
     config['simulation'].update(idealized_test='rll_mountain', dt_s=.5,
         total_time_s=2., output_interval_s=2.)
-    config['initial_conditions']['jung2019'].update(jet_scale=0., perturbation_scale=0.)
+    config['initial_conditions']['barotropic_jet'].update(jet_scale=0., perturbation_scale=0.)
     config['initial_conditions']['rll_mountain'] = dict(height_m=1000., half_width_m=1000.,
         center_latitude_deg=0., center_longitude_deg=0., zonal_flow=True, u0_m_s=20.)
     dq = np.deg2rad(.2/horizontal['nx'])
@@ -635,7 +635,7 @@ with h5py.File(output_path, "r") as file:
         )
 
     # -------------------------------------------------------------------------
-    # Confirm this really is the nonuniform Jung problem.
+    # Confirm this really is the nonuniform barotropic jet problem.
     # -------------------------------------------------------------------------
 
     u_abs_max = float(
@@ -660,12 +660,12 @@ with h5py.File(output_path, "r") as file:
 
     if not args.rest and u_abs_max <= 0.0:
         raise AssertionError(
-            "Jung jet is absent from the integration"
+            "Barotropic jet is absent from the integration"
         )
 
     if not args.rest and zeta_abs_max <= 0.0:
         raise AssertionError(
-            "Jung vorticity field is absent from the integration"
+            "Barotropic jet vorticity field is absent from the integration"
         )
 
     if args.periodic:

@@ -271,7 +271,7 @@ run_tests() {
     moist["simulation"]["idealized_test"] = "rll_mountain";
     moist["initial_conditions"] = {{"format", "txt"},
         {"source_file", "profile.txt"},
-        {"jung2019", {{"case", 1}, {"jet_scale", 0.}, {"perturbation_scale", 0.}}},
+        {"barotropic_jet", {{"case", 1}, {"jet_scale", 0.}, {"perturbation_scale", 0.}}},
         {"rll_mountain",
             {{"height_m", 500.},
                 {"half_width_m", 1000.},
@@ -356,13 +356,13 @@ run_tests() {
         false,
         "zonal mountain initializer");
     periodic["initial_conditions"]["rll_mountain"]["zonal_flow"] = true;
-    periodic["simulation"]["idealized_test"] = "jung2019_barotropic";
+    periodic["simulation"]["idealized_test"] = "barotropic_jet";
     check_validation(directory,
-        "jung_periodic_still_rejected",
+        "barotropic_jet_periodic_still_rejected",
         periodic,
         1,
         false,
-        "periodic-longitude channel");
+        "periodic longitude");
     Json bad = moist;
     bad["initial_conditions"].erase("source_file");
     check_validation(directory, "rll_radiation_needs_profile", bad, 1, false, "profile-backed");

@@ -9,7 +9,7 @@
   },
   "simulation": {"idealized_test": "rll_mountain", "dt_s": 10.0, "total_time_s": 3600.0, "output_interval_s": 600.0},
   "initial_conditions": {
-    "jung2019": {"case": 1, "jet_scale": 1.0, "perturbation_scale": 1.0},
+    "barotropic_jet": {"case": 1, "jet_scale": 1.0, "perturbation_scale": 1.0},
     "rll_mountain": {"height_m": 2000.0, "half_width_m": 500000.0}
   },
   "dynamics": {

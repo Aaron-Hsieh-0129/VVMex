@@ -136,7 +136,7 @@ Initializer::initialize_state() const {
     // the common ITYPE fields have been constructed.
     finalize_rll_terrain_masks();
 
-    // Cartesian cases use assign_vars(); Jung/RLL cases use the analytic state.
+    // Cartesian cases use assign_vars(); RLL idealized cases use the analytic state.
     initialize_prognostic_state();
 
     // Tg requires both topography and the thermodynamic state to exist.
@@ -154,7 +154,7 @@ Initializer::initialize_state() const {
         load_restart();
     }
     else if (!is_rll_idealized(config_)) {
-        // Jung already contains its analytic perturbation.
+        // RLL idealized initial conditions already contain their analytic perturbations.
         initialize_perturbation();
     }
 
@@ -225,8 +225,8 @@ Initializer::initialize_background_state() const {
     Kokkos::deep_copy(th, real(300.0));
     Kokkos::deep_copy(qv, real(0.0));
 
-    // Jung supplies u and zeta analytically later. These fields have generic
-    // zero initial values until initialize_jung2019() overwrites what it owns.
+    // The barotropic jet supplies u and zeta analytically later. These fields have generic
+    // zero initial values until initialize_barotropic_jet() overwrites what it owns.
     Kokkos::deep_copy(v, real(0.0));
     Kokkos::deep_copy(w, real(0.0));
     Kokkos::deep_copy(xi, real(0.0));
@@ -267,7 +267,7 @@ Initializer::initialize_background_state() const {
 
 void
 Initializer::initialize_case_terrain() const {
-    // RLL Jung terrain is generated analytically here. Flat Jung cases leave
+    // RLL mountain terrain is generated analytically here. Flat barotropic jet cases leave
     // topo untouched and are handled by the common initialize_topo() call.
     if (is_rll_idealized(config_)) {
         if (!is_rll_mountain(config_)) {
@@ -473,7 +473,7 @@ Initializer::initialize_case_terrain() const {
 void
 Initializer::initialize_prognostic_state() const {
     if (is_rll_idealized(config_)) {
-        initialize_jung2019();
+        initialize_barotropic_jet();
     }
     else {
         assign_vars();

@@ -83,10 +83,10 @@ struct TemporaryConfig {
             "vertical": {"nz": 8, "type": "default", "dz": 250, "dz1": 250}
           },
           "simulation": {
-            "idealized_test": "jung2019_barotropic", "dt_s": 1,
+            "idealized_test": "barotropic_jet", "dt_s": 1,
             "total_time_s": 2, "output_interval_s": 1
           },
-          "initial_conditions": {"jung2019": {"case": 1}},
+          "initial_conditions": {"barotropic_jet": {"case": 1}},
           "dynamics": {"solver": {
             "w_solver_method": "tridiagonal", "iteration": 10,
             "initial_iterations": 10, "vertical_iterations": 10, "WRXMU": 100
@@ -102,8 +102,8 @@ struct TemporaryConfig {
                     {"temporal_scheme", "AdamsBashforth2"}};
             }
         }
-        // Keep this a valid Jung2019 RLL production configuration. Forward-Euler
-        // consumption is tested independently below with TimeIntegrator; Jung2019
+        // Keep this a valid RLL barotropic jet production configuration. Forward-Euler
+        // consumption is tested independently below with TimeIntegrator; the barotropic jet
         // itself intentionally permits only the three AB2 vorticity terms above.
         const auto path = directory / "config.json";
         std::ofstream output(path);
@@ -300,7 +300,7 @@ run_test(const std::string& path
         grid.get_local_total_points_y(),
         grid.get_local_total_points_x()};
 
-    // Jung2019 has no Forward-Euler vorticity terms, so State correctly does
+    // The barotropic jet has no Forward-Euler vorticity terms, so State correctly does
     // not allocate these buffers from configuration. Add explicit scratch only
     // for the isolated mixed AB2/FE TimeIntegrator contract tested below.
     for (const char* name : {"xi", "eta", "zeta"}) {
@@ -404,7 +404,7 @@ run_test(const std::string& path
         fe.set_to_zero();
 
         // These are valid generalized canonical sources even though the dry
-        // Jung2019 production configuration intentionally does not enable them.
+        // barotropic jet production configuration intentionally does not enable them.
         reference
             .add_from_canonical_state(state, grid, params, fe, name, Vorticity::Term::Planetary);
 
@@ -484,7 +484,7 @@ run_test(const std::string& path
             fill_canonical_fe(n);
             const auto fe = snapshot(state.get_field<3>("fe_tendency_" + name));
 
-            // Production configuration remains legal AB2-only Jung2019. This
+            // Production configuration remains legal AB2-only barotropic jet. This
             // isolated integrator verifies that an additional canonical FE
             // group is consumed without touching physical compatibility fields.
             Dynamics::TimeIntegrator mixed_integrator(name, true, true);

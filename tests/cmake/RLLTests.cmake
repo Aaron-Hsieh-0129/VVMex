@@ -1,7 +1,7 @@
 # Model-level RLL suites are independent of the small field/unit tests.
 if(VVM_TEST_RLL)
-    vvm_add_model_test(test_jung2019_shared_model
-        SCRIPT check_jung2019_model.py OUTPUT testing_output_jung2019
+    vvm_add_model_test(test_barotropic_jet_shared_model
+        SCRIPT check_barotropic_jet_model.py OUTPUT testing_output_barotropic_jet
         TIMEOUT 300 LABELS rll)
     vvm_add_model_test(test_rll_mountain_shared_model
         SCRIPT check_rll_mountain.py OUTPUT rll_mountain_tests

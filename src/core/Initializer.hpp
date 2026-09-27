@@ -23,7 +23,7 @@ public:
         HaloExchanger& halo_exchanger);
 
     void initialize_state() const;
-    void initialize_jung2019() const;
+    void initialize_barotropic_jet() const;
     void initialize_grid() const;
     void initialize_topo() const;
     void initialize_poisson() const;

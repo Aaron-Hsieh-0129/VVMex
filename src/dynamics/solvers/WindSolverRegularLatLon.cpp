@@ -136,7 +136,7 @@ require_cuda(cudaError_t result, const char* operation) {
 
 void
 WindSolver::initialize_regular_latlon_solver(const bool periodic, const int nz) {
-    Core::validate_jung2019_rll(config_, Core::GridSpecification::from_config(config_));
+    Core::validate_rll_idealized(config_, Core::GridSpecification::from_config(config_));
 
     rll_inverse_dz_ = params_.get_value_host(params_.rdz);
 

@@ -114,14 +114,14 @@ config = {
     # on model step 1 rather than step 0. Therefore the final output proves
     # that compute_coefficients() was actually reached.
     "simulation": {
-        "idealized_test": "jung2019_barotropic",
+        "idealized_test": "barotropic_jet",
         "dt_s": 60.0,
         "total_time_s": 120.0,
         "output_interval_s": 120.0,
     },
 
     "initial_conditions": {
-        "jung2019": {
+        "barotropic_jet": {
             "case": 1,
             "jet_scale": 1.0,
             "perturbation_scale": 1.0,

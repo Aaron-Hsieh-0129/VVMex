@@ -5,7 +5,7 @@ One-step P3 execution test on a horizontally uniform dry RLL state.
 
 This is deliberately the simplest possible runtime P3 test.
 
-The Jung jet and perturbation are both disabled, so the initial state is
+The barotropic jet and perturbation are both disabled, so the initial state is
 horizontally uniform and dry. P3 is then executed for one timestep.
 
 The test verifies that:
@@ -127,13 +127,13 @@ config = {
 
     # Exactly one timestep.
     "simulation": {
-        "idealized_test": "jung2019_barotropic",
+        "idealized_test": "barotropic_jet",
         "dt_s": 10.0,
         "total_time_s": 10.0,
         "output_interval_s": 10.0,
     },
 
-    # Disable all Jung horizontal structure.
+    # Disable all barotropic jet horizontal structure.
     #
     # jet_scale = 0:
     #     u = 0
@@ -144,7 +144,7 @@ config = {
     #
     # This gives P3 a horizontally uniform dry state.
     "initial_conditions": {
-        "jung2019": {
+        "barotropic_jet": {
             "case": 1,
             "jet_scale": 0.0,
             "perturbation_scale": 0.0,

@@ -68,7 +68,7 @@ def main():
     base["simulation"].update(dt_s=10, total_time_s=120, output_interval_s=60)
     base["dynamics"]["solver"]["WRXMU"] = 2/(2*np.pi/80)**2
     base["initial_conditions"]["rll_mountain"]["half_width_m"] = 1000000.
-    base["initial_conditions"]["jung2019"]["perturbation_scale"] = 0.
+    base["initial_conditions"]["barotropic_jet"]["perturbation_scale"] = 0.
 
     def run(name, config, rejection=None):
         directory = work/name
@@ -95,7 +95,7 @@ def main():
         return snapshots
 
     rest = copy.deepcopy(base)
-    rest["initial_conditions"]["jung2019"]["jet_scale"] = 0.
+    rest["initial_conditions"]["barotropic_jet"]["jet_scale"] = 0.
     for data in run("rest", rest):
         assert all(np.max(np.abs(data[name])) == 0 for name in FIELDS)
     mountain = run("mountain", copy.deepcopy(base))
@@ -105,7 +105,7 @@ def main():
     flat["initial_conditions"]["rll_mountain"]["height_m"] = 0.
     zero = run("zero_height", flat)
     flat = copy.deepcopy(flat)
-    flat["simulation"]["idealized_test"] = "jung2019_barotropic"
+    flat["simulation"]["idealized_test"] = "barotropic_jet"
     del flat["initial_conditions"]["rll_mountain"]
     flat["output"]["fields_to_output"] = list(FIELDS)
     original = run("original_flat", flat)
@@ -117,7 +117,7 @@ def main():
         invalid["initial_conditions"]["rll_mountain"][key] = value
         run(f"invalid_{key}_{value}", invalid, "RLL mountain requires")
     invalid = copy.deepcopy(base)
-    invalid["simulation"]["idealized_test"] = "jung2019_barotropic"
+    invalid["simulation"]["idealized_test"] = "barotropic_jet"
     run("invalid_flat_terrain", invalid, "Mountain terrain requires")
     print(f"PASS RLL terrain integration, {args.ranks} ranks; results: {work}")
 

@@ -117,14 +117,14 @@ config = {
     # surface scheduler performs the first coefficient calculation on step 1.
     # Therefore the final output confirms that SurfaceProcess actually ran.
     "simulation": {
-        "idealized_test": "jung2019_barotropic",
+        "idealized_test": "barotropic_jet",
         "dt_s": 60.0,
         "total_time_s": 120.0,
         "output_interval_s": 120.0,
     },
 
     "initial_conditions": {
-        "jung2019": {
+        "barotropic_jet": {
             "case": 1,
             "jet_scale": 1.0,
             "perturbation_scale": 1.0,
@@ -136,7 +136,7 @@ config = {
             "w_solver_method": "tridiagonal",
 
             # Smoke-test settings rather than a reproduction-quality
-            # Jung integration.
+            # barotropic jet integration.
             "iteration": 40,
             "vertical_iterations": 10,
             "initial_iterations": 100,
@@ -282,7 +282,7 @@ config = {
         "Cp": 1004.5,
         "Lv": 2500000.0,
 
-        # Jung configuration currently uses the nonrotating RLL path.
+        # The barotropic jet configuration currently uses the nonrotating RLL path.
         "OMEGA": 0.0,
     },
 }
@@ -563,7 +563,7 @@ with h5py.File(output_path, "r") as file:
     # Surface fluxes need to remain finite.
     #
     # Do not require every flux to be non-zero because some thermodynamic
-    # fluxes may legitimately vanish for this idealized Jung state.
+    # fluxes may legitimately vanish for this idealized barotropic jet state.
     # ------------------------------------------------------------------------
 
     for name in (

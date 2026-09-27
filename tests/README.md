@@ -19,7 +19,7 @@ reconfiguring; CMake remembers flag values in the build directory.
 | --- | --- | --- |
 | `BUILD_TESTS` | OFF | Build and register project tests |
 | `VVM_TEST_REGRESSION` | ON | Cartesian baselines, mountain digest, configuration equivalence |
-| `VVM_TEST_RLL` | OFF | Jung and RLL mountain model runs; RLL BP5 history when BP5 is also enabled |
+| `VVM_TEST_RLL` | OFF | Barotropic jet and RLL mountain model runs; RLL BP5 history when BP5 is also enabled |
 | `VVM_TEST_RLL_PHYSICS` | OFF | Eight RLL turbulence, surface, and P3 model checks |
 | `VVM_TEST_BP5` | OFF | Direct BP5 unit and integration tests, including multiple ranks |
 | `VVM_TEST_SST` | OFF | SST relay precision; needs working SST networking |

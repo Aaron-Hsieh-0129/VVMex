@@ -32,7 +32,7 @@ def config_for(geometry, engine):
         config["grid"]["horizontal"].update(nx=80, ny=40)
         config["grid"]["horizontal"]["geometry"]["latitude_bounds_deg"] = [-70.0, 70.0]
         config["grid"]["vertical"]["nz"] = 8
-        config["initial_conditions"]["jung2019"]["perturbation_scale"] = 0.0
+        config["initial_conditions"]["barotropic_jet"]["perturbation_scale"] = 0.0
         config["initial_conditions"]["rll_mountain"].update(
             half_width_m=1200000.0, center_latitude_deg=30.0,
             center_longitude_deg=45.0, zonal_flow=True, u0_m_s=20.0)

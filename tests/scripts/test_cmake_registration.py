@@ -57,7 +57,7 @@ add_subdirectory("{ROOT.as_posix()}/tests" tests)
                 return {p["name"]: p["value"] for p in test["properties"]}
 
             default = registry()
-            self.assertNotIn("test_jung2019_shared_model", default)
+            self.assertNotIn("test_barotropic_jet_shared_model", default)
             self.assertFalse(any(n.startswith("test_rll_") for n in default))
             self.assertIn("test_regular_latlon_turbulence", default)
             self.assertIn("Run_advection_u", default)
@@ -66,7 +66,7 @@ add_subdirectory("{ROOT.as_posix()}/tests" tests)
 
             dynamics = registry(RLL=True)
             self.assertEqual(set(dynamics) - set(default),
-                             {"test_jung2019_shared_model", "test_rll_mountain_shared_model"})
+                             {"test_barotropic_jet_shared_model", "test_rll_mountain_shared_model"})
             for name in set(dynamics) - set(default):
                 p = props(dynamics[name])
                 self.assertIn("rll", p["LABELS"])

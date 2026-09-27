@@ -37,7 +37,7 @@ args = parser.parse_args()
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 args.work.mkdir(parents=True, exist_ok=True)
 work = Path(tempfile.mkdtemp(prefix="run-", dir=args.work))
-base = json.loads((ROOT / "tests/configs/jung2019_case1.json").read_text())
+base = json.loads((ROOT / "tests/configs/barotropic_jet_case1.json").read_text())
 base["grid"]["horizontal"].update(nx=80, ny=20)
 base["simulation"].update(total_time_s=3600, output_interval_s=3600)
 base["dynamics"]["solver"]["WRXMU"] = 2 / (2*np.pi/80)**2
@@ -60,7 +60,7 @@ def run(name, config, rejection=None):
         return
     if result.returncode:
         raise AssertionError(f"{name}: model failed; see {directory / 'run.log'}")
-    outputs = sorted((directory / "output").glob("jung_*.h5"))
+    outputs = sorted((directory / "output").glob("barotropic_jet_*.h5"))
     if len(outputs) != 2:
         raise AssertionError("Expected initial and final output")
     for path in outputs:
@@ -95,7 +95,7 @@ def run(name, config, rejection=None):
 
 for name, jet, perturbation in (("rest", 0, 0), ("jet", 1, 0), ("coupled", 1, 1)):
     config = copy.deepcopy(base)
-    config["initial_conditions"]["jung2019"].update(jet_scale=jet, perturbation_scale=perturbation)
+    config["initial_conditions"]["barotropic_jet"].update(jet_scale=jet, perturbation_scale=perturbation)
     run(name, config)
 
 negative = [
@@ -103,8 +103,8 @@ negative = [
     ("disabled_transport", ("dynamics", "prognostic_variables", "zeta", "tendency_terms", "advection", "enable"), False, "requires enabled advection"),
     ("missing_vorticity", ("dynamics", "prognostic_variables", "xi"), {}, "requires all three vorticity"),
     ("zero_iterations", ("dynamics", "solver", "iteration"), 0, "positive fixed solver"),
-    ("wrong_case", ("initial_conditions", "jung2019", "case"), 3, "case must be 1 or 2"),
-    ("wrong_amplitude", ("initial_conditions", "jung2019", "jet_scale"), 2, "amplitudes must select"),
+    ("wrong_case", ("initial_conditions", "barotropic_jet", "case"), 3, "jet case must be 1 or 2"),
+    ("wrong_amplitude", ("initial_conditions", "barotropic_jet", "jet_scale"), 2, "amplitudes must select"),
     ("external_initialization", ("initial_conditions", "source_file"), "not-read.nc", "analytic initial conditions"),
     ("bp5", ("output", "engine"), "BP5", "Unsupported RLL output engine"),
 ]

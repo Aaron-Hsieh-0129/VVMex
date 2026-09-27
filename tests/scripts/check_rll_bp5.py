@@ -27,7 +27,7 @@ base["grid"]["horizontal"].update(nx=80, ny=40)
 base["grid"]["vertical"]["nz"] = 8
 base["simulation"].update(dt_s=10, total_time_s=120, output_interval_s=60)
 base["initial_conditions"]["rll_mountain"].update(center_latitude_deg=20., jet_center_latitude_deg=20.)
-base["initial_conditions"]["jung2019"]["perturbation_scale"] = 0.
+base["initial_conditions"]["barotropic_jet"]["perturbation_scale"] = 0.
 base["constants"]["OMEGA"] = 7.292e-5
 base["dynamics"]["solver"]["WRXMU"] = 2/(2*np.pi/80)**2
 for name in ("xi", "eta", "zeta"):
