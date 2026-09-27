@@ -1,9 +1,11 @@
 #include "p3_functions.hpp"
 #include "physics/p3/VVM_p3_process_interface.hpp"
+#include "core/BoundaryConditionManager.hpp"
 
 #include <ekat_assert.hpp>
 #include <ekat_units.hpp>
 
+#include <algorithm>
 #include <array>
 #include <exception>
 #include <stdexcept>
@@ -20,14 +22,20 @@ constexpr int P3_NUM_WSM_VARS = 6;
 #else
 constexpr int P3_NUM_WSM_VARS = 64;
 #endif
-// ekat's TeamPolicyFactory never hands out a team larger than this on GPU.
-constexpr int P3_MAX_TEAM_SIZE = 128;
-constexpr size_t P3_WSM_BUDGET_BYTES = 1024ull*1024ull*1024ull;
+// Use one workspace slot per column on GPUs. EKAT's shared-slot fallback
+// indexes a default RNG pool by league_rank(), which can exceed that pool on
+// large domains. A factor equal to the league size makes EKAT cap the slot
+// count at the league size, disabling sharing without changing external code.
+double p3_wsm_overprovision(const TeamPolicy& policy) {
+    return ekat::OnGpu<KT::ExeSpace>::value
+        ? static_cast<double>(std::max(1, policy.league_size()))
+        : WSM::GPU_DEFAULT_OVERPROVISION_FACTOR();
+}
 
 // Same formula as ekat's WorkspaceManager::get_total_bytes_needed, in 64-bit
 // arithmetic: the ekat version returns int and overflows for large domains.
 size_t p3_wsm_bytes(const TeamPolicy& policy, int nk_pack_p1, int num_wsm_vars) {
-    ekat::TeamUtils<Spack, KT::ExeSpace> tu(policy, WSM::GPU_DEFAULT_OVERPROVISION_FACTOR());
+    ekat::TeamUtils<Spack, KT::ExeSpace> tu(policy, p3_wsm_overprovision(policy));
     const size_t reserve_slots = (sizeof(Spack) > 2*sizeof(int))
                                  ? 1 : (2*sizeof(int) + sizeof(Spack) - 1) / sizeof(Spack);
     return static_cast<size_t>(tu.get_num_ws_slots()) * (static_cast<size_t>(nk_pack_p1) + reserve_slots)
@@ -61,19 +69,8 @@ VVM_P3_Interface::VVM_P3_Interface(const VVM::Utils::ConfigurationManager &confi
 
     // Set Kokkos execution policy
     using TPF = ekat::TeamPolicyFactory<KT::ExeSpace>;
-    auto default_policy = TPF::get_default_team_policy(m_num_cols, m_num_lev_packs);
-    int team_size = default_policy.team_size();
-
-    // The workspace is sized per *resident* team, and the number of resident
-    // teams is (device concurrency)/(team size): a larger team is what shrinks
-    // it, not a smaller one. Grow the team if the default footprint is large.
-    const int nk_pack_p1 = ekat::npack<Spack>(m_num_levs+1);
-    while (team_size < P3_MAX_TEAM_SIZE &&
-           p3_wsm_bytes(TeamPolicy(m_num_cols, team_size, Spack::n), nk_pack_p1, P3_NUM_WSM_VARS) > P3_WSM_BUDGET_BYTES) {
-        team_size = std::min(P3_MAX_TEAM_SIZE, 2*team_size);
-    }
-
-    m_policy = TeamPolicy(m_num_cols, team_size, Spack::n);
+    const auto default_policy = TPF::get_default_team_policy(m_num_cols, m_num_lev_packs);
+    m_policy = TeamPolicy(m_num_cols, default_policy.team_size(), Spack::n);
     m_team_size = m_policy.team_size();
 
     if (grid_.get_mpi_rank() == 0) {
@@ -96,9 +93,11 @@ VVM_P3_Interface::VVM_P3_Interface(const VVM::Utils::ConfigurationManager &confi
     if (!state.has_field("bm")) state.add_field<3>("bm", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "m3 kg-1", "ice rime volume mixing ratio"});
 
 
-    std::string source_file = config.get_value<std::string>("initial_conditions.source_file");
-    declare_p3_diag_ = source_file == "./rundata/initial_conditions/profiles/default_cases/p3_bubble_shear.txt" ? true : false;
+    std::string source_file = config.get_value<std::string>("initial_conditions.source_file", std::string{});
+    declare_p3_diag_ = source_file == "./rundata/initial_conditions/profiles/default_cases/p3_bubble_shear.txt" ||
+        config.get_value<bool>("physics.p3.output_stage_diagnostics", false);
     if (declare_p3_diag_) {
+        if (!state.has_field("qc_before_p3")) state.add_field<3>("qc_before_p3", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "cloud liquid water after transport, before P3"});
         if (!state.has_field("th_m_diag")) state.add_field<3>("th_m_diag", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "K", "previous-step air potential temperature for P3 diagnostics"});
         if (!state.has_field("qv_m_diag")) state.add_field<3>("qv_m_diag", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "previous-step water vapor mixing ratio for P3 diagnostics"});
         if (!state.has_field("qv_after_p3")) state.add_field<3>("qv_after_p3", {nz_total, ny_total, nx_total}, Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1", "water vapor mixing ratio after P3"});
@@ -185,7 +184,9 @@ void VVM_P3_Interface::allocate_p3_buffers() {
     const size_t wsm_size_in_bytes = p3_wsm_bytes(m_policy, nk_pack_p1, P3_NUM_WSM_VARS);
     const size_t wsm_size_in_spacks = (wsm_size_in_bytes + sizeof(Spack) - 1) / sizeof(Spack);
     if (grid_.get_mpi_rank() == 0) {
-        std::cout << "p3 workspace = " << (wsm_size_in_bytes / (1024.0*1024.0)) << " MiB" << std::endl;
+        std::cout << "p3 workspace = " << (wsm_size_in_bytes / (1024.0*1024.0)) << " MiB"
+                  << (ekat::OnGpu<KT::ExeSpace>::value ? " (dedicated column slots)" : "")
+                  << std::endl;
     }
     m_wsm_view_storage = Kokkos::View<Spack*>("P3 WSM Storage", wsm_size_in_spacks);
     m_wsm_data = m_wsm_view_storage.data();
@@ -444,7 +445,8 @@ void VVM_P3_Interface::initialize(VVM::Core::State& state) {
     );
 
     const int nk_pack_p1 = ekat::npack<Spack>(m_num_levs+1);
-    workspace_mgr.setup(m_wsm_data, nk_pack_p1, P3_NUM_WSM_VARS, m_policy);
+    workspace_mgr.setup(m_wsm_data, nk_pack_p1, P3_NUM_WSM_VARS, m_policy,
+        p3_wsm_overprovision(m_policy));
 
     this->initialize_constant_buffers(state);
 }
@@ -991,8 +993,27 @@ void VVM_P3_Interface::postprocessing_and_unpacking(VVM::Core::State& state) {
         }
     }
     halo_exchanger_.exchange_multiple_halos(m_p3_update_fields);
+    if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+        Core::BoundaryConditionManager boundary(grid_, true);
+        for (auto* field : m_p3_update_fields) {
+            boundary.apply_horizontal_bcs(*field);
+        }
+    }
 }
 
+
+void VVM_P3_Interface::refresh_total_condensate(VVM::Core::State& state) {
+    const auto qc = state.get_field<3>("qc").get_device_data();
+    const auto qr = state.get_field<3>("qr").get_device_data();
+    const auto qi = state.get_field<3>("qi").get_device_data();
+    auto qp = state.get_field<3>("qp").get_mutable_device_data();
+    Kokkos::parallel_for("RefreshTotalCondensate",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0,0,0},
+            {grid_.get_local_total_points_z(),grid_.get_local_total_points_y(),grid_.get_local_total_points_x()}),
+        KOKKOS_LAMBDA(int k, int j, int i) {
+            qp(k,j,i) = qc(k,j,i)+qr(k,j,i)+qi(k,j,i);
+        });
+}
 
 void VVM_P3_Interface::run(VVM::Core::State &state, const VVM::Real dt) {
     if (m_need_reset_precip) {
@@ -1008,6 +1029,10 @@ void VVM_P3_Interface::run(VVM::Core::State &state, const VVM::Real dt) {
     const int nx = grid_.get_local_total_points_x();
     const int h = grid_.get_halo_cells();
 
+    if (declare_p3_diag_) {
+        Kokkos::deep_copy(state.get_field<3>("qc_before_p3").get_mutable_device_data(),
+            qc_ref_.get(state, "qc").get_device_data());
+    }
     preprocessing_and_packing(state);
     // Kokkos::fence();
 
@@ -1040,7 +1065,9 @@ void VVM_P3_Interface::run(VVM::Core::State &state, const VVM::Real dt) {
         m_policy,
         m_p3_postproc
     ); // Kokkos::parallel_for(p3_main_local_vals)
-    Kokkos::fence();
+    // Both kernels use the default execution stream and persistent member
+    // buffers. Stream ordering makes the postprocessing result available to
+    // unpacking without a host wait.
     postprocessing_and_unpacking(state);
 
     int output_steps = std::round(m_output_interval_s / dt);

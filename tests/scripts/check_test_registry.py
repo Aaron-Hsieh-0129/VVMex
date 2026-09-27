@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check tests/CMakeLists.txt against the files it names.
+"""Check the test CMake registry against the files it names.
 
 CMake resolves these paths at configure time and CTest only at run time, so a
 case registered without its config, or a baseline left behind by a removed test,
@@ -76,7 +76,8 @@ def main():
     root = pathlib.Path(a.root) if a.root else pathlib.Path(__file__).resolve().parents[2]
     tests = root / "tests"
     cases = root / "rundata" / "input_configs" / "default_cases"
-    text = strip_comments((tests / "CMakeLists.txt").read_text())
+    cmake_files = [tests / "CMakeLists.txt", *sorted((tests / "cmake").glob("*.cmake"))]
+    text = strip_comments("\n".join(path.read_text() for path in cmake_files))
 
     missing, orphans = [], []
     used_units, used_baselines, used_references = set(), set(), set()
@@ -88,6 +89,7 @@ def main():
     # Unit tests: one source file each. The three registration helpers differ
     # only in what they link, so the source-file rule is the same for all.
     unit_names = [c[0] for c in calls(text, "add_vvm_unit_test")]
+    unit_names += [c[0] for c in calls(text, "vvm_add_test_executable")]
     unit_names += [c[0] for c in calls(text, "add_vvm_file_unit_test")]
     unit_names += [c[0] for c in calls(text, "add_vvm_device_unit_test")]
     # Hand-registered ones name their source directly.
@@ -129,6 +131,12 @@ def main():
         need(tests / "references" / f"{name}.json", f"case test {name} reference")
     for args in calls(text, "add_rank_invariance_test"):
         need(cases / f"{args[0]}.json", f"rank-invariance case {args[0]} config")
+
+    # Model helpers name Python scripts rather than repeating launcher commands.
+    for args in calls(text, "vvm_add_model_test"):
+        if "SCRIPT" in args:
+            need(tests / "scripts" / args[args.index("SCRIPT") + 1],
+                 f"model test {args[0]} script")
 
     # Model-level configs named by the BP5 tier.
     for name in re.findall(r"\$\{TEST_DIR\}/configs/(\w+)\.json", text):

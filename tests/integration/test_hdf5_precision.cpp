@@ -14,7 +14,8 @@
 #include <fstream>
 #include <string>
 
-int main(int argc, char** argv) {
+int
+main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
     int rank = 0;
     int comm_size = 1;
@@ -24,8 +25,8 @@ int main(int argc, char** argv) {
     if (argc != 4) {
         if (rank == 0) {
             std::fprintf(stderr,
-                         "usage: test_hdf5_precision BASE_CONFIG WORK_ROOT "
-                         "unset|native|float32|float64\n");
+                "usage: test_hdf5_precision BASE_CONFIG WORK_ROOT "
+                "unset|native|float32|float64\n");
         }
         MPI_Finalize();
         return 2;
@@ -42,8 +43,7 @@ int main(int argc, char** argv) {
             std::filesystem::remove_all(case_dir);
             std::filesystem::create_directories(case_dir.parent_path());
             std::ofstream output(config_path);
-            output << VVMTest::make_config(argv[1], case_dir, "HDF5", precision).dump(2)
-                   << '\n';
+            output << VVMTest::make_config(argv[1], case_dir, "HDF5", precision).dump(2) << '\n';
         }
         MPI_Barrier(MPI_COMM_WORLD);
 
@@ -55,7 +55,9 @@ int main(int argc, char** argv) {
             VVMTest::fill_coordinates(parameters, grid);
 #if defined(ENABLE_NCCL)
             ncclUniqueId id;
-            if (rank == 0) ncclGetUniqueId(&id);
+            if (rank == 0) {
+                ncclGetUniqueId(&id);
+            }
             MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
             ncclComm_t nccl_comm;
             ncclCommInitRank(&nccl_comm, comm_size, id, rank);
@@ -66,10 +68,8 @@ int main(int argc, char** argv) {
 #endif
             VVMTest::fill_fields(state, grid);
 
-            const VVM::Real interval =
-                config.get_value<VVM::Real>("simulation.output_interval_s");
-            VVM::IO::OutputManager manager(
-                config, grid, parameters, state, MPI_COMM_WORLD);
+            const VVM::Real interval = config.get_value<VVM::Real>("simulation.output_interval_s");
+            VVM::IO::OutputManager manager(config, grid, parameters, state, MPI_COMM_WORLD);
             // Two steps, because the conversion buffers and the variable
             // definitions are created once and reused by every later write.
             manager.write(0, VVM::real(0.0));
@@ -86,18 +86,19 @@ int main(int argc, char** argv) {
 #endif
         }
         Kokkos::finalize();
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e) {
         std::fprintf(stderr, "[rank %d] exception: %s\n", rank, e.what());
         ++VVMTest::failures;
-        if (Kokkos::is_initialized()) Kokkos::finalize();
+        if (Kokkos::is_initialized()) {
+            Kokkos::finalize();
+        }
     }
 
     int global_failures = 0;
-    MPI_Allreduce(&VVMTest::failures, &global_failures, 1, MPI_INT, MPI_SUM,
-                  MPI_COMM_WORLD);
+    MPI_Allreduce(&VVMTest::failures, &global_failures, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if (rank == 0 && global_failures == 0) {
-        std::fprintf(stdout, "test_hdf5_precision(%s): all checks passed\n",
-                     precision.c_str());
+        std::fprintf(stdout, "test_hdf5_precision(%s): all checks passed\n", precision.c_str());
     }
     MPI_Finalize();
     return global_failures == 0 ? 0 : 1;

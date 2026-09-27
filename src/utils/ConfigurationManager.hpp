@@ -18,11 +18,11 @@ public:
     explicit ConfigurationManager(const std::string& config_file_path);
 
     // Get configuration value of any type
-    template<typename T>
+    template <typename T>
     T get_value(const std::string& key_path) const;
 
     // Default value mode
-    template<typename T>
+    template <typename T>
     T get_value(const std::string& key_path, const T& default_value) const;
 
     // Check if a key exists
@@ -42,32 +42,37 @@ private:
 // Template method implementations
 // ====================================================================
 
-template<typename T>
-T ConfigurationManager::get_value(const std::string& key_path) const {
+template <typename T>
+T
+ConfigurationManager::get_value(const std::string& key_path) const {
     const nlohmann::json* node = find_node(key_path);
     if (!node) {
         throw std::runtime_error("Configuration error: Key '" + key_path + "' not found.");
     }
     try {
         return node->get<T>();
-    } catch (const nlohmann::json::exception& e) {
-        throw std::runtime_error("Configuration error: Type mismatch for key '" + key_path + "'. " + e.what());
+    }
+    catch (const nlohmann::json::exception& e) {
+        throw std::runtime_error(
+            "Configuration error: Type mismatch for key '" + key_path + "'. " + e.what());
     }
 }
 
-template<typename T>
-T ConfigurationManager::get_value(const std::string& key_path, const T& default_value) const {
+template <typename T>
+T
+ConfigurationManager::get_value(const std::string& key_path, const T& default_value) const {
     const nlohmann::json* node = find_node(key_path);
-    
+
     if (!node) {
         return default_value;
     }
 
     try {
         return node->get<T>();
-    } 
+    }
     catch (const nlohmann::json::exception& e) {
-        throw std::runtime_error("Configuration error: Type mismatch for key '" + key_path + "'. " + e.what());
+        throw std::runtime_error(
+            "Configuration error: Type mismatch for key '" + key_path + "'. " + e.what());
     }
 }
 

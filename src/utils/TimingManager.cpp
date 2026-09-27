@@ -10,30 +10,37 @@
 namespace VVM {
 namespace Utils {
 
-TimingManager& TimingManager::get_instance() {
+TimingManager&
+TimingManager::get_instance() {
     static TimingManager instance;
     return instance;
 }
 
-void TimingManager::configure(bool enabled, bool fence_gpu, int warmup_steps) {
+void
+TimingManager::configure(bool enabled, bool fence_gpu, int warmup_steps) {
     enabled_ = enabled;
     fence_gpu_ = fence_gpu;
     warmup_steps_ = static_cast<std::size_t>(std::max(0, warmup_steps));
 }
 
-void TimingManager::set_step(std::size_t step) {
+void
+TimingManager::set_step(std::size_t step) {
     current_step_ = step;
 }
 
-bool TimingManager::should_accumulate() const {
+bool
+TimingManager::should_accumulate() const {
     return enabled_ && current_step_ >= warmup_steps_;
 }
 
-void TimingManager::start_timer(const std::string& name) {
+void
+TimingManager::start_timer(const std::string& name) {
     // Keep Kokkos profiling regions for Nsight/Kokkos Tools.
     Kokkos::Profiling::pushRegion(name);
 
-    if (!should_accumulate()) return;
+    if (!should_accumulate()) {
+        return;
+    }
 
     if (fence_gpu_) {
         Kokkos::fence("timer_start_" + name);
@@ -42,7 +49,8 @@ void TimingManager::start_timer(const std::string& name) {
     active_stack_.push_back({name, MPI_Wtime()});
 }
 
-void TimingManager::stop_timer(const std::string& name) {
+void
+TimingManager::stop_timer(const std::string& name) {
     if (should_accumulate() && !active_stack_.empty()) {
         if (fence_gpu_) {
             Kokkos::fence("timer_stop_" + name);
@@ -63,12 +71,14 @@ void TimingManager::stop_timer(const std::string& name) {
     Kokkos::Profiling::popRegion();
 }
 
-void TimingManager::reset() {
+void
+TimingManager::reset() {
     records_.clear();
     active_stack_.clear();
 }
 
-std::vector<std::string> TimingManager::collect_timer_names(MPI_Comm comm) const {
+std::vector<std::string>
+TimingManager::collect_timer_names(MPI_Comm comm) const {
     int rank = 0;
     int size = 1;
     MPI_Comm_rank(comm, &rank);
@@ -90,11 +100,14 @@ std::vector<std::string> TimingManager::collect_timer_names(MPI_Comm comm) const
         displs.resize(size, 0);
     }
 
-    MPI_Gather(
-        &local_len, 1, MPI_INT,
-        rank == 0 ? recv_counts.data() : nullptr, 1, MPI_INT,
-        0, comm
-    );
+    MPI_Gather(&local_len,
+        1,
+        MPI_INT,
+        rank == 0 ? recv_counts.data() : nullptr,
+        1,
+        MPI_INT,
+        0,
+        comm);
 
     int total_len = 0;
     if (rank == 0) {
@@ -109,13 +122,15 @@ std::vector<std::string> TimingManager::collect_timer_names(MPI_Comm comm) const
         gathered.resize(total_len);
     }
 
-    MPI_Gatherv(
-        local_packed.data(), local_len, MPI_CHAR,
+    MPI_Gatherv(local_packed.data(),
+        local_len,
+        MPI_CHAR,
         rank == 0 ? gathered.data() : nullptr,
         rank == 0 ? recv_counts.data() : nullptr,
         rank == 0 ? displs.data() : nullptr,
-        MPI_CHAR, 0, comm
-    );
+        MPI_CHAR,
+        0,
+        comm);
 
     std::string union_packed;
 
@@ -125,7 +140,9 @@ std::vector<std::string> TimingManager::collect_timer_names(MPI_Comm comm) const
         std::string line;
 
         while (std::getline(iss, line)) {
-            if (!line.empty()) names.insert(line);
+            if (!line.empty()) {
+                names.insert(line);
+            }
         }
 
         for (const auto& n : names) {
@@ -148,13 +165,16 @@ std::vector<std::string> TimingManager::collect_timer_names(MPI_Comm comm) const
     std::string line;
 
     while (std::getline(iss, line)) {
-        if (!line.empty()) names.push_back(line);
+        if (!line.empty()) {
+            names.push_back(line);
+        }
     }
 
     return names;
 }
 
-void TimingManager::print_timings(MPI_Comm comm, bool reset_after_print) {
+void
+TimingManager::print_timings(MPI_Comm comm, bool reset_after_print) {
     int rank = 0;
     int size = 1;
     MPI_Comm_rank(comm, &rank);
@@ -185,8 +205,7 @@ void TimingManager::print_timings(MPI_Comm comm, bool reset_after_print) {
     double total_vvm_max = 0.0;
 
     auto total_it = records_.find("total_vvm");
-    const double local_total_vvm =
-        total_it == records_.end() ? 0.0 : total_it->second.total_s;
+    const double local_total_vvm = total_it == records_.end() ? 0.0 : total_it->second.total_s;
 
     MPI_Reduce(&local_total_vvm, &total_vvm_max, 1, MPI_DOUBLE, MPI_MAX, 0, comm);
 
@@ -215,8 +234,7 @@ void TimingManager::print_timings(MPI_Comm comm, bool reset_after_print) {
             row.total_max = max_total;
             row.avg_call_ms =
                 max_count > 0 ? 1000.0 * max_total / static_cast<double>(max_count) : 0.0;
-            row.pct_total =
-                total_vvm_max > 0.0 ? 100.0 * max_total / total_vvm_max : 0.0;
+            row.pct_total = total_vvm_max > 0.0 ? 100.0 * max_total / total_vvm_max : 0.0;
 
             rows.push_back(row);
         }
@@ -232,30 +250,22 @@ void TimingManager::print_timings(MPI_Comm comm, bool reset_after_print) {
         std::cout << " GPU fence timing: " << (fence_gpu_ ? "ON" : "OFF") << "\n";
         std::cout << " Warmup skipped steps: " << warmup_steps_ << "\n";
         std::cout << "------------------------------------------------------------\n";
-        std::cout << std::left
-                  << std::setw(28) << "component"
-                  << std::right
-                  << std::setw(10) << "calls"
-                  << std::setw(14) << "max_s"
-                  << std::setw(14) << "mean_s"
-                  << std::setw(14) << "min_s"
-                  << std::setw(14) << "ms/call"
-                  << std::setw(10) << "%total"
+        std::cout << std::left << std::setw(28) << "component" << std::right << std::setw(10)
+                  << "calls" << std::setw(14) << "max_s" << std::setw(14) << "mean_s"
+                  << std::setw(14) << "min_s" << std::setw(14) << "ms/call" << std::setw(10)
+                  << "%total"
                   << "\n";
 
         std::cout << "------------------------------------------------------------\n";
 
         for (const auto& r : rows) {
-            std::cout << std::left
-                      << std::setw(28) << r.name
-                      << std::right
-                      << std::setw(10) << r.count_max
-                      << std::setw(14) << std::fixed << std::setprecision(4) << r.total_max
-                      << std::setw(14) << std::fixed << std::setprecision(4) << r.total_mean
-                      << std::setw(14) << std::fixed << std::setprecision(4) << r.total_min
-                      << std::setw(14) << std::fixed << std::setprecision(3) << r.avg_call_ms
-                      << std::setw(10) << std::fixed << std::setprecision(2) << r.pct_total
-                      << "\n";
+            std::cout << std::left << std::setw(28) << r.name << std::right << std::setw(10)
+                      << r.count_max << std::setw(14) << std::fixed << std::setprecision(4)
+                      << r.total_max << std::setw(14) << std::fixed << std::setprecision(4)
+                      << r.total_mean << std::setw(14) << std::fixed << std::setprecision(4)
+                      << r.total_min << std::setw(14) << std::fixed << std::setprecision(3)
+                      << r.avg_call_ms << std::setw(10) << std::fixed << std::setprecision(2)
+                      << r.pct_total << "\n";
         }
 
         std::cout << "============================================================\n";

@@ -168,6 +168,10 @@ void inc_2stream_by_2stream_bybnd(int ncol, int nlay, int ngpt,
   // do igpt = 1 , ngpt
   //   do ilay = 1, nlay
   //     do icol = 1, ncol
+  // Aaron: Launch one work item per column/layer/g-point instead of also launching every band.
+  // Aaron: Find the unique containing band and break after applying the unchanged formulas.
+  // Aaron: This removes redundant work and reduces large launch bounds by a factor of nbnd.
+  /* Aaron: Original code retained for comparison.
   TIMED_KERNEL(FLATTEN_MD_KERNEL4(ncol,nlay,ngpt,nbnd, icol, ilay, igpt, ibnd,
     if (igpt >= gpt_lims(0,ibnd) && igpt <= gpt_lims(1,ibnd) ) {
       // t=tau1 + tau2
@@ -179,6 +183,23 @@ void inc_2stream_by_2stream_bybnd(int ncol, int nlay, int ngpt,
                             tau2(icol,ilay,ibnd) * ssa2(icol,ilay,ibnd) * g2(icol,ilay,ibnd)) / Kokkos::fmax(eps,tauscat12);
       ssa1(icol,ilay,igpt) = tauscat12 / Kokkos::fmax(eps,tau12);
       tau1(icol,ilay,igpt) = tau12;
+    }
+  ));
+  */
+  TIMED_KERNEL(FLATTEN_MD_KERNEL3(ncol,nlay,ngpt, icol, ilay, igpt,
+    for (int ibnd = 0; ibnd < nbnd; ++ibnd) {
+      if (igpt >= gpt_lims(0,ibnd) && igpt <= gpt_lims(1,ibnd) ) {
+        // t=tau1 + tau2
+        RealT tau12 = tau1(icol,ilay,igpt) + tau2(icol,ilay,ibnd);
+        // w=(tau1*ssa1 + tau2*ssa2) / t
+        RealT tauscat12 = tau1(icol,ilay,igpt) * ssa1(icol,ilay,igpt) +
+                         tau2(icol,ilay,ibnd) * ssa2(icol,ilay,ibnd);
+        g1(icol,ilay,igpt) = (tau1(icol,ilay,igpt) * ssa1(icol,ilay,igpt) * g1(icol,ilay,igpt) +
+                              tau2(icol,ilay,ibnd) * ssa2(icol,ilay,ibnd) * g2(icol,ilay,ibnd)) / Kokkos::fmax(eps,tauscat12);
+        ssa1(icol,ilay,igpt) = tauscat12 / Kokkos::fmax(eps,tau12);
+        tau1(icol,ilay,igpt) = tau12;
+        break;
+      }
     }
   ));
 }

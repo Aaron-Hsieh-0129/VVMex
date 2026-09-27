@@ -1,7 +1,10 @@
 #include "DynamicalCore.hpp"
 #include "numerical_methods/NumericalMethodFactory.hpp"
 #include "spatial_schemes/Takacs.hpp"
-#include "core/HaloExchanger.hpp"
+#include "core/haloexchange/HaloExchanger.hpp"
+#include "dynamics/solvers/VerticalWindDiagnostic.hpp"
+#include "dynamics/operators/HorizontalVectorConversion.hpp"
+
 #include <stdexcept>
 #include <iostream>
 #include <unordered_set>
@@ -9,40 +12,48 @@
 namespace VVM {
 namespace Dynamics {
 
-bool startsWith(const std::string& fullString, const std::string& prefix) {
-    if (fullString.length() < prefix.length()) return false;
+bool
+startsWith(const std::string& fullString, const std::string& prefix) {
+    if (fullString.length() < prefix.length()) {
+        return false;
+    }
     return fullString.compare(0, prefix.length(), prefix) == 0;
 }
 
-DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config, 
-                             const Core::Grid& grid, 
-                             const Core::Parameters& params,
-                             Core::State& state, 
-                             Core::HaloExchanger& halo_exchanger, 
-                             const Core::BoundaryConditionManager& bc_manager)
-    : config_(config), grid_(grid), params_(params), state_(state), 
-      wind_solver_(std::make_unique<WindSolver>(grid, config, params, halo_exchanger, state)), 
+DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
+    const Core::Grid& grid,
+    const Core::Parameters& params,
+    Core::State& state,
+    Core::HaloExchanger& halo_exchanger,
+    const Core::BoundaryConditionManager& bc_manager)
+    : config_(config), grid_(grid), params_(params), state_(state),
+      wind_solver_(std::make_unique<WindSolver>(grid, config, params, halo_exchanger, state)),
       halo_exchanger_(halo_exchanger), bc_manager_(bc_manager) {
 
     int rank = grid_.get_mpi_rank();
-    if (rank == 0) std::cout << "\n--- Initializing Dynamical Core ---" << std::endl;
+    if (rank == 0) {
+        std::cout << "\n--- Initializing Dynamical Core ---" << std::endl;
+    }
 
     int nz = grid_.get_local_total_points_z();
     int ny = grid_.get_local_total_points_y();
     int nx = grid_.get_local_total_points_x();
-    auto dims = std::array<int, 3>{
-          grid.get_local_total_points_z(),
-          grid.get_local_total_points_y(),
-          grid.get_local_total_points_x()
-    };
+    auto dims = std::array<int, 3>{grid.get_local_total_points_z(),
+        grid.get_local_total_points_y(),
+        grid.get_local_total_points_x()};
 
     std::vector<std::string> common_thermo = {"th", "qv"};
     const bool p3_enabled = config.get_value<bool>("physics.p3.enable_p3", false);
-    
+
     auto prognostic_config = config_.get_value<nlohmann::json>("dynamics.prognostic_variables");
     if (!p3_enabled) {
-        if (rank == 0) std::cout << "[WARNING] P3 is not turned on but the P3 variables are listed in prognostic variables so they are deleted!!" << std::endl;
-        std::unordered_set<std::string> P3toRemove = {"qc", "qi", "qr", "qm", "nc", "ni", "nr", "bm"};
+        if (rank == 0) {
+            std::cout << "[WARNING] P3 is not turned on but the P3 variables are listed in "
+                         "prognostic variables so they are deleted!!"
+                      << std::endl;
+        }
+        std::unordered_set<std::string> P3toRemove =
+            {"qc", "qi", "qr", "qm", "nc", "ni", "nr", "bm"};
         std::vector<std::string> keysToDelete;
         for (auto& [key, value] : prognostic_config.items()) {
             for (const auto& prefix : P3toRemove) {
@@ -56,7 +67,9 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
             prognostic_config.erase(key);
         }
     }
-    else common_thermo.insert(common_thermo.end(), {"qc", "qr", "qi", "nc", "nr", "ni", "qm", "bm"});
+    else {
+        common_thermo.insert(common_thermo.end(), {"qc", "qr", "qi", "nc", "nr", "ni", "qm", "bm"});
+    }
 
     if (config_.has_key("dynamics.tracers")) {
         const auto tracer_config = config_.get_value<nlohmann::json>("dynamics.tracers");
@@ -65,45 +78,76 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
         }
     }
 
-    bool coriolis_xi = config.get_value<bool>("dynamics.prognostic_variables.xi.tendency_terms.coriolis.enable", false);
-    bool coriolis_eta = config.get_value<bool>("dynamics.prognostic_variables.eta.tendency_terms.coriolis.enable", false);
-    bool coriolis_zeta = config.get_value<bool>("dynamics.prognostic_variables.zeta.tendency_terms.coriolis.enable", false);
+    bool coriolis_xi =
+        config.get_value<bool>("dynamics.prognostic_variables.xi.tendency_terms.coriolis.enable",
+            false);
+    bool coriolis_eta =
+        config.get_value<bool>("dynamics.prognostic_variables.eta.tendency_terms.coriolis.enable",
+            false);
+    bool coriolis_zeta =
+        config.get_value<bool>("dynamics.prognostic_variables.zeta.tendency_terms.coriolis.enable",
+            false);
     enable_coriolis_ = coriolis_xi && coriolis_eta && coriolis_zeta;
     enable_turbulence_ = config.get_value<bool>("physics.turbulence.enable_turbulence", false);
 
     diagnostic_scheme_ = std::make_unique<Takacs>(config_, grid_, halo_exchanger_, bc_manager_);
-    
+
     mean_wind_state_ = std::make_shared<MeanWindState>();
-    NumericalMethodFactory method_factory(config_, grid_, halo_exchanger_, bc_manager_,
-                                          mean_wind_state_);
+    NumericalMethodFactory method_factory(config_,
+        grid_,
+        halo_exchanger_,
+        bc_manager_,
+        mean_wind_state_);
 
     for (auto& [var_name, var_conf] : prognostic_config.items()) {
         if (rank == 0) {
-            std::cout << "  * Loading prognostic variable: "
-                      << var_name << std::endl;
+            std::cout << "  * Loading prognostic variable: " << var_name << std::endl;
         }
 
-        const bool has_external_forward_euler = var_name == "th" && config.get_value<bool>("physics.rrtmgp.enable_rrtmgp", false);
+        const bool has_external_forward_euler =
+            var_name == "th" && config.get_value<bool>("physics.rrtmgp.enable_rrtmgp", false);
         if (has_external_forward_euler && rank == 0) {
             std::cout << "    - Enabled radiation forcing integration. " << std::endl;
         }
 
         const bool is_tracer = state_.is_tracer(var_name);
-        const bool is_thermo = is_tracer || std::find(common_thermo.begin(), common_thermo.end(), var_name) != common_thermo.end();
+        const bool is_thermo =
+            is_tracer ||
+            std::find(common_thermo.begin(), common_thermo.end(), var_name) != common_thermo.end();
 
-        if (is_thermo) thermo_vars_.push_back(var_name);
-        else vorticity_vars_.push_back(var_name);
+        if (is_thermo) {
+            thermo_vars_.push_back(var_name);
+        }
+        else {
+            vorticity_vars_.push_back(var_name);
+        }
 
-        if (!state_.has_field(var_name)) state_.add_field<3>(var_name, dims);
+        if (!state_.has_field(var_name)) {
+            state_.add_field<3>(var_name, dims);
+        }
 
-        auto numerical_method = method_factory.create(var_name, var_conf, is_tracer, is_thermo, dims, has_external_forward_euler);
+        auto numerical_method = method_factory.create(var_name,
+            var_conf,
+            is_tracer,
+            is_thermo,
+            dims,
+            has_external_forward_euler);
         const auto requirements = numerical_method->state_requirements();
 
         // P3 consumes the pre-dynamics th/qv values after this update.
         const bool p3_previous_state = p3_enabled && (var_name == "th" || var_name == "qv");
         if (requirements.previous_state || p3_previous_state) {
-            state_.add_field<3>(var_name + "_m", dims);
+            if (var_name == "xi") {
+                state_.add_field<3>("xi_con_m", dims);
+            }
+            else if (var_name == "eta") {
+                state_.add_field<3>("eta_con_m", dims);
+            }
+            else {
+                state_.add_field<3>(var_name + "_m", dims);
+            }
         }
+
         if (requirements.ab2_tendency_history) {
             state_.add_field<3>("d_" + var_name + "_0", dims);
             state_.add_field<3>("d_" + var_name + "_1", dims);
@@ -120,19 +164,256 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
     state_.add_field<0>("utopmn_m", {});
     state_.add_field<0>("vtopmn_m", {});
 
+    if (!state.has_field("RKM")) {
+        state.add_field<3>("RKM", dims);
+    }
+    if (!state.has_field("RKH")) {
+        state.add_field<3>("RKH", dims);
+    }
+    if (!state.has_field("tempu")) {
+        state.add_field<2>("tempu",
+            {ny, nx},
+            Core::FieldMetadata{Core::GridStaggering::StaggeredX,
+                "m s-1",
+                "temporary top-boundary x wind work field"});
+    }
+    if (!state.has_field("tempv")) {
+        state.add_field<2>("tempv",
+            {ny, nx},
+            Core::FieldMetadata{Core::GridStaggering::StaggeredY,
+                "m s-1",
+                "temporary top-boundary y wind work field"});
+    }
 
-    if (!state.has_field("RKM")) state.add_field<3>("RKM", dims);
-    if (!state.has_field("RKH")) state.add_field<3>("RKH", dims);
-    if (!state.has_field("tempu")) state.add_field<2>("tempu", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::StaggeredX, "m s-1", "temporary top-boundary x wind work field"});
-    if (!state.has_field("tempv")) state.add_field<2>("tempv", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::StaggeredY, "m s-1", "temporary top-boundary y wind work field"});
-
-    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), utopmn_m_ref_.get(state_, "utopmn_m").get_mutable_device_data(), utopmn_ref_.get(state_, "utopmn").get_mutable_device_data());
-    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), vtopmn_m_ref_.get(state_, "vtopmn_m").get_mutable_device_data(), vtopmn_ref_.get(state_, "vtopmn").get_mutable_device_data());
+    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+        utopmn_m_ref_.get(state_, "utopmn_m").get_mutable_device_data(),
+        utopmn_ref_.get(state_, "utopmn").get_mutable_device_data());
+    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+        vtopmn_m_ref_.get(state_, "vtopmn_m").get_mutable_device_data(),
+        vtopmn_ref_.get(state_, "vtopmn").get_mutable_device_data());
 }
 
 DynamicalCore::~DynamicalCore() = default;
 
-void DynamicalCore::compute_diagnostic_fields() const {
+void
+DynamicalCore::update_contravariant_wind_shadow_state() {
+    using Core::Geometry::GeometryKind;
+    using Core::Geometry::HorizontalLocation;
+    using Operators::HorizontalVectorConversion;
+
+    const auto geometry_kind = grid_.geometry().kind();
+
+    if (geometry_kind != GeometryKind::Cartesian && geometry_kind != GeometryKind::RegularLatLon) {
+        throw std::logic_error("Contravariant wind shadow state currently supports only Cartesian "
+                               "and regular latitude-longitude geometry.");
+    }
+
+    const auto& u = u_ref_.get(state_, "u").get_device_data();
+    const auto& v = v_ref_.get(state_, "v").get_device_data();
+
+    auto& u_con = u_con_ref_.get(state_, "u_con").get_mutable_device_data();
+    auto& v_con = v_con_ref_.get(state_, "v_con").get_mutable_device_data();
+
+    auto exec = Kokkos::DefaultExecutionSpace();
+
+    // Cartesian physical and contravariant components are identical.
+    // Preserve an exact copy rather than introducing an unnecessary multiply.
+    if (geometry_kind == GeometryKind::Cartesian) {
+        Kokkos::deep_copy(exec, u_con, u);
+        Kokkos::deep_copy(exec, v_con, v);
+        return;
+    }
+
+    // Regular latitude-longitude:
+    //
+    //     u^1 = U / h1    at U
+    //     u^2 = V / h2    at V
+    //
+    // with
+    //
+    //     h1 = a cos(phi)
+    //     h2 = a.
+    const auto u_geometry = grid_.geometry().device_view(HorizontalLocation::U);
+    const auto v_geometry = grid_.geometry().device_view(HorizontalLocation::V);
+
+    const auto inverse_h1_at_u = u_geometry.physical_to_contravariant.a11;
+
+    const auto inverse_h2_at_v = v_geometry.physical_to_contravariant.a22;
+
+    const int nz = grid_.get_local_total_points_z();
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
+
+    // Deliberately capture only the two metric fields required here.
+    Kokkos::parallel_for("UpdateContravariantWindShadow",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) {
+            u_con(k, j, i) = HorizontalVectorConversion::physical_to_contravariant(u(k, j, i),
+                inverse_h1_at_u(j, i));
+
+            v_con(k, j, i) = HorizontalVectorConversion::physical_to_contravariant(v(k, j, i),
+                inverse_h2_at_v(j, i));
+        });
+}
+
+void
+DynamicalCore::sync_contravariant_vorticity_from_physical() {
+    using Core::Geometry::GeometryKind;
+    using Core::Geometry::HorizontalLocation;
+
+    const auto geometry_kind = grid_.geometry().kind();
+
+    const auto& xi = xi_ref_.get(state_, "xi").get_device_data();
+    const auto& eta = eta_ref_.get(state_, "eta").get_device_data();
+    const auto& zeta = zeta_ref_.get(state_, "zeta").get_device_data();
+
+    auto& xi_con = xi_con_ref_.get(state_, "xi_con").get_mutable_device_data();
+    auto& eta_con = eta_con_ref_.get(state_, "eta_con").get_mutable_device_data();
+    auto& zeta_con = zeta_con_ref_.get(state_, "zeta_con").get_mutable_device_data();
+
+    auto exec = Kokkos::DefaultExecutionSpace();
+
+    // ------------------------------------------------------------
+    // Cartesian:
+    //
+    // physical == contravariant
+    // ------------------------------------------------------------
+    if (geometry_kind == GeometryKind::Cartesian) {
+        Kokkos::deep_copy(exec, xi_con, xi);
+        Kokkos::deep_copy(exec, eta_con, eta);
+        Kokkos::deep_copy(exec, zeta_con, zeta);
+        return;
+    }
+
+    // ------------------------------------------------------------
+    // Generalized horizontal geometry.
+    //
+    // Stored variables:
+    //
+    //     xi      = +omega_phys_1 @ V
+    //     eta     = -omega_phys_2 @ U
+    //
+    //     xi_con  = +omega^1      @ V
+    //     eta_con = -omega^2      @ U
+    //
+    // For a non-orthogonal coordinate system, the full 2x2
+    // transformation must be used.
+    // ------------------------------------------------------------
+
+    const auto u_geometry = grid_.geometry().device_view(HorizontalLocation::U);
+    const auto v_geometry = grid_.geometry().device_view(HorizontalLocation::V);
+
+    const auto A_u = u_geometry.physical_to_contravariant;
+    const auto A_v = v_geometry.physical_to_contravariant;
+
+    const int nz = grid_.get_local_total_points_z();
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
+    const int h = grid_.get_halo_cells();
+
+    Kokkos::parallel_for("SyncContravariantHorizontalVorticityFromPhysical",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) {
+            // ----------------------------------------------------
+            // U -> V interpolation:
+            //
+            // eta = -omega_phys_2
+            // ----------------------------------------------------
+
+            const VVM::Real eta_at_v =
+                VVM::real(0.25) *
+                (eta(k, j, i) + eta(k, j + 1, i) + eta(k, j, i - 1) + eta(k, j + 1, i - 1));
+
+            // omega_phys_2 = -eta
+            const VVM::Real omega2_phys_at_v = -eta_at_v;
+
+            xi_con(k, j, i) = A_v.a11(j, i) * xi(k, j, i) + A_v.a12(j, i) * omega2_phys_at_v;
+
+            // ----------------------------------------------------
+            // V -> U interpolation:
+            //
+            // xi = +omega_phys_1
+            // ----------------------------------------------------
+
+            const VVM::Real xi_at_u = VVM::real(0.25) * (xi(k, j, i) + xi(k, j, i + 1) +
+                                                            xi(k, j - 1, i) + xi(k, j - 1, i + 1));
+
+            const VVM::Real omega2_con_at_u =
+                A_u.a21(j, i) * xi_at_u + A_u.a22(j, i) * (-eta(k, j, i));
+
+            eta_con(k, j, i) = -omega2_con_at_u;
+
+            // Vertical direction remains Cartesian in VVMex.
+            zeta_con(k, j, i) = zeta(k, j, i);
+        });
+}
+
+void
+DynamicalCore::sync_physical_horizontal_vorticity_from_contravariant() {
+    using Core::Geometry::GeometryKind;
+    using Core::Geometry::HorizontalLocation;
+    const auto geometry_kind = grid_.geometry().kind();
+
+    const auto& xi_con = xi_con_ref_.get(state_, "xi_con").get_device_data();
+    const auto& eta_con = eta_con_ref_.get(state_, "eta_con").get_device_data();
+
+    auto& xi = xi_ref_.get(state_, "xi").get_mutable_device_data();
+    auto& eta = eta_ref_.get(state_, "eta").get_mutable_device_data();
+
+    auto exec = Kokkos::DefaultExecutionSpace();
+
+    if (geometry_kind == GeometryKind::Cartesian) {
+        Kokkos::deep_copy(exec, xi, xi_con);
+        Kokkos::deep_copy(exec, eta, eta_con);
+        return;
+    }
+
+    const auto u_geometry = grid_.geometry().device_view(HorizontalLocation::U);
+    const auto v_geometry = grid_.geometry().device_view(HorizontalLocation::V);
+
+    const auto B_u = u_geometry.contravariant_to_physical;
+    const auto B_v = v_geometry.contravariant_to_physical;
+
+    const int nz = grid_.get_local_total_points_z();
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
+    const int h = grid_.get_halo_cells();
+
+    Kokkos::parallel_for("SyncPhysicalHorizontalVorticityFromContravariant",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) {
+            // ----------------------------------------------------
+            // U -> V interpolation of eta_con.
+            //
+            // eta_con = -omega^2
+            // ----------------------------------------------------
+
+            const VVM::Real eta_con_at_v =
+                VVM::real(0.25) * (eta_con(k, j, i) + eta_con(k, j + 1, i) + eta_con(k, j, i - 1) +
+                                      eta_con(k, j + 1, i - 1));
+
+            xi(k, j, i) = B_v.a11(j, i) * xi_con(k, j, i) - B_v.a12(j, i) * eta_con_at_v;
+
+            // ----------------------------------------------------
+            // V -> U interpolation of xi_con.
+            // ----------------------------------------------------
+
+            const VVM::Real xi_con_at_u =
+                VVM::real(0.25) * (xi_con(k, j, i) + xi_con(k, j, i + 1) + xi_con(k, j - 1, i) +
+                                      xi_con(k, j - 1, i + 1));
+
+            eta(k, j, i) = -B_u.a21(j, i) * xi_con_at_u + B_u.a22(j, i) * eta_con(k, j, i);
+        });
+}
+
+void
+DynamicalCore::compute_diagnostic_fields() const {
+    // Generalized-coordinate turbulence calculates deformation directly
+    // from u^i and g_ij. The old diagnostic_scheme_ is retained only for
+    // the legacy Cartesian path.
+    if (grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
+        return;
+    }
     auto& R_xi_field = R_xi_ref_.get(state_, "R_xi");
     auto& R_eta_field = R_eta_ref_.get(state_, "R_eta");
     auto& R_zeta_field = R_zeta_ref_.get(state_, "R_zeta");
@@ -142,54 +423,111 @@ void DynamicalCore::compute_diagnostic_fields() const {
     diagnostic_scheme_->calculate_R_zeta(state_, grid_, params_, R_zeta_field);
 }
 
-void DynamicalCore::initialize_restart_history() {
-    int rank = grid_.get_mpi_rank();
+void
+DynamicalCore::initialize_restart_history() {
+    const int rank = grid_.get_mpi_rank();
+
+    // Preserve loaded RLL wind and seed the solver's circulation target.
+    wind_solver_->initialize_regular_latlon_restart_state();
+    if (grid_.geometry().kind() == Core::Geometry::GeometryKind::Cartesian) {
+        // The Cartesian top-wind means are scalar solver state. Recover them
+        // from the saved physical top wind, which is their value after the
+        // solver's mean correction, before the first resumed prediction.
+        state_.calculate_horizontal_mean(u_ref_.get(state_, "u"),
+            utopmn_ref_.get(state_, "utopmn").get_mutable_device_data());
+        state_.calculate_horizontal_mean(v_ref_.get(state_, "v"),
+            vtopmn_ref_.get(state_, "vtopmn").get_mutable_device_data());
+    }
+
     if (rank == 0) {
         std::cout << "  [WARNING] Restart files do not preserve the previous AB2 "
-                     "tendency. The first step after restart uses first-order history "
-                     "initialization and may differ from an uninterrupted run." << std::endl;
+                     "tendency. The first step after restart uses first-order "
+                     "history initialization and may differ from an uninterrupted "
+                     "run."
+                  << std::endl;
     }
 
     for (const auto& item : numerical_methods_) {
         const std::string& var_name = item.first;
+        if (var_name == "xi") {
+            if (state_.has_field("xi_con_m")) {
+                Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+                    state_.get_field<3>("xi_con_m").get_mutable_device_data(),
+                    state_.get_field<3>("xi_con").get_device_data());
+            }
+        }
+        else if (var_name == "eta") {
+            if (state_.has_field("eta_con_m")) {
+                Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+                    state_.get_field<3>("eta_con_m").get_mutable_device_data(),
+                    state_.get_field<3>("eta_con").get_device_data());
+            }
+        }
+        else {
+            const std::string previous_name = var_name + "_m";
+            if (state_.has_field(previous_name)) {
+                Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+                    state_.get_field<3>(previous_name).get_mutable_device_data(),
+                    state_.get_field<3>(var_name).get_device_data());
+            }
+        }
+    }
 
-        if (state_.has_field(var_name + "_m")) {
-            Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
-                              state_.get_field<3>(var_name + "_m").get_mutable_device_data(),
-                              state_.get_field<3>(var_name).get_device_data());
+    // Non-vorticity tendency initialization retains the established path.
+    for (const auto& item : numerical_methods_) {
+        const std::string& var_name = item.first;
+        const bool is_vorticity =
+            std::find(vorticity_vars_.begin(), vorticity_vars_.end(), var_name) !=
+            vorticity_vars_.end();
+
+        if (!is_vorticity) {
+            item.second->calculate_tendencies(state_, grid_, params_);
+        }
+    }
+
+    // Vorticity restart history must go through exactly the same
+    // density-normalized physical tendency evaluation and physical->con
+    // conversion as a normal timestep.
+    calculate_vorticity_tendencies();
+
+    // Restart provides only one tendency state. Duplicate it into both AB2
+    // history slots so the first resumed step remains the established
+    // first-order startup.
+    for (const auto& item : numerical_methods_) {
+        const std::string& var_name = item.first;
+        if (!state_.has_field("d_" + var_name + "_0")) {
+            continue;
         }
 
-        item.second->calculate_tendencies(state_, grid_, params_);
+        const size_t now_idx = state_.get_step() % 2;
+        const std::string now_name = "d_" + var_name + (now_idx == 0 ? "_0" : "_1");
+        const std::string previous_name = "d_" + var_name + (now_idx == 0 ? "_1" : "_0");
 
-        // NOTE: Restart files currently store the prognostic state but not the
-        // previous AB2 tendency. The tendency evaluated from the restart state is
-        // therefore copied into both history slots. This makes the first resumed
-        // step equivalent to a first-order startup step; normal AB2 integration
-        // resumes afterward. Restart is intended for recovery, not bitwise-exact
-        // continuation.
-        if (state_.has_field("d_" + var_name + "_0")) {
-            const size_t now_idx = state_.get_step() % 2;
-            const std::string now_name  = "d_" + var_name + (now_idx == 0 ? "_0" : "_1");
-            const std::string prev_name = "d_" + var_name + (now_idx == 0 ? "_1" : "_0");
-            Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
-                              state_.get_field<3>(prev_name).get_mutable_device_data(),
-                              state_.get_field<3>(now_name).get_device_data());
-        }
+        Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+            state_.get_field<3>(previous_name).get_mutable_device_data(),
+            state_.get_field<3>(now_name).get_device_data());
     }
 
     if (state_.has_field("utopmn_m")) {
         Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
-                          utopmn_m_ref_.get(state_, "utopmn_m").get_mutable_device_data(),
-                          utopmn_ref_.get(state_, "utopmn").get_device_data());
+            utopmn_m_ref_.get(state_, "utopmn_m").get_mutable_device_data(),
+            utopmn_ref_.get(state_, "utopmn").get_device_data());
     }
+
     if (state_.has_field("vtopmn_m")) {
+
         Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
-                          vtopmn_m_ref_.get(state_, "vtopmn_m").get_mutable_device_data(),
-                          vtopmn_ref_.get(state_, "vtopmn").get_device_data());
+            vtopmn_m_ref_.get(state_, "vtopmn_m").get_mutable_device_data(),
+            vtopmn_ref_.get(state_, "vtopmn").get_device_data());
     }
 }
 
-void DynamicalCore::compute_zeta_vertical_structure(Core::State& state) const {
+void
+DynamicalCore::compute_zeta_vertical_structure(Core::State& state) const {
+    // The composed RLL wind diagnostic integrates zeta with metric factors.
+    if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+        return;
+    }
     auto& zeta_field = zeta_ref_.get(state, "zeta");
     auto zeta_data = zeta_field.get_mutable_device_data();
     const auto& xi = xi_ref_.get(state, "xi").get_device_data();
@@ -199,7 +537,7 @@ void DynamicalCore::compute_zeta_vertical_structure(Core::State& state) const {
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
     const int h = grid_.get_halo_cells();
-    
+
     const VVM::Real dz = grid_.get_dz();
     const VVM::Real dy = grid_.get_dy();
     const VVM::Real dx = grid_.get_dx();
@@ -209,113 +547,77 @@ void DynamicalCore::compute_zeta_vertical_structure(Core::State& state) const {
     const auto& flex_height_coef_up = params_.flex_height_coef_up.get_device_data();
 
     Kokkos::parallel_for("zeta_downward_integration",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny-h, nx-h}),
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
         KOKKOS_LAMBDA(const int j, const int i) {
             // The for-loop inside is to prevent racing condition because lower layers depend on upper layers.
-            for (int k = nz-h-2; k >= h-1; --k) {
+            for (int k = nz - h - 2; k >= h - 1; --k) {
                 // zeta_data(k,j,i) = zeta_data(k+1,j,i) + rhs_data(k,j,i) * -dz / flex_height_coef_up(k);
-                zeta_data(k,j,i) = zeta_data(k+1,j,i) 
-                                 + ( xi(k,j,i+1) -  xi(k,j,i)) * rdx() * dz / (flex_height_coef_up(k))
-                                 - (eta(k,j+1,i) - eta(k,j,i)) * rdy() * dz / (flex_height_coef_up(k));
+                zeta_data(k, j, i) =
+                    zeta_data(k + 1, j, i) +
+                    (xi(k, j, i + 1) - xi(k, j, i)) * rdx() * dz / (flex_height_coef_up(k)) -
+                    (eta(k, j + 1, i) - eta(k, j, i)) * rdy() * dz / (flex_height_coef_up(k));
             }
             // WARNING: NK3 has a upward integration in original VVM code.
             // zeta_data(nz-h,j,i) = zeta_data(nz-h-1,j,i) + rhs_data(nz-h-1,j,i) * dz / flex_height_coef_up(nz-h-1);
-            zeta_data(nz-h,j,i) = zeta_data(nz-h-1,j,i) 
-                             - ( xi(nz-h-1,j,i+1) -  xi(nz-h-1,j,i)) * dz * rdx() / (flex_height_coef_up(nz-h-1))
-                             + (eta(nz-h-1,j+1,i) - eta(nz-h-1,j,i)) * dz * rdy() / (flex_height_coef_up(nz-h-1));
+            zeta_data(nz - h, j, i) = zeta_data(nz - h - 1, j, i) -
+                                      (xi(nz - h - 1, j, i + 1) - xi(nz - h - 1, j, i)) * dz *
+                                          rdx() / (flex_height_coef_up(nz - h - 1)) +
+                                      (eta(nz - h - 1, j + 1, i) - eta(nz - h - 1, j, i)) * dz *
+                                          rdy() / (flex_height_coef_up(nz - h - 1));
 
             // for (int k = 0; k < nz; k++) {
             //     if (k != nz-h-1) zeta_data(k,j,i) = 0;
             // }
-        }
-    );
+        });
     halo_exchanger_.exchange_halos(zeta_field);
     bc_manager_.apply_horizontal_bcs(zeta_field);
 }
 
-void DynamicalCore::compute_wind_fields() {
-    // Assign wind for topography 
-    const auto& ITYPEU = ITYPEU_ref_.get(state_, "ITYPEU").get_device_data();
-    const auto& ITYPEV = ITYPEV_ref_.get(state_, "ITYPEV").get_device_data();
-    const auto& ITYPEW = ITYPEW_ref_.get(state_, "ITYPEW").get_device_data();
-    const auto& max_topo_idx = params_.max_topo_idx;
+void
+DynamicalCore::compute_wind_fields() {
+    using Core::Geometry::GeometryKind;
+    const auto geometry_kind = grid_.geometry().kind();
 
-    auto& u_topo = u_topo_ref_.get(state_, "u_topo").get_mutable_device_data();
-    const auto& u = u_ref_.get(state_, "u").get_device_data();
-    auto& v_topo = v_topo_ref_.get(state_, "v_topo").get_mutable_device_data();
-    const auto& v = v_ref_.get(state_, "v").get_device_data();
-    auto& w_topo = w_topo_ref_.get(state_, "w_topo").get_mutable_device_data();
-    const auto& w = w_ref_.get(state_, "w").get_device_data();
-    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), u_topo, u);
-    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), v_topo, v);
-    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), w_topo, w);
-
-    const int nz = grid_.get_local_total_points_z();
-    const int ny = grid_.get_local_total_points_y();
-    const int nx = grid_.get_local_total_points_x();
-    const int h = grid_.get_halo_cells();
-
-    Kokkos::parallel_for("wind_topo",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h-1, 0, 0}, {max_topo_idx+2, ny, nx}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            if (ITYPEU(k,j,i) != 1) u_topo(k,j,i) = 0;
-            else u_topo(k,j,i) = u(k,j,i);
-
-            if (ITYPEV(k,j,i) != 1) v_topo(k,j,i) = 0;
-            else v_topo(k,j,i) = v(k,j,i);
-
-            if (ITYPEW(k,j,i) != 1) w_topo(k,j,i) = 0;
-            else w_topo(k,j,i) = w(k,j,i);
-        }
-    );
-
-    auto& xi_topo = xi_topo_ref_.get(state_, "xi_topo").get_mutable_device_data();
-    const auto& xi = xi_ref_.get(state_, "xi").get_device_data();
-    auto& eta_topo = eta_topo_ref_.get(state_, "eta_topo").get_mutable_device_data();
-    const auto& eta = eta_ref_.get(state_, "eta").get_device_data();
-    const auto& rdx = params_.rdx;
-    const auto& rdy = params_.rdy;
-    const auto& rdz = params_.rdz;
-    const auto& flex_height_coef_up = params_.flex_height_coef_up.get_device_data();
-
-    // Assign vorticity for topography
-    Kokkos::parallel_for("vorticity_topo",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h-1, h, h}, {nz-h, ny-h, nx-h}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            if (ITYPEV(k,j,i) != 1) {
-                xi_topo(k,j,i) = (w_topo(k,j+1,i) - w_topo(k,j,i)) * rdy()
-                               - (v_topo(k+1,j,i) - v_topo(k,j,i)) * rdz() * flex_height_coef_up(k);
-            }
-            else xi_topo(k,j,i) = xi(k,j,i);
-            
-
-            if (ITYPEU(k,j,i) != 1) {
-                eta_topo(k,j,i) = (w_topo(k,j,i+1) - w_topo(k,j,i)) * rdx()
-                                - (u_topo(k+1,j,i) - u_topo(k,j,i)) * rdz() * flex_height_coef_up(k);
-            }
-            else eta_topo(k,j,i) = eta(k,j,i);
-        }
-    );
-    halo_exchanger_.exchange_halos(xi_topo_ref_.get(state_, "xi_topo"));
-    halo_exchanger_.exchange_halos(eta_topo_ref_.get(state_, "eta_topo"));
-    bc_manager_.apply_horizontal_bcs(xi_topo_ref_.get(state_, "xi_topo"));
-    bc_manager_.apply_horizontal_bcs(eta_topo_ref_.get(state_, "eta_topo"));
-
-    wind_solver_->solve_w();
-    wind_solver_->solve_uv();
+    // WindSolver owns geometry-specific wind recovery and representation
+    // finalization.
+    wind_solver_->solve(bc_manager_);
 
     mean_wind_state_->invalidate();
+
+    if (geometry_kind == GeometryKind::Cartesian) {
+        // Preserve the existing exact Cartesian path. Cartesian physical and
+        // contravariant horizontal components are identical.
+        update_contravariant_wind_shadow_state();
+    }
+    else if (geometry_kind == GeometryKind::RegularLatLon) {
+        // The RLL WindSolver has already committed its final physical wind,
+        // including topology correction and wall treatment, into u_con/v_con.
+        //
+        // The current horizontal-only generalized coordinate leaves the
+        // vertical vorticity component unchanged.
+        Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+            zeta_con_ref_.get(state_, "zeta_con").get_mutable_device_data(),
+            zeta_ref_.get(state_, "zeta").get_device_data());
+    }
+    else {
+        throw std::logic_error("Wind-field finalization is not implemented for geometry '" +
+                               std::string(grid_.geometry().name()) + "'.");
+    }
 }
 
-void DynamicalCore::compute_uvtopmn() {
+void
+DynamicalCore::compute_uvtopmn() {
+    if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+        return;
+    }
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
     const int h = grid_.get_halo_cells();
     const auto& dt = params_.dt;
 
-    const auto& u = u_ref_.get(state_, "u").get_device_data();
-    const auto& v = v_ref_.get(state_, "v").get_device_data();
+    const auto& u = u_con_ref_.get(state_, "u_con").get_device_data();
+    const auto& v = v_con_ref_.get(state_, "v_con").get_device_data();
     const auto& w = w_ref_.get(state_, "w").get_device_data();
     const auto& flex_height_coef_mid = params_.flex_height_coef_mid.get_device_data();
     const auto& rhobar = rhobar_ref_.get(state_, "rhobar").get_device_data();
@@ -327,18 +629,19 @@ void DynamicalCore::compute_uvtopmn() {
     auto& tempu = tempu_field.get_mutable_device_data();
     auto& tempv = tempv_field.get_mutable_device_data();
 
-    auto &utopmn = utopmn_ref_.get(state_, "utopmn");
-    auto &vtopmn = vtopmn_ref_.get(state_, "vtopmn");
+    auto& utopmn = utopmn_ref_.get(state_, "utopmn");
+    auto& vtopmn = vtopmn_ref_.get(state_, "vtopmn");
 
     Kokkos::parallel_for("calculate_utopmn",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h,h}, {ny-h, nx-h}),
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
         KOKKOS_LAMBDA(const int j, const int i) {
-            tempu(j,i) = (rhobar(nz-h-2)*u(nz-h-2,j,i) + rhobar(nz-h-1)*u(nz-h-1,j,i)) 
-                       * (w(nz-h-2,j,i)+w(nz-h-2,j,i+1));
-            tempv(j,i) = (rhobar(nz-h-2)*v(nz-h-2,j,i) + rhobar(nz-h-1)*v(nz-h-1,j,i)) 
-                       * (w(nz-h-2,j,i)+w(nz-h-2,j+1,i));
-        }
-    );
+            tempu(j, i) = (rhobar(nz - h - 2) * u(nz - h - 2, j, i) +
+                              rhobar(nz - h - 1) * u(nz - h - 1, j, i)) *
+                          (w(nz - h - 2, j, i) + w(nz - h - 2, j, i + 1));
+            tempv(j, i) = (rhobar(nz - h - 2) * v(nz - h - 2, j, i) +
+                              rhobar(nz - h - 1) * v(nz - h - 1, j, i)) *
+                          (w(nz - h - 2, j, i) + w(nz - h - 2, j + 1, i));
+        });
     state_.calculate_horizontal_mean(tempu_field, tempumn_);
     state_.calculate_horizontal_mean(tempv_field, tempvmn_);
 
@@ -353,8 +656,8 @@ void DynamicalCore::compute_uvtopmn() {
         }
     });
 
-    int NK2 = nz-h-1;
-    int NK1 = nz-h-2;
+    int NK2 = nz - h - 1;
+    int NK1 = nz - h - 2;
 
     const auto& RKM = RKM_ref_.get(state_, "RKM").get_device_data();
     const auto& RKH = RKH_ref_.get(state_, "RKH").get_device_data();
@@ -367,14 +670,15 @@ void DynamicalCore::compute_uvtopmn() {
     auto mean_v_turb = mean_v_turb_;
     if (enable_turbulence_) {
         Kokkos::parallel_for("calculate_utopmn_diffusion",
-            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h,h}, {ny-h, nx-h}),
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
             KOKKOS_LAMBDA(const int j, const int i) {
-                tempu(j,i) = (RKM(NK1,j,i)+RKM(NK1,j,i+1)+RKM(NK2,j,i)+RKM(NK2,j,i+1))
-                             *R_eta(NK1,j,i)*rhobar_up(NK1);
-                tempv(j,i) = (RKM(NK1,j,i)+RKM(NK1,j+1,i)+RKM(NK2,j,i)+RKM(NK2,j+1,i))
-                             *R_xi(NK1,j,i)*rhobar_up(NK1);
-            }
-        );
+                tempu(j, i) =
+                    (RKM(NK1, j, i) + RKM(NK1, j, i + 1) + RKM(NK2, j, i) + RKM(NK2, j, i + 1)) *
+                    R_eta(NK1, j, i) * rhobar_up(NK1);
+                tempv(j, i) =
+                    (RKM(NK1, j, i) + RKM(NK1, j + 1, i) + RKM(NK2, j, i) + RKM(NK2, j + 1, i)) *
+                    R_xi(NK1, j, i) * rhobar_up(NK1);
+            });
         state_.calculate_horizontal_mean(tempu_field, mean_u_turb_);
         state_.calculate_horizontal_mean(tempv_field, mean_v_turb_);
         Kokkos::parallel_for("DataClipZero", 1, KOKKOS_LAMBDA(const int i) {
@@ -395,12 +699,11 @@ void DynamicalCore::compute_uvtopmn() {
     if (enable_coriolis_) {
         // Coriolis force
         Kokkos::parallel_for("calculate_utopmn_coriolis",
-            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h,h}, {ny-h, nx-h}),
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
             KOKKOS_LAMBDA(const int j, const int i) {
-                tempu(j,i) = f(j) * v(NK2, j, i);
-                tempv(j,i) = f(j) * u(NK2, j, i);
-            }
-        );
+                tempu(j, i) = f(j) * v(NK2, j, i);
+                tempv(j, i) = f(j) * u(NK2, j, i);
+            });
         state_.calculate_horizontal_mean(tempu_field, mean_u_coriolis_);
         state_.calculate_horizontal_mean(tempv_field, mean_v_coriolis_);
         Kokkos::parallel_for("DataClipZero", 1, KOKKOS_LAMBDA(const int i) {
@@ -421,9 +724,13 @@ void DynamicalCore::compute_uvtopmn() {
     auto& vtopmn_prev_step = vtopmn_m_ref_.get(state_, "vtopmn_m");
 
     // update utopmn, vtopmn
-    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), utopmn_prev_step.get_mutable_device_data(), utopmn_to_update.get_device_data());
+    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+        utopmn_prev_step.get_mutable_device_data(),
+        utopmn_to_update.get_device_data());
     auto& utopmn_old_view = utopmn_prev_step.get_device_data();
-    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), vtopmn_prev_step.get_mutable_device_data(), vtopmn_to_update.get_device_data());
+    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+        vtopmn_prev_step.get_mutable_device_data(),
+        vtopmn_to_update.get_device_data());
     auto& vtopmn_old_view = vtopmn_prev_step.get_device_data();
 
     auto& d_utopmn = d_utopmn_ref_.get(state_, "d_utopmn").get_mutable_device_data();
@@ -433,45 +740,45 @@ void DynamicalCore::compute_uvtopmn() {
     size_t prev_idx = (state_.get_step() + 1) % 2;
 
     if (state_.get_step() == 0) {
-        Kokkos::parallel_for("Cauculate_uvtopmn", 
-            1, 
-            KOKKOS_LAMBDA(const int i) {
-                d_utopmn(now_idx) = real(0.25) * flex_height_coef_mid(NK2) * tempumn() * rdz() / rhobar(NK2)
-                                   -real(0.25) * flex_height_coef_mid(NK2) * mean_u_turb() * rdz() / rhobar(NK2)
-                                   +mean_u_coriolis();
-                d_vtopmn(now_idx) = real(0.25) * flex_height_coef_mid(NK2) * tempvmn() * rdz() / rhobar(NK2)
-                                   -real(0.25) * flex_height_coef_mid(NK2) * mean_v_turb() * rdz() / rhobar(NK2)
-                                   -mean_v_coriolis();
+        Kokkos::parallel_for("Cauculate_uvtopmn", 1, KOKKOS_LAMBDA(const int i) {
+            d_utopmn(now_idx) =
+                real(0.25) * flex_height_coef_mid(NK2) * tempumn() * rdz() / rhobar(NK2) -
+                real(0.25) * flex_height_coef_mid(NK2) * mean_u_turb() * rdz() / rhobar(NK2) +
+                mean_u_coriolis();
+            d_vtopmn(now_idx) =
+                real(0.25) * flex_height_coef_mid(NK2) * tempvmn() * rdz() / rhobar(NK2) -
+                real(0.25) * flex_height_coef_mid(NK2) * mean_v_turb() * rdz() / rhobar(NK2) -
+                mean_v_coriolis();
 
-                utopmn_new_view() = utopmn_old_view() + dt() * d_utopmn(now_idx);
-                vtopmn_new_view() = vtopmn_old_view() + dt() * d_vtopmn(now_idx);
-            }
-        );
+            utopmn_new_view() = utopmn_old_view() + dt() * d_utopmn(now_idx);
+            vtopmn_new_view() = vtopmn_old_view() + dt() * d_vtopmn(now_idx);
+        });
     }
     else {
-        Kokkos::parallel_for("Cauculate_uvtopmn", 
-            1, 
-            KOKKOS_LAMBDA(const int i) {
-                d_utopmn(now_idx) = real(0.25) * flex_height_coef_mid(NK2) * tempumn() * rdz() / rhobar(NK2)
-                                   -real(0.25) * flex_height_coef_mid(NK2) * mean_u_turb() * rdz() / rhobar(NK2)
-                                   +mean_u_coriolis();
-                d_vtopmn(now_idx) = real(0.25) * flex_height_coef_mid(NK2) * tempvmn() * rdz() / rhobar(NK2)
-                                   -real(0.25) * flex_height_coef_mid(NK2) * mean_v_turb() * rdz() / rhobar(NK2)
-                                   -mean_v_coriolis();
+        Kokkos::parallel_for("Cauculate_uvtopmn", 1, KOKKOS_LAMBDA(const int i) {
+            d_utopmn(now_idx) =
+                real(0.25) * flex_height_coef_mid(NK2) * tempumn() * rdz() / rhobar(NK2) -
+                real(0.25) * flex_height_coef_mid(NK2) * mean_u_turb() * rdz() / rhobar(NK2) +
+                mean_u_coriolis();
+            d_vtopmn(now_idx) =
+                real(0.25) * flex_height_coef_mid(NK2) * tempvmn() * rdz() / rhobar(NK2) -
+                real(0.25) * flex_height_coef_mid(NK2) * mean_v_turb() * rdz() / rhobar(NK2) -
+                mean_v_coriolis();
 
-                utopmn_new_view() = utopmn_old_view() 
-                        + dt() * (real(1.5) * d_utopmn(now_idx) - real(0.5) * d_utopmn(prev_idx));
-                vtopmn_new_view() = vtopmn_old_view() 
-                        + dt() * (real(1.5) * d_vtopmn(now_idx) - real(0.5) * d_vtopmn(prev_idx));
-            }
-        );
+            utopmn_new_view() = utopmn_old_view() + dt() * (real(1.5) * d_utopmn(now_idx) -
+                                                               real(0.5) * d_utopmn(prev_idx));
+            vtopmn_new_view() = vtopmn_old_view() + dt() * (real(1.5) * d_vtopmn(now_idx) -
+                                                               real(0.5) * d_vtopmn(prev_idx));
+        });
     }
     return;
 }
 
-
-void DynamicalCore::ensure_field_cache() {
-    if (field_cache_ready_) return;
+void
+DynamicalCore::ensure_field_cache() {
+    if (field_cache_ready_) {
+        return;
+    }
 
     auto build = [&](const std::vector<std::string>& var_names,
                      std::vector<VariableCache>& out,
@@ -480,14 +787,23 @@ void DynamicalCore::ensure_field_cache() {
         for (const auto& var_name : var_names) {
             VariableCache entry;
             entry.name = var_name;
-            entry.field = &state_.get_field<3>(var_name);
+            if (var_name == "xi") {
+                entry.field = &xi_con_ref_.get(state_, "xi_con");
+            }
+            else if (var_name == "eta") {
+                entry.field = &eta_con_ref_.get(state_, "eta_con");
+            }
+            else {
+                entry.field = &state_.get_field<3>(var_name);
+            }
+
             const auto method_it = numerical_methods_.find(var_name);
-            entry.method = (method_it == numerical_methods_.end())
-                           ? nullptr : method_it->second.get();
+            entry.method =
+                (method_it == numerical_methods_.end()) ? nullptr : method_it->second.get();
             if (with_fe_tendency) {
                 const std::string fe_name = "fe_tendency_" + var_name;
-                entry.fe_tendency = state_.has_field(fe_name)
-                                    ? &state_.get_field<3>(fe_name) : nullptr;
+                entry.fe_tendency =
+                    state_.has_field(fe_name) ? &state_.get_field<3>(fe_name) : nullptr;
             }
             entry.is_th = (var_name == "th");
             entry.is_xi = (var_name == "xi");
@@ -501,7 +817,9 @@ void DynamicalCore::ensure_field_cache() {
     build(vorticity_vars_, vorticity_cache_, false);
 
     for (const auto& var : thermo_cache_) {
-        if (var.method == nullptr || var.method->uses_multistage_scheme()) continue;
+        if (var.method == nullptr || var.method->uses_multistage_scheme()) {
+            continue;
+        }
         single_stage_thermo_.push_back(&var);
         single_stage_thermo_fields_.push_back(var.field);
     }
@@ -509,7 +827,8 @@ void DynamicalCore::ensure_field_cache() {
     field_cache_ready_ = true;
 }
 
-void DynamicalCore::calculate_thermo_tendencies() {
+void
+DynamicalCore::calculate_thermo_tendencies() {
     ensure_field_cache();
 
     for (const auto& var : thermo_cache_) {
@@ -526,7 +845,8 @@ void DynamicalCore::calculate_thermo_tendencies() {
     }
 }
 
-void DynamicalCore::update_thermodynamics(VVM::Real dt) {
+void
+DynamicalCore::update_thermodynamics(VVM::Real dt) {
     ensure_field_cache();
 
     const int h = grid_.get_halo_cells();
@@ -542,16 +862,18 @@ void DynamicalCore::update_thermodynamics(VVM::Real dt) {
         if (var_cache.is_th) {
             const auto thbar = thbar_ref_.get(state_, "thbar").get_device_data();
             Kokkos::parallel_for("topo_bc_th",
-                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {max_topo_idx + 1, ny - h, nx - h}),
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h},
+                    {max_topo_idx + 1, ny - h, nx - h}),
                 KOKKOS_LAMBDA(const int k, const int j, const int i) {
                     if (ITYPEW(k, j, i) != VVM::real(1.0)) {
                         var(k, j, i) = thbar(k);
                     }
                 });
-        } 
+        }
         else {
             Kokkos::parallel_for("topo_thermodynamic",
-                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {max_topo_idx + 1, ny - h, nx - h}),
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h},
+                    {max_topo_idx + 1, ny - h, nx - h}),
                 KOKKOS_LAMBDA(const int k, const int j, const int i) {
                     if (ITYPEW(k, j, i) != VVM::real(1.0)) {
                         var(k, j, i) = VVM::real(0.0);
@@ -566,25 +888,30 @@ void DynamicalCore::update_thermodynamics(VVM::Real dt) {
         // values first, then fill global horizontal and vertical boundaries.
         halo_exchanger_.exchange_halos(*var_cache.field);
         bc_manager_.apply_horizontal_bcs(*var_cache.field);
-        if (var_cache.zero_gradient_top) bc_manager_.apply_zero_gradient(*var_cache.field);
-        else bc_manager_.apply_zero_gradient_bottom_zero_top(*var_cache.field);
+        if (var_cache.zero_gradient_top) {
+            bc_manager_.apply_zero_gradient(*var_cache.field);
+        }
+        else {
+            bc_manager_.apply_zero_gradient_bottom_zero_top(*var_cache.field);
+        }
     };
 
     for (const auto& var : thermo_cache_) {
-        if (var.method == nullptr) continue;
+        if (var.method == nullptr) {
+            continue;
+        }
 
         auto& numerical_method = *var.method;
         if (numerical_method.uses_multistage_scheme()) {
             const std::string previous_name = var.name + "_m";
             if (state_.has_field(previous_name)) {
-                Kokkos::deep_copy(
-                    Kokkos::DefaultExecutionSpace(),
+                Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
                     state_.get_field<3>(previous_name).get_mutable_device_data(),
                     var.field->get_device_data());
             }
-            numerical_method.advance(
-                state_, grid_, params_, dt,
-                [&]() { process_stage_field(var); });
+            numerical_method.advance(state_, grid_, params_, dt, [&]() {
+                process_stage_field(var);
+            });
         }
         else {
             numerical_method.advance(state_, grid_, params_, dt);
@@ -607,50 +934,141 @@ void DynamicalCore::update_thermodynamics(VVM::Real dt) {
     }
 }
 
-void DynamicalCore::calculate_vorticity_tendencies() {
+void
+DynamicalCore::calculate_vorticity_tendencies() {
     ensure_field_cache();
 
-    const int nz = grid_.get_local_total_points_z();
-    const int ny = grid_.get_local_total_points_y();
-    const int nx = grid_.get_local_total_points_x();
-    const int h = grid_.get_halo_cells();
-    const auto& rhobar_up = rhobar_up_ref_.get(state_, "rhobar_up").get_device_data();
-    const auto& rhobar = rhobar_ref_.get(state_, "rhobar").get_device_data();
+    using Core::Geometry::GeometryKind;
 
-    auto& xi = xi_ref_.get(state_, "xi").get_mutable_device_data();
-    auto& eta = eta_ref_.get(state_, "eta").get_mutable_device_data();
-    auto& zeta = zeta_ref_.get(state_, "zeta").get_mutable_device_data();
-    
-    // Divide by density
-    Kokkos::parallel_for("divide_by_density_xi_eta",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h-1, 0, 0}, {nz-h, ny, nx}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            xi(k, j, i) /= rhobar_up(k);
-            eta(k, j, i) /= rhobar_up(k);
-        }
-    );
-    Kokkos::parallel_for("divide_by_density_zeta",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h-1, 0, 0}, {nz-h+1, ny, nx}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            zeta(k, j, i) /= rhobar(k);
-        }
-    );
+    const auto geometry_kind = grid_.geometry().kind();
+    const bool cartesian_exact = geometry_kind == GeometryKind::Cartesian;
 
-    // Calculate vorticity tendency
+    if (cartesian_exact) {
+        // Preserve the established Cartesian density-normalization path.
+        prepare_vorticity_for_tendency_evaluation();
+    }
+    else if (geometry_kind != GeometryKind::RegularLatLon) {
+        // Do not admit a new geometry before wind recovery and topology
+        // support it. Generalized tendency kernels alone are not sufficient.
+        throw std::logic_error("Vorticity tendency evaluation currently supports only "
+                               "Cartesian and regular latitude-longitude geometry.");
+    }
+
     for (const auto& var : vorticity_cache_) {
         if (var.method != nullptr) {
+            // Generalized producers already write canonical AB2/FE histories.
+            // Do not rescale these buffers or touch unrelated physics scratch.
             var.method->calculate_tendencies(state_, grid_, params_);
         }
     }
+
+    if (cartesian_exact) {
+        restore_vorticity_after_tendency_evaluation();
+        sync_contravariant_vorticity_from_physical();
+    }
 }
 
-void DynamicalCore::update_vorticity(VVM::Real dt) {
+void
+DynamicalCore::update_vorticity(VVM::Real dt) {
     ensure_field_cache();
 
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
     const int h = grid_.get_halo_cells();
+
+    for (const auto& var : vorticity_cache_) {
+        if (var.method == nullptr) {
+            continue;
+        }
+
+        if (var.is_xi) {
+            Core::Field<3>* previous = nullptr;
+            if (state_.has_field("xi_con_m")) {
+                previous = &state_.get_field<3>("xi_con_m");
+            }
+            var.method->advance(state_, grid_, params_, dt, *var.field, previous);
+        }
+        else if (var.is_eta) {
+            Core::Field<3>* previous = nullptr;
+            if (state_.has_field("eta_con_m")) {
+                previous = &state_.get_field<3>("eta_con_m");
+            }
+            var.method->advance(state_, grid_, params_, dt, *var.field, previous);
+        }
+        else {
+            var.method->advance(state_, grid_, params_, dt);
+        }
+
+        auto& var_data = var.field->get_mutable_device_data();
+        const auto& max_topo_idx = params_.max_topo_idx;
+
+        if (var.is_xi) {
+            const auto& ITYPEV = ITYPEV_ref_.get(state_, "ITYPEV").get_device_data();
+
+            Kokkos::parallel_for("mask_xi_topo",
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {max_topo_idx + 2, ny, nx}),
+                KOKKOS_LAMBDA(const int k, const int j, const int i) {
+                    if (ITYPEV(k, j, i) != 1) {
+                        var_data(k, j, i) = real(0.0);
+                    }
+                });
+        }
+        else if (var.is_eta) {
+            const auto& ITYPEU = ITYPEU_ref_.get(state_, "ITYPEU").get_device_data();
+
+            Kokkos::parallel_for("mask_eta_topo",
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {max_topo_idx + 2, ny, nx}),
+                KOKKOS_LAMBDA(const int k, const int j, const int i) {
+                    if (ITYPEU(k, j, i) != 1) {
+                        var_data(k, j, i) = real(0.0);
+                    }
+                });
+        }
+
+        halo_exchanger_.exchange_halos(*var.field);
+        bc_manager_.apply_horizontal_bcs(*var.field);
+    }
+
+    // Vertical vorticity boundary conditions now apply directly to the
+    // canonical horizontal prognostic components.
+    bc_manager_.apply_vorticity_bc(xi_con_ref_.get(state_, "xi_con"));
+    bc_manager_.apply_vorticity_bc(eta_con_ref_.get(state_, "eta_con"));
+
+    // Legacy physics / output / Cartesian zeta reconstruction still consume
+    // physical xi / eta.
+    sync_physical_horizontal_vorticity_from_contravariant();
+
+    if (config_.get_value<std::string>("simulation.idealized_test", "none") != "twisting") {
+        compute_zeta_vertical_structure(state_);
+    }
+
+    // The current generalized coordinate changes only the horizontal basis,
+    // so omega^3 remains identical to physical zeta.
+    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+        zeta_con_ref_.get(state_, "zeta_con").get_mutable_device_data(),
+        zeta_ref_.get(state_, "zeta").get_device_data());
+}
+
+void
+DynamicalCore::diagnose_wind_fields(Core::State& state) {
+    compute_uvtopmn();
+    compute_wind_fields();
+}
+
+void
+DynamicalCore::prepare_vorticity_for_tendency_evaluation() {
+    // xi_con / eta_con are the persistent prognostic state.
+    //
+    // Existing spatial tendency operators still consume the established
+    // physical/legacy representation.
+    sync_physical_horizontal_vorticity_from_contravariant();
+
+    const int nz = grid_.get_local_total_points_z();
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
+    const int h = grid_.get_halo_cells();
+
     const auto& rhobar_up = rhobar_up_ref_.get(state_, "rhobar_up").get_device_data();
     const auto& rhobar = rhobar_ref_.get(state_, "rhobar").get_device_data();
 
@@ -658,70 +1076,49 @@ void DynamicalCore::update_vorticity(VVM::Real dt) {
     auto& eta = eta_ref_.get(state_, "eta").get_mutable_device_data();
     auto& zeta = zeta_ref_.get(state_, "zeta").get_mutable_device_data();
 
+    Kokkos::parallel_for("divide_by_density_xi_eta",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {nz - h, ny, nx}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) {
+            xi(k, j, i) /= rhobar_up(k);
+            eta(k, j, i) /= rhobar_up(k);
+        });
+
+    Kokkos::parallel_for("divide_by_density_zeta",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {nz - h + 1, ny, nx}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) { zeta(k, j, i) /= rhobar(k); });
+}
+
+void
+DynamicalCore::restore_vorticity_after_tendency_evaluation() {
+    const int nz = grid_.get_local_total_points_z();
+    const int ny = grid_.get_local_total_points_y();
+    const int nx = grid_.get_local_total_points_x();
+    const int h = grid_.get_halo_cells();
+
+    const auto& rhobar_up = rhobar_up_ref_.get(state_, "rhobar_up").get_device_data();
+    const auto& rhobar = rhobar_ref_.get(state_, "rhobar").get_device_data();
+
+    auto& xi = xi_ref_.get(state_, "xi").get_mutable_device_data();
+    auto& eta = eta_ref_.get(state_, "eta").get_mutable_device_data();
+    auto& zeta = zeta_ref_.get(state_, "zeta").get_mutable_device_data();
+
+    // Restore the temporary physical compatibility representation after
+    // density-normalized tendency evaluation.
+    //
+    // xi_con / eta_con remain the persistent prognostic state.
+
     Kokkos::parallel_for("multiply_density_xi",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h-1, 0, 0}, {nz-h, ny, nx}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            xi(k, j, i) *= rhobar_up(k);
-        }
-    );
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {nz - h, ny, nx}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) { xi(k, j, i) *= rhobar_up(k); });
+
     Kokkos::parallel_for("multiply_density_eta",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h-1, 0, 0}, {nz-h, ny, nx}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            eta(k, j, i) *= rhobar_up(k);
-        }
-    );
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {nz - h, ny, nx}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) { eta(k, j, i) *= rhobar_up(k); });
+
     Kokkos::parallel_for("multiply_density_zeta",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h-1, 0, 0}, {nz-h+1, ny, nx}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            zeta(k, j, i) *= rhobar(k);
-        }
-    );
-
-    for (const auto& var : vorticity_cache_) {
-        if (var.method != nullptr) {
-            var.method->advance(state_, grid_, params_, dt);
-
-            auto& var_data = var.field->get_mutable_device_data();
-            const auto& max_topo_idx = params_.max_topo_idx;
-            const int h = grid_.get_halo_cells();
-            if (var.is_xi) {
-                const auto& ITYPEV = ITYPEV_ref_.get(state_, "ITYPEV").get_device_data();
-                Kokkos::parallel_for("mask_xi_topo",
-                    Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h-1, 0, 0}, {max_topo_idx+2, ny, nx}),
-                    KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                        if (ITYPEV(k, j, i) != 1) var_data(k, j, i) = real(0.0);
-                    }
-                );
-            } 
-            else if (var.is_eta) {
-                const auto& ITYPEU = ITYPEU_ref_.get(state_, "ITYPEU").get_device_data();
-                Kokkos::parallel_for("mask_eta_topo",
-                    Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h-1, 0, 0}, {max_topo_idx+2, ny, nx}),
-                    KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                        if (ITYPEU(k, j, i) != 1) var_data(k, j, i) = real(0.0);
-                    }
-                );
-            }
-
-
-
-            halo_exchanger_.exchange_halos(*var.field);
-            bc_manager_.apply_horizontal_bcs(*var.field);
-        }
-    }
-    bc_manager_.apply_vorticity_bc(xi_ref_.get(state_, "xi"));
-    bc_manager_.apply_vorticity_bc(eta_ref_.get(state_, "eta"));
- 
-    if (config_.get_value<std::string>("simulation.idealized_test", "none") != "twisting") {
-        compute_zeta_vertical_structure(state_);
-    }
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h - 1, 0, 0}, {nz - h + 1, ny, nx}),
+        KOKKOS_LAMBDA(const int k, const int j, const int i) { zeta(k, j, i) *= rhobar(k); });
 }
-
-void DynamicalCore::diagnose_wind_fields(Core::State& state) {
-    compute_uvtopmn(); 
-    compute_wind_fields();
-}
-
 
 } // namespace Dynamics
 } // namespace VVM

@@ -3,9 +3,9 @@
 
 // Keep this public include stable while each transport owns its implementation.
 #if defined(ENABLE_NCCL)
-#include "HaloExchangerNCCL.hpp"
+#include "core/haloexchange/HaloExchangerNCCL.hpp"
 #else
-#include "HaloExchangerMPI.hpp"
+#include "core/haloexchange/HaloExchangerMPI.hpp"
 #endif
 
 #endif // VVM_CORE_HALOEXCHANGER_HPP

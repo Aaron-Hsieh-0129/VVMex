@@ -3,7 +3,7 @@
 
 #include "TendencyTerm.hpp"
 #include "dynamics/spatial_schemes/SpatialScheme.hpp"
-#include "core/HaloExchanger.hpp"
+#include "core/haloexchange/HaloExchanger.hpp"
 #include <memory>
 #include <string>
 
@@ -12,14 +12,16 @@ namespace Dynamics {
 
 class CoriolisTerm : public TendencyTerm {
 public:
-    CoriolisTerm(std::unique_ptr<SpatialScheme> scheme, std::string var_name, VVM::Core::HaloExchanger& halo_exchanger);
+    CoriolisTerm(std::unique_ptr<SpatialScheme> scheme,
+        std::string var_name,
+        VVM::Core::HaloExchanger& halo_exchanger);
     ~CoriolisTerm() override;
 
-    void compute_tendency(
-        Core::State& state, 
+    void compute_tendency(Core::State& state,
         const Core::Grid& grid,
-        const Core::Parameters& params, 
+        const Core::Parameters& params,
         Core::Field<3>& out_tendency) const override;
+
 private:
     std::unique_ptr<SpatialScheme> scheme_;
     std::string variable_name_;

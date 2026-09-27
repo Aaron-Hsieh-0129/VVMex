@@ -97,8 +97,10 @@ cmake --build build -j 64
 
 ./submit.py --local --preset <preset> \
     -c rundata/input_configs/default_cases/advection_u.json --compute 1
-ctest --test-dir build -L unit            # optional: fast, no GPU needed
+ctest --test-dir build -L unit            # unit checks (some use MPI/GPU)
 ```
+
+See [tests/README.md](tests/README.md) for suite flags, RLL model tests, and adding tests.
 
 `submit.py` derives the runtime environment from the preset, so there is no separate environment script to source. For dependencies, cluster presets, designing an experiment, SLURM submission, and choosing an output engine, see the [Quick Start guide](https://aaron-hsieh-0129.github.io/VVMex/quick-start/).
 

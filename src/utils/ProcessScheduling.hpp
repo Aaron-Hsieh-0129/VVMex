@@ -41,7 +41,8 @@ namespace Utils {
 
 // True when `step` is a compute step for a process with this interval.
 // This is the correct convention. Radiation already uses it.
-inline bool is_process_step(std::size_t step, int interval_in_steps) {
+inline bool
+is_process_step(std::size_t step, int interval_in_steps) {
     // An interval that is not strictly positive must never reach the modulo:
     // 0 is a division by zero, and a negative int converts to a huge value in
     // the unsigned arithmetic below. interval_steps_from_frequency() already
@@ -50,7 +51,9 @@ inline bool is_process_step(std::size_t step, int interval_in_steps) {
     // the safe direction -- it can cost time, but it cannot skip physics.
     //
     // Interval 1 takes the same branch because every step is a compute step.
-    if (interval_in_steps <= 1) return true;
+    if (interval_in_steps <= 1) {
+        return true;
+    }
     return step % static_cast<std::size_t>(interval_in_steps) == 0;
 }
 
@@ -69,19 +72,22 @@ inline bool is_process_step(std::size_t step, int interval_in_steps) {
 //
 // Kept as a named function so the behaviour is reproduced on purpose rather
 // than re-derived from an expression that looks like a typo.
-inline bool is_legacy_surface_compute_step(std::size_t step, int interval_in_steps) {
+inline bool
+is_legacy_surface_compute_step(std::size_t step, int interval_in_steps) {
     // Same non-positive guard as is_process_step(): unreachable for a validated
     // interval, and interval 1 computes every step under both conventions, so
     // this does not change any v1.0.0 result.
-    if (interval_in_steps <= 1) return true;
+    if (interval_in_steps <= 1) {
+        return true;
+    }
     return (step - 1) % static_cast<std::size_t>(interval_in_steps) == 0;
 }
 
 // Convert a calling frequency in seconds into a whole number of time steps.
 // Rejects frequencies that are not a positive whole multiple of dt, so the
 // interval handed to is_process_step() is always >= 1.
-inline int interval_steps_from_frequency(double frequency_s, double dt_s,
-                                         const std::string& process_name) {
+inline int
+interval_steps_from_frequency(double frequency_s, double dt_s, const std::string& process_name) {
     const double epsilon = 1e-6;
 
     if (!(frequency_s > 0.0)) {
@@ -92,18 +98,17 @@ inline int interval_steps_from_frequency(double frequency_s, double dt_s,
 
     const double remainder = std::fmod(frequency_s, dt_s);
     if (remainder > epsilon && (dt_s - remainder) > epsilon) {
-        throw std::runtime_error("Error: " + process_name +
-                                 " calling frequency can't be evenly divided by dt.");
+        throw std::runtime_error(
+            "Error: " + process_name + " calling frequency can't be evenly divided by dt.");
     }
 
     const int steps = static_cast<int>(std::round(frequency_s / dt_s));
     if (steps < 1) {
         // frequency_s > 0 but under half a time step: it divides dt to within
         // epsilon yet rounds to zero.
-        throw std::runtime_error("Error: " + process_name +
-                                 " calling frequency (" + std::to_string(frequency_s) +
-                                 " s) is shorter than one time step (" +
-                                 std::to_string(dt_s) + " s).");
+        throw std::runtime_error(
+            "Error: " + process_name + " calling frequency (" + std::to_string(frequency_s) +
+            " s) is shorter than one time step (" + std::to_string(dt_s) + " s).");
     }
     return steps;
 }

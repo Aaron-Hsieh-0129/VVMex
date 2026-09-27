@@ -174,8 +174,10 @@ cannot open a `dtype bp5` descriptor at all. Its rules:
   letter, so `unique_grads_variable_name` sanitises each name and de-duplicates
   the truncations. Untouched names are written without an alias.
 - A variable must map exactly one x and one y dimension. A z-only profile field
-  cannot be expressed, and declaring one fails the whole `open` rather than that
-  variable, so profiles are omitted and named in a `*` comment line.
+  cannot be declared directly in a GrADS CTL. The writer preserves the native
+  1D variable, adds a compact `(z,1,1)` view named `grads_profiles/<name>` in
+  the same BP5 dataset, and writes `vvm_profiles.ctl` with singleton x/y axes.
+  The main `vvm.ctl` points users to that companion descriptor.
 - A 4-D field is declared as `0,z,y,x`, pinning the component axis to a fixed
   index, because the descriptor's dimension count must equal the variable's
   rank.

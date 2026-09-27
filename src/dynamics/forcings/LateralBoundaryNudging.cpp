@@ -5,62 +5,86 @@
 namespace VVM {
 namespace Dynamics {
 
-void LateralBoundaryNudging::check_ncmpi_error(int status, const std::string& msg) const {
+void
+LateralBoundaryNudging::check_ncmpi_error(int status, const std::string& msg) const {
     if (status != NC_NOERR) {
         std::string err_msg = msg + ": " + ncmpi_strerror(status);
         int rank = grid_.get_mpi_rank();
-        if (rank == 0) std::cerr << "PnetCDF Error in LBN: " << err_msg << std::endl;
+        if (rank == 0) {
+            std::cerr << "PnetCDF Error in LBN: " << err_msg << std::endl;
+        }
         MPI_Abort(grid_.get_cart_comm(), status);
         throw std::runtime_error(err_msg);
     }
 }
 
-LateralBoundaryNudging::LateralBoundaryNudging(const Utils::ConfigurationManager& config, 
-                                               const Core::Grid& grid, 
-                                               const Core::Parameters& params,
-                                               Core::State& state)
-    : config_(config), grid_(grid), params_(params) 
-{
+LateralBoundaryNudging::LateralBoundaryNudging(const Utils::ConfigurationManager& config,
+    const Core::Grid& grid,
+    const Core::Parameters& params,
+    Core::State& state)
+    : config_(config), grid_(grid), params_(params) {
     enable_ = config_.get_value<bool>("dynamics.forcings.lateral_boundary_nudging.enable", false);
-    
-    if (enable_) {
-        nudge_W_ = config_.get_value<bool>("dynamics.forcings.lateral_boundary_nudging.boundaries.west", false);
-        nudge_E_ = config_.get_value<bool>("dynamics.forcings.lateral_boundary_nudging.boundaries.east", false);
-        nudge_S_ = config_.get_value<bool>("dynamics.forcings.lateral_boundary_nudging.boundaries.south", false);
-        nudge_N_ = config_.get_value<bool>("dynamics.forcings.lateral_boundary_nudging.boundaries.north", false);
 
-        tau_b_  = config_.get_value<VVM::Real>("dynamics.forcings.lateral_boundary_nudging.tau_b", 300.0);
-        offset_ = config_.get_value<VVM::Real>("dynamics.forcings.lateral_boundary_nudging.offset", 2500.0);
-        width_  = config_.get_value<VVM::Real>("dynamics.forcings.lateral_boundary_nudging.width", 600.0);
-        radius_ = config_.get_value<VVM::Real>("dynamics.forcings.lateral_boundary_nudging.radius", 2500.0);
-        
+    if (enable_) {
+        nudge_W_ =
+            config_.get_value<bool>("dynamics.forcings.lateral_boundary_nudging.boundaries.west",
+                false);
+        nudge_E_ =
+            config_.get_value<bool>("dynamics.forcings.lateral_boundary_nudging.boundaries.east",
+                false);
+        nudge_S_ =
+            config_.get_value<bool>("dynamics.forcings.lateral_boundary_nudging.boundaries.south",
+                false);
+        nudge_N_ =
+            config_.get_value<bool>("dynamics.forcings.lateral_boundary_nudging.boundaries.north",
+                false);
+
+        tau_b_ =
+            config_.get_value<VVM::Real>("dynamics.forcings.lateral_boundary_nudging.tau_b", 300.0);
+        offset_ = config_.get_value<VVM::Real>("dynamics.forcings.lateral_boundary_nudging.offset",
+            2500.0);
+        width_ =
+            config_.get_value<VVM::Real>("dynamics.forcings.lateral_boundary_nudging.width", 600.0);
+        radius_ = config_.get_value<VVM::Real>("dynamics.forcings.lateral_boundary_nudging.radius",
+            2500.0);
+
         inv_tau_b_ = 1.0 / tau_b_;
 
         target_vars_ = config_.get_value<std::vector<std::string>>(
-            "dynamics.forcings.lateral_boundary_nudging.target_vars", 
-            std::vector<std::string>{"th", "qv"}
-        );
+            "dynamics.forcings.lateral_boundary_nudging.target_vars",
+            std::vector<std::string>{"th", "qv"});
 
-        data_dir_ = config_.get_value<std::string>("dynamics.forcings.lateral_boundary_nudging.forcing_data.directory", "../rundata/LS_forcings/");
-        time_varying_ = config_.get_value<bool>("dynamics.forcings.lateral_boundary_nudging.forcing_data.time_varying", false);
+        data_dir_ = config_.get_value<std::string>(
+            "dynamics.forcings.lateral_boundary_nudging.forcing_data.directory",
+            "../rundata/LS_forcings/");
+        time_varying_ = config_.get_value<bool>(
+            "dynamics.forcings.lateral_boundary_nudging.forcing_data.time_varying",
+            false);
 
         if (time_varying_) {
-            file_prefix_ = config_.get_value<std::string>("dynamics.forcings.lateral_boundary_nudging.forcing_data.file_prefix", "ls_forcing_");
-            update_interval_ = config_.get_value<VVM::Real>("dynamics.forcings.lateral_boundary_nudging.forcing_data.update_interval_s", 3600.0);
+            file_prefix_ = config_.get_value<std::string>(
+                "dynamics.forcings.lateral_boundary_nudging.forcing_data.file_prefix",
+                "ls_forcing_");
+            update_interval_ = config_.get_value<VVM::Real>(
+                "dynamics.forcings.lateral_boundary_nudging.forcing_data.update_interval_s",
+                3600.0);
             time_T1_ = 0.0;
             time_T2_ = update_interval_;
-        } 
+        }
         else {
-            file_name_ = config_.get_value<std::string>("dynamics.forcings.lateral_boundary_nudging.forcing_data.file_name_for_not_varying", "ls_forcing_constant.nc");
+            file_name_ = config_.get_value<std::string>(
+                "dynamics.forcings.lateral_boundary_nudging.forcing_data.file_name_for_not_varying",
+                "ls_forcing_constant.nc");
         }
     }
 }
 
-void LateralBoundaryNudging::initialize(Core::State& state) {
+void
+LateralBoundaryNudging::initialize(Core::State& state) {
     int nz = grid_.get_local_total_points_z();
     int ny = grid_.get_local_total_points_y();
     int nx = grid_.get_local_total_points_x();
-    int h  = grid_.get_halo_cells();
+    int h = grid_.get_halo_cells();
     VVM::Real dx = grid_.get_dx();
     VVM::Real dy = grid_.get_dy();
 
@@ -70,13 +94,17 @@ void LateralBoundaryNudging::initialize(Core::State& state) {
     VVM::Real ysize = grid_.get_global_points_y() * dy;
 
     if (!state.has_field("lbn_weight")) {
-        state.add_field<2>("lbn_weight", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Centered, "1", "lateral boundary nudging weight"});
+        state.add_field<2>("lbn_weight",
+            {ny, nx},
+            Core::FieldMetadata{Core::GridStaggering::Centered,
+                "1",
+                "lateral boundary nudging weight"});
     }
 
     for (const auto& var_name : target_vars_) {
         const auto metadata = state.get_field<3>(var_name).get_metadata();
         state.add_field<3>(var_name + "_ls", {nz, ny, nx}, metadata);
-        
+
         if (time_varying_) {
             name_T1_[var_name] = var_name + "_ls_T1";
             name_T2_[var_name] = var_name + "_ls_T2";
@@ -86,23 +114,22 @@ void LateralBoundaryNudging::initialize(Core::State& state) {
     }
 
     auto& weight = lbn_weight_ref_.get(state, "lbn_weight").get_mutable_device_data();
-    
+
     VVM::Real offset = offset_;
-    VVM::Real width  = width_;
+    VVM::Real width = width_;
     VVM::Real radius = radius_;
     VVM::Real nW = nudge_W_, nE = nudge_E_, nS = nudge_S_, nN = nudge_N_;
 
     int rank = grid_.get_mpi_rank();
     if (rank == 0) {
         std::cout << "--- Initializing Lateral Boundary Nudging ---" << std::endl;
-        std::cout << "  * Active boundaries - W: " << nW << ", E: " << nE 
-                  << ", S: " << nS << ", N: " << nN << std::endl;
+        std::cout << "  * Active boundaries - W: " << nW << ", E: " << nE << ", S: " << nS
+                  << ", N: " << nN << std::endl;
     }
 
     Kokkos::parallel_for("Init_LBN_Weight",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny-h, nx-h}),
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
         KOKKOS_LAMBDA(const int j, const int i) {
-            
             VVM::Real x = (global_start_x + (i - h)) * dx + real(0.5) * dx;
             VVM::Real y = (global_start_y + (j - h)) * dy + real(0.5) * dy;
 
@@ -115,61 +142,93 @@ void LateralBoundaryNudging::initialize(Core::State& state) {
             bool in_N = (y > ysize - dc);
 
             if (in_W && in_S && nW && nS) {
-                VVM::Real D = Kokkos::sqrt((x - dc)*(x - dc) + (y - dc)*(y - dc)) - radius;
+                VVM::Real D = Kokkos::sqrt((x - dc) * (x - dc) + (y - dc) * (y - dc)) - radius;
                 f += Kokkos::exp(-real(0.5) * (D / width) * (D / width));
             }
             else if (in_E && in_S && nE && nS) {
-                VVM::Real D = Kokkos::sqrt((x - (xsize - dc))*(x - (xsize - dc)) + (y - dc)*(y - dc)) - radius;
+                VVM::Real D =
+                    Kokkos::sqrt((x - (xsize - dc)) * (x - (xsize - dc)) + (y - dc) * (y - dc)) -
+                    radius;
                 f += Kokkos::exp(-real(0.5) * (D / width) * (D / width));
             }
             else if (in_W && in_N && nW && nN) {
-                VVM::Real D = Kokkos::sqrt((x - dc)*(x - dc) + (y - (ysize - dc))*(y - (ysize - dc))) - radius;
+                VVM::Real D =
+                    Kokkos::sqrt((x - dc) * (x - dc) + (y - (ysize - dc)) * (y - (ysize - dc))) -
+                    radius;
                 f += Kokkos::exp(-real(0.5) * (D / width) * (D / width));
             }
             else if (in_E && in_N && nE && nN) {
-                VVM::Real D = Kokkos::sqrt((x - (xsize - dc))*(x - (xsize - dc)) + (y - (ysize - dc))*(y - (ysize - dc))) - radius;
+                VVM::Real D = Kokkos::sqrt((x - (xsize - dc)) * (x - (xsize - dc)) +
+                                           (y - (ysize - dc)) * (y - (ysize - dc))) -
+                              radius;
                 f += Kokkos::exp(-real(0.5) * (D / width) * (D / width));
             }
             else {
                 // If it's not corner or it's the corner withuout turning on boundary, using 1D linear line.
-                if (nW) f += Kokkos::exp(-0.5 * ((x - offset) / width) * ((x - offset) / width));
-                if (nE) f += Kokkos::exp(-0.5 * ((x - (xsize - offset)) / width) * ((x - (xsize - offset)) / width));
-                if (nS) f += Kokkos::exp(-0.5 * ((y - offset) / width) * ((y - offset) / width));
-                if (nN) f += Kokkos::exp(-0.5 * ((y - (ysize - offset)) / width) * ((y - (ysize - offset)) / width));
+                if (nW) {
+                    f += Kokkos::exp(-0.5 * ((x - offset) / width) * ((x - offset) / width));
+                }
+                if (nE) {
+                    f += Kokkos::exp(
+                        -0.5 * ((x - (xsize - offset)) / width) * ((x - (xsize - offset)) / width));
+                }
+                if (nS) {
+                    f += Kokkos::exp(-0.5 * ((y - offset) / width) * ((y - offset) / width));
+                }
+                if (nN) {
+                    f += Kokkos::exp(
+                        -0.5 * ((y - (ysize - offset)) / width) * ((y - (ysize - offset)) / width));
+                }
             }
 
-            if (f < 1e-3) f = 0.0;
-            if (f > 1.0) f = 1.0;
+            if (f < 1e-3) {
+                f = 0.0;
+            }
+            if (f > 1.0) {
+                f = 1.0;
+            }
 
             weight(j, i) = f;
-        }
-    );
+        });
 
     if (time_varying_) {
         std::ostringstream file_t1, file_t2;
-        file_t1 << data_dir_ << file_prefix_ << std::setfill('0') << std::setw(6) << static_cast<int>(time_T1_) << ".nc";
-        file_t2 << data_dir_ << file_prefix_ << std::setfill('0') << std::setw(6) << static_cast<int>(time_T2_) << ".nc";
+        file_t1 << data_dir_ << file_prefix_ << std::setfill('0') << std::setw(6)
+                << static_cast<int>(time_T1_) << ".nc";
+        file_t2 << data_dir_ << file_prefix_ << std::setfill('0') << std::setw(6)
+                << static_cast<int>(time_T2_) << ".nc";
 
         load_forcing_data(state, file_t1.str(), false); // load to T2
-        for (const auto& var : target_vars_) { std::swap(name_T1_[var], name_T2_[var]); } // swap to T1
+        for (const auto& var : target_vars_) {
+            std::swap(name_T1_[var], name_T2_[var]);
+        } // swap to T1
         load_forcing_data(state, file_t2.str(), false); // load to T2
         update_large_scale_forcing(state, state.get_time());
-    } 
+    }
     else {
         std::string full_filepath = data_dir_ + file_name_;
         load_forcing_data(state, full_filepath, true);
     }
 }
 
-void LateralBoundaryNudging::load_forcing_data(Core::State& state, const std::string& filepath, bool is_constant) {
+void
+LateralBoundaryNudging::load_forcing_data(
+    Core::State& state, const std::string& filepath, bool is_constant) {
     int ncid;
-    int status = ncmpi_open(grid_.get_cart_comm(), filepath.c_str(), NC_NOWRITE, MPI_INFO_NULL, &ncid);
+    int status =
+        ncmpi_open(grid_.get_cart_comm(), filepath.c_str(), NC_NOWRITE, MPI_INFO_NULL, &ncid);
     check_ncmpi_error(status, "Failed to open NetCDF file: " + filepath);
 
-    if (grid_.get_mpi_rank() == 0) std::cout << "  - LBN Loaded Forcing Data: " << filepath << std::endl;
+    if (grid_.get_mpi_rank() == 0) {
+        std::cout << "  - LBN Loaded Forcing Data: " << filepath << std::endl;
+    }
 
-    MPI_Offset start[3] = {0, grid_.get_local_physical_start_y(), grid_.get_local_physical_start_x()};
-    MPI_Offset count[3] = {grid_.get_global_points_z(), grid_.get_local_physical_points_y(), grid_.get_local_physical_points_x()};
+    MPI_Offset start[3] = {0,
+        grid_.get_local_physical_start_y(),
+        grid_.get_local_physical_start_x()};
+    MPI_Offset count[3] = {grid_.get_global_points_z(),
+        grid_.get_local_physical_points_y(),
+        grid_.get_local_physical_points_x()};
     std::vector<VVM::Real> host_buffer(count[0] * count[1] * count[2]);
 
     const int h = grid_.get_halo_cells();
@@ -180,32 +239,37 @@ void LateralBoundaryNudging::load_forcing_data(Core::State& state, const std::st
         status = ncmpi_inq_varid(ncid, var.c_str(), &varid);
         check_ncmpi_error(status, "Cannot find 3D variable '" + var + "' in LBN file");
 #ifdef VVM_USE_DOUBLE_PRECISION
-            check_ncmpi_error(ncmpi_get_vara_double_all(ncid, varid, start, count, host_buffer.data()), "Failed to read 3D variable");
+        check_ncmpi_error(ncmpi_get_vara_double_all(ncid, varid, start, count, host_buffer.data()),
+            "Failed to read 3D variable");
 #else
-            check_ncmpi_error(ncmpi_get_vara_float_all(ncid, varid, start, count, host_buffer.data()), "Failed to read 3D variable");
+        check_ncmpi_error(ncmpi_get_vara_float_all(ncid, varid, start, count, host_buffer.data()),
+            "Failed to read 3D variable");
 #endif
 
         std::string target_field_name = is_constant ? (var + "_ls") : name_T2_[var];
         auto& field = state.get_field<3>(target_field_name);
-        
+
         auto field_view_dev = field.get_mutable_device_data();
         auto field_view_host = Kokkos::create_mirror_view(field_view_dev);
-        
+
         using HostExec = Kokkos::DefaultHostExecutionSpace;
         Kokkos::parallel_for("Init_LBN_Buffer_3D",
             Kokkos::MDRangePolicy<HostExec, Kokkos::Rank<3>>({0, 0, 0}, {nz_in, ny_in, nx_in}),
             [=](const int k, const int j, const int i) {
-                size_t flat_idx = static_cast<size_t>(k) * ny_in * nx_in + static_cast<size_t>(j) * nx_in + static_cast<size_t>(i);
-                field_view_host(k + h, j + h, i + h) = host_buffer[flat_idx];
-            }
-        );
+            size_t flat_idx = static_cast<size_t>(k) * ny_in * nx_in +
+                              static_cast<size_t>(j) * nx_in + static_cast<size_t>(i);
+            field_view_host(k + h, j + h, i + h) = host_buffer[flat_idx];
+        });
         Kokkos::deep_copy(field_view_dev, field_view_host);
     }
     check_ncmpi_error(ncmpi_close(ncid), "Failed to close NetCDF file");
 }
 
-void LateralBoundaryNudging::update_large_scale_forcing(Core::State& state, VVM::Real current_time) {
-    if (!time_varying_) return;
+void
+LateralBoundaryNudging::update_large_scale_forcing(Core::State& state, VVM::Real current_time) {
+    if (!time_varying_) {
+        return;
+    }
 
     if (current_time >= time_T2_) {
         for (const auto& var : target_vars_) {
@@ -216,16 +280,19 @@ void LateralBoundaryNudging::update_large_scale_forcing(Core::State& state, VVM:
         time_T2_ += update_interval_;
 
         std::ostringstream filename_stream;
-        filename_stream << data_dir_ << file_prefix_ 
-                        << std::setfill('0') << std::setw(6) 
+        filename_stream << data_dir_ << file_prefix_ << std::setfill('0') << std::setw(6)
                         << static_cast<int>(time_T2_) << ".nc";
-        
+
         load_forcing_data(state, filename_stream.str(), false);
     }
 
     VVM::Real W = (current_time - time_T1_) / (time_T2_ - time_T1_);
-    if (W < 0.0) W = real(0.0);
-    if (W > 1.0) W = real(1.0);
+    if (W < 0.0) {
+        W = real(0.0);
+    }
+    if (W > 1.0) {
+        W = real(1.0);
+    }
 
     int nz = grid_.get_local_total_points_z();
     int ny = grid_.get_local_total_points_y();
@@ -235,9 +302,9 @@ void LateralBoundaryNudging::update_large_scale_forcing(Core::State& state, VVM:
         forcing_targets_.reserve(target_vars_.size());
         for (const auto& var : target_vars_) {
             forcing_targets_.push_back({&state.get_field<3>(name_T1_.at(var)),
-                                        &state.get_field<3>(name_T2_.at(var)),
-                                        &state.get_field<3>(var + "_ls"),
-                                        "Time_Interpolation_" + var});
+                &state.get_field<3>(name_T2_.at(var)),
+                &state.get_field<3>(var + "_ls"),
+                "Time_Interpolation_" + var});
         }
     }
 
@@ -250,47 +317,44 @@ void LateralBoundaryNudging::update_large_scale_forcing(Core::State& state, VVM:
             Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
             KOKKOS_LAMBDA(const int k, const int j, const int i) {
                 current_ls(k, j, i) = (1.0 - W) * t1_data(k, j, i) + W * t2_data(k, j, i);
-            }
-        );
+            });
     }
 }
 
-template<size_t Dim>
-void LateralBoundaryNudging::calculate_tendencies(Core::State& state, 
-                                                  const std::string& var_name, 
-                                                  Core::Field<Dim>& out_tendency) const 
-{
+template <size_t Dim>
+void
+LateralBoundaryNudging::calculate_tendencies(
+    Core::State& state, const std::string& var_name, Core::Field<Dim>& out_tendency) const {
     const auto& weight = lbn_weight_ref_.get(state, "lbn_weight").get_device_data();
-    
+
     const auto& var = state.get_field<3>(var_name).get_device_data();
-    
+
     const auto& var_ls = state.get_field<3>(var_name + "_ls").get_device_data();
 
     auto& tend = out_tendency.get_mutable_device_data();
-    
+
     int nz = grid_.get_local_total_points_z();
     int ny = grid_.get_local_total_points_y();
     int nx = grid_.get_local_total_points_x();
-    int h  = grid_.get_halo_cells();
-    
+    int h = grid_.get_halo_cells();
+
     VVM::Real inv_tau = inv_tau_b_;
 
     if constexpr (Dim == 3) {
         Kokkos::parallel_for("Sponge_Tendency_Lateral_" + var_name,
-            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {nz-h, ny-h, nx-h}),
+            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {nz - h, ny - h, nx - h}),
             KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                
                 VVM::Real fn = weight(j, i);
-                
+
                 if (fn > real(1e-6)) {
                     tend(k, j, i) += fn * inv_tau * (var_ls(k, j, i) - var(k, j, i));
                 }
-            }
-        );
+            });
     }
 }
 
-template void LateralBoundaryNudging::calculate_tendencies(Core::State& state, const std::string& var_name, Core::Field<3ul>& out_tendency) const;
+template void LateralBoundaryNudging::calculate_tendencies(
+    Core::State& state, const std::string& var_name, Core::Field<3ul>& out_tendency) const;
 
 } // namespace Dynamics
 } // namespace VVM

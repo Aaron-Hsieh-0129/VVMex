@@ -1,22 +1,44 @@
 set(VVM_CORE_SOURCES
     State.cpp
     Grid.cpp
+    GridSpecification.cpp
     Initializer.cpp
+    InitializeBarotropic.cpp
     BoundaryConditionManager.cpp
     Parameters.cpp
+
+    geometry/CartesianGeometry.cpp
+    geometry/RegularLatLonGeometry.cpp
+    geometry/HorizontalGeometryFactory.cpp
+
+    boundary/HorizontalBoundaryStencils.cpp
 )
 
 set(VVM_CORE_HEADERS
     State.hpp
     Grid.hpp
-    HaloExchanger.hpp
-    HaloExchangeDegenerate.hpp
-    HaloExchangerMPI.hpp
-    HaloExchangerNCCL.hpp
+    GridSpecification.hpp
     Initializer.hpp
     BoundaryConditionManager.hpp
     Parameters.hpp
     Field.hpp
+
+    haloexchange/HaloExchanger.hpp
+    haloexchange/HaloExchangeDegenerate.hpp
+    haloexchange/HaloExchangerMPI.hpp
+    haloexchange/HaloExchangerNCCL.hpp
+
+    geometry/GeometryKind.hpp
+    geometry/HorizontalLocation.hpp
+    geometry/HorizontalStaggering.hpp
+    geometry/GeometryField2D.hpp
+    geometry/HorizontalGridSpec.hpp
+    geometry/HorizontalGeometry.hpp
+    geometry/CartesianGeometry.hpp
+    geometry/RegularLatLonGeometry.hpp
+    geometry/HorizontalGeometryFactory.hpp
+
+    boundary/HorizontalBoundaryStencils.hpp
 )
 
 add_library(vvm_core STATIC

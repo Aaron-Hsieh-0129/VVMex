@@ -28,12 +28,12 @@ struct IntegrationStep {
 
 class DynamicalCore {
 public:
-    DynamicalCore(const Utils::ConfigurationManager& config, 
-                  const Core::Grid& grid, 
-                  const Core::Parameters& params,
-                  Core::State& state, 
-                  Core::HaloExchanger& halo_exchanger,
-                  const Core::BoundaryConditionManager& bc_manager);
+    DynamicalCore(const Utils::ConfigurationManager& config,
+        const Core::Grid& grid,
+        const Core::Parameters& params,
+        Core::State& state,
+        Core::HaloExchanger& halo_exchanger,
+        const Core::BoundaryConditionManager& bc_manager);
     ~DynamicalCore();
 
     void compute_diagnostic_fields() const;
@@ -49,6 +49,12 @@ public:
     void diagnose_wind_fields(Core::State& state);
     void initialize_restart_history();
 
+    void update_contravariant_wind_shadow_state();
+    void sync_contravariant_vorticity_from_physical();
+    void sync_physical_horizontal_vorticity_from_contravariant();
+
+    void prepare_vorticity_for_tendency_evaluation();
+    void restore_vorticity_after_tendency_evaluation();
 
 private:
     const Utils::ConfigurationManager& config_;
@@ -58,7 +64,7 @@ private:
     const Core::BoundaryConditionManager& bc_manager_;
     std::vector<std::string> thermo_vars_;
     std::vector<std::string> vorticity_vars_;
-    
+
     std::map<std::string, std::unique_ptr<NumericalMethod>> numerical_methods_;
     std::vector<IntegrationStep> integration_procedure_;
 
@@ -91,10 +97,14 @@ private:
 
     Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> tempumn_{"tempumn"};
     Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> tempvmn_{"tempvmn"};
-    Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> mean_u_turb_{"mean_u_turb"};
-    Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> mean_v_turb_{"mean_v_turb"};
-    Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> mean_u_coriolis_{"mean_u_coriolis"};
-    Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> mean_v_coriolis_{"mean_v_coriolis"};
+    Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> mean_u_turb_{
+        "mean_u_turb"};
+    Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> mean_v_turb_{
+        "mean_v_turb"};
+    Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> mean_u_coriolis_{
+        "mean_u_coriolis"};
+    Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space> mean_v_coriolis_{
+        "mean_v_coriolis"};
 
     Core::FieldRef<0> utopmn_ref_;
     Core::FieldRef<0> utopmn_m_ref_;
@@ -114,11 +124,13 @@ private:
     Core::FieldRef<3> xi_ref_;
     Core::FieldRef<3> eta_ref_;
     Core::FieldRef<3> zeta_ref_;
-    Core::FieldRef<3> u_topo_ref_;
-    Core::FieldRef<3> v_topo_ref_;
-    Core::FieldRef<3> w_topo_ref_;
-    Core::FieldRef<3> xi_topo_ref_;
-    Core::FieldRef<3> eta_topo_ref_;
+
+    Core::FieldRef<3> u_con_ref_;
+    Core::FieldRef<3> v_con_ref_;
+    Core::FieldRef<3> xi_con_ref_;
+    Core::FieldRef<3> eta_con_ref_;
+    Core::FieldRef<3> zeta_con_ref_;
+
     Core::FieldRef<3> R_xi_ref_;
     Core::FieldRef<3> R_eta_ref_;
     Core::FieldRef<3> R_zeta_ref_;

@@ -18,9 +18,9 @@ namespace Dynamics {
 
 class AreaMeanNudging {
 public:
-    AreaMeanNudging(const Utils::ConfigurationManager& config, 
-                    const Core::Grid& grid, 
-                    const Core::Parameters& params);
+    AreaMeanNudging(const Utils::ConfigurationManager& config,
+        const Core::Grid& grid,
+        const Core::Parameters& params);
     ~AreaMeanNudging() = default;
 
     void initialize(Core::State& state);
@@ -36,10 +36,8 @@ public:
     // two backends disagree in the last bit (and moved utopmn/vtopmn with it).
     // Public only because a CUDA extended lambda may not appear in a private
     // member, the same reason WindSolver::relax_2d_batched() is public.
-    void deterministic_global_sum(const Core::State& state,
-                                  const VVM::Real* local,
-                                  VVM::Real* global,
-                                  int count) const;
+    void deterministic_global_sum(
+        const Core::State& state, const VVM::Real* local, VVM::Real* global, int count) const;
 
 private:
     const Utils::ConfigurationManager& config_;
@@ -49,7 +47,7 @@ private:
     bool enable_;
     VVM::Real uvtau_;
     VVM::Real nudgelim_;
-    
+
     VVM::Real inv_total_xy_pts_;
 
     bool use_netcdf_target_ = false;
@@ -67,8 +65,7 @@ private:
     Kokkos::View<VVM::Real*> v_T2_;
 
     std::string forcing_filename(VVM::Real time) const;
-    void load_wind_profiles(
-        const std::string& filename,
+    void load_wind_profiles(const std::string& filename,
         VVM::Real expected_time,
         Kokkos::View<VVM::Real*>& u_target,
         Kokkos::View<VVM::Real*>& v_target) const;
@@ -98,9 +95,8 @@ private:
     Core::FieldRef<3> ITYPEU_ref_;
     Core::FieldRef<3> ITYPEV_ref_;
 
-
 #if defined(ENABLE_NCCL)
-    ncclComm_t nccl_comm_; 
+    ncclComm_t nccl_comm_;
     cudaStream_t stream_;
 #endif
 };

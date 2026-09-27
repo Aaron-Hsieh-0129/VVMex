@@ -18,13 +18,10 @@ struct NumericalConfigurationValues {
     double output_interval;
 };
 
-void validate_numerical_configuration_values(
-    const NumericalConfigurationValues& values,
+void validate_numerical_configuration_values(const NumericalConfigurationValues& values,
     int compute_ranks);
 
-void validate_numerical_configuration(
-    const ConfigurationManager& config,
-    int compute_ranks);
+void validate_numerical_configuration(const ConfigurationManager& config, int compute_ranks);
 
 } // namespace VVM::Utils
 

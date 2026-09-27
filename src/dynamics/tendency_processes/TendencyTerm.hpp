@@ -11,18 +11,17 @@ namespace Dynamics {
 class TendencyTerm {
 public:
     virtual ~TendencyTerm() = default;
-    
-    virtual void compute_tendency(
-        Core::State& state, 
+
+    virtual void compute_tendency(Core::State& state,
         const Core::Grid& grid,
-        const Core::Parameters& params, 
+        const Core::Parameters& params,
         Core::Field<3>& out_tendency) const = 0;
 
     // Existing terms ignore the stage timestep. Timestep-dependent spatial
     // schemes override this distinctly named entry point without hiding the
     // legacy virtual function.
-    virtual void compute_stage_tendency(
-        Core::State& state,
+    virtual void
+    compute_stage_tendency(Core::State& state,
         const Core::Grid& grid,
         const Core::Parameters& params,
         Core::Field<3>& out_tendency,

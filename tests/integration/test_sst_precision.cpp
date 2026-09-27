@@ -15,7 +15,8 @@
 #include <fstream>
 #include <string>
 
-int main(int argc, char** argv) {
+int
+main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
     int rank = 0;
     int world_size = 1;
@@ -25,8 +26,8 @@ int main(int argc, char** argv) {
     if (argc != 4 || world_size != 2) {
         if (rank == 0) {
             std::fprintf(stderr,
-                         "usage: mpirun -n 2 test_sst_precision BASE_CONFIG WORK_ROOT "
-                         "unset|native|float32|float64\n");
+                "usage: mpirun -n 2 test_sst_precision BASE_CONFIG WORK_ROOT "
+                "unset|native|float32|float64\n");
         }
         MPI_Finalize();
         return 2;
@@ -46,8 +47,7 @@ int main(int argc, char** argv) {
             std::filesystem::remove_all(case_dir);
             std::filesystem::create_directories(case_dir);
             std::ofstream output(config_path);
-            output << VVMTest::make_config(argv[1], case_dir, "SST", precision).dump(2)
-                   << '\n';
+            output << VVMTest::make_config(argv[1], case_dir, "SST", precision).dump(2) << '\n';
         }
         MPI_Barrier(MPI_COMM_WORLD);
 
@@ -58,7 +58,8 @@ int main(int argc, char** argv) {
 
         if (is_io_rank) {
             VVM::IO::run_io_server(split_comm, config);
-        } else {
+        }
+        else {
             Kokkos::initialize(Kokkos::InitializationSettings().set_device_id(0));
             {
                 VVM::Core::Grid grid(config, split_comm);
@@ -70,7 +71,9 @@ int main(int argc, char** argv) {
                 MPI_Comm_rank(split_comm, &split_rank);
                 MPI_Comm_size(split_comm, &split_size);
                 ncclUniqueId id;
-                if (split_rank == 0) ncclGetUniqueId(&id);
+                if (split_rank == 0) {
+                    ncclGetUniqueId(&id);
+                }
                 MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, split_comm);
                 ncclComm_t nccl_comm;
                 ncclCommInitRank(&nccl_comm, split_size, id, split_rank);
@@ -84,8 +87,7 @@ int main(int argc, char** argv) {
                 {
                     // Scoped so the writer closes the stream here, which is what
                     // ends the I/O server's read loop.
-                    VVM::IO::OutputManager manager(
-                        config, grid, parameters, state, split_comm);
+                    VVM::IO::OutputManager manager(config, grid, parameters, state, split_comm);
                     manager.write(0, VVM::real(0.0));
                 }
 #if defined(ENABLE_NCCL)
@@ -97,19 +99,22 @@ int main(int argc, char** argv) {
 
         MPI_Comm_free(&split_comm);
         MPI_Barrier(MPI_COMM_WORLD);
-        if (rank == 0) VVMTest::inspect(case_dir / "history_000000.h5", precision);
-    } catch (const std::exception& e) {
+        if (rank == 0) {
+            VVMTest::inspect(case_dir / "history_000000.h5", precision);
+        }
+    }
+    catch (const std::exception& e) {
         std::fprintf(stderr, "[rank %d] exception: %s\n", rank, e.what());
         ++VVMTest::failures;
-        if (Kokkos::is_initialized()) Kokkos::finalize();
+        if (Kokkos::is_initialized()) {
+            Kokkos::finalize();
+        }
     }
 
     int global_failures = 0;
-    MPI_Allreduce(&VVMTest::failures, &global_failures, 1, MPI_INT, MPI_SUM,
-                  MPI_COMM_WORLD);
+    MPI_Allreduce(&VVMTest::failures, &global_failures, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if (rank == 0 && global_failures == 0) {
-        std::fprintf(stdout, "test_sst_precision(%s): all checks passed\n",
-                     precision.c_str());
+        std::fprintf(stdout, "test_sst_precision(%s): all checks passed\n", precision.c_str());
     }
     MPI_Finalize();
     return global_failures == 0 ? 0 : 1;

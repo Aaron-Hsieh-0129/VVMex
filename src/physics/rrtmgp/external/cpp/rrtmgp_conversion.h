@@ -3,6 +3,8 @@
 #include "rrtmgp_const.h"
 
 #include <stdexcept>
+// Aaron: Use fixed-width 64-bit integers for large flattened radiation loops.
+#include <cstdint>
 #include <chrono>
 #define RRTMGP_ENABLE_KOKKOS
 // Validate if both enabled?
@@ -418,13 +420,24 @@ struct MDRP
   }
 };
 
+// Aaron: Use a 64-bit flattened index; promote stride products before multiplying to avoid int overflow.
+/* Aaron: Original code retained for comparison.
 KOKKOS_INLINE_FUNCTION
 void unflatten_idx_left(const int idx, const Kokkos::Array<int, 2>& dims, int& i, int& j)
 {
   i = idx % dims[0];
   j = idx / dims[0];
 }
+*/
+KOKKOS_INLINE_FUNCTION
+void unflatten_idx_left(const std::int64_t idx, const Kokkos::Array<int, 2>& dims, int& i, int& j)
+{
+  i = idx % dims[0];
+  j = idx / dims[0];
+}
 
+// Aaron: Use a 64-bit flattened index; promote stride products before multiplying to avoid int overflow.
+/* Aaron: Original code retained for comparison.
 KOKKOS_INLINE_FUNCTION
 void unflatten_idx_left(const int idx, const Kokkos::Array<int, 3>& dims, int& i, int& j, int& k)
 {
@@ -432,7 +445,17 @@ void unflatten_idx_left(const int idx, const Kokkos::Array<int, 3>& dims, int& i
   j = (idx / dims[0]) % dims[1];
   k = idx / (dims[0] * dims[1]);
 }
+*/
+KOKKOS_INLINE_FUNCTION
+void unflatten_idx_left(const std::int64_t idx, const Kokkos::Array<int, 3>& dims, int& i, int& j, int& k)
+{
+  i = idx % dims[0];
+  j = (idx / dims[0]) % dims[1];
+  k = idx / (std::int64_t{dims[0]} * dims[1]);
+}
 
+// Aaron: Use a 64-bit flattened index; promote stride products before multiplying to avoid int overflow.
+/* Aaron: Original code retained for comparison.
 KOKKOS_INLINE_FUNCTION
 void unflatten_idx_left(const int idx, const Kokkos::Array<int, 4>& dims, int& i, int& j, int& k, int& l)
 {
@@ -441,14 +464,34 @@ void unflatten_idx_left(const int idx, const Kokkos::Array<int, 4>& dims, int& i
   k = (idx / (dims[0]*dims[1])) % dims[2];
   l = idx / (dims[0]*dims[1]*dims[2]);
 }
+*/
+KOKKOS_INLINE_FUNCTION
+void unflatten_idx_left(const std::int64_t idx, const Kokkos::Array<int, 4>& dims, int& i, int& j, int& k, int& l)
+{
+  i = idx % dims[0];
+  j = (idx / dims[0]) % dims[1];
+  k = (idx / (std::int64_t{dims[0]}*dims[1])) % dims[2];
+  l = idx / (std::int64_t{dims[0]}*dims[1]*dims[2]);
+}
 
+// Aaron: Use a 64-bit flattened index; promote stride products before multiplying to avoid int overflow.
+/* Aaron: Original code retained for comparison.
 KOKKOS_INLINE_FUNCTION
 void unflatten_idx_right(const int idx, const Kokkos::Array<int, 2>& dims, int& i, int& j)
 {
   i = idx / dims[1];
   j = idx % dims[1];
 }
+*/
+KOKKOS_INLINE_FUNCTION
+void unflatten_idx_right(const std::int64_t idx, const Kokkos::Array<int, 2>& dims, int& i, int& j)
+{
+  i = idx / dims[1];
+  j = idx % dims[1];
+}
 
+// Aaron: Use a 64-bit flattened index; promote stride products before multiplying to avoid int overflow.
+/* Aaron: Original code retained for comparison.
 KOKKOS_INLINE_FUNCTION
 void unflatten_idx_right(const int idx, const Kokkos::Array<int, 3>& dims, int& i, int& j, int& k)
 {
@@ -456,7 +499,17 @@ void unflatten_idx_right(const int idx, const Kokkos::Array<int, 3>& dims, int& 
   j = (idx / dims[2]) % dims[1];
   k =  idx % dims[2];
 }
+*/
+KOKKOS_INLINE_FUNCTION
+void unflatten_idx_right(const std::int64_t idx, const Kokkos::Array<int, 3>& dims, int& i, int& j, int& k)
+{
+  i = idx / (std::int64_t{dims[2]} * dims[1]);
+  j = (idx / dims[2]) % dims[1];
+  k =  idx % dims[2];
+}
 
+// Aaron: Use a 64-bit flattened index; promote stride products before multiplying to avoid int overflow.
+/* Aaron: Original code retained for comparison.
 KOKKOS_INLINE_FUNCTION
 void unflatten_idx_right(const int idx, const Kokkos::Array<int, 4>& dims, int& i, int& j, int& k, int& l)
 {
@@ -465,7 +518,18 @@ void unflatten_idx_right(const int idx, const Kokkos::Array<int, 4>& dims, int& 
   k = (idx / dims[3]) % dims[2];
   l = idx % dims[3];
 }
+*/
+KOKKOS_INLINE_FUNCTION
+void unflatten_idx_right(const std::int64_t idx, const Kokkos::Array<int, 4>& dims, int& i, int& j, int& k, int& l)
+{
+  i = idx / (std::int64_t{dims[3]}*dims[2]*dims[1]);
+  j = (idx / (std::int64_t{dims[3]}*dims[2])) % dims[1];
+  k = (idx / dims[3]) % dims[2];
+  l = idx % dims[3];
+}
 
+// Aaron: Keep the flattened index 64-bit through layout dispatch to avoid truncation.
+/* Aaron: Original code retained for comparison.
 template <typename LayoutT>
 KOKKOS_INLINE_FUNCTION
 void unflatten_idx(const int idx, const Kokkos::Array<int, 2>& dims, int& i, int& j)
@@ -477,7 +541,21 @@ void unflatten_idx(const int idx, const Kokkos::Array<int, 2>& dims, int& i, int
     unflatten_idx_right(idx, dims, i, j);
   }
 }
+*/
+template <typename LayoutT>
+KOKKOS_INLINE_FUNCTION
+void unflatten_idx(const std::int64_t idx, const Kokkos::Array<int, 2>& dims, int& i, int& j)
+{
+  if constexpr (std::is_same_v<LayoutT, Kokkos::LayoutLeft>) {
+    unflatten_idx_left(idx, dims, i, j);
+  }
+  else {
+    unflatten_idx_right(idx, dims, i, j);
+  }
+}
 
+// Aaron: Keep the flattened index 64-bit through layout dispatch to avoid truncation.
+/* Aaron: Original code retained for comparison.
 template <typename LayoutT>
 KOKKOS_INLINE_FUNCTION
 void unflatten_idx(const int idx, const Kokkos::Array<int, 3>& dims, int& i, int& j, int& k)
@@ -489,7 +567,21 @@ void unflatten_idx(const int idx, const Kokkos::Array<int, 3>& dims, int& i, int
     unflatten_idx_right(idx, dims, i, j, k);
   }
 }
+*/
+template <typename LayoutT>
+KOKKOS_INLINE_FUNCTION
+void unflatten_idx(const std::int64_t idx, const Kokkos::Array<int, 3>& dims, int& i, int& j, int& k)
+{
+  if constexpr (std::is_same_v<LayoutT, Kokkos::LayoutLeft>) {
+    unflatten_idx_left(idx, dims, i, j, k);
+  }
+  else {
+    unflatten_idx_right(idx, dims, i, j, k);
+  }
+}
 
+// Aaron: Keep the flattened index 64-bit through layout dispatch to avoid truncation.
+/* Aaron: Original code retained for comparison.
 template <typename LayoutT>
 KOKKOS_INLINE_FUNCTION
 void unflatten_idx(const int idx, const Kokkos::Array<int, 4>& dims, int& i, int& j, int& k, int& l)
@@ -501,9 +593,24 @@ void unflatten_idx(const int idx, const Kokkos::Array<int, 4>& dims, int& i, int
     unflatten_idx_right(idx, dims, i, j, k, l);
   }
 }
+*/
+template <typename LayoutT>
+KOKKOS_INLINE_FUNCTION
+void unflatten_idx(const std::int64_t idx, const Kokkos::Array<int, 4>& dims, int& i, int& j, int& k, int& l)
+{
+  if constexpr (std::is_same_v<LayoutT, Kokkos::LayoutLeft>) {
+    unflatten_idx_left(idx, dims, i, j, k, l);
+  }
+  else {
+    unflatten_idx_right(idx, dims, i, j, k, l);
+  }
+}
 
 // The FLATTEN* macros expect LayoutT to be defined.
 
+// Aaron: Use 64-bit products, an explicit Kokkos index policy, and lambda indices for the 2D launch.
+// Aaron: Cast before multiplication so bounds above INT_MAX cannot overflow in int arithmetic.
+/* Aaron: Original code retained for comparison.
 #define FLATTEN_MD_KERNEL2(n1, n2, i1, i2, kernel)     \
   {                                                     \
     Kokkos::Array<int, 2> dims_fmk_internal = {n1, n2};         \
@@ -514,7 +621,21 @@ void unflatten_idx(const int idx, const Kokkos::Array<int, 4>& dims, int& i, int
       kernel;                                                           \
     });                                                               \
   }
+*/
+#define FLATTEN_MD_KERNEL2(n1, n2, i1, i2, kernel)     \
+  {                                                     \
+    Kokkos::Array<int, 2> dims_fmk_internal = {n1, n2};         \
+    const std::int64_t dims_fmk_internal_tot = std::int64_t{n1}*(n2);                        \
+    Kokkos::parallel_for(Kokkos::RangePolicy<Kokkos::IndexType<std::int64_t>>(0, dims_fmk_internal_tot), KOKKOS_LAMBDA (std::int64_t idx_fmk_internal) { \
+      int i1, i2;                                                     \
+      conv::unflatten_idx<LayoutT>(idx_fmk_internal, dims_fmk_internal, i1, i2); \
+      kernel;                                                           \
+    });                                                               \
+  }
 
+// Aaron: Use 64-bit products, an explicit Kokkos index policy, and lambda indices for the 3D launch.
+// Aaron: Cast before multiplication so bounds above INT_MAX cannot overflow in int arithmetic.
+/* Aaron: Original code retained for comparison.
 #define FLATTEN_MD_KERNEL3(n1, n2, n3, i1, i2, i3, kernel)       \
   {                                                              \
     Kokkos::Array<int, 3> dims_fmk_internal = {n1, n2, n3};      \
@@ -525,12 +646,37 @@ void unflatten_idx(const int idx, const Kokkos::Array<int, 4>& dims, int& i, int
       kernel;                                                           \
     });                                                               \
   }
+*/
+#define FLATTEN_MD_KERNEL3(n1, n2, n3, i1, i2, i3, kernel)       \
+  {                                                              \
+    Kokkos::Array<int, 3> dims_fmk_internal = {n1, n2, n3};      \
+    const std::int64_t dims_fmk_internal_tot = std::int64_t{n1}*(n2)*(n3);                   \
+    Kokkos::parallel_for(Kokkos::RangePolicy<Kokkos::IndexType<std::int64_t>>(0, dims_fmk_internal_tot), KOKKOS_LAMBDA (std::int64_t idx_fmk_internal) { \
+      int i1, i2, i3;                                                 \
+      conv::unflatten_idx<LayoutT>(idx_fmk_internal, dims_fmk_internal, i1, i2, i3); \
+      kernel;                                                           \
+    });                                                               \
+  }
 
+// Aaron: Use 64-bit products, an explicit Kokkos index policy, and lambda indices for the 4D launch.
+// Aaron: Cast before multiplication so bounds above INT_MAX cannot overflow in int arithmetic.
+/* Aaron: Original code retained for comparison.
 #define FLATTEN_MD_KERNEL4(n1, n2, n3, n4, i1, i2, i3, i4, kernel)       \
   {                                                                     \
     Kokkos::Array<int, 4> dims_fmk_internal = {n1, n2, n3, n4};         \
     const int dims_fmk_internal_tot = (n1)*(n2)*(n3)*(n4);              \
     Kokkos::parallel_for(dims_fmk_internal_tot, KOKKOS_LAMBDA (int idx_fmk_internal) { \
+      int i1, i2, i3, i4;                                             \
+      conv::unflatten_idx<LayoutT>(idx_fmk_internal, dims_fmk_internal, i1, i2, i3, i4); \
+      kernel;                                                           \
+    });                                                               \
+  }
+*/
+#define FLATTEN_MD_KERNEL4(n1, n2, n3, n4, i1, i2, i3, i4, kernel)       \
+  {                                                                     \
+    Kokkos::Array<int, 4> dims_fmk_internal = {n1, n2, n3, n4};         \
+    const std::int64_t dims_fmk_internal_tot = std::int64_t{n1}*(n2)*(n3)*(n4);              \
+    Kokkos::parallel_for(Kokkos::RangePolicy<Kokkos::IndexType<std::int64_t>>(0, dims_fmk_internal_tot), KOKKOS_LAMBDA (std::int64_t idx_fmk_internal) { \
       int i1, i2, i3, i4;                                             \
       conv::unflatten_idx<LayoutT>(idx_fmk_internal, dims_fmk_internal, i1, i2, i3, i4); \
       kernel;                                                           \

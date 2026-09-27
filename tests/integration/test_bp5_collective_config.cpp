@@ -6,7 +6,8 @@
 #include <exception>
 #include <string>
 
-int main(int argc, char** argv) {
+int
+main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
     int rank = 0;
     int size = 1;
@@ -14,18 +15,20 @@ int main(int argc, char** argv) {
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     int failures = 0;
     try {
-        VVM::IO::BP5::require_collective_match(
-            "identical", MPI_COMM_WORLD, "test configuration");
-    } catch (const std::exception& e) {
+        VVM::IO::BP5::require_collective_match("identical", MPI_COMM_WORLD, "test configuration");
+    }
+    catch (const std::exception& e) {
         std::fprintf(stderr, "rank %d: identical configuration failed: %s\n", rank, e.what());
         ++failures;
     }
     bool rejected = false;
     try {
-        VVM::IO::BP5::require_collective_match(
-            rank == 0 ? "root" : "different-" + std::to_string(rank),
-            MPI_COMM_WORLD, "test configuration");
-    } catch (const std::exception&) {
+        VVM::IO::BP5::require_collective_match(rank == 0 ? "root"
+                                                         : "different-" + std::to_string(rank),
+            MPI_COMM_WORLD,
+            "test configuration");
+    }
+    catch (const std::exception&) {
         rejected = true;
     }
     if (size > 1 && !rejected) {

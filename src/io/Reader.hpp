@@ -13,7 +13,8 @@ public:
     virtual ~Reader() = default;
     virtual void read_and_initialize(VVM::Core::State& state) = 0;
 
-    virtual VVM::Utils::RestartFileMetadata read_restart_metadata() {
+    virtual VVM::Utils::RestartFileMetadata
+    read_restart_metadata() {
         return VVM::Utils::RestartFileMetadata{};
     }
 };

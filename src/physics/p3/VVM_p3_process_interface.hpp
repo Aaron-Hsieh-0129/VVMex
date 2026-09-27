@@ -9,7 +9,7 @@
 #include "core/Grid.hpp"
 #include "core/State.hpp"
 #include "core/Parameters.hpp"
-#include "core/HaloExchanger.hpp"
+#include "core/haloexchange/HaloExchanger.hpp"
 #include "core/vvm_types.hpp"
 #include "utils/ConfigurationManager.hpp"
 
@@ -369,6 +369,8 @@ public:
     void finalize();
 
     void run(VVM::Core::State& state, const VVM::Real dt);
+    // Other scalar physics can change hydrometeors after P3 has run.
+    void refresh_total_condensate(VVM::Core::State& state);
 
     /**
      * @brief Pack: VVM 3D (z,y,x) + halo -> P3 2D (col,lev_packs)

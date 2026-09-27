@@ -14,22 +14,24 @@ class SSPRK2 final : public TemporalScheme {
 public:
     SSPRK2(std::string var_name, const std::array<int, 3>& dimensions);
 
-    void step(
-        Core::State& state,
+    void step(Core::State& state,
         const Core::Grid& grid,
         const Core::Parameters& params,
         VVM::Real dt) const override;
 
-    bool requires_tendency_recomputation() const override { return true; }
-    int stage_count() const override { return 2; }
+    bool
+    requires_tendency_recomputation() const override {
+        return true;
+    }
+    int
+    stage_count() const override {
+        return 2;
+    }
 
     void begin_multistage_step(
-        Core::State& state,
-        const Core::Grid& grid,
-        const Core::Parameters& params) const override;
+        Core::State& state, const Core::Grid& grid, const Core::Parameters& params) const override;
 
-    void advance_multistage(
-        Core::State& state,
+    void advance_multistage(Core::State& state,
         const Core::Grid& grid,
         const Core::Parameters& params,
         const Core::Field<3>& tendency,

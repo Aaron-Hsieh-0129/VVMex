@@ -1,0 +1,39 @@
+{
+    "grid": {
+        "horizontal": {
+            "nx": 8,
+            "ny": 6,
+            "n_halo_cells": 2,
+            "geometry": {
+                "kind": "cartesian",
+                "dx": 500.0,
+                "dy": 750.0
+            },
+            "topology": {
+                "q1": "periodic",
+                "q2": "periodic"
+            }
+        },
+        "vertical": {
+            "nz": 4,
+            "type": "default",
+            "dz": 1000.0,
+            "dz1": 200.0
+        }
+    },
+    "constants": {
+        "gravity": 9.81,
+        "Rd": 287.0,
+        "P0": 100000.0,
+        "Cp": 1004.0
+    },
+    "simulation": {
+        "dt_s": 2.0
+    },
+    "dynamics": {
+        "solver": {
+            "WRXMU": 0.25,
+            "iteration": 4
+        }
+    }
+}

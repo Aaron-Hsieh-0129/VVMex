@@ -26,7 +26,8 @@ public:
     // This literal-based helper is safe in host and device compilation. Some
     // CUDA compilers reject std::numeric_limits::epsilon in device functions.
     KOKKOS_INLINE_FUNCTION
-    static VVM::Real machine_epsilon() {
+    static VVM::Real
+    machine_epsilon() {
 #ifdef VVM_USE_DOUBLE_PRECISION
         return VVM::real(2.2204460492503130808472633361816e-16);
 #else
@@ -34,25 +35,26 @@ public:
 #endif
     }
 
-    static Options validate_configuration(
-        const std::string& variable_name,
+    static Options validate_configuration(const std::string& variable_name,
         const std::string& spatial_scheme,
         const std::string& temporal_scheme,
         const nlohmann::json& advection_config,
         size_t enabled_tendency_count,
         int configured_halo_width);
 
-    MUSCL(std::string variable_name,
-          const nlohmann::json& advection_config,
-          const Core::Grid& grid);
+    MUSCL(
+        std::string variable_name, const nlohmann::json& advection_config, const Core::Grid& grid);
 
-    bool handles_multidimensional_advection() const override { return true; }
-    bool produces_anelastic_scalar_flux_divergence() const override {
+    bool
+    handles_multidimensional_advection() const override {
+        return true;
+    }
+    bool
+    produces_anelastic_scalar_flux_divergence() const override {
         return true;
     }
 
-    void calculate_advection_tendency(
-        const Core::State& state,
+    void calculate_advection_tendency(const Core::State& state,
         const Core::Field<3>& scalar,
         const Core::Field<3>& mass_flux_x,
         const Core::Field<3>& mass_flux_y,
@@ -64,97 +66,107 @@ public:
         VVM::Real stage_dt) const override;
 
     KOKKOS_INLINE_FUNCTION
-    static VVM::Real van_leer_slope(VVM::Real backward, VVM::Real forward) {
-        const bool both_positive =
-            backward > VVM::real(0.0) && forward > VVM::real(0.0);
-        const bool both_negative =
-            backward < VVM::real(0.0) && forward < VVM::real(0.0);
-        if (!both_positive && !both_negative) return VVM::real(0.0);
+    static VVM::Real
+    van_leer_slope(VVM::Real backward, VVM::Real forward) {
+        const bool both_positive = backward > VVM::real(0.0) && forward > VVM::real(0.0);
+        const bool both_negative = backward < VVM::real(0.0) && forward < VVM::real(0.0);
+        if (!both_positive && !both_negative) {
+            return VVM::real(0.0);
+        }
 
         const VVM::Real abs_backward = Kokkos::abs(backward);
         const VVM::Real abs_forward = Kokkos::abs(forward);
-        const VVM::Real lo =
-            abs_backward < abs_forward ? abs_backward : abs_forward;
-        const VVM::Real hi =
-            abs_backward < abs_forward ? abs_forward : abs_backward;
-        if (hi <= VVM::real(0.0)) return VVM::real(0.0);
+        const VVM::Real lo = abs_backward < abs_forward ? abs_backward : abs_forward;
+        const VVM::Real hi = abs_backward < abs_forward ? abs_forward : abs_backward;
+        if (hi <= VVM::real(0.0)) {
+            return VVM::real(0.0);
+        }
 
-        const VVM::Real magnitude =
-            VVM::real(2.0) * lo / (VVM::real(1.0) + lo / hi);
+        const VVM::Real magnitude = VVM::real(2.0) * lo / (VVM::real(1.0) + lo / hi);
         return backward > VVM::real(0.0) ? magnitude : -magnitude;
     }
 
     KOKKOS_INLINE_FUNCTION
-    static VVM::Real reconstructed_state_factor_from_deviations(
-        VVM::Real q, VVM::Real lower_bound,
-        VVM::Real dxm, VVM::Real dxp,
-        VVM::Real dym, VVM::Real dyp,
-        VVM::Real dzm, VVM::Real dzp) {
+    static VVM::Real
+    reconstructed_state_factor_from_deviations(VVM::Real q,
+        VVM::Real lower_bound,
+        VVM::Real dxm,
+        VVM::Real dxp,
+        VVM::Real dym,
+        VVM::Real dyp,
+        VVM::Real dzm,
+        VVM::Real dzp) {
         VVM::Real theta = VVM::real(1.0);
-        const VVM::Real faces[6] = {
-            q + dxm, q + dxp,
-            q + dym, q + dyp,
-            q + dzm, q + dzp
-        };
+        const VVM::Real faces[6] = {q + dxm, q + dxp, q + dym, q + dyp, q + dzm, q + dzp};
         for (int n = 0; n < 6; ++n) {
             if (faces[n] < lower_bound) {
                 const VVM::Real denominator = q - faces[n];
-                if (denominator <= VVM::real(0.0)) return VVM::real(0.0);
-                const VVM::Real candidate =
-                    (q - lower_bound) / denominator;
-                if (candidate < theta) theta = candidate;
+                if (denominator <= VVM::real(0.0)) {
+                    return VVM::real(0.0);
+                }
+                const VVM::Real candidate = (q - lower_bound) / denominator;
+                if (candidate < theta) {
+                    theta = candidate;
+                }
             }
         }
-        if (theta < VVM::real(0.0)) return VVM::real(0.0);
+        if (theta < VVM::real(0.0)) {
+            return VVM::real(0.0);
+        }
         return theta > VVM::real(1.0) ? VVM::real(1.0) : theta;
     }
 
     KOKKOS_INLINE_FUNCTION
-    static VVM::Real reconstructed_state_factor(
-        VVM::Real q, VVM::Real lower_bound,
-        VVM::Real sx, VVM::Real sy, VVM::Real sz) {
+    static VVM::Real
+    reconstructed_state_factor(
+        VVM::Real q, VVM::Real lower_bound, VVM::Real sx, VVM::Real sy, VVM::Real sz) {
         const VVM::Real half = VVM::real(0.5);
-        return reconstructed_state_factor_from_deviations(
-            q, lower_bound,
-            -half * sx, half * sx,
-            -half * sy, half * sy,
-            -half * sz, half * sz);
+        return reconstructed_state_factor_from_deviations(q,
+            lower_bound,
+            -half * sx,
+            half * sx,
+            -half * sy,
+            half * sy,
+            -half * sz,
+            half * sz);
     }
 
     KOKKOS_INLINE_FUNCTION
-    static VVM::Real donor_outflow_factor(
-        VVM::Real available, VVM::Real outgoing_depletion) {
+    static VVM::Real
+    donor_outflow_factor(VVM::Real available, VVM::Real outgoing_depletion) {
         const VVM::Real tolerance =
-            VVM::real(64.0) * machine_epsilon() *
-            (Kokkos::abs(available) + VVM::real(1.0));
-        if (outgoing_depletion <= tolerance) return VVM::real(1.0);
-        if (available <= VVM::real(0.0)) return VVM::real(0.0);
+            VVM::real(64.0) * machine_epsilon() * (Kokkos::abs(available) + VVM::real(1.0));
+        if (outgoing_depletion <= tolerance) {
+            return VVM::real(1.0);
+        }
+        if (available <= VVM::real(0.0)) {
+            return VVM::real(0.0);
+        }
         const VVM::Real ratio = available / outgoing_depletion;
         return ratio < VVM::real(1.0) ? ratio : VVM::real(1.0);
     }
 
     KOKKOS_INLINE_FUNCTION
-    static VVM::Real lower_bound_tolerance(VVM::Real lower_bound) {
-        return VVM::real(64.0) *
-            machine_epsilon() *
-            (Kokkos::abs(lower_bound) + VVM::real(1.0));
+    static VVM::Real
+    lower_bound_tolerance(VVM::Real lower_bound) {
+        return VVM::real(64.0) * machine_epsilon() * (Kokkos::abs(lower_bound) + VVM::real(1.0));
     }
 
     KOKKOS_INLINE_FUNCTION
-    static bool violates_lower_bound(
-        VVM::Real value, VVM::Real lower_bound) {
-        return value < lower_bound -
-            lower_bound_tolerance(lower_bound);
+    static bool
+    violates_lower_bound(VVM::Real value, VVM::Real lower_bound) {
+        return value < lower_bound - lower_bound_tolerance(lower_bound);
     }
 
-    const Options& options() const { return options_; }
+    const Options&
+    options() const {
+        return options_;
+    }
 
     // These validation entry points launch Kokkos reductions. They remain
     // public for scalar-scheme reuse and focused numerical testing.
-    void validate_initial_field(
-        const Core::State& state, const Core::Field<3>& scalar) const;
-    void validate_cfl(
-        const Core::State& state,
+    void validate_initial_field(const Core::State& state, const Core::Field<3>& scalar) const;
+    void validate_cfl(const Core::State& state,
         const Core::Field<3>& mass_flux_x,
         const Core::Field<3>& mass_flux_y,
         const Core::Field<3>& mass_flux_z,
@@ -162,10 +174,8 @@ public:
         VVM::Real stage_dt) const;
 
 private:
-    static Options parse_options(
-        const std::string& variable_name,
+    static Options parse_options(const std::string& variable_name,
         const nlohmann::json& advection_config);
-
 
     std::string variable_name_;
     Options options_;

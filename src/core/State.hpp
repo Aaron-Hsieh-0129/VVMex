@@ -17,13 +17,17 @@
 #include <variant>
 #include <vector>
 #if defined(KOKKOS_ENABLE_CUDA)
-    #include <cuda_runtime.h>
+#include <cuda_runtime.h>
 #endif
 #if defined(ENABLE_NCCL)
-    #include <nccl.h>
+#include <nccl.h>
 #endif
 
-namespace VVM { namespace Dynamics { class AdamsBashforth2; } }
+namespace VVM {
+namespace Dynamics {
+class AdamsBashforth2;
+}
+}
 
 namespace VVM {
 namespace Core {
@@ -32,65 +36,90 @@ namespace Core {
 using ScalarView = Kokkos::View<VVM::Real, Kokkos::DefaultExecutionSpace::memory_space>;
 
 // A variant that can hold a field of any supported dimension
-using AnyField = std::variant<
-    std::monostate, // default state
+using AnyField = std::variant<std::monostate, // default state
     Field<0>,
     Field<1>,
     Field<2>,
     Field<3>,
-    Field<4>
->;
+    Field<4>>;
 
 class State {
     friend class VVM::Dynamics::AdamsBashforth2;
+
 public:
-    // Constructor
 #if defined(ENABLE_NCCL)
-    State(const Utils::ConfigurationManager& config, const Parameters& params, const Grid& grid, ncclComm_t nccl_comm,
-          cudaStream_t nccl_stream);
+    // Preferred constructor. State depends on configuration and grid geometry,
+    // but not on Parameters.
+    State(const Utils::ConfigurationManager& config,
+        const Grid& grid,
+        ncclComm_t nccl_comm,
+        cudaStream_t nccl_stream);
+
+    // Compatibility constructor retained during migration. Parameters is not
+    // used by State; this overload delegates to the constructor above.
+    State(const Utils::ConfigurationManager& config,
+        const Parameters& params,
+        const Grid& grid,
+        ncclComm_t nccl_comm,
+        cudaStream_t nccl_stream);
 #else
+    // Preferred constructor.
+    State(const Utils::ConfigurationManager& config, const Grid& grid);
+
+    // Compatibility constructor retained during migration.
     State(const Utils::ConfigurationManager& config, const Parameters& params, const Grid& grid);
 #endif
 
 #if defined(ENABLE_NCCL)
-    ncclComm_t get_nccl_comm() const { return nccl_comm_; }
-    cudaStream_t get_cuda_stream() const { return nccl_stream_; }
+    ncclComm_t
+    get_nccl_comm() const {
+        return nccl_comm_;
+    }
+    cudaStream_t
+    get_cuda_stream() const {
+        return nccl_stream_;
+    }
 #endif
 
-    template<size_t Dim>
-    void add_field(const std::string& name, std::initializer_list<int> dims_list, FieldMetadata metadata = {}) {
+    template <size_t Dim>
+    void
+    add_field(const std::string& name,
+        std::initializer_list<int> dims_list,
+        FieldMetadata metadata = {}) {
         if (dims_list.size() != Dim) {
             throw std::runtime_error("Dimension mismatch for field '" + name + "'");
         }
         std::array<int, Dim> dims;
         std::copy(dims_list.begin(), dims_list.end(), dims.begin());
-        auto [it, inserted] = fields_.try_emplace(name, std::in_place_type_t<Field<Dim>>(), name, dims, std::move(metadata));
-        if (inserted) std::get<Field<Dim>>(it->second).set_to_zero();
+        auto [it, inserted] = fields_.try_emplace(name,
+            std::in_place_type_t<Field<Dim>>(),
+            name,
+            dims,
+            std::move(metadata));
+        if (inserted) {
+            std::get<Field<Dim>>(it->second).set_to_zero();
+        }
     }
 
-    template<size_t Dim>
-    void add_field(const std::string& name, const std::array<int, Dim>& dims, FieldMetadata metadata = {}) {
-        auto [it, inserted] = fields_.try_emplace(name, std::in_place_type_t<Field<Dim>>(), name, dims, std::move(metadata));
-        if (inserted) std::get<Field<Dim>>(it->second).set_to_zero();
+    template <size_t Dim>
+    void
+    add_field(
+        const std::string& name, const std::array<int, Dim>& dims, FieldMetadata metadata = {}) {
+        auto [it, inserted] = fields_.try_emplace(name,
+            std::in_place_type_t<Field<Dim>>(),
+            name,
+            dims,
+            std::move(metadata));
+        if (inserted) {
+            std::get<Field<Dim>>(it->second).set_to_zero();
+        }
     }
 
     // Get a field by name
-    template<size_t Dim>
-    Field<Dim>& get_field(const std::string& name) {
-        try { 
-            return std::get<Field<Dim>>(fields_.at(name));
-        }
-        catch (const std::out_of_range& e) {
-            throw std::runtime_error("Field '" + name + "' not found in State.");
-        }
-        catch (const std::bad_variant_access& e) {
-            throw std::runtime_error("Field '" + name + "' has incorrect dimension.");
-        }
-    }
-    
-    template<size_t Dim>
-    const Field<Dim>& get_field(const std::string& name) const {
-        try { 
+    template <size_t Dim>
+    Field<Dim>&
+    get_field(const std::string& name) {
+        try {
             return std::get<Field<Dim>>(fields_.at(name));
         }
         catch (const std::out_of_range& e) {
@@ -101,6 +130,19 @@ public:
         }
     }
 
+    template <size_t Dim>
+    const Field<Dim>&
+    get_field(const std::string& name) const {
+        try {
+            return std::get<Field<Dim>>(fields_.at(name));
+        }
+        catch (const std::out_of_range& e) {
+            throw std::runtime_error("Field '" + name + "' not found in State.");
+        }
+        catch (const std::bad_variant_access& e) {
+            throw std::runtime_error("Field '" + name + "' has incorrect dimension.");
+        }
+    }
 
     // Global horizontal mean over the physical (halo-free) cells of every rank:
     //
@@ -112,14 +154,12 @@ public:
     //
     // For 3D fields, k_level = -1 (the default) means the highest physical
     // level, nz - h - 1. An explicit level inside the halo is an error.
-    template<size_t Dim>
-    void calculate_horizontal_mean(
-        const Field<Dim>& field,
-        ScalarView d_mean_result,
-        int k_level = -1) const
-    {
+    template <size_t Dim>
+    void
+    calculate_horizontal_mean(
+        const Field<Dim>& field, ScalarView d_mean_result, int k_level = -1) const {
         static_assert(Dim == 2 || Dim == 3,
-                      "calculate_horizontal_mean supports 2D and 3D fields only.");
+            "calculate_horizontal_mean supports 2D and 3D fields only.");
 
         auto view = field.get_device_data();
 
@@ -135,13 +175,14 @@ public:
 
         if constexpr (Dim == 3) {
             const int nz = grid_.get_local_total_points_z();
-            if (k_level == -1) k_level = nz - h - 1;
+            if (k_level == -1) {
+                k_level = nz - h - 1;
+            }
             if (k_level < h || k_level >= nz - h) {
                 throw std::out_of_range(
                     "calculate_horizontal_mean: k_level " + std::to_string(k_level) +
                     " is outside the physical range [" + std::to_string(h) + ", " +
-                    std::to_string(nz - h - 1) + "] of the 3D field '" +
-                    field.get_name() + "'.");
+                    std::to_string(nz - h - 1) + "] of the 3D field '" + field.get_name() + "'.");
             }
         }
 
@@ -165,7 +206,8 @@ public:
         // ULP, and the v1.0.0 baselines encode the parallel_reduce order.
         if (static_cast<int>(row_sums_.extent(0)) != ny_local) {
             row_sums_ = Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space>(
-                "horizontal_mean_row_sums", ny_local);
+                "horizontal_mean_row_sums",
+                ny_local);
         }
         auto row_sums = row_sums_;
         const int nx_count = nx_local;
@@ -177,7 +219,9 @@ public:
                 Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, ny_local),
                 KOKKOS_LAMBDA(const int row) {
                     VVM::Real sum = VVM::real(0.0);
-                    for (int i = 0; i < nx_count; ++i) sum += view(k_level, halo + row, halo + i);
+                    for (int i = 0; i < nx_count; ++i) {
+                        sum += view(k_level, halo + row, halo + i);
+                    }
                     row_sums(row) = sum;
                 });
         }
@@ -186,7 +230,9 @@ public:
                 Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, ny_local),
                 KOKKOS_LAMBDA(const int row) {
                     VVM::Real sum = VVM::real(0.0);
-                    for (int i = 0; i < nx_count; ++i) sum += view(halo + row, halo + i);
+                    for (int i = 0; i < nx_count; ++i) {
+                        sum += view(halo + row, halo + i);
+                    }
                     row_sums(row) = sum;
                 });
         }
@@ -195,7 +241,9 @@ public:
             Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, 1),
             KOKKOS_LAMBDA(const int) {
                 VVM::Real sum = VVM::real(0.0);
-                for (int row = 0; row < ny_count; ++row) sum += row_sums(row);
+                for (int row = 0; row < ny_count; ++row) {
+                    sum += row_sums(row);
+                }
                 d_local_sum() = sum;
             });
 #else
@@ -208,18 +256,28 @@ public:
                 Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny_local + h, nx_local + h}),
                 KOKKOS_LAMBDA(const int j, const int i, VVM::Real& update_sum) {
                     update_sum += view(k_level, j, i);
-                }, d_local_sum);
+                },
+                d_local_sum);
         }
         else {
             Kokkos::parallel_reduce("calculate_2d_local_sum",
                 Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny_local + h, nx_local + h}),
                 KOKKOS_LAMBDA(const int j, const int i, VVM::Real& update_sum) {
                     update_sum += view(j, i);
-                }, d_local_sum);
+                },
+                d_local_sum);
         }
 #endif
 
-        Kokkos::fence();
+#if defined(ENABLE_NCCL)
+        // The normal model uses Kokkos's stream for NCCL too. Only a separate
+        // communication stream needs a producer wait before reading the sum.
+        const bool separate_nccl_stream =
+            nccl_stream_ != Kokkos::DefaultExecutionSpace().cuda_stream();
+        if (separate_nccl_stream) {
+            Kokkos::DefaultExecutionSpace().fence("horizontal mean producer ready");
+        }
+#endif
 
         // Both backends gather the per-rank partial sums and then add them in
         // rank order in the same device kernel below.
@@ -246,43 +304,47 @@ public:
 
         if (static_cast<int>(rank_sums_.extent(0)) != comm_size) {
             rank_sums_ = Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space>(
-                "horizontal_mean_rank_sums", comm_size);
+                "horizontal_mean_rank_sums",
+                comm_size);
         }
 
 #if defined(ENABLE_NCCL)
-        const ncclResult_t result = ncclAllGather(
-            d_local_sum.data(),
+        const ncclResult_t result = ncclAllGather(d_local_sum.data(),
             rank_sums_.data(),
             1,
             VVM_NCCL_REAL,
             nccl_comm_,
-            nccl_stream_
-        );
+            nccl_stream_);
 
         if (result != ncclSuccess) {
-            throw std::runtime_error(
-                "calculate_horizontal_mean NCCL all-gather failed for '" +
-                field.get_name() + "': " + ncclGetErrorString(result));
+            throw std::runtime_error("calculate_horizontal_mean NCCL all-gather failed for '" +
+                                     field.get_name() + "': " + ncclGetErrorString(result));
         }
 
-        cudaStreamSynchronize(nccl_stream_);
+        // The following finalize kernel is ordered after NCCL on the shared
+        // stream. Retain the wait when callers supply a different stream.
+        if (separate_nccl_stream) {
+            cudaStreamSynchronize(nccl_stream_);
+        }
 #else
         VVM::Real local_sum = VVM::real(0.0);
         Kokkos::deep_copy(local_sum, d_local_sum);
 
         std::vector<VVM::Real> host_rank_sums(static_cast<size_t>(comm_size), VVM::real(0.0));
-        const int mpi_result = MPI_Allgather(
-            &local_sum, 1, VVM_MPI_REAL,
-            host_rank_sums.data(), 1, VVM_MPI_REAL, grid_.get_comm());
+        const int mpi_result = MPI_Allgather(&local_sum,
+            1,
+            VVM_MPI_REAL,
+            host_rank_sums.data(),
+            1,
+            VVM_MPI_REAL,
+            grid_.get_comm());
 
         if (mpi_result != MPI_SUCCESS) {
             throw std::runtime_error(
-                "calculate_horizontal_mean MPI_Allgather failed for '" +
-                field.get_name() + "'.");
+                "calculate_horizontal_mean MPI_Allgather failed for '" + field.get_name() + "'.");
         }
 
-        Kokkos::deep_copy(
-            rank_sums_,
+        Kokkos::deep_copy(rank_sums_,
             Kokkos::View<const VVM::Real*, Kokkos::HostSpace>(host_rank_sums.data(), comm_size));
 #endif
 
@@ -297,50 +359,341 @@ public:
             Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, 1),
             KOKKOS_LAMBDA(const int) {
                 VVM::Real global_sum = VVM::real(0.0);
-                for (int r = 0; r < num_ranks; ++r) global_sum += rank_sums(r);
+                for (int r = 0; r < num_ranks; ++r) {
+                    global_sum += rank_sums(r);
+                }
                 d_mean_result() = global_sum / total_points_horizontal;
             });
     }
 
+    // Global area-weighted horizontal mean over the physical, halo-free
+    // points of every rank:
+    //
+    //     mean = sum(phi * J * dq1 * dq2) / sum(J * dq1 * dq2)
+    //
+    // The geometry is selected from the field's declared staggering. This is
+    // intentionally separate from calculate_horizontal_mean(), whose point-mean
+    // semantics remain unchanged.
+    //
+    // For 3D fields, k_level = -1 selects the highest physical level.
+    template <size_t Dim>
+    void
+    calculate_horizontal_area_weighted_mean(
+        const Field<Dim>& field, ScalarView d_mean_result, int k_level = -1) const {
+        static_assert(Dim == 2 || Dim == 3,
+            "calculate_horizontal_area_weighted_mean supports 2D and 3D fields only.");
+
+        const auto view = field.get_device_data();
+        const auto geometry =
+            grid_.geometry().device_view(field.get_metadata().grid_staggering, field.get_name());
+
+        const int ny_local = grid_.get_local_physical_points_y();
+        const int nx_local = grid_.get_local_physical_points_x();
+        const int h = grid_.get_halo_cells();
+
+        if constexpr (Dim == 3) {
+            const int nz = grid_.get_local_total_points_z();
+
+            if (k_level == -1) {
+                k_level = nz - h - 1;
+            }
+
+            if (k_level < h || k_level >= nz - h) {
+                throw std::out_of_range(
+                    "calculate_horizontal_area_weighted_mean: k_level " + std::to_string(k_level) +
+                    " is outside the physical range [" + std::to_string(h) + ", " +
+                    std::to_string(nz - h - 1) + "] of the 3D field '" + field.get_name() + "'.");
+            }
+        }
+
+        Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space> d_local_sums(
+            "horizontal_area_weighted_mean_local_sums",
+            2);
+
+        const VVM::Real computational_cell_area = geometry.dq1 * geometry.dq2;
+
+#if defined(VVM_DETERMINISTIC_FP)
+        if (static_cast<int>(area_weighted_row_sums_.extent(0)) != ny_local) {
+            area_weighted_row_sums_ =
+                Kokkos::View<VVM::Real**, Kokkos::DefaultExecutionSpace::memory_space>(
+                    "horizontal_area_weighted_mean_row_sums",
+                    ny_local,
+                    2);
+        }
+
+        auto row_sums = area_weighted_row_sums_;
+        const int nx_count = nx_local;
+        const int ny_count = ny_local;
+        const int halo = h;
+
+        if constexpr (Dim == 3) {
+            Kokkos::parallel_for("calculate_3d_area_weighted_row_sums",
+                Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, ny_local),
+                KOKKOS_LAMBDA(const int row) {
+                    VVM::Real weighted_sum = VVM::real(0.0);
+                    VVM::Real area_sum = VVM::real(0.0);
+                    const int j = halo + row;
+
+                    for (int i_offset = 0; i_offset < nx_count; ++i_offset) {
+                        const int i = halo + i_offset;
+                        const VVM::Real area = geometry.sqrt_g(j, i) * computational_cell_area;
+
+                        weighted_sum += view(k_level, j, i) * area;
+                        area_sum += area;
+                    }
+
+                    row_sums(row, 0) = weighted_sum;
+                    row_sums(row, 1) = area_sum;
+                });
+        }
+        else {
+            Kokkos::parallel_for("calculate_2d_area_weighted_row_sums",
+                Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, ny_local),
+                KOKKOS_LAMBDA(const int row) {
+                    VVM::Real weighted_sum = VVM::real(0.0);
+                    VVM::Real area_sum = VVM::real(0.0);
+                    const int j = halo + row;
+
+                    for (int i_offset = 0; i_offset < nx_count; ++i_offset) {
+                        const int i = halo + i_offset;
+                        const VVM::Real area = geometry.sqrt_g(j, i) * computational_cell_area;
+
+                        weighted_sum += view(j, i) * area;
+                        area_sum += area;
+                    }
+
+                    row_sums(row, 0) = weighted_sum;
+                    row_sums(row, 1) = area_sum;
+                });
+        }
+
+        Kokkos::parallel_for("calculate_area_weighted_local_sums",
+            Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, 1),
+            KOKKOS_LAMBDA(const int) {
+                VVM::Real weighted_sum = VVM::real(0.0);
+                VVM::Real area_sum = VVM::real(0.0);
+
+                for (int row = 0; row < ny_count; ++row) {
+                    weighted_sum += row_sums(row, 0);
+                    area_sum += row_sums(row, 1);
+                }
+
+                d_local_sums(0) = weighted_sum;
+                d_local_sums(1) = area_sum;
+            });
+#else
+        auto d_local_weighted_sum = Kokkos::subview(d_local_sums, 0);
+        auto d_local_area_sum = Kokkos::subview(d_local_sums, 1);
+
+        if constexpr (Dim == 3) {
+            Kokkos::parallel_reduce("calculate_3d_local_area_weighted_sum",
+                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny_local + h, nx_local + h}),
+                KOKKOS_LAMBDA(const int j, const int i, VVM::Real& update_sum) {
+                    const VVM::Real area = geometry.sqrt_g(j, i) * computational_cell_area;
+
+                    update_sum += view(k_level, j, i) * area;
+                },
+                d_local_weighted_sum);
+
+            Kokkos::parallel_reduce("calculate_3d_local_area_sum",
+                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny_local + h, nx_local + h}),
+                KOKKOS_LAMBDA(const int j, const int i, VVM::Real& update_sum) {
+                    update_sum += geometry.sqrt_g(j, i) * computational_cell_area;
+                },
+                d_local_area_sum);
+        }
+        else {
+            Kokkos::parallel_reduce("calculate_2d_local_area_weighted_sum",
+                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny_local + h, nx_local + h}),
+                KOKKOS_LAMBDA(const int j, const int i, VVM::Real& update_sum) {
+                    const VVM::Real area = geometry.sqrt_g(j, i) * computational_cell_area;
+
+                    update_sum += view(j, i) * area;
+                },
+                d_local_weighted_sum);
+
+            Kokkos::parallel_reduce("calculate_2d_local_area_sum",
+                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny_local + h, nx_local + h}),
+                KOKKOS_LAMBDA(const int j, const int i, VVM::Real& update_sum) {
+                    update_sum += geometry.sqrt_g(j, i) * computational_cell_area;
+                },
+                d_local_area_sum);
+        }
+#endif
+
+#if defined(ENABLE_NCCL)
+        // The normal model uses Kokkos's stream for NCCL too. Only a separate
+        // communication stream needs a producer wait before reading the sum.
+        const bool separate_nccl_stream =
+            nccl_stream_ != Kokkos::DefaultExecutionSpace().cuda_stream();
+        if (separate_nccl_stream) {
+            Kokkos::DefaultExecutionSpace().fence("horizontal mean producer ready");
+        }
+#endif
+
+        int comm_size = 1;
+
+#if defined(ENABLE_NCCL)
+        const ncclResult_t count_result = ncclCommCount(nccl_comm_, &comm_size);
+
+        if (count_result != ncclSuccess) {
+            throw std::runtime_error("calculate_horizontal_area_weighted_mean could not query "
+                                     "the NCCL communicator size: " +
+                                     std::string(ncclGetErrorString(count_result)));
+        }
+#else
+        MPI_Comm_size(grid_.get_comm(), &comm_size);
+#endif
+
+        constexpr int values_per_rank = 2;
+        const int gathered_value_count = values_per_rank * comm_size;
+
+        if (static_cast<int>(area_weighted_rank_sums_.extent(0)) != gathered_value_count) {
+            area_weighted_rank_sums_ =
+                Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space>(
+                    "horizontal_area_weighted_mean_rank_sums",
+                    gathered_value_count);
+        }
+
+#if defined(ENABLE_NCCL)
+        const ncclResult_t result = ncclAllGather(d_local_sums.data(),
+            area_weighted_rank_sums_.data(),
+            values_per_rank,
+            VVM_NCCL_REAL,
+            nccl_comm_,
+            nccl_stream_);
+
+        if (result != ncclSuccess) {
+            throw std::runtime_error("calculate_horizontal_area_weighted_mean NCCL all-gather "
+                                     "failed for '" +
+                                     field.get_name() + "': " + ncclGetErrorString(result));
+        }
+
+        // The following finalize kernel is ordered after NCCL on the shared
+        // stream. Retain the wait when callers supply a different stream.
+        if (separate_nccl_stream) {
+            cudaStreamSynchronize(nccl_stream_);
+        }
+#else
+        const auto host_local_sums =
+            Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), d_local_sums);
+
+        std::vector<VVM::Real> host_rank_sums(static_cast<size_t>(gathered_value_count),
+            VVM::real(0.0));
+
+        const int mpi_result = MPI_Allgather(host_local_sums.data(),
+            values_per_rank,
+            VVM_MPI_REAL,
+            host_rank_sums.data(),
+            values_per_rank,
+            VVM_MPI_REAL,
+            grid_.get_comm());
+
+        if (mpi_result != MPI_SUCCESS) {
+            throw std::runtime_error("calculate_horizontal_area_weighted_mean MPI_Allgather "
+                                     "failed for '" +
+                                     field.get_name() + "'.");
+        }
+
+        Kokkos::deep_copy(area_weighted_rank_sums_,
+            Kokkos::View<const VVM::Real*, Kokkos::HostSpace>(host_rank_sums.data(),
+                gathered_value_count));
+#endif
+
+        auto rank_sums = area_weighted_rank_sums_;
+        const int num_ranks = comm_size;
+
+        Kokkos::parallel_for("horizontal_area_weighted_mean_finalize",
+            Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, 1),
+            KOKKOS_LAMBDA(const int) {
+                VVM::Real global_weighted_sum = VVM::real(0.0);
+                VVM::Real global_area_sum = VVM::real(0.0);
+
+                for (int rank = 0; rank < num_ranks; ++rank) {
+                    global_weighted_sum += rank_sums(values_per_rank * rank);
+                    global_area_sum += rank_sums(values_per_rank * rank + 1);
+                }
+
+                d_mean_result() = global_weighted_sum / global_area_sum;
+            });
+    }
+
     // Provide iterators to loop over all fields
-    auto begin() { return fields_.begin(); } // First value
-    auto end() { return fields_.end(); } // Last value
-    auto begin() const { return fields_.cbegin(); } // First key
-    auto end() const { return fields_.cend(); } // Last key
+    auto
+    begin() {
+        return fields_.begin();
+    } // First value
+    auto
+    end() {
+        return fields_.end();
+    } // Last value
+    auto
+    begin() const {
+        return fields_.cbegin();
+    } // First key
+    auto
+    end() const {
+        return fields_.cend();
+    } // Last key
 
-    size_t get_step() const { return step_; }
-    void set_step(size_t step) { step_ = step; }
-    void increment_step() { step_++; }
-    VVM::Real get_time() const { return time_; }
-    void set_time(VVM::Real time) { time_ = time; }
-    void advance_time(VVM::Real dt) { time_ += dt; }
+    size_t
+    get_step() const {
+        return step_;
+    }
+    void
+    set_step(size_t step) {
+        step_ = step;
+    }
+    void
+    increment_step() {
+        step_++;
+    }
+    VVM::Real
+    get_time() const {
+        return time_;
+    }
+    void
+    set_time(VVM::Real time) {
+        time_ = time;
+    }
+    void
+    advance_time(VVM::Real dt) {
+        time_ += dt;
+    }
 
-    bool has_field(const std::string& name) const {
+    bool
+    has_field(const std::string& name) const {
         return fields_.find(name) != fields_.end();
     }
 
-    const AnyField* find_any(const std::string& name) const {
+    const AnyField*
+    find_any(const std::string& name) const {
         auto it = fields_.find(name);
         return it == fields_.end() ? nullptr : &it->second;
     }
 
-    const std::vector<std::string>& get_tracer_names() const {
+    const std::vector<std::string>&
+    get_tracer_names() const {
         return tracer_names_;
     }
 
-    const std::vector<std::string>& get_tracer_source_targets() const {
+    const std::vector<std::string>&
+    get_tracer_source_targets() const {
         return tracer_source_targets_;
     }
 
-    const std::vector<std::string>& get_tracer_source_names() const {
+    const std::vector<std::string>&
+    get_tracer_source_names() const {
         return tracer_source_names_;
     }
 
-    bool is_tracer(const std::string& name) const {
+    bool
+    is_tracer(const std::string& name) const {
         return std::find(tracer_names_.begin(), tracer_names_.end(), name) != tracer_names_.end();
     }
 
-    bool is_tracer_source(const std::string& name) const {
+    bool
+    is_tracer_source(const std::string& name) const {
         return std::find(tracer_source_names_.begin(), tracer_source_names_.end(), name) !=
                tracer_source_names_.end();
     }
@@ -348,7 +701,6 @@ public:
 private:
     const Utils::ConfigurationManager& config_ref_;
     const Grid& grid_;
-    const Parameters& parameters_;
     std::unordered_map<std::string, AnyField> fields_;
     std::vector<std::string> tracer_names_;
     std::vector<std::string> tracer_source_targets_;
@@ -368,41 +720,66 @@ private:
     ncclComm_t nccl_comm_;
     cudaStream_t nccl_stream_;
 #endif
+
+    mutable Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space>
+        area_weighted_rank_sums_;
+#if defined(VVM_DETERMINISTIC_FP)
+    mutable Kokkos::View<VVM::Real**, Kokkos::DefaultExecutionSpace::memory_space>
+        area_weighted_row_sums_;
+#endif
 };
 
-template<size_t Dim>
+template <size_t Dim>
 class FieldRef {
 public:
-    Field<Dim>& get(State& state, const char* name) const {
-        if (!field_) field_ = &state.get_field<Dim>(name);
+    Field<Dim>&
+    get(State& state, const char* name) const {
+        if (!field_) {
+            field_ = &state.get_field<Dim>(name);
+        }
         assert(field_->get_name() == name && "FieldRef reused for a second field name");
         return *field_;
     }
-    Field<Dim>& get(State& state, const std::string& name) const {
-        if (!field_) field_ = &state.get_field<Dim>(name);
+    Field<Dim>&
+    get(State& state, const std::string& name) const {
+        if (!field_) {
+            field_ = &state.get_field<Dim>(name);
+        }
         assert(field_->get_name() == name && "FieldRef reused for a second field name");
         return *field_;
     }
-    bool resolved() const { return field_ != nullptr; }
+    bool
+    resolved() const {
+        return field_ != nullptr;
+    }
 
 private:
     mutable Field<Dim>* field_ = nullptr;
 };
 
-template<size_t Dim>
+template <size_t Dim>
 class ConstFieldRef {
 public:
-    const Field<Dim>& get(const State& state, const char* name) const {
-        if (!field_) field_ = &state.get_field<Dim>(name);
+    const Field<Dim>&
+    get(const State& state, const char* name) const {
+        if (!field_) {
+            field_ = &state.get_field<Dim>(name);
+        }
         assert(field_->get_name() == name && "ConstFieldRef reused for a second field name");
         return *field_;
     }
-    const Field<Dim>& get(const State& state, const std::string& name) const {
-        if (!field_) field_ = &state.get_field<Dim>(name);
+    const Field<Dim>&
+    get(const State& state, const std::string& name) const {
+        if (!field_) {
+            field_ = &state.get_field<Dim>(name);
+        }
         assert(field_->get_name() == name && "ConstFieldRef reused for a second field name");
         return *field_;
     }
-    bool resolved() const { return field_ != nullptr; }
+    bool
+    resolved() const {
+        return field_ != nullptr;
+    }
 
 private:
     mutable const Field<Dim>* field_ = nullptr;

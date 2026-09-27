@@ -1,0 +1,664 @@
+#include "core/Field.hpp"
+#include "core/Grid.hpp"
+#include "core/boundary/HorizontalBoundaryStencils.hpp"
+#include "core/geometry/GeometryKind.hpp"
+#include "core/geometry/HorizontalLocation.hpp"
+#include "core/haloexchange/HaloExchanger.hpp"
+#include "dynamics/solvers/HorizontalEllipticSolver.hpp"
+#include "utils/ConfigurationManager.hpp"
+
+#include <Kokkos_Core.hpp>
+#include <mpi.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <exception>
+#include <stdexcept>
+#include <cstring>
+#include <string>
+
+#if defined(ENABLE_NCCL)
+#include <cuda_runtime.h>
+#include <nccl.h>
+#endif
+
+namespace {
+
+using VVM::Core::Field;
+using VVM::Core::Grid;
+using VVM::Core::HaloExchanger;
+using VVM::Core::HorizontalEdgeTopology;
+using VVM::Core::Boundary::HorizontalBoundaryStencils;
+using VVM::Core::Geometry::GeometryKind;
+using VVM::Core::Geometry::HorizontalLocation;
+using VVM::Dynamics::HorizontalEllipticSolver;
+using VVM::Dynamics::Operators::make_horizontal_laplace_beltrami_device_view;
+using VVM::Dynamics::Operators::ScalarStencilAtT;
+using VVM::Dynamics::Operators::ScalarStencilAtZ;
+using VVM::Utils::ConfigurationManager;
+
+int failures = 0;
+int mpi_rank = 0;
+
+void
+check(const bool condition, const char* message) {
+    if (condition) {
+        return;
+    }
+
+    ++failures;
+    std::fprintf(stderr, "Rank %d FAIL: %s\n", mpi_rank, message);
+}
+
+void
+refresh_halos(const Grid& grid, HaloExchanger& halo_exchanger, Field<2>& field) {
+    halo_exchanger.exchange_halos(field, 1);
+
+    const auto& horizontal = grid.horizontal_specification();
+    if (horizontal.ny > 1 && horizontal.topology.q2 == HorizontalEdgeTopology::Bounded) {
+        HorizontalBoundaryStencils boundary_stencils(grid);
+        boundary_stencils.fill_constant_q2_halos(field);
+    }
+}
+
+void
+initialize_fields(
+    const Grid& grid, Field<2>& right_hand_side, Field<2>& solution_at_t, Field<2>& solution_at_z) {
+    const int halo = grid.get_halo_cells();
+    const int ny = grid.get_local_total_points_y();
+    const int nx = grid.get_local_total_points_x();
+    const int global_start_j = grid.get_local_physical_start_y();
+    const int global_start_i = grid.get_local_physical_start_x();
+
+    auto rhs = right_hand_side.get_mutable_device_data();
+    auto t = solution_at_t.get_mutable_device_data();
+    auto z = solution_at_z.get_mutable_device_data();
+
+    Kokkos::parallel_for("InitializeHorizontalEllipticSolverTest",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
+        KOKKOS_LAMBDA(const int j, const int i) {
+            const VVM::Real global_j = static_cast<VVM::Real>(global_start_j + j - halo);
+            const VVM::Real global_i = static_cast<VVM::Real>(global_start_i + i - halo);
+
+            rhs(j, i) = VVM::real(1.0e-12) *
+                        (VVM::real(0.75) + Kokkos::sin(VVM::real(0.17) * global_i) *
+                                               Kokkos::cos(VVM::real(0.11) * global_j));
+            t(j, i) = VVM::real(2.0) + VVM::real(0.03) * global_i - VVM::real(0.02) * global_j +
+                      VVM::real(0.001) * global_i * global_j;
+            z(j, i) = t(j, i);
+        });
+}
+
+void
+test_extrapolated_guess(const Grid& grid, HorizontalEllipticSolver& solver) {
+    const int ny = grid.get_local_total_points_y();
+    const int nx = grid.get_local_total_points_x();
+
+    Field<2> current("extrapolation_current", {ny, nx});
+    Field<2> previous("extrapolation_previous", {ny, nx});
+    Field<2> guess("extrapolation_guess", {ny, nx});
+
+    auto current_data = current.get_mutable_device_data();
+    auto previous_data = previous.get_mutable_device_data();
+
+    Kokkos::parallel_for("InitializeHorizontalEllipticExtrapolationTest",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
+        KOKKOS_LAMBDA(const int j, const int i) {
+            current_data(j, i) = VVM::real(3.0) + VVM::real(0.2) * i - VVM::real(0.1) * j;
+            previous_data(j, i) = VVM::real(1.0) - VVM::real(0.05) * i + VVM::real(0.3) * j;
+        });
+
+    solver.make_extrapolated_guess(current, previous, guess);
+
+    const auto current_host = current.get_host_data();
+    const auto previous_host = previous.get_host_data();
+    const auto guess_host = guess.get_host_data();
+
+    VVM::Real maximum_error = VVM::real(0.0);
+    for (int j = 0; j < ny; ++j) {
+        for (int i = 0; i < nx; ++i) {
+            const VVM::Real expected = VVM::real(2.0) * current_host(j, i) - previous_host(j, i);
+            maximum_error = std::max(maximum_error, std::abs(guess_host(j, i) - expected));
+        }
+    }
+
+    check(maximum_error == VVM::real(0.0),
+        "The initial guess must equal 2 * current - previous in every cell");
+}
+
+void
+test_staggered_operator_diagonals(const Grid& grid) {
+    const int halo = grid.get_halo_cells();
+    const int ny = grid.get_local_total_points_y();
+    const int i = halo;
+    const auto laplace_beltrami = make_horizontal_laplace_beltrami_device_view(grid.geometry());
+
+    Kokkos::View<VVM::Real*> applied_at_t("horizontal_elliptic_diagonal_applied_t", ny);
+    Kokkos::View<VVM::Real*> diagonal_at_t("horizontal_elliptic_diagonal_t", ny);
+    Kokkos::View<VVM::Real*> applied_at_z("horizontal_elliptic_diagonal_applied_z", ny);
+    Kokkos::View<VVM::Real*> diagonal_at_z("horizontal_elliptic_diagonal_z", ny);
+
+    Kokkos::parallel_for("CompareHorizontalEllipticStaggeredDiagonals",
+        Kokkos::RangePolicy<>(halo, ny - halo),
+        KOKKOS_LAMBDA(const int j) {
+            ScalarStencilAtT impulse_at_t;
+            ScalarStencilAtZ impulse_at_z;
+            impulse_at_t.center = VVM::real(1.0);
+            impulse_at_z.center = VVM::real(1.0);
+
+            applied_at_t(j) = laplace_beltrami.calculate_jacobian_weighted_at_t(j, i, impulse_at_t);
+            diagonal_at_t(j) = laplace_beltrami.jacobian_weighted_diagonal_at_t(j, i);
+            applied_at_z(j) = laplace_beltrami.calculate_jacobian_weighted_at_z(j, i, impulse_at_z);
+            diagonal_at_z(j) = laplace_beltrami.jacobian_weighted_diagonal_at_z(j, i);
+        });
+
+    const auto applied_t_host =
+        Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), applied_at_t);
+    const auto diagonal_t_host =
+        Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), diagonal_at_t);
+    const auto applied_z_host =
+        Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), applied_at_z);
+    const auto diagonal_z_host =
+        Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), diagonal_at_z);
+
+    const VVM::Real relative_tolerance =
+        sizeof(VVM::Real) == sizeof(double) ? VVM::real(2.0e-13) : VVM::real(2.0e-5);
+    for (int j = halo; j < ny - halo; ++j) {
+        const VVM::Real t_scale = std::max(VVM::real(1.0), std::abs(diagonal_t_host(j)));
+        const VVM::Real z_scale = std::max(VVM::real(1.0), std::abs(diagonal_z_host(j)));
+
+        check(std::abs(applied_t_host(j) - diagonal_t_host(j)) <= relative_tolerance * t_scale,
+            "The weighted T diagonal must equal the response to a T center impulse");
+        check(std::abs(applied_z_host(j) - diagonal_z_host(j)) <= relative_tolerance * z_scale,
+            "The weighted Z diagonal must equal the response to a Z center impulse");
+    }
+}
+
+void
+test_one_iteration(
+    const Grid& grid, HaloExchanger& halo_exchanger, HorizontalEllipticSolver& solver) {
+    const int halo = grid.get_halo_cells();
+    const int ny = grid.get_local_total_points_y();
+    const int nx = grid.get_local_total_points_x();
+    const VVM::Real diagonal_shift = VVM::real(2.5e-7);
+
+    Field<2> right_hand_side("horizontal_elliptic_rhs", {ny, nx});
+    Field<2> solution_at_t("horizontal_elliptic_solution_t", {ny, nx});
+    Field<2> solution_at_z("horizontal_elliptic_solution_z", {ny, nx});
+
+    initialize_fields(grid, right_hand_side, solution_at_t, solution_at_z);
+    refresh_halos(grid, halo_exchanger, solution_at_t);
+    refresh_halos(grid, halo_exchanger, solution_at_z);
+
+    Kokkos::View<VVM::Real**> expected_at_t("horizontal_elliptic_expected_t", ny, nx);
+    Kokkos::View<VVM::Real**> expected_at_z("horizontal_elliptic_expected_z", ny, nx);
+
+    const auto rhs = right_hand_side.get_device_data();
+    const auto initial_t = solution_at_t.get_device_data();
+    const auto initial_z = solution_at_z.get_device_data();
+    const auto t = grid.geometry().device_view(HorizontalLocation::T);
+    const auto u = grid.geometry().device_view(HorizontalLocation::U);
+    const auto v = grid.geometry().device_view(HorizontalLocation::V);
+    const auto z = grid.geometry().device_view(HorizontalLocation::Z);
+    const VVM::Real inverse_dq1_squared =
+        VVM::real(1.0) / (grid.geometry().dq1() * grid.geometry().dq1());
+    const VVM::Real inverse_dq2_squared =
+        VVM::real(1.0) / (grid.geometry().dq2() * grid.geometry().dq2());
+
+    Kokkos::parallel_for("BuildHorizontalEllipticOneIterationReference",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({halo, halo}, {ny - halo, nx - halo}),
+        KOKKOS_LAMBDA(const int j, const int i) {
+            const VVM::Real t_q1_west = u.sqrt_g_g_contra.a11(j, i - 1) * inverse_dq1_squared;
+            const VVM::Real t_q1_east = u.sqrt_g_g_contra.a11(j, i) * inverse_dq1_squared;
+            const VVM::Real t_q2_south = v.sqrt_g_g_contra.a22(j - 1, i) * inverse_dq2_squared;
+            const VVM::Real t_q2_north = v.sqrt_g_g_contra.a22(j, i) * inverse_dq2_squared;
+            const VVM::Real t_denominator =
+                diagonal_shift + t_q1_west + t_q1_east + t_q2_south + t_q2_north;
+
+            expected_at_t(j, i) =
+                (diagonal_shift * initial_t(j, i) + t_q1_west * initial_t(j, i - 1) +
+                    t_q1_east * initial_t(j, i + 1) + t_q2_south * initial_t(j - 1, i) +
+                    t_q2_north * initial_t(j + 1, i) - t.sqrt_g(j, i) * rhs(j, i)) /
+                t_denominator;
+
+            const VVM::Real z_q1_west = v.sqrt_g_g_contra.a11(j, i) * inverse_dq1_squared;
+            const VVM::Real z_q1_east = v.sqrt_g_g_contra.a11(j, i + 1) * inverse_dq1_squared;
+            const VVM::Real z_q2_south = u.sqrt_g_g_contra.a22(j, i) * inverse_dq2_squared;
+            const VVM::Real z_q2_north = u.sqrt_g_g_contra.a22(j + 1, i) * inverse_dq2_squared;
+            const VVM::Real z_denominator =
+                diagonal_shift + z_q1_west + z_q1_east + z_q2_south + z_q2_north;
+
+            expected_at_z(j, i) =
+                (diagonal_shift * initial_z(j, i) + z_q1_west * initial_z(j, i - 1) +
+                    z_q1_east * initial_z(j, i + 1) + z_q2_south * initial_z(j - 1, i) +
+                    z_q2_north * initial_z(j + 1, i) - z.sqrt_g(j, i) * rhs(j, i)) /
+                z_denominator;
+        });
+
+    const HorizontalEllipticSolver::Options options{1, diagonal_shift};
+    solver.solve_at_t(right_hand_side, solution_at_t, options);
+    solver.solve_at_z(right_hand_side, solution_at_z, options);
+
+    const auto actual_t_host = solution_at_t.get_host_data();
+    const auto actual_z_host = solution_at_z.get_host_data();
+    const auto expected_t_host =
+        Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), expected_at_t);
+    const auto expected_z_host =
+        Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), expected_at_z);
+
+    VVM::Real maximum_t_error = VVM::real(0.0);
+    VVM::Real maximum_z_error = VVM::real(0.0);
+    VVM::Real maximum_t_scale = VVM::real(0.0);
+    VVM::Real maximum_z_scale = VVM::real(0.0);
+
+    for (int j = halo; j < ny - halo; ++j) {
+        for (int i = halo; i < nx - halo; ++i) {
+            maximum_t_error =
+                std::max(maximum_t_error, std::abs(actual_t_host(j, i) - expected_t_host(j, i)));
+            maximum_z_error =
+                std::max(maximum_z_error, std::abs(actual_z_host(j, i) - expected_z_host(j, i)));
+            maximum_t_scale = std::max(maximum_t_scale, std::abs(expected_t_host(j, i)));
+            maximum_z_scale = std::max(maximum_z_scale, std::abs(expected_z_host(j, i)));
+        }
+    }
+
+    const VVM::Real relative_tolerance =
+        sizeof(VVM::Real) == sizeof(double) ? VVM::real(2.0e-11) : VVM::real(2.0e-4);
+    check(maximum_t_error <= relative_tolerance * std::max(VVM::real(1.0), maximum_t_scale),
+        "One T-point iteration must match the CVVM/VVMex shifted-Jacobi equation");
+    check(maximum_z_error <= relative_tolerance * std::max(VVM::real(1.0), maximum_z_scale),
+        "One Z-point iteration must match the CVVM/VVMex shifted-Jacobi equation");
+
+    if (grid.geometry().kind() == GeometryKind::Cartesian) {
+        VVM::Real maximum_tz_difference = VVM::real(0.0);
+        for (int j = halo; j < ny - halo; ++j) {
+            for (int i = halo; i < nx - halo; ++i) {
+                maximum_tz_difference = std::max(maximum_tz_difference,
+                    std::abs(actual_t_host(j, i) - actual_z_host(j, i)));
+            }
+        }
+
+        check(maximum_tz_difference <=
+                  relative_tolerance * std::max(VVM::real(1.0), maximum_t_scale),
+            "Cartesian T and Z relaxation must reduce to the same legacy five-point update");
+    }
+}
+
+void
+test_batched_matches_independent_solves(const Grid& grid, HorizontalEllipticSolver& solver) {
+
+    const int halo = grid.get_halo_cells();
+    const int ny = grid.get_local_total_points_y();
+    const int nx = grid.get_local_total_points_x();
+    const int global_start_j = grid.get_local_physical_start_y();
+    const int global_start_i = grid.get_local_physical_start_x();
+
+    Field<2> right_hand_side_at_t("horizontal_elliptic_batched_rhs_t", {ny, nx});
+    Field<2> right_hand_side_at_z("horizontal_elliptic_batched_rhs_z", {ny, nx});
+    Field<2> independent_at_t("horizontal_elliptic_independent_t", {ny, nx});
+    Field<2> independent_at_z("horizontal_elliptic_independent_z", {ny, nx});
+    Field<2> batched_at_t("horizontal_elliptic_batched_t", {ny, nx});
+    Field<2> batched_at_z("horizontal_elliptic_batched_z", {ny, nx});
+
+    auto rhs_at_t = right_hand_side_at_t.get_mutable_device_data();
+    auto rhs_at_z = right_hand_side_at_z.get_mutable_device_data();
+    auto initial_at_t = independent_at_t.get_mutable_device_data();
+    auto initial_at_z = independent_at_z.get_mutable_device_data();
+
+    Kokkos::parallel_for("InitializeHorizontalEllipticBatchedTest",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
+        KOKKOS_LAMBDA(const int j, const int i) {
+            const VVM::Real global_j = static_cast<VVM::Real>(global_start_j + j - halo);
+            const VVM::Real global_i = static_cast<VVM::Real>(global_start_i + i - halo);
+
+            rhs_at_t(j, i) = VVM::real(1.0e-12) *
+                             (VVM::real(0.75) + Kokkos::sin(VVM::real(0.17) * global_i) *
+                                                    Kokkos::cos(VVM::real(0.11) * global_j));
+
+            rhs_at_z(j, i) = VVM::real(1.0e-12) *
+                             (VVM::real(-0.35) + Kokkos::cos(VVM::real(0.09) * global_i) *
+                                                     Kokkos::sin(VVM::real(0.14) * global_j));
+
+            initial_at_t(j, i) = VVM::real(2.0) + VVM::real(0.03) * global_i -
+                                 VVM::real(0.02) * global_j +
+                                 VVM::real(0.001) * global_i * global_j;
+
+            initial_at_z(j, i) = VVM::real(-1.0) - VVM::real(0.015) * global_i +
+                                 VVM::real(0.025) * global_j -
+                                 VVM::real(0.0007) * global_i * global_j;
+        });
+
+    Kokkos::deep_copy(batched_at_t.get_mutable_device_data(), independent_at_t.get_device_data());
+
+    Kokkos::deep_copy(batched_at_z.get_mutable_device_data(), independent_at_z.get_device_data());
+
+    const HorizontalEllipticSolver::Options options{3, VVM::real(2.5e-7)};
+
+    solver.solve_at_t(right_hand_side_at_t, independent_at_t, options);
+
+    solver.solve_at_z(right_hand_side_at_z, independent_at_z, options);
+
+    solver.solve_at_z_and_t(right_hand_side_at_z,
+        batched_at_z,
+        right_hand_side_at_t,
+        batched_at_t,
+        options);
+
+    const auto independent_at_t_host = independent_at_t.get_host_data();
+    const auto independent_at_z_host = independent_at_z.get_host_data();
+    const auto batched_at_t_host = batched_at_t.get_host_data();
+    const auto batched_at_z_host = batched_at_z.get_host_data();
+
+    VVM::Real maximum_t_difference = VVM::real(0.0);
+    VVM::Real maximum_z_difference = VVM::real(0.0);
+    VVM::Real maximum_t_scale = VVM::real(0.0);
+    VVM::Real maximum_z_scale = VVM::real(0.0);
+
+    for (int j = halo; j < ny - halo; ++j) {
+        for (int i = halo; i < nx - halo; ++i) {
+            maximum_t_difference = std::max(maximum_t_difference,
+                std::abs(independent_at_t_host(j, i) - batched_at_t_host(j, i)));
+
+            maximum_z_difference = std::max(maximum_z_difference,
+                std::abs(independent_at_z_host(j, i) - batched_at_z_host(j, i)));
+
+            maximum_t_scale = std::max(maximum_t_scale, std::abs(independent_at_t_host(j, i)));
+
+            maximum_z_scale = std::max(maximum_z_scale, std::abs(independent_at_z_host(j, i)));
+        }
+    }
+
+    const VVM::Real relative_tolerance =
+        sizeof(VVM::Real) == sizeof(double) ? VVM::real(2.0e-13) : VVM::real(2.0e-5);
+
+    check(maximum_t_difference <= relative_tolerance * std::max(VVM::real(1.0), maximum_t_scale),
+        "The batched T solve must match the independent T solve");
+
+    check(maximum_z_difference <= relative_tolerance * std::max(VVM::real(1.0), maximum_z_scale),
+        "The batched Z solve must match the independent Z solve");
+}
+
+#if defined(ENABLE_NCCL)
+
+void
+require_cuda_success(const cudaError_t status, const char* operation) {
+    if (status != cudaSuccess) {
+        throw std::runtime_error(std::string(operation) + ": " + cudaGetErrorString(status));
+    }
+}
+
+// Declared after the fields and solvers so the graph is destroyed before any
+// allocation whose address it captures.
+struct EllipticTestGraph {
+    cudaStream_t stream = nullptr;
+    cudaGraph_t graph = nullptr;
+    cudaGraphExec_t executable = nullptr;
+    bool capturing = false;
+
+    explicit EllipticTestGraph(cudaStream_t stream_in) : stream(stream_in) {}
+
+    EllipticTestGraph(const EllipticTestGraph&) = delete;
+    EllipticTestGraph& operator=(const EllipticTestGraph&) = delete;
+
+    ~EllipticTestGraph() {
+        // Best-effort cleanup if a checked operation throws during capture.
+        if (capturing) {
+            cudaGraph_t abandoned_graph = nullptr;
+            cudaStreamEndCapture(stream, &abandoned_graph);
+            if (abandoned_graph) {
+                cudaGraphDestroy(abandoned_graph);
+            }
+        }
+
+        cudaStreamSynchronize(stream);
+
+        if (executable) {
+            cudaGraphExecDestroy(executable);
+        }
+        if (graph) {
+            cudaGraphDestroy(graph);
+        }
+    }
+};
+
+void
+initialize_graph_test_inputs(const Grid& grid,
+    const int replay,
+    Field<2>& rhs_at_z,
+    Field<2>& rhs_at_t,
+    Field<2>& solution_at_z,
+    Field<2>& solution_at_t) {
+
+    const int ny = grid.get_local_total_points_y();
+    const int nx = grid.get_local_total_points_x();
+    const int halo = grid.get_halo_cells();
+    const int start_i = grid.get_local_physical_start_x();
+    const int start_j = grid.get_local_physical_start_y();
+    const VVM::Real factor = static_cast<VVM::Real>(replay + 1);
+
+    auto rz = rhs_at_z.get_mutable_device_data();
+    auto rt = rhs_at_t.get_mutable_device_data();
+    auto z = solution_at_z.get_mutable_device_data();
+    auto t = solution_at_t.get_mutable_device_data();
+
+    Kokkos::parallel_for("InitializeEllipticGraphInputs",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
+        KOKKOS_LAMBDA(const int j, const int i) {
+            const VVM::Real x = static_cast<VVM::Real>(start_i + i - halo);
+            const VVM::Real y = static_cast<VVM::Real>(start_j + j - halo);
+
+            rz(j, i) =
+                VVM::real(1.0e-12) * factor * (VVM::real(0.3) + Kokkos::sin(VVM::real(0.17) * x));
+            rt(j, i) =
+                VVM::real(1.0e-12) * factor * (VVM::real(-0.4) + Kokkos::cos(VVM::real(0.13) * y));
+
+            z(j, i) = factor * (VVM::real(-1.0) + VVM::real(0.03) * x - VVM::real(0.02) * y);
+            t(j, i) = factor * (VVM::real(2.0) - VVM::real(0.01) * x + VVM::real(0.04) * y);
+        });
+}
+
+void
+compare_graph_test_fields(const Field<2>& expected,
+    const Field<2>& actual,
+    const int iterations,
+    const int replay,
+    const char* location) {
+
+    const auto expected_host = expected.get_host_data();
+    const auto actual_host = actual.get_host_data();
+
+    std::size_t different_bits = 0;
+    std::size_t nonfinite_values = 0;
+    VVM::Real maximum_error = VVM::real(0.0);
+
+    // Include halos: the captured solve must replay communication and wall
+    // filling as well as the interior relaxation.
+    for (std::size_t j = 0; j < expected_host.extent(0); ++j) {
+        for (std::size_t i = 0; i < expected_host.extent(1); ++i) {
+            const VVM::Real a = expected_host(j, i);
+            const VVM::Real b = actual_host(j, i);
+
+            if (!std::isfinite(a) || !std::isfinite(b)) {
+                ++nonfinite_values;
+                continue;
+            }
+
+            if (std::memcmp(&a, &b, sizeof(VVM::Real)) != 0) {
+                ++different_bits;
+            }
+
+            maximum_error = std::max(maximum_error, std::abs(a - b));
+        }
+    }
+
+    std::printf("Rank %d graph %s: iterations=%d replay=%d different_bits=%zu nonfinite=%zu "
+                "max_error=%.17e\n",
+        mpi_rank,
+        location,
+        iterations,
+        replay,
+        different_bits,
+        nonfinite_values,
+        static_cast<double>(maximum_error));
+
+    check(nonfinite_values == 0, "Direct and captured solves must produce finite values");
+    check(different_bits == 0, "Graph replay must match direct execution bit for bit");
+}
+
+void
+test_cuda_graph_replay(const Grid& grid, HaloExchanger& halo_exchanger) {
+    const int ny = grid.get_local_total_points_y();
+    const int nx = grid.get_local_total_points_x();
+
+    for (const int iterations : {1, 2, 3, 4}) {
+        Field<2> rhs_at_z("graph_rhs_at_z", {ny, nx});
+        Field<2> rhs_at_t("graph_rhs_at_t", {ny, nx});
+        Field<2> direct_at_z("graph_direct_at_z", {ny, nx});
+        Field<2> direct_at_t("graph_direct_at_t", {ny, nx});
+        Field<2> captured_at_z("graph_captured_at_z", {ny, nx});
+        Field<2> captured_at_t("graph_captured_at_t", {ny, nx});
+
+        HorizontalEllipticSolver direct_solver(grid, halo_exchanger);
+        HorizontalEllipticSolver captured_solver(grid, halo_exchanger);
+
+        HorizontalEllipticSolver::Options options;
+        options.iterations = iterations;
+        options.diagonal_shift = VVM::real(2.5e-7);
+        options.refresh_initial_halos = true;
+
+        EllipticTestGraph graph(Kokkos::Cuda().cuda_stream());
+
+        // All owning fields and solver scratch arrays exist before capture.
+        // The captured solver has not previously executed an ordinary solve.
+        Kokkos::fence();
+        require_cuda_success(cudaStreamBeginCapture(graph.stream, cudaStreamCaptureModeGlobal),
+            "Begin elliptic capture");
+        graph.capturing = true;
+
+        captured_solver.solve_at_z_and_t(rhs_at_z, captured_at_z, rhs_at_t, captured_at_t, options);
+
+        const cudaError_t end_status = cudaStreamEndCapture(graph.stream, &graph.graph);
+        graph.capturing = false;
+        require_cuda_success(end_status, "End elliptic capture");
+
+        if (!graph.graph) {
+            throw std::runtime_error("Elliptic capture returned an empty graph handle.");
+        }
+
+        require_cuda_success(
+            cudaGraphInstantiate(&graph.executable, graph.graph, nullptr, nullptr, 0),
+            "Instantiate elliptic graph");
+
+        for (int replay = 0; replay < 3; ++replay) {
+            // Change values while retaining every captured allocation address.
+            // Distinct T/Z data also detect accidental interchange of the fields.
+            initialize_graph_test_inputs(grid,
+                replay,
+                rhs_at_z,
+                rhs_at_t,
+                direct_at_z,
+                direct_at_t);
+
+            Kokkos::deep_copy(captured_at_z.get_mutable_device_data(),
+                direct_at_z.get_device_data());
+            Kokkos::deep_copy(captured_at_t.get_mutable_device_data(),
+                direct_at_t.get_device_data());
+
+            direct_solver.solve_at_z_and_t(rhs_at_z, direct_at_z, rhs_at_t, direct_at_t, options);
+            Kokkos::fence();
+
+            require_cuda_success(cudaGraphLaunch(graph.executable, graph.stream),
+                "Launch elliptic graph");
+            require_cuda_success(cudaStreamSynchronize(graph.stream), "Complete elliptic graph");
+
+            compare_graph_test_fields(direct_at_z, captured_at_z, iterations, replay, "Z");
+            compare_graph_test_fields(direct_at_t, captured_at_t, iterations, replay, "T");
+        }
+    }
+}
+
+#endif
+
+void
+run_tests(Grid& grid, HaloExchanger& halo_exchanger) {
+    HorizontalEllipticSolver solver(grid, halo_exchanger);
+    test_extrapolated_guess(grid, solver);
+    test_staggered_operator_diagonals(grid);
+    test_one_iteration(grid, halo_exchanger, solver);
+    test_batched_matches_independent_solves(grid, solver);
+#if defined(ENABLE_NCCL)
+    test_cuda_graph_replay(grid, halo_exchanger);
+#endif
+}
+
+} // namespace
+
+int
+main(int argc, char** argv) {
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
+
+    Kokkos::initialize(argc, argv);
+
+    {
+        try {
+            if (argc < 2) {
+                throw std::invalid_argument(
+                    "Usage: test_horizontal_elliptic_solver <configuration.json>");
+            }
+
+            const ConfigurationManager config(argv[1]);
+            Grid grid(config);
+
+#if defined(ENABLE_NCCL)
+            int mpi_size = 1;
+            MPI_Comm_size(MPI_COMM_WORLD, &mpi_size);
+
+            ncclUniqueId nccl_id;
+            if (mpi_rank == 0) {
+                ncclGetUniqueId(&nccl_id);
+            }
+
+            MPI_Bcast(&nccl_id, sizeof(nccl_id), MPI_BYTE, 0, MPI_COMM_WORLD);
+
+            ncclComm_t nccl_comm;
+            ncclCommInitRank(&nccl_comm, mpi_size, nccl_id, mpi_rank);
+
+            {
+                cudaStream_t stream = Kokkos::Cuda().cuda_stream();
+                HaloExchanger halo_exchanger(config, grid, nccl_comm, stream);
+                run_tests(grid, halo_exchanger);
+            }
+
+            ncclCommDestroy(nccl_comm);
+#else
+            HaloExchanger halo_exchanger(grid);
+            run_tests(grid, halo_exchanger);
+#endif
+        }
+        catch (const std::exception& error) {
+            ++failures;
+            std::fprintf(stderr, "Rank %d unexpected exception: %s\n", mpi_rank, error.what());
+        }
+    }
+
+    Kokkos::finalize();
+
+    int global_failures = 0;
+    MPI_Allreduce(&failures, &global_failures, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+
+    if (mpi_rank == 0) {
+        if (global_failures == 0) {
+            std::fprintf(stdout, "test_horizontal_elliptic_solver: PASS\n");
+        }
+        else {
+            std::fprintf(stderr,
+                "test_horizontal_elliptic_solver: %d failure(s)\n",
+                global_failures);
+        }
+    }
+
+    MPI_Finalize();
+    return global_failures == 0 ? 0 : 1;
+}

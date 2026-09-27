@@ -9,7 +9,7 @@ that area.
 | [System architecture](architecture.md) | Follow startup, MPI/Kokkos ownership, major targets, and repository layout |
 | [Physics implementation](physics.md) | Understand the model time-step order and optional physics components |
 | [P3 modifications](p3-modifications.md) | Compare VVMex microphysics coupling with EAMxx and original Fortran P3 |
-| [RRTMGP modifications](rrtmgp-modifications.md) | Understand the single-precision radiation fixes |
+| [RRTMGP modifications](rrtmgp-modifications.md) | Understand the precision and large-domain radiation fixes |
 | [BP5 output internals](bp5-output.md) | Change the BP5 schema, writer, restart path, or staging behavior |
 | [Reproducibility](reproducibility.md) | Diagnose repeatability or CPU/GPU floating-point differences |
 | [Continuous integration](ci.md) | Change test tiers, workflows, runners, or branch protection |

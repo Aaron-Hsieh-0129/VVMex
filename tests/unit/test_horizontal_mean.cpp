@@ -55,32 +55,43 @@ int g_failures = 0;
 constexpr VVM::Real kTolerance =
     sizeof(VVM::Real) == sizeof(double) ? VVM::Real(1e-12) : VVM::Real(1e-5);
 
-void report(const char* name, VVM::Real got, VVM::Real want) {
+void
+report(const char* name, VVM::Real got, VVM::Real want) {
     const VVM::Real scale = std::fabs(want) > VVM::Real(1) ? std::fabs(want) : VVM::Real(1);
     const bool ok = std::fabs(got - want) <= kTolerance * scale;
-    if (!ok) ++g_failures;
+    if (!ok) {
+        ++g_failures;
+    }
     if (g_rank == 0) {
-        std::fprintf(stdout, "[%s] %-46s got=%.17g want=%.17g\n",
-                     ok ? "PASS" : "FAIL", name,
-                     static_cast<double>(got), static_cast<double>(want));
+        std::fprintf(stdout,
+            "[%s] %-46s got=%.17g want=%.17g\n",
+            ok ? "PASS" : "FAIL",
+            name,
+            static_cast<double>(got),
+            static_cast<double>(want));
     }
 }
 
-void report_bool(const char* name, bool ok) {
-    if (!ok) ++g_failures;
+void
+report_bool(const char* name, bool ok) {
+    if (!ok) {
+        ++g_failures;
+    }
     if (g_rank == 0) {
         std::fprintf(stdout, "[%s] %s\n", ok ? "PASS" : "FAIL", name);
     }
 }
 
-VVM::Real read_scalar(const VVM::Core::ScalarView& v) {
+VVM::Real
+read_scalar(const VVM::Core::ScalarView& v) {
     VVM::Real host_value = VVM::real(0.0);
     Kokkos::deep_copy(host_value, v);
     return host_value;
 }
 
 // Physical cells hold their global horizontal index; halo cells hold junk.
-void fill_2d(const VVM::Core::Grid& grid, VVM::Core::Field<2>& field, VVM::Real halo_junk) {
+void
+fill_2d(const VVM::Core::Grid& grid, VVM::Core::Field<2>& field, VVM::Real halo_junk) {
     auto view = field.get_mutable_device_data();
     const int h = grid.get_halo_cells();
     const int ny = grid.get_local_total_points_y();
@@ -97,7 +108,8 @@ void fill_2d(const VVM::Core::Grid& grid, VVM::Core::Field<2>& field, VVM::Real 
                 const int gj = j0 + (j - h);
                 const int gi = i0 + (i - h);
                 view(j, i) = VVM::real(gj) * VVM::real(gnx) + VVM::real(gi);
-            } else {
+            }
+            else {
                 view(j, i) = halo_junk;
             }
         });
@@ -105,7 +117,8 @@ void fill_2d(const VVM::Core::Grid& grid, VVM::Core::Field<2>& field, VVM::Real 
 }
 
 // As above, with the level index folded in so that each level has its own mean.
-void fill_3d(const VVM::Core::Grid& grid, VVM::Core::Field<3>& field, VVM::Real halo_junk) {
+void
+fill_3d(const VVM::Core::Grid& grid, VVM::Core::Field<3>& field, VVM::Real halo_junk) {
     auto view = field.get_mutable_device_data();
     const int h = grid.get_halo_cells();
     const int nz = grid.get_local_total_points_z();
@@ -118,15 +131,15 @@ void fill_3d(const VVM::Core::Grid& grid, VVM::Core::Field<3>& field, VVM::Real 
     Kokkos::parallel_for("fill_3d",
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            const bool physical = (k >= h && k < nz - h &&
-                                   j >= h && j < ny - h &&
-                                   i >= h && i < nx - h);
+            const bool physical =
+                (k >= h && k < nz - h && j >= h && j < ny - h && i >= h && i < nx - h);
             if (physical) {
                 const int gj = j0 + (j - h);
                 const int gi = i0 + (i - h);
-                view(k, j, i) = VVM::real(k) * VVM::real(100.0) +
-                                VVM::real(gj) * VVM::real(gnx) + VVM::real(gi);
-            } else {
+                view(k, j, i) = VVM::real(k) * VVM::real(100.0) + VVM::real(gj) * VVM::real(gnx) +
+                                VVM::real(gi);
+            }
+            else {
                 view(k, j, i) = halo_junk;
             }
         });
@@ -135,7 +148,8 @@ void fill_3d(const VVM::Core::Grid& grid, VVM::Core::Field<3>& field, VVM::Real 
 
 } // namespace
 
-int main(int argc, char* argv[]) {
+int
+main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &g_rank);
 
@@ -158,7 +172,9 @@ int main(int argc, char* argv[]) {
         int size = 1;
         MPI_Comm_size(MPI_COMM_WORLD, &size);
         ncclUniqueId id;
-        if (g_rank == 0) ncclGetUniqueId(&id);
+        if (g_rank == 0) {
+            ncclGetUniqueId(&id);
+        }
         MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
         ncclComm_t nccl_comm;
         ncclCommInitRank(&nccl_comm, size, id, g_rank);
@@ -182,8 +198,13 @@ int main(int argc, char* argv[]) {
         MPI_Comm_size(MPI_COMM_WORLD, &mpi_size);
         if (g_rank == 0) {
             std::fprintf(stdout,
-                         "horizontal-mean test: backend=%s ranks=%d grid=%dx%d halo=%d nz_local=%d\n",
-                         backend, mpi_size, gnx, gny, h, nz);
+                "horizontal-mean test: backend=%s ranks=%d grid=%dx%d halo=%d nz_local=%d\n",
+                backend,
+                mpi_size,
+                gnx,
+                gny,
+                h,
+                nz);
         }
 
         VVM::Core::ScalarView mean("mean");
@@ -205,20 +226,23 @@ int main(int argc, char* argv[]) {
 
         const int k_mid = h + (nz - 2 * h) / 2;
         state.calculate_horizontal_mean(field_3d, mean, k_mid);
-        report("3D mean at an explicit level", read_scalar(mean),
-               VVM::real(k_mid) * VVM::real(100.0) + index_mean);
+        report("3D mean at an explicit level",
+            read_scalar(mean),
+            VVM::real(k_mid) * VVM::real(100.0) + index_mean);
 
         // Lowest and highest physical levels are both valid.
         state.calculate_horizontal_mean(field_3d, mean, h);
-        report("3D mean at the lowest physical level", read_scalar(mean),
-               VVM::real(h) * VVM::real(100.0) + index_mean);
+        report("3D mean at the lowest physical level",
+            read_scalar(mean),
+            VVM::real(h) * VVM::real(100.0) + index_mean);
 
         // --- 3D, default level ------------------------------------------------
         const int k_top = nz - h - 1;
         state.calculate_horizontal_mean(field_3d, mean);
         const VVM::Real default_mean = read_scalar(mean);
-        report("3D mean with default k_level", default_mean,
-               VVM::real(k_top) * VVM::real(100.0) + index_mean);
+        report("3D mean with default k_level",
+            default_mean,
+            VVM::real(k_top) * VVM::real(100.0) + index_mean);
 
         state.calculate_horizontal_mean(field_3d, mean, k_top);
         report("default k_level equals nz - h - 1", default_mean, read_scalar(mean));
@@ -248,9 +272,10 @@ int main(int argc, char* argv[]) {
                     if (physical) {
                         const int gj = j0 + (j - h);
                         const int gi = i0 + (i - h);
-                        view(j, i) = VVM::real(1.0) /
-                                     (VVM::real(gj) * VVM::real(gnx) + VVM::real(gi) + VVM::real(1.0));
-                    } else {
+                        view(j, i) = VVM::real(1.0) / (VVM::real(gj) * VVM::real(gnx) +
+                                                          VVM::real(gi) + VVM::real(1.0));
+                    }
+                    else {
                         view(j, i) = VVM::real(0.0);
                     }
                 });
@@ -259,8 +284,11 @@ int main(int argc, char* argv[]) {
             state.calculate_horizontal_mean(field_2d, mean);
             const VVM::Real fractional = read_scalar(mean);
             if (g_rank == 0) {
-                std::fprintf(stdout, "[INFO] inexact-sum mean = %.17g  (%s, %d ranks)\n",
-                             static_cast<double>(fractional), backend, mpi_size);
+                std::fprintf(stdout,
+                    "[INFO] inexact-sum mean = %.17g  (%s, %d ranks)\n",
+                    static_cast<double>(fractional),
+                    backend,
+                    mpi_size);
             }
 
             // Same idea, but with the summands spanning many orders of magnitude,
@@ -275,17 +303,22 @@ int main(int argc, char* argv[]) {
                         const VVM::Real n = VVM::real(gj) * VVM::real(gnx) + VVM::real(gi);
                         // Alternating sign and an exponent sweep: catastrophic
                         // cancellation, so the ordering shows in the top bits.
-                        const VVM::Real sign = ((gi + gj) % 2 == 0) ? VVM::real(1.0) : VVM::real(-1.0);
+                        const VVM::Real sign =
+                            ((gi + gj) % 2 == 0) ? VVM::real(1.0) : VVM::real(-1.0);
                         view(j, i) = sign * Kokkos::exp(VVM::real(1.0e-5) * n);
-                    } else {
+                    }
+                    else {
                         view(j, i) = VVM::real(0.0);
                     }
                 });
             Kokkos::fence();
             state.calculate_horizontal_mean(field_2d, mean);
             if (g_rank == 0) {
-                std::fprintf(stdout, "[INFO] wide-magnitude mean = %.17g  (%s, %d ranks)\n",
-                             static_cast<double>(read_scalar(mean)), backend, mpi_size);
+                std::fprintf(stdout,
+                    "[INFO] wide-magnitude mean = %.17g  (%s, %d ranks)\n",
+                    static_cast<double>(read_scalar(mean)),
+                    backend,
+                    mpi_size);
             }
 
             // Structured patterns can agree by symmetry. Pseudo-random values are
@@ -300,20 +333,26 @@ int main(int argc, char* argv[]) {
                         const int gi = i0 + (i - h);
                         uint64_t x = static_cast<uint64_t>(gj) * 2654435761u +
                                      static_cast<uint64_t>(gi) * 40503u + 1u;
-                        x ^= x >> 33; x *= 0xff51afd7ed558ccdULL; x ^= x >> 33;
+                        x ^= x >> 33;
+                        x *= 0xff51afd7ed558ccdULL;
+                        x ^= x >> 33;
                         // Uniform in [-1, 1), no structure for an ordering to exploit.
-                        view(j, i) = VVM::real(2.0) *
-                                     (VVM::real(x >> 11) / VVM::real(9007199254740992.0)) -
-                                     VVM::real(1.0);
-                    } else {
+                        view(j, i) =
+                            VVM::real(2.0) * (VVM::real(x >> 11) / VVM::real(9007199254740992.0)) -
+                            VVM::real(1.0);
+                    }
+                    else {
                         view(j, i) = VVM::real(0.0);
                     }
                 });
             Kokkos::fence();
             state.calculate_horizontal_mean(field_2d, mean);
             if (g_rank == 0) {
-                std::fprintf(stdout, "[INFO] pseudo-random mean = %.17g  (%s, %d ranks)\n",
-                             static_cast<double>(read_scalar(mean)), backend, mpi_size);
+                std::fprintf(stdout,
+                    "[INFO] pseudo-random mean = %.17g  (%s, %d ranks)\n",
+                    static_cast<double>(read_scalar(mean)),
+                    backend,
+                    mpi_size);
             }
 
             // Same values through the 3D path: a different view rank, so a
@@ -323,26 +362,32 @@ int main(int argc, char* argv[]) {
             Kokkos::parallel_for("fill3_pseudo_random",
                 Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz_t, ny_t, nx_t}),
                 KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                    const bool physical = (k >= h && k < nz_t - h &&
-                                           j >= h && j < ny_t - h && i >= h && i < nx_t - h);
+                    const bool physical = (k >= h && k < nz_t - h && j >= h && j < ny_t - h &&
+                                           i >= h && i < nx_t - h);
                     if (physical) {
                         const int gj = j0 + (j - h);
                         const int gi = i0 + (i - h);
                         uint64_t x = static_cast<uint64_t>(gj) * 2654435761u +
                                      static_cast<uint64_t>(gi) * 40503u + 1u;
-                        x ^= x >> 33; x *= 0xff51afd7ed558ccdULL; x ^= x >> 33;
-                        view3(k, j, i) = VVM::real(2.0) *
-                                         (VVM::real(x >> 11) / VVM::real(9007199254740992.0)) -
-                                         VVM::real(1.0);
-                    } else {
+                        x ^= x >> 33;
+                        x *= 0xff51afd7ed558ccdULL;
+                        x ^= x >> 33;
+                        view3(k, j, i) =
+                            VVM::real(2.0) * (VVM::real(x >> 11) / VVM::real(9007199254740992.0)) -
+                            VVM::real(1.0);
+                    }
+                    else {
                         view3(k, j, i) = VVM::real(0.0);
                     }
                 });
             Kokkos::fence();
             state.calculate_horizontal_mean(field_3d, mean);
             if (g_rank == 0) {
-                std::fprintf(stdout, "[INFO] pseudo-random 3D mean = %.17g  (%s, %d ranks)\n",
-                             static_cast<double>(read_scalar(mean)), backend, mpi_size);
+                std::fprintf(stdout,
+                    "[INFO] pseudo-random 3D mean = %.17g  (%s, %d ranks)\n",
+                    static_cast<double>(read_scalar(mean)),
+                    backend,
+                    mpi_size);
             }
 
             // A constant field, which is what the initialiser actually averages
@@ -353,30 +398,33 @@ int main(int argc, char* argv[]) {
             Kokkos::parallel_for("fill3_constant",
                 Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz_t, ny_t, nx_t}),
                 KOKKOS_LAMBDA(const int k, const int j, const int i) {
-                    const bool physical = (k >= h && k < nz_t - h &&
-                                           j >= h && j < ny_t - h && i >= h && i < nx_t - h);
+                    const bool physical = (k >= h && k < nz_t - h && j >= h && j < ny_t - h &&
+                                           i >= h && i < nx_t - h);
                     view3(k, j, i) = physical ? constant : VVM::real(0.0);
                 });
             Kokkos::fence();
             state.calculate_horizontal_mean(field_3d, mean);
             if (g_rank == 0) {
-                std::fprintf(stdout, "[INFO] constant-field 3D mean = %.17g  (%s, %d ranks)\n",
-                             static_cast<double>(read_scalar(mean)), backend, mpi_size);
+                std::fprintf(stdout,
+                    "[INFO] constant-field 3D mean = %.17g  (%s, %d ranks)\n",
+                    static_cast<double>(read_scalar(mean)),
+                    backend,
+                    mpi_size);
             }
             // Harmonic-series sum over the domain; only the last bits are at stake.
             VVM::Real harmonic = VVM::real(0.0);
             for (int n = static_cast<int>(npoints); n >= 1; --n) {
                 harmonic += VVM::real(1.0) / VVM::real(n);
             }
-            report("inexact-sum mean matches a serial sum",
-                   fractional, harmonic / npoints);
+            report("inexact-sum mean matches a serial sum", fractional, harmonic / npoints);
         }
 
         // --- invalid explicit levels fail loudly ------------------------------
         bool threw_below = false;
         try {
             state.calculate_horizontal_mean(field_3d, mean, h - 1);
-        } catch (const std::exception&) {
+        }
+        catch (const std::exception&) {
             threw_below = true;
         }
         report_bool("k_level in the lower halo throws", threw_below);
@@ -384,7 +432,8 @@ int main(int argc, char* argv[]) {
         bool threw_above = false;
         try {
             state.calculate_horizontal_mean(field_3d, mean, nz - h);
-        } catch (const std::exception&) {
+        }
+        catch (const std::exception&) {
             threw_above = true;
         }
         report_bool("k_level in the upper halo throws", threw_above);
@@ -394,8 +443,10 @@ int main(int argc, char* argv[]) {
         MPI_Allreduce(&g_failures, &global_failures, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
         exit_code = global_failures == 0 ? 0 : 1;
         if (g_rank == 0) {
-            std::fprintf(stdout, "%s: %d failure(s)\n",
-                         global_failures == 0 ? "OK" : "FAILED", global_failures);
+            std::fprintf(stdout,
+                "%s: %d failure(s)\n",
+                global_failures == 0 ? "OK" : "FAILED",
+                global_failures);
         }
 
 #if defined(ENABLE_NCCL)

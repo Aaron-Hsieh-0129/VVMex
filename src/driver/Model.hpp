@@ -22,10 +22,10 @@ namespace Driver {
 class Model {
 public:
     Model(const Utils::ConfigurationManager& config,
-          Core::Parameters& params,
-          const Core::Grid& grid,
-          Core::State& state,
-          Core::HaloExchanger& halo_exchanger);
+        Core::Parameters& params,
+        const Core::Grid& grid,
+        Core::State& state,
+        Core::HaloExchanger& halo_exchanger);
 
     void init();
     void run_step(VVM::Real dt);
