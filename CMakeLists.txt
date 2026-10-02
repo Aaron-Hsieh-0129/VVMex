@@ -447,11 +447,11 @@ endif()
 
 if(ENABLE_NCCL)
     find_path(NCCL_INCLUDE_DIR nccl.h
-        HINTS 
+        HINTS
         ${NVHPC_DIR}/comm_libs/nccl/include
     )
     find_library(NCCL_LIBRARY nccl
-        HINTS 
+        HINTS
         ${NVHPC_DIR}/comm_libs/nccl/lib
     )
     if (NCCL_INCLUDE_DIR AND NCCL_LIBRARY)
@@ -636,6 +636,12 @@ else()
     message(FATAL_ERROR "PnetCDF library or includes not found at the specified path: ${PNETCDF_DIR}")
 endif()
 
+# ------------------------------
+# CLEO
+# ------------------------------
+set(cleopath ${CMAKE_SOURCE_DIR}/externals/cleo)
+message(STATUS "Using CLEO installation from: ${cleopath}")
+add_subdirectory(${cleopath} ${CMAKE_BINARY_DIR}/externals/cleo)
 
 # ------------------------------
 # Project sources
