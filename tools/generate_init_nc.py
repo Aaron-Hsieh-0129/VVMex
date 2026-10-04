@@ -23,7 +23,7 @@ if not VVM_ROOT:
 os.chdir(VVM_ROOT)
 print(f"[Info] Change to VVM_ROOT: {VVM_ROOT}")
 
-CONFIG_PATH = os.environ.get('VVM_CONFIG_PATH', './rundata/input_configs/rll_tropical.json')
+CONFIG_PATH = os.environ.get('VVM_CONFIG_PATH', './rundata/input_configs/tropical_rll/uniform80.json')
 SOURCE_TW_DATA = './rundata/land/topolsm_TW.nc'
 
 with open(CONFIG_PATH, 'r') as f:
@@ -631,11 +631,14 @@ def get_ideal_slopetype_data(ny, nx):
     slopetype[:,:] = 1
     return slopetype
 
-def get_ideal_tg_data(ny, nx, value=300.0):
-    # Optional prescribed surface-temperature pattern, independent of terrain.
+def get_ideal_tg_data(ny, nx, value=300.0, amplitude=3.0,
+                      width_fraction=0.16276):
     reference = os.environ.get('VVM_TG_REFERENCE')
     if not reference:
-        return np.full((ny, nx), value, dtype='f8')
+        x = (np.arange(nx, dtype='f8') - (nx - 1) / 2.0) / (width_fraction * nx)
+        y = (np.arange(ny, dtype='f8') - (ny - 1) / 2.0) / (width_fraction * ny)
+        return value + amplitude * np.exp(-(y[:, None] ** 2 + x[None, :] ** 2))
+        # return value
     with nc.Dataset(reference, 'r') as ds:
         field = ds.variables['Tg']
         if field.dimensions != ('ny', 'nx') or field.shape != (ny, nx):

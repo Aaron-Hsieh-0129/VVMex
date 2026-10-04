@@ -332,11 +332,9 @@ run_tests() {
     noisy["physics"]["p3"]["enable_p3"] = false;
     noisy["physics"]["rrtmgp"]["enable_rrtmgp"] = false;
     noisy["dynamics"]["forcings"]["sponge_layer"]["enable"] = false;
-    check_validation(directory,
-        "rll_dry_random_perturbation_rejected",
-        noisy,
-        1,
-        false,
+    check_validation(directory, "rll_profile_random_perturbation_without_p3", noisy, 1, true);
+    noisy["initial_conditions"].erase("source_file");
+    check_validation(directory, "rll_dry_random_perturbation_rejected", noisy, 1, false,
         "random perturbation requires a profile-backed moist");
     Json periodic = moist;
     periodic["grid"]["horizontal"]["topology"]["q2"] = "periodic";
@@ -368,7 +366,13 @@ run_tests() {
     check_validation(directory, "rll_radiation_needs_profile", bad, 1, false, "profile-backed");
     bad = moist;
     bad["physics"]["p3"]["enable_p3"] = false;
-    check_validation(directory, "rll_profile_needs_p3", bad, 1, false, "profile-backed");
+    bad["physics"]["turbulence"]["enable_turbulence"] = false;
+    bad["physics"]["surface_process"]["enable"] = false;
+    check_validation(directory, "rll_rrtmgp_with_dynamics_without_p3", bad, 1, true);
+    bad["dynamics"]["prognostic_variables"]["qc"] =
+        bad["dynamics"]["prognostic_variables"]["qv"];
+    check_validation(directory, "rll_cloud_transport_requires_p3", bad, 1, false,
+        "Unsupported RLL prognostic variable: qc");
     bad = moist;
     bad["dynamics"]["prognostic_variables"].erase("qv");
     check_validation(directory, "rll_profile_needs_transport", bad, 1, false, "th and qv");

@@ -1,6 +1,7 @@
 #include "NumericalMethodFactory.hpp"
 
 #include "core/geometry/GeometryKind.hpp"
+#include "core/RegularLatLonModelConfiguration.hpp"
 #include "dynamics/spatial_schemes/MUSCL.hpp"
 #include "dynamics/spatial_schemes/GeneralizedTakacs.hpp"
 #include "dynamics/spatial_schemes/Takacs.hpp"
@@ -109,9 +110,10 @@ NumericalMethodFactory::create_spatial_scheme(const std::string& variable_name,
             }
 
             if (horizontal_buoyancy) {
-                if (config_.get_value<bool>("physics.p3.enable_p3", false)) {
-                    // P3 owns qp (total condensate). Full-model capability
-                    // remains separately guarded until all coupled paths pass.
+                if (config_.get_value<bool>("physics.p3.enable_p3", false) ||
+                    Core::is_rll_profile_atmosphere(config_)) {
+                    // A text sounding supplies water vapor independently of P3.
+                    // DynamicalCore supplies zero qp when P3 is disabled.
                     return std::make_unique<GeneralizedTakacs>(grid_.geometry(),
                         GeneralizedTakacs::BuoyancyMode::Moist,
                         make_rll_takacs_boundary(grid_.geometry()));

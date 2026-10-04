@@ -2,6 +2,7 @@
 #include "numerical_methods/NumericalMethodFactory.hpp"
 #include "spatial_schemes/Takacs.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
+#include "core/RegularLatLonModelConfiguration.hpp"
 #include "dynamics/solvers/VerticalWindDiagnostic.hpp"
 #include "dynamics/operators/HorizontalVectorConversion.hpp"
 
@@ -44,14 +45,16 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
 
     std::vector<std::string> common_thermo = {"th", "qv"};
     const bool p3_enabled = config.get_value<bool>("physics.p3.enable_p3", false);
+    if (!p3_enabled && Core::is_rll_profile_atmosphere(config) && !state_.has_field("qp")) {
+        // The sounding supplies water vapor even without microphysics. Moist
+        // buoyancy uses that vapor with zero condensate in this configuration.
+        state_.add_field<3>("qp", dims,
+            Core::FieldMetadata{Core::GridStaggering::Centered, "kg kg-1",
+                "total condensate mixing ratio (zero without P3)"});
+    }
 
     auto prognostic_config = config_.get_value<nlohmann::json>("dynamics.prognostic_variables");
     if (!p3_enabled) {
-        if (rank == 0) {
-            std::cout << "[WARNING] P3 is not turned on but the P3 variables are listed in "
-                         "prognostic variables so they are deleted!!"
-                      << std::endl;
-        }
         std::unordered_set<std::string> P3toRemove =
             {"qc", "qi", "qr", "qm", "nc", "ni", "nr", "bm"};
         std::vector<std::string> keysToDelete;
@@ -62,6 +65,10 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
                     break;
                 }
             }
+        }
+        if (rank == 0 && !keysToDelete.empty()) {
+            std::cout << "[WARNING] P3 is disabled; ignoring configured P3 prognostic variables."
+                      << std::endl;
         }
         for (const auto& key : keysToDelete) {
             prognostic_config.erase(key);

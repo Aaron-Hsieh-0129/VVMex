@@ -31,6 +31,12 @@ is_rll_spatial_terrain(const Utils::ConfigurationManager& config) {
 }
 
 inline bool
+is_rll_profile_atmosphere(const Utils::ConfigurationManager& config) {
+    return is_rll_mountain(config) && config.has_key("initial_conditions.source_file") &&
+           config.get_value<std::string>("initial_conditions.format", "") == "txt";
+}
+
+inline bool
 valid_rll_terrain_index(double level, int halo, int total_nz) {
     // Same index convention as Cartesian input: zero means flat; nonzero
     // values are absolute vertical indices, not elevations in metres.
@@ -91,10 +97,7 @@ validate_rll_idealized(const Utils::ConfigurationManager& config,
         throw std::runtime_error("Mountain terrain requires simulation.idealized_test = "
                                  "rll_mountain; the barotropic jet case remains flat.");
     }
-    const bool profile_atmosphere =
-        is_rll_mountain(config) && config.has_key("initial_conditions.source_file") &&
-        config.get_value<std::string>("initial_conditions.format", "") == "txt" &&
-        config.get_value<bool>("physics.p3.enable_p3", false);
+    const bool profile_atmosphere = is_rll_profile_atmosphere(config);
     if (is_rll_spatial_terrain(config)) {
         const auto fields = config.get_value<nlohmann::json>("netcdf_reader.variables_to_read.2d",
             nlohmann::json::array());
@@ -258,9 +261,11 @@ validate_rll_idealized(const Utils::ConfigurationManager& config,
 
         const bool is_vorticity = is_vorticity_variable(name);
 
-        const bool is_p3_scalar = p3_enabled && is_p3_thermodynamic_variable(name);
+        const bool is_thermodynamic_scalar =
+            (p3_enabled && is_p3_thermodynamic_variable(name)) ||
+            (profile_atmosphere && (name == "th" || name == "qv"));
 
-        if (!is_vorticity && !is_p3_scalar) {
+        if (!is_vorticity && !is_thermodynamic_scalar) {
             throw std::runtime_error("Unsupported RLL prognostic variable: " + name);
         }
 
@@ -272,13 +277,13 @@ validate_rll_idealized(const Utils::ConfigurationManager& config,
         const auto& terms = variable.value().at("tendency_terms");
 
         // ---------------------------------------------------------------------
-        // P3 thermodynamic variables
+        // Thermodynamic variables (th/qv do not require P3)
         //
         // RLL currently supports these as transported scalars. Keep this
         // deliberately narrow: advection only, using the validated RLL Takacs
         // scalar operator and the existing AB2 temporal integration.
         // ---------------------------------------------------------------------
-        if (is_p3_scalar) {
+        if (is_thermodynamic_scalar) {
             for (const auto& term : terms.items()) {
                 if (!term.value().value("enable", true)) {
                     continue;

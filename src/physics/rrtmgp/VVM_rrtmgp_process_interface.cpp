@@ -85,6 +85,34 @@ RRTMGPRadiation::RRTMGPRadiation(const VVM::Utils::ConfigurationManager& config,
     int nx = m_grid.get_local_total_points_x();
     int ny = m_grid.get_local_total_points_y();
     if (!state.has_field("albedo")) state.add_field<2>("albedo", {ny, nx}, Core::FieldMetadata{Core::GridStaggering::Surface, "%", "surface albedo"});
+    const int nz = m_grid.get_local_total_points_z();
+    if (!state.has_field("fe_tendency_th")) {
+        state.add_field<3>("fe_tendency_th", {nz, ny, nx});
+    }
+    if (m_config.get_value<bool>("physics.p3.enable_p3", false)) {
+        return;
+    }
+    // Radiation can use fixed cloud inputs without running P3. Register these
+    // before the initial-condition reader so prescribed inputs can be loaded.
+    for (const char* name : {"qc", "qi", "nc"}) {
+        if (!state.has_field(name)) {
+            state.add_field<3>(name, {nz, ny, nx},
+                Core::FieldMetadata{Core::GridStaggering::Centered,
+                    std::string(name) == "nc" ? "kg-1" : "kg kg-1",
+                    "prescribed cloud input without P3"});
+            state.get_field<3>(name).set_to_zero();
+        }
+    }
+    for (const auto& cloud : {std::make_pair("diag_eff_radius_qc", 10.0),
+             std::make_pair("diag_eff_radius_qi", 25.0)}) {
+        if (!state.has_field(cloud.first)) {
+            state.add_field<3>(cloud.first, {nz, ny, nx},
+                Core::FieldMetadata{Core::GridStaggering::Centered, "um",
+                    "prescribed cloud effective radius"});
+            Kokkos::deep_copy(state.get_field<3>(cloud.first).get_mutable_device_data(),
+                VVM::real(cloud.second));
+        }
+    }
 }
 
 RRTMGPRadiation::~RRTMGPRadiation() {}
