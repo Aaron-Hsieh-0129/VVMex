@@ -2,6 +2,7 @@
 
 add_library(vvm_driver
     Model.cpp
+    OneWayCoupledModel.cpp
 )
 
 target_link_libraries(vvm_driver

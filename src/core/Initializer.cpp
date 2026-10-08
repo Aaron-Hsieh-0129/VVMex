@@ -153,6 +153,9 @@ Initializer::initialize_state() const {
     if (restart_reader_) {
         load_restart();
     }
+    else if (is_rll_bubble(config_)) {
+        initialize_rll_bubble();
+    }
     else if (!is_rll_idealized(config_)) {
         // RLL idealized initial conditions already contain their analytic perturbations.
         initialize_perturbation();
@@ -468,6 +471,60 @@ Initializer::initialize_case_terrain() const {
     Kokkos::deep_copy(state_.get_field<2>("terrain_height").get_mutable_device_data(), elevation);
     halo_exchanger_.exchange_halos(terrain);
     halo_exchanger_.exchange_halos(state_.get_field<2>("terrain_height"));
+}
+
+void
+Initializer::initialize_rll_bubble() const {
+    if (!config_.get_value<bool>("initial_conditions.bubble.enable", false)) return;
+    const auto& geometry = grid_.horizontal_specification().geometry;
+    const Real pi = std::acos(real(-1.));
+    const Real longitude = config_.get_value<Real>("initial_conditions.bubble.longitude_deg", real(10.))*pi/real(180.);
+    const Real latitude = config_.get_value<Real>("initial_conditions.bubble.latitude_deg", real(0.))*pi/real(180.);
+    const Real rh = config_.get_value<Real>("initial_conditions.bubble.horizontal_radius_m", real(100000.));
+    const Real rz = config_.get_value<Real>("initial_conditions.bubble.vertical_radius_m", real(2000.));
+    const Real z0 = config_.get_value<Real>("initial_conditions.bubble.center_height_m", real(3000.));
+    const Real amplitude = config_.get_value<Real>("initial_conditions.bubble.theta_amplitude_K", real(2.));
+    const Real moisture = config_.get_value<Real>("initial_conditions.bubble.qv_amplitude", real(0.));
+    const Real west = geometry.regular_lat_lon.longitude_west_edge;
+    const Real south = geometry.regular_lat_lon.latitude_south_edge;
+    const Real width = geometry.dq1*grid_.get_global_points_x();
+    const Real north = south+geometry.dq2*grid_.get_global_points_y();
+    if (!std::isfinite(longitude) || !std::isfinite(latitude) || !std::isfinite(rh) || rh <= real(0.) ||
+        !std::isfinite(rz) || rz <= real(0.) || !std::isfinite(z0) || z0 < real(0.) ||
+        !std::isfinite(amplitude) || !std::isfinite(moisture) || moisture < real(0.) ||
+        longitude < west || longitude >= west+width || latitude <= south || latitude >= north ||
+        rh >= geometry.regular_lat_lon.radius*std::min(latitude-south,north-latitude))
+        throw std::runtime_error("RLL bubble parameters must be finite, positive in radius, and fit inside the latitude walls.");
+    const auto coords = grid_.geometry().device_view(Core::Geometry::HorizontalLocation::T);
+    const auto z = parameters_.z_mid.get_device_data();
+    const Real radius = geometry.regular_lat_lon.radius;
+    const auto th = state_.get_field<3>("th").get_mutable_device_data();
+    const auto qv = state_.get_field<3>("qv").get_mutable_device_data();
+    const auto active = state_.get_field<3>("ITYPEW").get_device_data();
+    const int h = grid_.get_halo_cells();
+    const int nz = grid_.get_local_total_points_z(), ny = grid_.get_local_total_points_y(), nx = grid_.get_local_total_points_x();
+    Kokkos::parallel_for("InitializeRLLBubble",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h,h,h}, {nz-h,ny-h,nx-h}),
+        KOKKOS_LAMBDA(int k, int j, int i) {
+            Real dl = coords.longitude(j,i)-longitude;
+            dl -= width*Kokkos::floor((dl+width/real(2.))/width);
+            const Real dp = coords.latitude(j,i)-latitude;
+            const Real s1 = Kokkos::sin(dp/real(2.)), s2 = Kokkos::sin(dl/real(2.));
+            const Real a = s1*s1+Kokkos::cos(latitude)*Kokkos::cos(coords.latitude(j,i))*s2*s2;
+            const Real distance = real(2.)*radius*Kokkos::asin(Kokkos::sqrt(Kokkos::fmin(real(1.),Kokkos::fmax(real(0.),a))));
+            const Real dz = Kokkos::abs(z(k)-z0);
+            if (active(k,j,i) == 1 && distance < rh && dz < rz) {
+                const Real horizontal = Kokkos::cos(pi*distance/(real(2.)*rh));
+                const Real vertical = Kokkos::cos(pi*dz/(real(2.)*rz));
+                const Real shape = horizontal*horizontal*vertical*vertical;
+                th(k,j,i) += amplitude*shape;
+                qv(k,j,i) += moisture*shape;
+            }
+        });
+    std::vector<Core::Field<3>*> fields{&state_.get_field<3>("th"),&state_.get_field<3>("qv")};
+    halo_exchanger_.exchange_multiple_halos(fields);
+    BoundaryConditionManager bc(grid_,true);
+    for (auto* field : fields) { bc.apply_horizontal_bcs(*field); bc.apply_zero_gradient(*field); }
 }
 
 void

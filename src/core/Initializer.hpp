@@ -35,6 +35,7 @@ public:
     void initialize_surface_temperature() const;
     void initialize_geographic_coordinates() const;
     void initialize_perturbation() const;
+    void initialize_rll_bubble() const;
     void initialize_zeta_factor_for_twisting() const;
     void apply_tracer_boundary_conditions() const;
     void load_restart() const;

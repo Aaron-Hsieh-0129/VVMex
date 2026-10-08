@@ -15,6 +15,7 @@
 #include "dynamics/forcings/LateralBoundaryNudging.hpp"
 #include "dynamics/forcings/AreaMeanNudging.hpp"
 #include <set>
+#include "driver/ThermodynamicFeedback.hpp"
 
 namespace VVM {
 namespace Driver {
@@ -28,7 +29,16 @@ public:
         Core::HaloExchanger& halo_exchanger);
 
     void init();
-    void run_step(VVM::Real dt);
+    void run_step(VVM::Real dt, const ThermodynamicFeedback* feedback = nullptr, bool thermodynamics_only = false);
+    void enable_transport_flux_capture();
+    void prepare_projected_state();
+    void enable_physics_feedback_capture(bool water_budget = false);
+    void enable_physics_tendency_capture(const std::vector<std::string>& variables);
+    void apply_thermodynamic_feedback(VVM::Real dt, const ThermodynamicFeedback& feedback);
+    // CUDA extended lambdas require public enclosing member functions.
+    void finish_physics_capture(bool dynamics, VVM::Real dt);
+    void apply_dynamic_feedback(VVM::Real dt, const ThermodynamicFeedback& feedback);
+    void update_thermodynamic_perturbations();
     void finalize();
 
 private:
@@ -96,6 +106,16 @@ private:
     std::vector<Core::Field<3>*> dynamics_boundary_fields_;
 
     bool field_cache_ready_ = false;
+    bool capture_physics_feedback_ = false;
+    std::vector<Core::Field<3>*> captured_fluxes_;
+    std::unique_ptr<Core::Field<3>> pre_p3_theta_, pre_p3_qv_, pre_p3_water_;
+    struct PhysicsCapture {
+        std::string variable;
+        bool dynamics;
+        std::unique_ptr<Core::Field<3>> before;
+    };
+    std::vector<PhysicsCapture> physics_captures_;
+    void begin_physics_capture(bool dynamics);
     void ensure_field_cache();
 };
 

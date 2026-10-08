@@ -65,6 +65,10 @@ public:
         const std::string& var_name,
         VVM::Real stage_dt) const override;
 
+    // Accumulate the two SSPRK2 stage fluxes with weight 1/2. Callers reset
+    // the diagnostic fields once per complete model step.
+    void accumulate_fluxes(Core::State& state) const;
+
     KOKKOS_INLINE_FUNCTION
     static VVM::Real
     van_leer_slope(VVM::Real backward, VVM::Real forward) {

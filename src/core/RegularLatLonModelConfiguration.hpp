@@ -19,8 +19,13 @@ is_rll_mountain(const Utils::ConfigurationManager& config) {
 }
 
 inline bool
+is_rll_bubble(const Utils::ConfigurationManager& config) {
+    return config.get_value<std::string>("simulation.idealized_test", "none") == "rll_bubble";
+}
+
+inline bool
 is_rll_idealized(const Utils::ConfigurationManager& config) {
-    return is_barotropic_jet_rll(config) || is_rll_mountain(config);
+    return is_barotropic_jet_rll(config) || is_rll_mountain(config) || is_rll_bubble(config);
 }
 
 inline bool
@@ -32,7 +37,7 @@ is_rll_spatial_terrain(const Utils::ConfigurationManager& config) {
 
 inline bool
 is_rll_profile_atmosphere(const Utils::ConfigurationManager& config) {
-    return is_rll_mountain(config) && config.has_key("initial_conditions.source_file") &&
+    return (is_rll_mountain(config) || is_rll_bubble(config)) && config.has_key("initial_conditions.source_file") &&
            config.get_value<std::string>("initial_conditions.format", "") == "txt";
 }
 
@@ -59,7 +64,7 @@ validate_rll_idealized(const Utils::ConfigurationManager& config,
             (!is_rll_mountain(config) || !h.geometry.regular_lat_lon.periodic_latitude)) ||
         h.n_halo_cells < 2 || h.nx < 8 || h.ny < 4 || v.nz < 3 ||
         !v.uses_uniform_analytic_coordinate()) {
-        throw std::runtime_error("Full-model RLL requires a supported barotropic jet or mountain "
+        throw std::runtime_error("Full-model RLL requires a supported barotropic jet, mountain or bubble "
                                  "configuration with uniform levels and periodic longitude.");
     }
     if (h.topology.q2 == HorizontalEdgeTopology::Periodic &&
@@ -98,6 +103,14 @@ validate_rll_idealized(const Utils::ConfigurationManager& config,
                                  "rll_mountain; the barotropic jet case remains flat.");
     }
     const bool profile_atmosphere = is_rll_profile_atmosphere(config);
+    if (is_rll_bubble(config)) {
+        if (!profile_atmosphere || config.has_key("netcdf_reader.source_file") ||
+            config.get_value<std::string>("initial_conditions.perturbation", "none") != "none" ||
+            config.get_value<double>("initial_conditions.barotropic_jet.jet_scale", 0.) != 0. ||
+            config.get_value<double>("initial_conditions.barotropic_jet.perturbation_scale", 0.) != 0.) {
+            throw std::runtime_error("RLL bubble requires a text sounding, flat resting atmosphere and only its dedicated bubble perturbation.");
+        }
+    }
     if (is_rll_spatial_terrain(config)) {
         const auto fields = config.get_value<nlohmann::json>("netcdf_reader.variables_to_read.2d",
             nlohmann::json::array());
@@ -172,20 +185,22 @@ validate_rll_idealized(const Utils::ConfigurationManager& config,
         }
     }
     const auto engine = config.get_value<std::string>("output.engine", "HDF5");
-    // The shared HDF5/SST writer exports geometry-derived RLL coordinates.
+    // Both history writers export geometry-derived RLL coordinates. BP5 is
+    // supported for the mountain and bubble experiments.
     const bool supported_engine = engine == "HDF5" ||
-                                  (is_rll_mountain(config) && engine == "BP5") ||
+                                  ((is_rll_mountain(config) || is_rll_bubble(config)) && engine == "BP5") ||
                                   (profile_atmosphere && engine == "SST");
     if (!supported_engine) {
         throw std::runtime_error(
             "Unsupported RLL output engine: " + engine +
-            ". Use HDF5, BP5 for rll_mountain, or SST for a profile-backed moist rll_mountain.");
+            ". Use HDF5, BP5 for rll_mountain/rll_bubble, or SST for a profile-backed atmosphere.");
     }
     if (h.fix_lonlat) {
         throw std::runtime_error(
             "RLL requires geometry-derived geographic coordinates (fix_lonlat=false).");
     }
-    const int experiment = config.get_value<int>("initial_conditions.barotropic_jet.case");
+    const int experiment = is_rll_bubble(config) ? 1 :
+        config.get_value<int>("initial_conditions.barotropic_jet.case");
     if (experiment != 1 && experiment != 2) {
         throw std::runtime_error("Barotropic jet case must be 1 or 2.");
     }
@@ -215,7 +230,7 @@ validate_rll_idealized(const Utils::ConfigurationManager& config,
             }
         }
     }
-    if (is_rll_mountain(config)) {
+    if (is_rll_mountain(config) || is_rll_bubble(config)) {
         const double omega = config.get_value<double>("constants.OMEGA", 0.);
         if (!std::isfinite(omega)) {
             throw std::runtime_error("RLL mountain OMEGA must be finite.");
@@ -297,6 +312,12 @@ validate_rll_idealized(const Utils::ConfigurationManager& config,
                 if (term.value().value("spatial_scheme", std::string("")) != "Takacs" ||
                     term.value().value("temporal_scheme", std::string("")) != "AdamsBashforth2") {
 
+                    // Bubble experiments can use the existing conservative
+                    // positivity-preserving scalar integrator on either grid.
+                    if (is_thermodynamic_scalar && is_rll_bubble(config) &&
+                        term.value().value("spatial_scheme",std::string(""))=="MUSCL" &&
+                        term.value().value("temporal_scheme",std::string(""))=="SSPRK2") continue;
+
                     throw std::runtime_error("RLL P3 scalar transport requires "
                                              "Takacs spatial transport and AdamsBashforth2.");
                 }
@@ -315,13 +336,13 @@ validate_rll_idealized(const Utils::ConfigurationManager& config,
 
             if (term.key() != "advection" && term.key() != "stretching" &&
                 term.key() != "twisting" &&
-                !(is_rll_mountain(config) && term.key() == "coriolis") &&
+                !((is_rll_mountain(config) || is_rll_bubble(config)) && term.key() == "coriolis") &&
                 !(profile_atmosphere && (name == "xi" || name == "eta") &&
                     term.key() == "buoyancy")) {
 
                 throw std::runtime_error("RLL vorticity currently supports "
                                          "advection, stretching and twisting"
-                                         " (plus Coriolis for the RLL mountain case).");
+                                         " (plus Coriolis for the RLL mountain or bubble case).");
             }
 
             const auto temporal = term.value().value("temporal_scheme", std::string(""));

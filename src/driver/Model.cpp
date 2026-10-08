@@ -2,6 +2,8 @@
 #include "utils/ProcessScheduling.hpp"
 #include "utils/Timer.hpp"
 #include "core/RegularLatLonModelConfiguration.hpp"
+#include <cmath>
+#include <sstream>
 
 namespace VVM {
 namespace Driver {
@@ -218,6 +220,10 @@ Model::init() {
     if (!state_.has_field("th_perturb")) {
         state_.add_field<3>("th_perturb", {nz, ny, nx});
     }
+    if (Core::is_rll_bubble(config_)) {
+        state_.add_field<3>("qv_perturb", {nz,ny,nx},
+            {Core::GridStaggering::Centered,"kg kg-1","water vapor anomaly from reference profile"});
+    }
 
     if (area_mean_nudging_ && uvtau_ == 0.0) {
         predict_uvtopmn_ = false;
@@ -235,6 +241,7 @@ Model::init() {
         dycore_->update_contravariant_wind_shadow_state();
     }
     dycore_->compute_diagnostic_fields();
+    update_thermodynamic_perturbations();
 
     if (restart_enabled) {
         dycore_->initialize_restart_history();
@@ -311,8 +318,41 @@ Model::ensure_field_cache() {
     field_cache_ready_ = true;
 }
 
+void Model::enable_transport_flux_capture() {
+    if (!captured_fluxes_.empty()) return;
+    for (const std::string name : {"th", "qv"}) {
+        const auto key="dynamics.prognostic_variables."+name+".tendency_terms.advection.";
+        if (config_.get_value<std::string>(key+"spatial_scheme","")!="MUSCL" ||
+            config_.get_value<std::string>(key+"temporal_scheme","")!="SSPRK2")
+            throw std::runtime_error("Coupling flux diagnostics require MUSCL/SSPRK2.");
+        for (const std::string axis : {"x","y","z"}) {
+            const auto label="coupling_flux_"+axis+"_"+name;
+            state_.add_field<3>(label,{grid_.get_local_total_points_z(),grid_.get_local_total_points_y(),grid_.get_local_total_points_x()});
+            captured_fluxes_.push_back(&state_.get_field<3>(label));
+        }
+    }
+}
+
+void Model::prepare_projected_state() {
+    ensure_field_cache();
+    halo_exchanger_.exchange_multiple_halos(thermo_boundary_fields_);
+    for (const auto& target : thermo_boundary_targets_) {
+        bc_manager_.apply_horizontal_bcs(*target.field);
+        if(target.zero_gradient_top) bc_manager_.apply_zero_gradient(*target.field);
+        else bc_manager_.apply_zero_gradient_bottom_zero_top(*target.field);
+    }
+    for (const char* name : {"u","v","w"}) {
+        auto& field=state_.get_field<3>(name);
+        halo_exchanger_.exchange_halos(field);
+        bc_manager_.apply_horizontal_bcs(field);
+    }
+    dycore_->update_contravariant_wind_shadow_state();
+    if (microphysics_) microphysics_->refresh_total_condensate(state_);
+}
+
 void
-Model::run_step(VVM::Real dt) {
+Model::run_step(VVM::Real dt, const ThermodynamicFeedback* feedback, bool thermodynamics_only) {
+    for (auto* flux : captured_fluxes_) flux->set_to_zero();
     ensure_field_cache();
 
     size_t current_step = state_.get_step();
@@ -369,10 +409,67 @@ Model::run_step(VVM::Real dt) {
         random_forcing_->apply(state_);
     }
 
+    if (feedback && feedback->transport && feedback->strength != real(0.)) {
+        feedback->transport->apply(state_, dt, feedback->strength);
+        halo_exchanger_.exchange_multiple_halos(thermo_boundary_fields_);
+        for (const auto& target : thermo_boundary_targets_) {
+            bc_manager_.apply_horizontal_bcs(*target.field);
+            if(target.zero_gradient_top) bc_manager_.apply_zero_gradient(*target.field);
+            else bc_manager_.apply_zero_gradient_bottom_zero_top(*target.field);
+        }
+    }
+
+    begin_physics_capture(false);
+
     // P3 Microphysics based on (t+1) thermodynamics variables
     if (microphysics_) {
         VVM::Utils::Timer timer("microphysics");
+        if (capture_physics_feedback_) {
+            Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+                pre_p3_theta_->get_mutable_device_data(), state_.get_field<3>("th").get_device_data());
+            Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+                pre_p3_qv_->get_mutable_device_data(), state_.get_field<3>("qv").get_device_data());
+        }
+        if(pre_p3_water_) {
+            const auto q=state_.get_field<3>("qv").get_device_data(),c=state_.get_field<3>("qc").get_device_data(),
+                r=state_.get_field<3>("qr").get_device_data(),ice=state_.get_field<3>("qi").get_device_data();
+            const auto out=pre_p3_water_->get_mutable_device_data();
+            Kokkos::parallel_for("SnapshotP3TotalWater",Kokkos::RangePolicy<>(0,out.size()),
+                KOKKOS_LAMBDA(size_t n){out.data()[n]=q.data()[n]+c.data()[n]+r.data()[n]+ice.data()[n];});
+        }
         microphysics_->run(state_, dt);
+        if(pre_p3_water_) {
+            const auto q=state_.get_field<3>("qv").get_device_data(),c=state_.get_field<3>("qc").get_device_data(),
+                r=state_.get_field<3>("qr").get_device_data(),ice=state_.get_field<3>("qi").get_device_data(),
+                before=pre_p3_water_->get_device_data();
+            const auto out=state_.get_field<3>("physics_tendency_qt").get_mutable_device_data();
+            Kokkos::parallel_for("CaptureP3TotalWater",Kokkos::RangePolicy<>(0,out.size()),
+                KOKKOS_LAMBDA(size_t n){out.data()[n]=(q.data()[n]+c.data()[n]+r.data()[n]+ice.data()[n]-before.data()[n])/dt;});
+        }
+        if (capture_physics_feedback_) {
+            const int h = grid_.get_halo_cells();
+            const int nz = grid_.get_local_total_points_z(), ny = grid_.get_local_total_points_y(),
+                      nx = grid_.get_local_total_points_x();
+            const auto before_th = pre_p3_theta_->get_device_data();
+            const auto before_q = pre_p3_qv_->get_device_data();
+            const auto th = state_.get_field<3>("th").get_device_data();
+            const auto q = state_.get_field<3>("qv").get_device_data();
+            const auto active = state_.get_field<3>("ITYPEW").get_device_data();
+            const auto ft = state_.get_field<3>("physics_tendency_th").get_mutable_device_data();
+            const auto fq = state_.get_field<3>("physics_tendency_qv").get_mutable_device_data();
+            Kokkos::parallel_for("CaptureP3Feedback",
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {nz-h, ny-h, nx-h}),
+                KOKKOS_LAMBDA(int k, int j, int i) {
+                    ft(k,j,i) = active(k,j,i) == 1 ? (th(k,j,i)-before_th(k,j,i))/dt : real(0.);
+                    fq(k,j,i) = active(k,j,i) == 1 ? (q(k,j,i)-before_q(k,j,i))/dt : real(0.);
+                });
+        }
+    }
+
+    // Match the fine model's P3 split stage. Buoyancy and wind recovery below
+    // see this update during the same step; AB2 transport histories do not.
+    if (feedback && !feedback->transport) {
+        apply_thermodynamic_feedback(dt, *feedback);
     }
 
     // Turbulence diffusion on thermodynamics variables
@@ -442,6 +539,8 @@ Model::run_step(VVM::Real dt) {
         }
     }
 
+    finish_physics_capture(false, dt);
+
     // Apply sponge layer
     if (sponge_layer_) {
         VVM::Utils::Timer timer("sponge_layer");
@@ -492,6 +591,8 @@ Model::run_step(VVM::Real dt) {
         microphysics_->refresh_total_condensate(state_);
     }
 
+    if (thermodynamics_only) { update_thermodynamic_perturbations(); return; }
+
     // Calculate buoyancy based on thermodynamics variables at t+1
     // dycore_->update_buoyancy_term(state_);
     // This is included in calculate vorticity tendencies
@@ -503,6 +604,8 @@ Model::run_step(VVM::Real dt) {
         // Update vorticity to t+1
         dycore_->update_vorticity(dt);
     }
+
+    begin_physics_capture(true);
 
     // Vorticity diffusion
     if (turbulence_) {
@@ -549,6 +652,9 @@ Model::run_step(VVM::Real dt) {
         }
     }
 
+    finish_physics_capture(true, dt);
+    if (feedback && !feedback->dynamics.empty()) apply_dynamic_feedback(dt, *feedback);
+
     if (sponge_layer_) {
         VVM::Utils::Timer timer("sponge_layer");
         for (const auto& target : sponge_dynamics_targets_) {
@@ -578,7 +684,8 @@ Model::run_step(VVM::Real dt) {
         area_mean_nudging_->apply_vorticity(state_, dt);
     }
 
-    if (turbulence_ || sponge_layer_ || enable_surface_process_ || area_mean_nudging_) {
+    if (turbulence_ || sponge_layer_ || enable_surface_process_ || area_mean_nudging_ ||
+        (feedback && feedback->strength != real(0.) && !feedback->dynamics.empty())) {
         VVM::Utils::Timer timer("halo_exchange");
         halo_exchanger_.exchange_multiple_halos(dynamics_boundary_fields_);
         for (const auto& target : dynamics_boundary_targets_) {
@@ -613,6 +720,216 @@ Model::run_step(VVM::Real dt) {
     {
         VVM::Utils::Timer timer("dynamics_diagnostics");
         dycore_->compute_diagnostic_fields();
+    }
+    update_thermodynamic_perturbations();
+}
+
+void
+Model::update_thermodynamic_perturbations() {
+    if (!Core::is_rll_bubble(config_)) return;
+    const auto th = state_.get_field<3>("th").get_device_data();
+    const auto qv = state_.get_field<3>("qv").get_device_data();
+    const auto thbar = state_.get_field<1>("thbar").get_device_data();
+    const auto qvbar = state_.get_field<1>("qvbar").get_device_data();
+    const auto tp = state_.get_field<3>("th_perturb").get_mutable_device_data();
+    const auto qp = state_.get_field<3>("qv_perturb").get_mutable_device_data();
+    Kokkos::parallel_for("RLLBubbleThermodynamicPerturbations",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0,0,0},
+            {grid_.get_local_total_points_z(),grid_.get_local_total_points_y(),grid_.get_local_total_points_x()}),
+        KOKKOS_LAMBDA(int k,int j,int i) {
+            tp(k,j,i) = th(k,j,i)-thbar(k);
+            qp(k,j,i) = qv(k,j,i)-qvbar(k);
+        });
+}
+
+void
+Model::enable_physics_tendency_capture(const std::vector<std::string>& variables) {
+    if (!physics_captures_.empty()) throw std::runtime_error("Physics tendency capture already enabled.");
+    const std::array<int,3> dims{grid_.get_local_total_points_z(),
+        grid_.get_local_total_points_y(),grid_.get_local_total_points_x()};
+    std::set<std::string> seen;
+    for (const auto& name : variables) {
+        if (!seen.insert(name).second) throw std::runtime_error("Duplicate physics feedback variable: "+name);
+        const bool dynamics = name == "xi" || name == "eta" || name == "zeta";
+        if ((name != "th" && name != "qv" && !dynamics) || !state_.has_field(name))
+            throw std::runtime_error("Unsupported physics feedback prognostic variable: "+name);
+        auto metadata = state_.get_field<3>(name).get_metadata();
+        metadata.units = dynamics ? "s-2" : name == "th" ? "K s-1" : "kg kg-1 s-1";
+        metadata.long_name = "net physical-process tendency of "+name;
+        state_.add_field<3>("coupling_physics_"+name,dims,metadata);
+        physics_captures_.push_back({name,dynamics,
+            std::make_unique<Core::Field<3>>("before_physics_"+name,dims)});
+    }
+}
+
+void
+Model::begin_physics_capture(bool dynamics) {
+    for (auto& entry : physics_captures_) if (entry.dynamics == dynamics)
+        Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(), entry.before->get_mutable_device_data(),
+            state_.get_field<3>(entry.variable).get_device_data());
+}
+
+void
+Model::finish_physics_capture(bool dynamics, VVM::Real dt) {
+    for (auto& entry : physics_captures_) if (entry.dynamics == dynamics) {
+        const auto before = entry.before->get_device_data();
+        const auto after = state_.get_field<3>(entry.variable).get_device_data();
+        const auto tendency = state_.get_field<3>("coupling_physics_"+entry.variable).get_mutable_device_data();
+        Kokkos::parallel_for("CaptureNetPhysicsIncrement",Kokkos::RangePolicy<>(0,after.size()),
+            KOKKOS_LAMBDA(size_t n) { tendency.data()[n]=(after.data()[n]-before.data()[n])/dt; });
+    }
+}
+
+void
+Model::apply_dynamic_feedback(VVM::Real dt, const ThermodynamicFeedback& feedback) {
+    if (feedback.strength == real(0.)) return;
+    const int h=grid_.get_halo_cells(),nz=grid_.get_local_total_points_z(),
+        ny=grid_.get_local_total_points_y(),nx=grid_.get_local_total_points_x();
+    for (const auto& entry : feedback.dynamics) {
+        const bool horizontal = entry.variable == "xi" || entry.variable == "eta";
+        if ((!horizontal && entry.variable != "zeta") || !entry.field)
+            throw std::runtime_error("Unsupported dynamic feedback variable: "+entry.variable);
+        const auto source=entry.field->get_device_data();
+        const auto target=state_.get_field<3>(entry.variable).get_mutable_device_data();
+        if (source.extent_int(0)!=nz || source.extent_int(1)!=ny || source.extent_int(2)!=nx)
+            throw std::runtime_error("Dynamic feedback dimensions do not match receiver.");
+        // xi/eta are prognostic on vertical interfaces. Only top zeta is an
+        // independent prognostic; its column structure is reconstructed below.
+        const int first=horizontal?h:nz-h-1,last=horizontal?nz-h-1:nz-h;
+        const Real strength=feedback.strength,increment=dt*strength;
+        int invalid=0;
+        Kokkos::parallel_reduce("CheckDynamicFeedback",Kokkos::MDRangePolicy<Kokkos::Rank<3>>(
+            {first,h,h},{last,ny-h,nx-h}),KOKKOS_LAMBDA(int k,int j,int i,int& count) {
+                if(!Kokkos::isfinite(target(k,j,i)+increment*source(k,j,i))) ++count;
+            },invalid);
+        if(invalid) throw std::runtime_error("Nonfinite dynamic coupling tendency: "+entry.variable);
+        const auto applied=state_.get_field<3>("feedback_applied_"+entry.variable).get_mutable_device_data();
+        Kokkos::parallel_for("ApplyDynamicFeedback",Kokkos::MDRangePolicy<Kokkos::Rank<3>>(
+            {first,h,h},{last,ny-h,nx-h}),KOKKOS_LAMBDA(int k,int j,int i) {
+                target(k,j,i)+=increment*source(k,j,i);
+                applied(k,j,i)=strength*source(k,j,i);
+            });
+    }
+}
+
+void
+Model::enable_physics_feedback_capture(bool water_budget) {
+    if (!microphysics_) {
+        throw std::runtime_error("Physics feedback capture requires P3.");
+    }
+    const std::array<int, 3> dims{grid_.get_local_total_points_z(),
+        grid_.get_local_total_points_y(), grid_.get_local_total_points_x()};
+    pre_p3_theta_ = std::make_unique<Core::Field<3>>("pre_p3_theta", dims);
+    pre_p3_qv_ = std::make_unique<Core::Field<3>>("pre_p3_qv", dims);
+    state_.add_field<3>("physics_tendency_th", dims,
+        {Core::GridStaggering::Centered, "K s-1", "step-averaged net P3 potential temperature tendency"});
+    state_.add_field<3>("physics_tendency_qv", dims,
+        {Core::GridStaggering::Centered, "kg kg-1 s-1", "step-averaged net P3 water vapor tendency"});
+    if(water_budget) {
+        pre_p3_water_=std::make_unique<Core::Field<3>>("pre_p3_water",dims);
+        state_.add_field<3>("physics_tendency_qt",dims,
+            {Core::GridStaggering::Centered,"kg kg-1 s-1","net P3 total water tendency including fallout"});
+    }
+    capture_physics_feedback_ = true;
+}
+
+void
+Model::apply_thermodynamic_feedback(VVM::Real dt, const ThermodynamicFeedback& feedback) {
+    if (!std::isfinite(feedback.strength) || feedback.strength < real(0.) ||
+        !std::isfinite(dt) || dt <= real(0.)) {
+        throw std::runtime_error("Thermodynamic feedback requires finite nonnegative strength and positive dt.");
+    }
+    using View = Core::Field<3>::ViewType;
+    View applied_q, unapplied_q, applied_th, unapplied_th;
+    if (feedback.limit_vapor || state_.has_field("feedback_applied_qv")) {
+        const std::array<int,3> dims{grid_.get_local_total_points_z(),
+            grid_.get_local_total_points_y(),grid_.get_local_total_points_x()};
+        for(const char* name : {"feedback_applied_qv","feedback_unapplied_qv",
+                               "feedback_applied_theta","feedback_unapplied_theta"}) {
+            if(!state_.has_field(name)) state_.add_field<3>(name,dims,
+                {Core::GridStaggering::Centered,std::string(name).find("qv")!=std::string::npos ? "kg kg-1 s-1" : "K s-1",
+                 "scaled applied or unapplied combined feedback tendency"});
+            state_.get_field<3>(name).set_to_zero();
+        }
+        applied_q=state_.get_field<3>("feedback_applied_qv").get_mutable_device_data();
+        unapplied_q=state_.get_field<3>("feedback_unapplied_qv").get_mutable_device_data();
+        applied_th=state_.get_field<3>("feedback_applied_theta").get_mutable_device_data();
+        unapplied_th=state_.get_field<3>("feedback_unapplied_theta").get_mutable_device_data();
+    }
+    // An exact bypass keeps the alpha=0 coarse solution identical to standalone.
+    if (feedback.strength == real(0.) || (!feedback.theta && !feedback.qv)) return;
+    if (microphysics_) throw std::runtime_error("The feedback receiver must have P3 disabled.");
+    const int h = grid_.get_halo_cells();
+    const int nz = grid_.get_local_total_points_z(), ny = grid_.get_local_total_points_y(),
+              nx = grid_.get_local_total_points_x();
+    const auto th = state_.get_field<3>("th").get_mutable_device_data();
+    const auto q = state_.get_field<3>("qv").get_mutable_device_data();
+    const auto active = state_.get_field<3>("ITYPEW").get_device_data();
+    const auto ft = feedback.theta ? feedback.theta->get_device_data() : View{};
+    const auto fq = feedback.qv ? feedback.qv->get_device_data() : View{};
+    for (const auto& v : {ft, fq}) {
+        if (v.data() && (v.extent_int(0) != nz || v.extent_int(1) != ny || v.extent_int(2) != nx))
+            throw std::runtime_error("Thermodynamic feedback field dimensions do not match receiver.");
+    }
+    const auto increment = dt * feedback.strength;
+    const bool limit_vapor=feedback.limit_vapor;
+    int invalid = 0;
+    Kokkos::parallel_reduce("CheckThermodynamicFeedback",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h,h,h}, {nz-h,ny-h,nx-h}),
+        KOKKOS_LAMBDA(int k, int j, int i, int& errors) {
+            if (active(k,j,i) != 1) return;
+            const auto t = th(k,j,i) + (ft.data() ? increment*ft(k,j,i) : real(0.));
+            const auto vapor = q(k,j,i) + (fq.data() ? increment*fq(k,j,i) : real(0.));
+            if (!Kokkos::isfinite(t) || !Kokkos::isfinite(vapor)) ++errors;
+            if(limit_vapor && q(k,j,i)<real(0.)) ++errors;
+            // Negative vapor is intentionally allowed in this one-way experiment:
+            // the receiver applies the prescribed tendency without clipping.
+            // if (vapor < real(0.)) ++errors;
+        }, invalid);
+    if (invalid) {
+        VVM::Real min_before, min_after;
+        Kokkos::parallel_reduce("FeedbackMinimumVaporBefore",
+            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h,h,h}, {nz-h,ny-h,nx-h}),
+            KOKKOS_LAMBDA(int k, int j, int i, VVM::Real& minimum) {
+                if (active(k,j,i) == 1 && q(k,j,i) < minimum) minimum = q(k,j,i);
+            }, Kokkos::Min<VVM::Real>(min_before));
+        Kokkos::parallel_reduce("FeedbackMinimumVaporAfter",
+            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h,h,h}, {nz-h,ny-h,nx-h}),
+            KOKKOS_LAMBDA(int k, int j, int i, VVM::Real& minimum) {
+                if (active(k,j,i) != 1) return;
+                const auto vapor = q(k,j,i) + (fq.data() ? increment*fq(k,j,i) : real(0.));
+                if (vapor < minimum) minimum = vapor;
+            }, Kokkos::Min<VVM::Real>(min_after));
+        std::ostringstream message;
+        message << "Coupling produced nonfinite thermodynamics; no clipping is applied. "
+                << "Invalid cells=" << invalid << ", minimum qv before feedback=" << min_before
+                << ", minimum qv after feedback=" << min_after << ", dt=" << dt;
+        throw std::runtime_error(message.str());
+    }
+    Kokkos::parallel_for("ApplyThermodynamicFeedback",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h,h,h}, {nz-h,ny-h,nx-h}),
+        KOKKOS_LAMBDA(int k, int j, int i) {
+            if (active(k,j,i) != 1) return;
+            const auto requested_t=ft.data() ? increment*ft(k,j,i) : real(0.);
+            const auto requested_q=fq.data() ? increment*fq(k,j,i) : real(0.);
+            Real factor=real(1.);
+            if(limit_vapor && requested_q<real(0.) && q(k,j,i)+requested_q<real(0.))
+                factor=q(k,j,i)/(-requested_q);
+            const auto applied_t=factor*requested_t;
+            const auto actual_q=factor<real(1.) ? -q(k,j,i) : requested_q;
+            th(k,j,i)+=applied_t;
+            if(factor<real(1.)) q(k,j,i)=real(0.);
+            else q(k,j,i)+=actual_q;
+            if(applied_q.data()) {
+                applied_th(k,j,i)=applied_t/dt;unapplied_th(k,j,i)=(requested_t-applied_t)/dt;
+                applied_q(k,j,i)=actual_q/dt;unapplied_q(k,j,i)=(requested_q-actual_q)/dt;
+            }
+        });
+    std::vector<Core::Field<3>*> fields{&state_.get_field<3>("th"), &state_.get_field<3>("qv")};
+    halo_exchanger_.exchange_multiple_halos(fields);
+    for (auto* field : fields) {
+        bc_manager_.apply_horizontal_bcs(*field);
+        bc_manager_.apply_zero_gradient(*field);
     }
 }
 

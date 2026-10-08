@@ -1,4 +1,5 @@
 #include "AdvectionTerm.hpp"
+#include "dynamics/spatial_schemes/MUSCL.hpp"
 
 #include "core/BoundaryConditionManager.hpp"
 #include "core/boundary/HorizontalBoundaryStencils.hpp"
@@ -325,6 +326,13 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
         out_tendency,
         variable_name_,
         stage_dt);
+
+    if (state.has_field("coupling_flux_x_"+variable_name_)) {
+        const auto* muscl=dynamic_cast<const MUSCL*>(scheme_.get());
+        if (!muscl || stage_dt <= real(0.))
+            throw std::runtime_error("Flux capture requires MUSCL/SSPRK2 stage evaluation.");
+        muscl->accumulate_fluxes(state);
+    }
 
     auto& tendency = out_tendency.get_mutable_device_data();
 

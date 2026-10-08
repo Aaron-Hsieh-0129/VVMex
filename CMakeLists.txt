@@ -647,6 +647,39 @@ if(BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
+# NVHPC dependency generation is disabled above. These inline validation
+# headers are shared by several libraries; stale copies can reject a valid
+# configuration even after the executable has been relinked.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
+    set(_vvm_validation_headers
+        "${CMAKE_SOURCE_DIR}/src/core/RegularLatLonModelConfiguration.hpp"
+        "${CMAKE_SOURCE_DIR}/src/core/ModelConfigurationValidation.hpp")
+    foreach(_vvm_validation_target IN ITEMS
+            vvm vvm_core vvm_dynamics vvm_driver vvm_io
+            test_model_configuration_validation)
+        if(NOT TARGET ${_vvm_validation_target})
+            continue()
+        endif()
+        get_target_property(_vvm_validation_sources ${_vvm_validation_target} SOURCES)
+        get_target_property(_vvm_validation_source_dir ${_vvm_validation_target} SOURCE_DIR)
+        foreach(_vvm_validation_source IN LISTS _vvm_validation_sources)
+            if(NOT IS_ABSOLUTE "${_vvm_validation_source}")
+                set(_vvm_validation_source "${_vvm_validation_source_dir}/${_vvm_validation_source}")
+            endif()
+            if(NOT _vvm_validation_source MATCHES "\\.cpp$" OR NOT EXISTS "${_vvm_validation_source}")
+                continue()
+            endif()
+            file(STRINGS "${_vvm_validation_source}" _vvm_validation_includes
+                REGEX "^#include.*(RegularLatLonModelConfiguration|ModelConfigurationValidation)\\.hpp")
+            if(_vvm_validation_includes)
+                set_property(SOURCE "${_vvm_validation_source}"
+                    TARGET_DIRECTORY ${_vvm_validation_target}
+                    APPEND PROPERTY OBJECT_DEPENDS ${_vvm_validation_headers})
+            endif()
+        endforeach()
+    endforeach()
+endif()
+
 message(STATUS "=== Compiler flags summary ===")
 message(STATUS "CXX Compiler: ${CMAKE_CXX_COMPILER}")
 message(STATUS "CXX Flags: ${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")

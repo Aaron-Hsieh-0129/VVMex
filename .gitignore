@@ -55,9 +55,10 @@ tags
 .codex
 
 # Local runtime inputs and generated run data
-/rundata/
+/rundata/*
+/rundata/input_configs/*
 __pycache__
 *.ipynb
 
 refs
-experiments
+/experiments/*

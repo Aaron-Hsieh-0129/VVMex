@@ -32,6 +32,7 @@
 #include "utils/TimingManager.hpp"
 
 #include "driver/Model.hpp"
+#include "driver/OneWayCoupledModel.hpp"
 #include "io/IOServer.hpp"
 
 #if defined(ENABLE_NCCL)
@@ -270,7 +271,14 @@ run_vvm(int argc, char* argv[], int world_rank, int world_size) {
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
 
-    VVM::Core::validate_model_numerical_configuration(config, num_sim_tasks);
+    const bool coupled_run = config.has_key("coupling");
+    if (coupled_run) {
+        if (num_sim_tasks != 1 || num_io_tasks != 0)
+            throw std::runtime_error("One-way coupling requires one compute rank and no IO ranks.");
+    }
+    else {
+        VVM::Core::validate_model_numerical_configuration(config, num_sim_tasks);
+    }
 
     int color = (world_rank < num_sim_tasks) ? 0 : 1;
     MPI_Comm split_comm;
@@ -375,91 +383,103 @@ run_vvm(int argc, char* argv[], int world_rank, int world_size) {
 #endif
 
         // Create a VVM model instance and run the simulation
-        VVM::Core::Grid grid(config, split_comm);
-        VVM::Core::Parameters parameters(config, grid);
-        grid.print_info();
-
+        if (coupled_run) {
+            timing.stop_timer("initialize");
+            VVM::Driver::run_one_way_coupled(config,split_comm
 #if defined(ENABLE_NCCL)
-        VVM::Core::State state(config, parameters, grid, nccl_comm, stream);
-        VVM::Core::HaloExchanger halo_exchanger(config, grid, nccl_comm, stream);
-#else
-        VVM::Core::State state(config, parameters, grid);
-        VVM::Core::HaloExchanger halo_exchanger(grid);
+                ,nccl_comm,stream
 #endif
-        VVM::Driver::Model model(config, parameters, grid, state, halo_exchanger);
-        model.init();
-
-        timing.stop_timer("initialize");
-
-        std::unique_ptr<VVM::IO::HistoryWriter> history_writer;
-        const std::string output_engine = config.get_value<std::string>("output.engine", "HDF5");
-        if (output_engine == "BP5") {
-            history_writer = std::make_unique<VVM::IO::BP5::Bp5HistoryWriter>(config,
-                grid,
-                parameters,
-                state,
-                split_comm);
+            );
+            timing.stop_timer("total_vvm");
+            timing.print_timings(split_comm,false);
         }
         else {
-            history_writer = std::make_unique<VVM::IO::LegacyHistoryWriter>(config,
-                grid,
-                parameters,
-                state,
-                split_comm);
-        }
+            VVM::Core::Grid grid(config, split_comm);
+            VVM::Core::Parameters parameters(config, grid);
+            grid.print_info();
 
-        const bool restart_enabled = config.get_value<bool>("restart.enable", false);
-        const bool output_initial_step = config.get_value<bool>("output.output_initial_step", true);
-        if (output_initial_step) {
-            VVM::Utils::Timer timer("io");
-            history_writer->write(state.get_step(), state.get_time());
-        }
-        else if (split_rank == 0) {
-            std::cout << "[Output] Skipping initial full output." << std::endl;
-        }
-        // output_manager->write_static_topo_file();
+#if defined(ENABLE_NCCL)
+            VVM::Core::State state(config, parameters, grid, nccl_comm, stream);
+            VVM::Core::HaloExchanger halo_exchanger(config, grid, nccl_comm, stream);
+#else
+            VVM::Core::State state(config, parameters, grid);
+            VVM::Core::HaloExchanger halo_exchanger(grid);
+#endif
+            VVM::Driver::Model model(config, parameters, grid, state, halo_exchanger);
+            model.init();
 
-        // Simulation loop parameters
-        double total_time = config.get_value<double>("simulation.total_time_s");
-        double dt = parameters.get_value_host(parameters.dt);
-        double output_interval = config.get_value<double>("simulation.output_interval_s");
-        double next_output_time = output_interval;
-        if (restart_enabled) {
-            next_output_time =
-                (std::floor(state.get_time() / output_interval) + 1.0) * output_interval;
-        }
+            timing.stop_timer("initialize");
 
-        // Simulation loop
-        while (state.get_time() < total_time) {
-            model.run_step(dt);
-
-            state.increment_step();
-            state.advance_time(dt);
-
-            if (split_rank == 0) {
-                std::cout << state.get_time() << std::endl;
+            std::unique_ptr<VVM::IO::HistoryWriter> history_writer;
+            const std::string output_engine = config.get_value<std::string>("output.engine", "HDF5");
+            if (output_engine == "BP5") {
+                history_writer = std::make_unique<VVM::IO::BP5::Bp5HistoryWriter>(config,
+                    grid,
+                    parameters,
+                    state,
+                    split_comm);
+            }
+            else {
+                history_writer = std::make_unique<VVM::IO::LegacyHistoryWriter>(config,
+                    grid,
+                    parameters,
+                    state,
+                    split_comm);
             }
 
-            // Output data at specified intervals
-            if (state.get_time() >= next_output_time) {
-                {
-                    VVM::Utils::Timer timer("io");
-                    history_writer->write(state.get_step(), state.get_time());
+            const bool restart_enabled = config.get_value<bool>("restart.enable", false);
+            const bool output_initial_step = config.get_value<bool>("output.output_initial_step", true);
+            if (output_initial_step) {
+                VVM::Utils::Timer timer("io");
+                history_writer->write(state.get_step(), state.get_time());
+            }
+            else if (split_rank == 0) {
+                std::cout << "[Output] Skipping initial full output." << std::endl;
+            }
+            // output_manager->write_static_topo_file();
+
+            // Simulation loop parameters
+            double total_time = config.get_value<double>("simulation.total_time_s");
+            double dt = parameters.get_value_host(parameters.dt);
+            double output_interval = config.get_value<double>("simulation.output_interval_s");
+            double next_output_time = output_interval;
+            if (restart_enabled) {
+                next_output_time =
+                    (std::floor(state.get_time() / output_interval) + 1.0) * output_interval;
+            }
+
+            // Simulation loop
+            while (state.get_time() < total_time) {
+                model.run_step(dt);
+
+                state.increment_step();
+                state.advance_time(dt);
+
+                if (split_rank == 0) {
+                    std::cout << state.get_time() << std::endl;
                 }
-                next_output_time += output_interval;
+
+                // Output data at specified intervals
+                if (state.get_time() >= next_output_time) {
+                    {
+                        VVM::Utils::Timer timer("io");
+                        history_writer->write(state.get_step(), state.get_time());
+                    }
+                    next_output_time += output_interval;
+                }
+                if (timing_print_interval_steps > 0 &&
+                    state.get_step() % static_cast<size_t>(timing_print_interval_steps) == 0) {
+                    timing.print_timings(split_comm, timing_reset_after_interval_print);
+                }
             }
-            if (timing_print_interval_steps > 0 &&
-                state.get_step() % static_cast<size_t>(timing_print_interval_steps) == 0) {
-                timing.print_timings(split_comm, timing_reset_after_interval_print);
-            }
+            history_writer->close();
+
+            timing.stop_timer("total_vvm");
+            timing.print_timings(split_comm, false);
+
+            model.finalize();
+            Kokkos::fence();
         }
-        history_writer->close();
-
-        timing.stop_timer("total_vvm");
-        timing.print_timings(split_comm, false);
-
-        model.finalize();
-        Kokkos::fence();
     }
 #if defined(ENABLE_NCCL)
     ncclCommDestroy(nccl_comm);

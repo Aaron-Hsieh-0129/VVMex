@@ -27,11 +27,12 @@ Initializer::initialize_barotropic_jet() const {
     const int nz = grid_.get_local_total_points_z();
     const int ny = grid_.get_local_total_points_y();
     const int nx = grid_.get_local_total_points_x();
-    const int experiment = config_.get_value<int>("initial_conditions.barotropic_jet.case");
+    const int experiment = is_rll_bubble(config_) ? 1 :
+        config_.get_value<int>("initial_conditions.barotropic_jet.case");
     const Real jet_scale =
-        config_.get_value<Real>("initial_conditions.barotropic_jet.jet_scale", real(1.0));
+        config_.get_value<Real>("initial_conditions.barotropic_jet.jet_scale", is_rll_bubble(config_) ? real(0.) : real(1.0));
     const Real perturbation_scale =
-        config_.get_value<Real>("initial_conditions.barotropic_jet.perturbation_scale", real(1.0));
+        config_.get_value<Real>("initial_conditions.barotropic_jet.perturbation_scale", is_rll_bubble(config_) ? real(0.) : real(1.0));
     const Real pi = std::acos(real(-1.0));
     const auto& geometry = grid_.horizontal_specification().geometry;
     const Real radius = geometry.regular_lat_lon.radius;
