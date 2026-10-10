@@ -1305,6 +1305,19 @@ def main():
         print(f"[Error] output.engine={io_engine!r} does not use IO-server ranks. Omit --io or use --io 0.")
         sys.exit(1)
 
+    # core_run.sh places ranks round-robin across nodes and assigns the last
+    # global ranks to the host-only I/O servers. When every requested GPU is
+    # occupied by a compute rank, an uneven I/O count can leave some nodes
+    # with an extra compute rank and make two ranks select the same GPU.
+    if (not args.local and not cpu_backend and args.io > 0 and args.nodes > 1 and
+            args.compute == args.nodes * args.gpus and args.io % args.nodes != 0):
+        next_io = math.ceil(args.io / args.nodes) * args.nodes
+        print(f"[Error] {args.compute} compute ranks fill {args.gpus} GPUs on each of "
+              f"{args.nodes} nodes, but {args.io} I/O ranks do not divide evenly "
+              "across the nodes. This can place more than one compute rank on a GPU. "
+              f"Use --io {next_io} or another multiple of --nodes.")
+        sys.exit(1)
+
     prof_file = config_data.get("initial_conditions", {}).get("source_file", "")
     spat_file = config_data.get("netcdf_reader", {}).get("source_file", "")
 
