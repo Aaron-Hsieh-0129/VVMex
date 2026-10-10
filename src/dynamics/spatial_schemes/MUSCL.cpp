@@ -293,6 +293,13 @@ MUSCL::validate_cfl(const Core::State& state,
     const auto flex = params.flex_height_coef_mid.get_device_data();
     const auto rdx = params.rdx;
     const auto rdy = params.rdy;
+    const bool cartesian = grid_.geometry().kind() == Core::Geometry::GeometryKind::Cartesian;
+    using Core::Geometry::HorizontalLocation;
+    const auto ju = grid_.geometry().device_view(HorizontalLocation::U).sqrt_g;
+    const auto jv = grid_.geometry().device_view(HorizontalLocation::V).sqrt_g;
+    const auto inv_j = grid_.geometry().device_view(HorizontalLocation::T).inv_sqrt_g;
+    const Real rdq1 = real(1.0) / grid_.geometry().dq1();
+    const Real rdq2 = real(1.0) / grid_.geometry().dq2();
     const auto rdz = params.rdz;
 
 #if defined(ENABLE_NCCL)
@@ -313,19 +320,21 @@ MUSCL::validate_cfl(const Core::State& state,
             VVM::Real outgoing = VVM::real(0.0);
             if (face_x(k, j, i) == VVM::real(1.0) && fluid(k, j, i + 1) == VVM::real(1.0) &&
                 mx(k, j, i) > VVM::real(0.0)) {
-                outgoing += mx(k, j, i) * rdx();
+                outgoing += mx(k, j, i) * (cartesian ? rdx() : ju(j, i) * inv_j(j, i) * rdq1);
             }
             if (face_x(k, j, i - 1) == VVM::real(1.0) && fluid(k, j, i - 1) == VVM::real(1.0) &&
                 mx(k, j, i - 1) < VVM::real(0.0)) {
-                outgoing -= mx(k, j, i - 1) * rdx();
+                outgoing -=
+                    mx(k, j, i - 1) * (cartesian ? rdx() : ju(j, i - 1) * inv_j(j, i) * rdq1);
             }
             if (face_y(k, j, i) == VVM::real(1.0) && fluid(k, j + 1, i) == VVM::real(1.0) &&
                 my(k, j, i) > VVM::real(0.0)) {
-                outgoing += my(k, j, i) * rdy();
+                outgoing += my(k, j, i) * (cartesian ? rdy() : jv(j, i) * inv_j(j, i) * rdq2);
             }
             if (face_y(k, j - 1, i) == VVM::real(1.0) && fluid(k, j - 1, i) == VVM::real(1.0) &&
                 my(k, j - 1, i) < VVM::real(0.0)) {
-                outgoing -= my(k, j - 1, i) * rdy();
+                outgoing -=
+                    my(k, j - 1, i) * (cartesian ? rdy() : jv(j - 1, i) * inv_j(j, i) * rdq2);
             }
             if (k < nz - h - 1 && fluid(k + 1, j, i) == VVM::real(1.0) &&
                 mz(k, j, i) > VVM::real(0.0)) {
@@ -376,19 +385,21 @@ MUSCL::validate_cfl(const Core::State& state,
             VVM::Real outgoing = VVM::real(0.0);
             if (face_x(k, j, i) == VVM::real(1.0) && fluid(k, j, i + 1) == VVM::real(1.0) &&
                 mx(k, j, i) > VVM::real(0.0)) {
-                outgoing += mx(k, j, i) * rdx();
+                outgoing += mx(k, j, i) * (cartesian ? rdx() : ju(j, i) * inv_j(j, i) * rdq1);
             }
             if (face_x(k, j, i - 1) == VVM::real(1.0) && fluid(k, j, i - 1) == VVM::real(1.0) &&
                 mx(k, j, i - 1) < VVM::real(0.0)) {
-                outgoing -= mx(k, j, i - 1) * rdx();
+                outgoing -=
+                    mx(k, j, i - 1) * (cartesian ? rdx() : ju(j, i - 1) * inv_j(j, i) * rdq1);
             }
             if (face_y(k, j, i) == VVM::real(1.0) && fluid(k, j + 1, i) == VVM::real(1.0) &&
                 my(k, j, i) > VVM::real(0.0)) {
-                outgoing += my(k, j, i) * rdy();
+                outgoing += my(k, j, i) * (cartesian ? rdy() : jv(j, i) * inv_j(j, i) * rdq2);
             }
             if (face_y(k, j - 1, i) == VVM::real(1.0) && fluid(k, j - 1, i) == VVM::real(1.0) &&
                 my(k, j - 1, i) < VVM::real(0.0)) {
-                outgoing -= my(k, j - 1, i) * rdy();
+                outgoing -=
+                    my(k, j - 1, i) * (cartesian ? rdy() : jv(j - 1, i) * inv_j(j, i) * rdq2);
             }
             if (k < nz - h - 1 && fluid(k + 1, j, i) == VVM::real(1.0) &&
                 mz(k, j, i) > VVM::real(0.0)) {
@@ -460,6 +471,13 @@ MUSCL::calculate_advection_tendency(const Core::State& state,
     const auto z_up = params.z_up.get_device_data();
     const auto rdx = params.rdx;
     const auto rdy = params.rdy;
+    const bool cartesian = grid_.geometry().kind() == Core::Geometry::GeometryKind::Cartesian;
+    using Core::Geometry::HorizontalLocation;
+    const auto ju = grid_.geometry().device_view(HorizontalLocation::U).sqrt_g;
+    const auto jv = grid_.geometry().device_view(HorizontalLocation::V).sqrt_g;
+    const auto inv_j = grid_.geometry().device_view(HorizontalLocation::T).inv_sqrt_g;
+    const Real rdq1 = real(1.0) / grid_.geometry().dq1();
+    const Real rdq2 = real(1.0) / grid_.geometry().dq2();
     const auto rdz = params.rdz;
 
     auto sx = slope_x_.get_mutable_device_data();
@@ -547,19 +565,23 @@ MUSCL::calculate_advection_tendency(const Core::State& state,
             VVM::Real outgoing_rate = VVM::real(0.0);
             if (face_x(k, j, i) == VVM::real(1.0) && fluid(k, j, i + 1) == VVM::real(1.0) &&
                 mx(k, j, i) > VVM::real(0.0)) {
-                outgoing_rate += mx(k, j, i) * rxp * rdx();
+                outgoing_rate +=
+                    mx(k, j, i) * rxp * (cartesian ? rdx() : ju(j, i) * inv_j(j, i) * rdq1);
             }
             if (face_x(k, j, i - 1) == VVM::real(1.0) && fluid(k, j, i - 1) == VVM::real(1.0) &&
                 mx(k, j, i - 1) < VVM::real(0.0)) {
-                outgoing_rate -= mx(k, j, i - 1) * rxm * rdx();
+                outgoing_rate -=
+                    mx(k, j, i - 1) * rxm * (cartesian ? rdx() : ju(j, i - 1) * inv_j(j, i) * rdq1);
             }
             if (face_y(k, j, i) == VVM::real(1.0) && fluid(k, j + 1, i) == VVM::real(1.0) &&
                 my(k, j, i) > VVM::real(0.0)) {
-                outgoing_rate += my(k, j, i) * ryp * rdy();
+                outgoing_rate +=
+                    my(k, j, i) * ryp * (cartesian ? rdy() : jv(j, i) * inv_j(j, i) * rdq2);
             }
             if (face_y(k, j - 1, i) == VVM::real(1.0) && fluid(k, j - 1, i) == VVM::real(1.0) &&
                 my(k, j - 1, i) < VVM::real(0.0)) {
-                outgoing_rate -= my(k, j - 1, i) * rym * rdy();
+                outgoing_rate -=
+                    my(k, j - 1, i) * rym * (cartesian ? rdy() : jv(j - 1, i) * inv_j(j, i) * rdq2);
             }
             if (k < nz - h - 1 && fluid(k + 1, j, i) == VVM::real(1.0) &&
                 mz(k, j, i) > VVM::real(0.0)) {
@@ -636,9 +658,18 @@ MUSCL::calculate_advection_tendency(const Core::State& state,
             if (fluid(k, j, i) != VVM::real(1.0)) {
                 return;
             }
-            tendency(k, j, i) += -(fx(k, j, i) - fx(k, j, i - 1)) * rdx() -
-                                 (fy(k, j, i) - fy(k, j - 1, i)) * rdy() -
-                                 (fz(k, j, i) - fz(k - 1, j, i)) * rdz() * flex(k);
+            if (cartesian) {
+                tendency(k, j, i) += -(fx(k, j, i) - fx(k, j, i - 1)) * rdx() -
+                                     (fy(k, j, i) - fy(k, j - 1, i)) * rdy() -
+                                     (fz(k, j, i) - fz(k - 1, j, i)) * rdz() * flex(k);
+            }
+            else {
+                tendency(k, j, i) -=
+                    inv_j(j, i) *
+                        ((ju(j, i) * fx(k, j, i) - ju(j, i - 1) * fx(k, j, i - 1)) * rdq1 +
+                            (jv(j, i) * fy(k, j, i) - jv(j - 1, i) * fy(k, j - 1, i)) * rdq2) +
+                    (fz(k, j, i) - fz(k - 1, j, i)) * rdz() * flex(k);
+            }
         });
 }
 

@@ -49,6 +49,7 @@ private:
     VVM::Real nudgelim_;
 
     VVM::Real inv_total_xy_pts_;
+    Real inverse_area_u_ = real(0.0), inverse_area_v_ = real(0.0), inverse_area_z_ = real(0.0);
 
     bool use_netcdf_target_ = false;
     bool constant_upper_wind_ = false;

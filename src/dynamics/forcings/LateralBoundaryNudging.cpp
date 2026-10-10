@@ -1,4 +1,5 @@
 #include "LateralBoundaryNudging.hpp"
+#include "core/geometry/HorizontalBoundaryDistances.hpp"
 #include <iostream>
 #include <pnetcdf.h>
 
@@ -127,69 +128,89 @@ LateralBoundaryNudging::initialize(Core::State& state) {
                   << ", N: " << nN << std::endl;
     }
 
-    Kokkos::parallel_for("Init_LBN_Weight",
-        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
-        KOKKOS_LAMBDA(const int j, const int i) {
-            VVM::Real x = (global_start_x + (i - h)) * dx + real(0.5) * dx;
-            VVM::Real y = (global_start_y + (j - h)) * dy + real(0.5) * dy;
+    if (grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
+        Core::Geometry::HorizontalBoundaryDistances distances(grid_, state);
+        const auto west = distances.west.get_device_data(), east = distances.east.get_device_data();
+        const auto south = distances.south.get_device_data(),
+                   north = distances.north.get_device_data();
+        Kokkos::parallel_for("InitMappedLateralNudgingWeight",
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
+            KOKKOS_LAMBDA(int j, int i) {
+                const Real dw = (west(j, i) - offset) / width, de = (east(j, i) - offset) / width;
+                const Real ds = (south(j, i) - offset) / width, dn = (north(j, i) - offset) / width;
+                const Real value = nW * Kokkos::exp(-real(0.5) * dw * dw) +
+                                   nE * Kokkos::exp(-real(0.5) * de * de) +
+                                   nS * Kokkos::exp(-real(0.5) * ds * ds) +
+                                   nN * Kokkos::exp(-real(0.5) * dn * dn);
+                weight(j, i) = value < real(1.e-3) ? real(0.0) : Kokkos::min(real(1.0), value);
+            });
+        Kokkos::fence(); // Temporary distance storage is used only at startup.
+    }
+    else {
+        Kokkos::parallel_for("Init_LBN_Weight",
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
+            KOKKOS_LAMBDA(const int j, const int i) {
+                VVM::Real x = (global_start_x + (i - h)) * dx + real(0.5) * dx;
+                VVM::Real y = (global_start_y + (j - h)) * dy + real(0.5) * dy;
 
-            VVM::Real dc = offset + radius;
-            VVM::Real f = 0.0;
+                VVM::Real dc = offset + radius;
+                VVM::Real f = 0.0;
 
-            bool in_W = (x < dc);
-            bool in_E = (x > xsize - dc);
-            bool in_S = (y < dc);
-            bool in_N = (y > ysize - dc);
+                bool in_W = (x < dc);
+                bool in_E = (x > xsize - dc);
+                bool in_S = (y < dc);
+                bool in_N = (y > ysize - dc);
 
-            if (in_W && in_S && nW && nS) {
-                VVM::Real D = Kokkos::sqrt((x - dc) * (x - dc) + (y - dc) * (y - dc)) - radius;
-                f += Kokkos::exp(-real(0.5) * (D / width) * (D / width));
-            }
-            else if (in_E && in_S && nE && nS) {
-                VVM::Real D =
-                    Kokkos::sqrt((x - (xsize - dc)) * (x - (xsize - dc)) + (y - dc) * (y - dc)) -
-                    radius;
-                f += Kokkos::exp(-real(0.5) * (D / width) * (D / width));
-            }
-            else if (in_W && in_N && nW && nN) {
-                VVM::Real D =
-                    Kokkos::sqrt((x - dc) * (x - dc) + (y - (ysize - dc)) * (y - (ysize - dc))) -
-                    radius;
-                f += Kokkos::exp(-real(0.5) * (D / width) * (D / width));
-            }
-            else if (in_E && in_N && nE && nN) {
-                VVM::Real D = Kokkos::sqrt((x - (xsize - dc)) * (x - (xsize - dc)) +
-                                           (y - (ysize - dc)) * (y - (ysize - dc))) -
-                              radius;
-                f += Kokkos::exp(-real(0.5) * (D / width) * (D / width));
-            }
-            else {
-                // If it's not corner or it's the corner withuout turning on boundary, using 1D linear line.
-                if (nW) {
-                    f += Kokkos::exp(-0.5 * ((x - offset) / width) * ((x - offset) / width));
+                if (in_W && in_S && nW && nS) {
+                    VVM::Real D = Kokkos::sqrt((x - dc) * (x - dc) + (y - dc) * (y - dc)) - radius;
+                    f += Kokkos::exp(-real(0.5) * (D / width) * (D / width));
                 }
-                if (nE) {
-                    f += Kokkos::exp(
-                        -0.5 * ((x - (xsize - offset)) / width) * ((x - (xsize - offset)) / width));
+                else if (in_E && in_S && nE && nS) {
+                    VVM::Real D = Kokkos::sqrt((x - (xsize - dc)) * (x - (xsize - dc)) +
+                                               (y - dc) * (y - dc)) -
+                                  radius;
+                    f += Kokkos::exp(-real(0.5) * (D / width) * (D / width));
                 }
-                if (nS) {
-                    f += Kokkos::exp(-0.5 * ((y - offset) / width) * ((y - offset) / width));
+                else if (in_W && in_N && nW && nN) {
+                    VVM::Real D = Kokkos::sqrt((x - dc) * (x - dc) +
+                                               (y - (ysize - dc)) * (y - (ysize - dc))) -
+                                  radius;
+                    f += Kokkos::exp(-real(0.5) * (D / width) * (D / width));
                 }
-                if (nN) {
-                    f += Kokkos::exp(
-                        -0.5 * ((y - (ysize - offset)) / width) * ((y - (ysize - offset)) / width));
+                else if (in_E && in_N && nE && nN) {
+                    VVM::Real D = Kokkos::sqrt((x - (xsize - dc)) * (x - (xsize - dc)) +
+                                               (y - (ysize - dc)) * (y - (ysize - dc))) -
+                                  radius;
+                    f += Kokkos::exp(-real(0.5) * (D / width) * (D / width));
                 }
-            }
+                else {
+                    // If it's not corner or it's the corner withuout turning on boundary, using 1D linear line.
+                    if (nW) {
+                        f += Kokkos::exp(-0.5 * ((x - offset) / width) * ((x - offset) / width));
+                    }
+                    if (nE) {
+                        f += Kokkos::exp(-0.5 * ((x - (xsize - offset)) / width) *
+                                         ((x - (xsize - offset)) / width));
+                    }
+                    if (nS) {
+                        f += Kokkos::exp(-0.5 * ((y - offset) / width) * ((y - offset) / width));
+                    }
+                    if (nN) {
+                        f += Kokkos::exp(-0.5 * ((y - (ysize - offset)) / width) *
+                                         ((y - (ysize - offset)) / width));
+                    }
+                }
 
-            if (f < 1e-3) {
-                f = 0.0;
-            }
-            if (f > 1.0) {
-                f = 1.0;
-            }
+                if (f < 1e-3) {
+                    f = 0.0;
+                }
+                if (f > 1.0) {
+                    f = 1.0;
+                }
 
-            weight(j, i) = f;
-        });
+                weight(j, i) = f;
+            });
+    }
 
     if (time_varying_) {
         std::ostringstream file_t1, file_t2;

@@ -34,6 +34,7 @@ set(VVM_CORE_HEADERS
     geometry/GeometryField2D.hpp
     geometry/HorizontalGridSpec.hpp
     geometry/HorizontalGeometry.hpp
+    geometry/HorizontalBoundaryDistances.hpp
     StartupCollectives.hpp
     geometry/AffineGeometry.hpp
     geometry/StaggeredVectorTransform.hpp

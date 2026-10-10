@@ -665,6 +665,7 @@ test_solid_body_rotation(TurbulenceProcess& turbulence, State& state, const Grid
     constexpr Real U0 = real(20.0);
 
     auto& u = state.get_field<3>("u").get_mutable_device_data();
+    auto& u_con = state.get_field<3>("u_con").get_mutable_device_data();
 
     const auto geometry_u = grid.geometry().device_view(HorizontalLocation::U);
 
@@ -680,9 +681,13 @@ test_solid_body_rotation(TurbulenceProcess& turbulence, State& state, const Grid
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{0, 0, 0}}, {{nz, ny, nx}}),
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
             u(k, j, i) = U0 * Kokkos::cos(geometry_u.latitude(j, i));
+            // The generalized deformation consumes canonical wind. Leaving
+            // this zero makes the rotation test pass for a resting state.
+            u_con(k, j, i) = U0 / EARTH_RADIUS;
         });
 
     fill_3d(state, "v", real(0.0));
+    fill_3d(state, "v_con", real(0.0));
 
     fill_3d(state, "w", real(0.0));
 
@@ -743,15 +748,53 @@ test_solid_body_rotation(TurbulenceProcess& turbulence, State& state, const Grid
 
     // R_xi and R_eta should be exactly zero for this state.
     //
-    // R_zeta is not exactly zero because the d/dphi term is
-    // discretized while the connection term uses tan(phi)
-    // analytically. It should be second-order small.
+    // Constant zonal u^1 is a Killing field of the RLL metric, so its
+    // generalized horizontal strain vanishes up to floating-point error.
     const bool passed = max_xi < real(1.0e-14) && max_eta < real(1.0e-14) &&
                         max_zeta_normalized < real(1.0e-3) && coefficients_ok;
 
     report("RLL turbulence: solid-body rotation deformation", passed);
 
     check(passed, "solid-body rotation deformation");
+}
+
+void
+test_canonical_vertical_shear(TurbulenceProcess& turbulence, State& state, const Grid& grid) {
+    constexpr Real shear = real(0.01);
+    const Real dz = grid.get_dz();
+    const int nz = grid.get_local_total_points_z();
+    const int ny = grid.get_local_total_points_y();
+    const int nx = grid.get_local_total_points_x();
+    const int h = grid.get_halo_cells();
+    const auto inverse_h1 =
+        grid.geometry().device_view(HorizontalLocation::U).physical_to_contravariant.a11;
+    const auto u_con = state.get_field<3>("u_con").get_mutable_device_data();
+    Kokkos::parallel_for("SetCanonicalVerticalShear",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
+        KOKKOS_LAMBDA(int k, int j, int i) {
+            u_con(k, j, i) = shear * dz * real(k - h) * inverse_h1(j, i);
+        });
+    // Deliberately different physical caches detect accidental consumption
+    // of u/v by the generalized deformation kernel.
+    for (const char* name : {"u", "v", "v_con", "w"}) {
+        fill_3d(state, name, real(0));
+    }
+    fill_3d(state, "th", real(300));
+    turbulence.compute_coefficients(state, real(1));
+    const auto r13 = state.get_field<3>("R_eta").get_host_data();
+    const auto r23 = state.get_field<3>("R_xi").get_host_data();
+    const Real tolerance = real(64) * std::numeric_limits<Real>::epsilon() * shear;
+    bool passed = true;
+    for (int k = h; k < nz - h - 1; ++k) {
+        for (int j = h + 1; j < ny - h - 1; ++j) {
+            for (int i = h + 1; i < nx - h - 1; ++i) {
+                passed &= std::abs(r13(k, j, i) - shear) <= tolerance &&
+                          std::abs(r23(k, j, i)) <= tolerance;
+            }
+        }
+    }
+    report("RLL turbulence: canonical vertical shear -> physical strain", passed);
+    check(passed, "canonical wind vertical shear");
 }
 
 // ============================================================================
@@ -936,6 +979,7 @@ main(int argc, char** argv) {
         test_longitude_manufactured_solution(turbulence, state, grid);
 
         test_solid_body_rotation(turbulence, state, grid);
+        test_canonical_vertical_shear(turbulence, state, grid);
 
         // ------------------------------------------------------------
         // Summary

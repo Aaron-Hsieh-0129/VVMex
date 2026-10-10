@@ -175,7 +175,8 @@ SpongeLayer::calculate_tendencies(
     else if constexpr (Dim == 2) {
         int NK2 = nz - h - 1;
         const auto& CRAD = CRAD_;
-        if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+        if (grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian &&
+            state.has_field("rll_background_zeta")) {
             const auto background = state.get_field<2>("rll_background_zeta").get_device_data();
             Kokkos::parallel_for("RLLSpongeRelativeToBackground",
                 Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h,h}, {ny-h,nx-h}),
