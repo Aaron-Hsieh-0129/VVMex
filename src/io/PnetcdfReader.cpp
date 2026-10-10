@@ -474,10 +474,24 @@ PnetcdfReader::read_and_initialize(VVM::Core::State& state) {
     const std::string key_3d = config_prefix_ + ".variables_to_read.3d";
 
     const bool has_explicit_3d_list = config_.has_key(key_3d);
+    bool canonical_state = false;
 
     if (config_prefix_ == "restart") {
-        const RestartVariables restart =
+        RestartVariables restart =
             select_restart_variables(config_, state, rank_, "PnetcdfReader");
+
+        try {
+            canonical_state = resolve_canonical_restart_variables(restart, grid_,
+                [&](const std::string& name) {
+                    int variable = -1;
+                    return ncmpi_inq_varid(ncid_, name.c_str(), &variable) == NC_NOERR;
+                });
+        }
+        catch (...) {
+            ncmpi_close(ncid_);
+            ncid_ = -1;
+            throw;
+        }
 
         vars_1d = restart.vars_1d;
         vars_2d = restart.vars_2d;
@@ -650,6 +664,7 @@ PnetcdfReader::read_and_initialize(VVM::Core::State& state) {
 
     check_ncmpi_error(ncmpi_close(ncid_), "Failed to close NetCDF file");
     ncid_ = -1;
+    restored_canonical_horizontal_state_ = canonical_state;
 
     if (rank_ == 0) {
         std::cout << "Finished loading from NetCDF file." << std::endl;

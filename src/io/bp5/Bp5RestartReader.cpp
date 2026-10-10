@@ -224,7 +224,7 @@ Bp5RestartReader::read_field(
 
 void
 Bp5RestartReader::read_and_initialize(Core::State& state) {
-    const RestartVariables variables = select_restart_variables(config_, state, rank_, kTag);
+    RestartVariables variables = select_restart_variables(config_, state, rank_, kTag);
     if (variables.empty()) {
         throw std::runtime_error(
             std::string("[") + kTag + "] No restart variables selected from " + dataset_path_);
@@ -234,6 +234,14 @@ Bp5RestartReader::read_and_initialize(Core::State& state) {
     adios2::ADIOS adios(comm_);
     OpenDataset dataset(dataset_path_, comm_, adios, "VVM_BP5_RESTART_FIELDS");
     dataset.set_step(resolve_step(dataset.steps()));
+    const auto checkpoint_name = [&](const std::string& name) {
+        const std::string hidden = "restart/" + name;
+        return !dataset.io().VariableType(hidden).empty() ? hidden : name;
+    };
+    const bool canonical_state = resolve_canonical_restart_variables(variables, grid_,
+        [&](const std::string& name) {
+            return !dataset.io().VariableType(checkpoint_name(name)).empty();
+        });
 
     if (rank_ == 0) {
         std::cout << "  [" << kTag << "] Reading step " << dataset.step() << " of "
@@ -243,19 +251,13 @@ Bp5RestartReader::read_and_initialize(Core::State& state) {
     for (const auto& name : variables.vars_1d) {
         read_field(dataset, name, state.get_field<1>(name));
     }
-    const auto checkpoint_name = [&](const std::string& name) {
-        const bool solver_history = name == "psi" || name == "psinm1" ||
-                                    name == "chi" || name == "chinm1" ||
-                                    name == "W3DNM1";
-        const std::string hidden = "restart/" + name;
-        return solver_history && !dataset.io().VariableType(hidden).empty() ? hidden : name;
-    };
     for (const auto& name : variables.vars_2d) {
         read_field(dataset, checkpoint_name(name), state.get_field<2>(name));
     }
     for (const auto& name : variables.vars_3d) {
         read_field(dataset, checkpoint_name(name), state.get_field<3>(name));
     }
+    restored_canonical_horizontal_state_ = canonical_state;
 
     for (const auto& name : variables.vars_1d) {
         if (state.has_field(name)) {

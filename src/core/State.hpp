@@ -47,6 +47,11 @@ class State {
     friend class VVM::Dynamics::AdamsBashforth2;
 
 public:
+    const Grid&
+    get_grid() const {
+        return grid_;
+    }
+
 #if defined(ENABLE_NCCL)
     // Preferred constructor. State depends on configuration and grid geometry,
     // but not on Parameters.

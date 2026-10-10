@@ -84,7 +84,7 @@ Hdf5RestartReader::Hdf5RestartReader(const std::string& filepath,
 
 void
 Hdf5RestartReader::read_and_initialize(Core::State& state) {
-    const RestartVariables variables =
+    RestartVariables variables =
         select_restart_variables(config_, state, rank_, "Hdf5RestartReader");
     const std::vector<std::string>& vars_1d = variables.vars_1d;
     const std::vector<std::string>& vars_2d = variables.vars_2d;
@@ -102,17 +102,23 @@ Hdf5RestartReader::read_and_initialize(Core::State& state) {
         throw std::runtime_error("[Hdf5RestartReader] Failed to open restart file " + source_file_);
     }
 
-    const auto checkpoint_name = [&](const std::string& name) {
-        const bool solver_history = name == "psi" || name == "psinm1" ||
-                                    name == "chi" || name == "chinm1" ||
-                                    name == "W3DNM1";
-        if (solver_history &&
-            H5Lexists(file_id, ("/Step0/restart/" + name).c_str(), H5P_DEFAULT) > 0) {
-            return std::string("restart/") + name;
+    const auto contains = [&](const std::string& name) {
+        htri_t step = 0, root = 0;
+        H5E_BEGIN_TRY {
+            step = H5Lexists(file_id, ("/Step0/" + name).c_str(), H5P_DEFAULT);
+            root = H5Lexists(file_id, ("/" + name).c_str(), H5P_DEFAULT);
         }
-        return name;
+        H5E_END_TRY;
+        return step > 0 || root > 0;
     };
+    const auto checkpoint_name = [&](const std::string& name) {
+        const std::string hidden = "restart/" + name;
+        return contains(hidden) ? hidden : name;
+    };
+    bool canonical_state = false;
     try {
+        canonical_state = resolve_canonical_restart_variables(variables, grid_,
+            [&](const std::string& name) { return contains(checkpoint_name(name)); });
         for (const auto& var_name : vars_1d) {
             read_field(file_id, var_name, state.get_field<1>(var_name));
         }
@@ -129,6 +135,7 @@ Hdf5RestartReader::read_and_initialize(Core::State& state) {
     }
 
     H5Fclose(file_id);
+    restored_canonical_horizontal_state_ = canonical_state;
 
     // Use per-field template exchange (bypasses CUDA graph capture on stream_).
     // The State& overload triggers graph capture for every graph-enabled field,

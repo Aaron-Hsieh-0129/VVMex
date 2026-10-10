@@ -840,3 +840,7 @@ add_vvm_unit_test(test_generalized_horizontal_elliptic DEVICE MPI
 add_vvm_unit_test(test_horizontal_wind_topology_constraint DEVICE MPI
     LIBRARIES vvm_dynamics vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX
     TIMEOUT 180)
+
+# Startup data collectives, uneven mapped boundary-distance prefixes and
+# canonical/legacy checkpoint selection under both MPI and NCCL builds.
+add_vvm_device_unit_test(test_mapped_startup ${TEST_DIR}/configs/2dbubble.json 4)

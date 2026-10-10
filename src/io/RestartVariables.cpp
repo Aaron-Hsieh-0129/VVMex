@@ -1,8 +1,10 @@
 #include "io/RestartVariables.hpp"
 
 #include <algorithm>
+#include <array>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 
 namespace VVM {
 namespace IO {
@@ -55,8 +57,7 @@ infer_restart_variables(const Utils::ConfigurationManager& config, const Core::S
     // Atmospheric prognostic state
     // -------------------------------------------------------------
     //
-    // Restart files store physical components. Generalized-coordinate
-    // contravariant shadow state is rebuilt after loading.
+    // Physical compatibility fields remain available to physics and output.
     const auto prognostic_config =
         config.get_value<nlohmann::json>("dynamics.prognostic_variables");
 
@@ -74,6 +75,12 @@ infer_restart_variables(const Utils::ConfigurationManager& config, const Core::S
     // circulation component of the horizontal wind.
     for (const char* name : {"u", "v", "w"}) {
         append_unique_if_present(variables.vars_3d, state, name);
+    }
+
+    if (state.get_grid().geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
+        for (const char* name : {"xi_con", "eta_con", "u_con", "v_con"}) {
+            append_unique_if_present(variables.vars_3d, state, name);
+        }
     }
 
     // Both Cartesian and RLL wind solvers extrapolate the top-boundary
@@ -165,6 +172,37 @@ infer_restart_variables(const Utils::ConfigurationManager& config, const Core::S
         }
     }
     return variables;
+}
+
+bool
+resolve_canonical_restart_variables(RestartVariables& variables,
+    const Core::Grid& grid,
+    const std::function<bool(const std::string&)>& contains) {
+    using namespace Core::Geometry;
+    if (grid.geometry().kind() == GeometryKind::Cartesian) {
+        return false;
+    }
+    const std::array<std::string, 4> canonical{"xi_con", "eta_con", "u_con", "v_con"};
+    const auto present = std::count_if(canonical.begin(), canonical.end(), contains);
+    if (present == static_cast<int>(canonical.size())) {
+        return true;
+    }
+    const auto u = grid.geometry().device_view(HorizontalLocation::U).physical_to_contravariant;
+    const auto v = grid.geometry().device_view(HorizontalLocation::V).physical_to_contravariant;
+    const auto zero = [](const GeometryField2D& coefficient) {
+        return coefficient.layout == GeometryFieldLayout::Constant &&
+               coefficient.constant == real(0.0);
+    };
+    if (present != 0 || !zero(u.a12) || !zero(u.a21) || !zero(v.a12) || !zero(v.a21)) {
+        throw std::runtime_error(
+            "Mapped restart requires xi_con, eta_con, u_con and v_con. "
+            "A physical-only checkpoint cannot preserve state on a mixed coordinate map.");
+    }
+    for (const auto& name : canonical) {
+        auto& fields = variables.vars_3d;
+        fields.erase(std::remove(fields.begin(), fields.end(), name), fields.end());
+    }
+    return false;
 }
 
 RestartVariables
