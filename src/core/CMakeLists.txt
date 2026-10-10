@@ -69,6 +69,9 @@ target_link_libraries(vvm_core
         ${NVCPUMATH_LIBRARY}
         ${PNETCDF_LIBRARY}
     PRIVATE
+        # Initializer constructs readers implemented in vvm_io. Both libraries
+        # are static; CMake repeats their link group to resolve the cycle.
+        vvm_io
         Kokkos::kokkos
         ${OpenMP_LIBRARIES}
 	${NVTOOLSEXT_LIBRARY}
