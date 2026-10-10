@@ -4,6 +4,7 @@
 #include <stdexcept>
 
 #include "core/geometry/CartesianGeometry.hpp"
+#include "core/geometry/AffineGeometry.hpp"
 #include "core/geometry/RegularLatLonGeometry.hpp"
 
 namespace VVM {
@@ -25,6 +26,14 @@ HorizontalGeometryFactory::create(const HorizontalGridSpec& spec, HorizontalDoma
             spec.regular_lat_lon.latitude_south_edge,
             spec.regular_lat_lon.radius,
             spec.regular_lat_lon.periodic_latitude);
+
+    case GeometryKind::Affine:
+        return std::make_unique<AffineGeometry>(layout,
+            spec.dq1,
+            spec.dq2,
+            spec.affine_basis,
+            spec.reference_longitude,
+            spec.reference_latitude);
 
     case GeometryKind::CubedSphere:
         throw std::invalid_argument("Cubed-sphere geometry is not implemented.");

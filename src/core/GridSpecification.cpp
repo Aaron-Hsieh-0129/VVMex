@@ -99,6 +99,10 @@ parse_geometry_kind(const std::string& value, const char* key) {
         return Geometry::GeometryKind::Cartesian;
     }
 
+    if (value == "affine") {
+        return Geometry::GeometryKind::Affine;
+    }
+
     if (value == "regular_latlon") {
         return Geometry::GeometryKind::RegularLatLon;
     }
@@ -107,8 +111,8 @@ parse_geometry_kind(const std::string& value, const char* key) {
         return Geometry::GeometryKind::CubedSphere;
     }
 
-    configuration_error(
-        std::string("'") + key + "' must be 'cartesian', 'regular_latlon', or 'cubed_sphere'.");
+    configuration_error(std::string("'") + key +
+                        "' must be 'cartesian', 'affine', 'regular_latlon', or 'cubed_sphere'.");
 
     return Geometry::GeometryKind::Cartesian;
 }
@@ -265,6 +269,43 @@ parse_structured_horizontal(const Utils::ConfigurationManager& config) {
     case Geometry::GeometryKind::RegularLatLon:
         configure_regular_lat_lon_geometry(horizontal, config);
         break;
+
+    case Geometry::GeometryKind::Affine: {
+        auto& geometry = horizontal.geometry;
+        geometry.kind = kind;
+        geometry.dq1 = config.get_value<Real>("grid.horizontal.geometry.dq1");
+        geometry.dq2 = config.get_value<Real>("grid.horizontal.geometry.dq2");
+        require_finite_positive(geometry.dq1, "grid.horizontal.geometry.dq1");
+        require_finite_positive(geometry.dq2, "grid.horizontal.geometry.dq2");
+        const auto basis = config.get_value<std::vector<Real>>("grid.horizontal.geometry.basis");
+        if (basis.size() != 4) {
+            configuration_error("Affine basis requires four row-major entries.");
+        }
+        for (int n = 0; n < 4; ++n) {
+            if (!std::isfinite(basis[n])) {
+                configuration_error("Affine basis entries must be finite.");
+            }
+            geometry.affine_basis[n] = basis[n];
+        }
+        const Real determinant = basis[0] * basis[3] - basis[1] * basis[2];
+        if (!std::isfinite(determinant) || determinant <= real(0.0)) {
+            configuration_error("Affine basis must have a positive finite determinant.");
+        }
+        const Real radians = std::acos(real(-1.0)) / real(180.0);
+        geometry.reference_longitude =
+            config.get_value<Real>("grid.horizontal.geometry.reference_longitude_deg", real(0.0)) *
+            radians;
+        geometry.reference_latitude =
+            config.get_value<Real>("grid.horizontal.geometry.reference_latitude_deg", real(0.0)) *
+            radians;
+        if (!std::isfinite(geometry.reference_longitude) ||
+            !std::isfinite(geometry.reference_latitude) ||
+            std::abs(geometry.reference_latitude) > real(90.0) * radians) {
+            configuration_error("Affine reference longitude/latitude must be finite with latitude "
+                                "within the poles.");
+        }
+        break;
+    }
 
     case Geometry::GeometryKind::CubedSphere:
         configuration_error("cubed-sphere geometry is recognized but is not implemented.");

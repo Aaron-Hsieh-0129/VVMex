@@ -34,6 +34,8 @@ set(VVM_CORE_HEADERS
     geometry/GeometryField2D.hpp
     geometry/HorizontalGridSpec.hpp
     geometry/HorizontalGeometry.hpp
+    geometry/AffineGeometry.hpp
+    geometry/StaggeredVectorTransform.hpp
     geometry/CartesianGeometry.hpp
     geometry/RegularLatLonGeometry.hpp
     geometry/HorizontalGeometryFactory.hpp

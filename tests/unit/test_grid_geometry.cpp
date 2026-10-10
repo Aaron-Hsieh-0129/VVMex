@@ -1,5 +1,7 @@
 #include "core/Grid.hpp"
 #include "core/geometry/HorizontalGeometryFactory.hpp"
+#include "core/geometry/StaggeredVectorTransform.hpp"
+#include "dynamics/operators/GeneralizedTerrain.hpp"
 #include "utils/ConfigurationManager.hpp"
 
 #include <algorithm>
@@ -329,6 +331,89 @@ test_factory_rejections(const Grid& grid) {
         "Factory must reject cubed sphere until it is implemented");
 }
 
+void
+test_affine_mixed_components(const Grid& grid) {
+    using namespace VVM;
+    HorizontalGridSpec spec;
+    spec.kind = GeometryKind::Affine;
+    spec.dq1 = real(2.0);
+    spec.dq2 = real(3.0);
+    spec.affine_basis = {real(2.0), real(0.5), real(-0.25), real(1.5)};
+    auto geometry = HorizontalGeometryFactory::create(spec, grid.geometry().layout());
+    check(geometry->kind() == GeometryKind::Affine, "Affine chart must select the mapped backend");
+    const auto gu = geometry->device_view(HorizontalLocation::U),
+               gv = geometry->device_view(HorizontalLocation::V);
+    const int ny = grid.get_local_total_points_y(), nx = grid.get_local_total_points_x(),
+              h = grid.get_halo_cells();
+    Kokkos::View<Real***> first("affine physical first", 3, ny, nx),
+        second("affine physical second", 3, ny, nx);
+    Kokkos::View<Real***> q1("affine canonical first", 3, ny, nx),
+        q2("affine canonical second", 3, ny, nx);
+    Kokkos::View<Real***> restored1("affine restored first", 3, ny, nx),
+        restored2("affine restored second", 3, ny, nx);
+    Kokkos::deep_copy(first, real(3.0));
+    Kokkos::deep_copy(second, real(-4.0));
+    Core::Geometry::transform_staggered_vector<true>(first,
+        second,
+        q1,
+        q2,
+        gu.physical_to_contravariant,
+        gv.physical_to_contravariant);
+    Core::Geometry::transform_staggered_vector<true>(q1,
+        q2,
+        restored1,
+        restored2,
+        gu.contravariant_to_physical,
+        gv.contravariant_to_physical);
+    auto r1 = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), restored1);
+    auto r2 = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), restored2);
+    for (int j = 0; j < ny; ++j) {
+        for (int i = 0; i < nx; ++i) {
+            check(close(r1(0, j, i), real(3.0)) && close(r2(0, j, i), real(-4.0)),
+                "Mixed-basis physical/canonical constant vector must round trip including halos");
+        }
+    }
+    // Historical eta is minus the second tensor component.
+    Kokkos::deep_copy(second, real(4.0));
+    Core::Geometry::transform_staggered_vector<false>(first,
+        second,
+        q1,
+        q2,
+        gv.physical_to_contravariant,
+        gu.physical_to_contravariant,
+        real(-1.0));
+    const auto c1 = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), q1);
+    const auto c2 = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), q2);
+    const Real jacobian = real(3.125);
+    check(close(c1(0, h, h), (real(1.5) * real(3.0) + real(0.5) * real(4.0)) / jacobian),
+        "Mixed xi conversion must use the negative physical second component");
+    check(close(c2(0, h, h), -(real(0.25) * real(3.0) - real(2.0) * real(4.0)) / jacobian),
+        "Mixed eta conversion must retain VVM's historical minus sign");
+    Kokkos::View<Real***> w("affine terrain w", 3, ny, nx);
+    const auto gt = geometry->device_view(HorizontalLocation::T);
+    const auto coordinate1 = gt.q1, coordinate2 = gt.q2;
+    Kokkos::parallel_for("AffineTerrainWindFixture",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {3, ny, nx}),
+        KOKKOS_LAMBDA(int k, int j, int i) {
+            first(k, j, i) = real(3.0) * Real(k);
+            second(k, j, i) = real(-4.0) * Real(k);
+            w(k, j, i) = coordinate1(j, i) + real(2.0) * coordinate2(j, i);
+        });
+    const auto terrain = Dynamics::Operators::make_generalized_terrain_device_view(*geometry);
+    Kokkos::View<Real*> curl("affine terrain curl", 2);
+    Kokkos::parallel_for("AffineTerrainCurl", 1, KOKKOS_LAMBDA(int) {
+        curl(0) = terrain.xi(first, second, w, real(1.0), 0, h, h);
+        curl(1) = terrain.eta(first, second, w, real(1.0), 0, h, h);
+    });
+    const auto values = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), curl);
+    check(
+        close(values(0), (real(2.0) - (real(0.5) * real(3.0) - real(1.5) * real(4.0))) / jacobian),
+        "General terrain xi must differentiate the full covariant wind");
+    check(
+        close(values(1), (real(1.0) - (real(2.0) * real(3.0) + real(0.25) * real(4.0))) / jacobian),
+        "General terrain eta must differentiate the full covariant wind");
+}
+
 } // namespace
 
 int
@@ -357,6 +442,7 @@ main(int argc, char* argv[]) {
             test_cartesian_device_values(grid);
             test_regular_lat_lon_factory(grid);
             test_factory_rejections(grid);
+            test_affine_mixed_components(grid);
         }
         catch (const std::exception& error) {
             ++failures;

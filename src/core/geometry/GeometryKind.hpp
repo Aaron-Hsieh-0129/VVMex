@@ -7,7 +7,7 @@ namespace VVM {
 namespace Core {
 namespace Geometry {
 
-enum class GeometryKind : std::uint8_t { Cartesian, RegularLatLon, CubedSphere };
+enum class GeometryKind : std::uint8_t { Cartesian, RegularLatLon, CubedSphere, Affine };
 
 inline const char*
 geometry_kind_to_string(const GeometryKind kind) noexcept {
@@ -18,6 +18,9 @@ geometry_kind_to_string(const GeometryKind kind) noexcept {
 
     case GeometryKind::RegularLatLon:
         return "regular_latlon";
+
+    case GeometryKind::Affine:
+        return "affine";
 
     case GeometryKind::CubedSphere:
         return "cubed_sphere";
