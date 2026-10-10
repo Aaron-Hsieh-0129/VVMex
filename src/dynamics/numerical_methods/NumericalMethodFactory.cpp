@@ -1,7 +1,6 @@
 #include "NumericalMethodFactory.hpp"
 
 #include "core/geometry/GeometryKind.hpp"
-#include "core/RegularLatLonModelConfiguration.hpp"
 #include "dynamics/spatial_schemes/MUSCL.hpp"
 #include "dynamics/spatial_schemes/GeneralizedTakacs.hpp"
 #include "dynamics/spatial_schemes/Takacs.hpp"
@@ -24,27 +23,20 @@ namespace Dynamics {
 namespace {
 
 void
-validate_rll_vorticity_state(
+validate_mapped_vorticity_state(
     const Core::State& state, const Core::Grid& grid, const Core::Parameters& params) {
     const int h = grid.get_halo_cells();
     const int top = grid.get_local_total_points_z() - h - 1;
-    const bool terrain = state.has_field("rll_terrain_height");
-
-    if ((!terrain && params.max_topo_idx != h) ||
-        (terrain && (params.max_topo_idx < h || params.max_topo_idx >= top))) {
+    if (params.max_topo_idx < h || params.max_topo_idx >= top) {
         throw std::invalid_argument(
-            "RLL vorticity tendencies require flat or initialized RLL terrain below the lid.");
+            "Mapped vorticity tendencies require initialized terrain below the lid.");
     }
 }
 
 GeneralizedTakacsBoundary
-make_rll_takacs_boundary(const Core::Geometry::HorizontalGeometry& geometry) {
-    if (geometry.kind() != Core::Geometry::GeometryKind::RegularLatLon) {
-        throw std::invalid_argument("The RLL Takacs boundary requires RLL geometry.");
-    }
-
+make_mapped_takacs_boundary() {
     GeneralizedTakacsBoundary boundary;
-    boundary.validate_vorticity = validate_rll_vorticity_state;
+    boundary.validate_vorticity = validate_mapped_vorticity_state;
 
     return boundary;
 }
@@ -88,7 +80,7 @@ NumericalMethodFactory::create_spatial_scheme(const std::string& variable_name,
             return std::make_unique<Takacs>(config_, grid_, halo_exchanger_, bc_manager_);
         }
 
-        if (geometry_kind == Core::Geometry::GeometryKind::RegularLatLon) {
+        if (geometry_kind != Core::Geometry::GeometryKind::Cartesian) {
 
             const bool scalar_advection =
                 term_name == "advection" && (variable_name == "th" || is_tracer ||
@@ -103,56 +95,24 @@ NumericalMethodFactory::create_spatial_scheme(const std::string& variable_name,
 
             if (!scalar_advection && !horizontal_buoyancy && !vorticity_term) {
                 throw std::runtime_error(
-                    "Regular latitude-longitude Takacs currently supports "
+                    "Mapped-coordinate Takacs currently supports "
                     "only potential-temperature, moisture or passive-tracer advection "
                     "and vorticity transport, deformation and xi/eta buoyancy; field '" +
                     variable_name + "', tendency term '" + term_name + "' is not enabled yet.");
             }
 
             if (horizontal_buoyancy) {
-                if (config_.get_value<bool>("physics.p3.enable_p3", false) ||
-                    Core::is_rll_profile_atmosphere(config_)) {
-                    // A text sounding supplies water vapor independently of P3.
-                    // DynamicalCore supplies zero qp when P3 is disabled.
-                    return std::make_unique<GeneralizedTakacs>(grid_.geometry(),
-                        GeneralizedTakacs::BuoyancyMode::Moist,
-                        make_rll_takacs_boundary(grid_.geometry()));
-                }
-
-                // P3 being disabled does not establish a dry configuration:
-                // water-vapor tendencies can still be configured separately.
-                for (const char* moisture_name :
-                    {"qv", "qc", "qr", "qi", "qm", "nc", "nr", "ni", "bm", "qp"}) {
-
-                    const std::string key = std::string("dynamics.prognostic_variables.") +
-                                            moisture_name + ".tendency_terms";
-
-                    if (!config_.has_key(key)) {
-                        continue;
-                    }
-
-                    const auto moisture_terms = config_.get_value<nlohmann::json>(key);
-
-                    if (!moisture_terms.is_object()) {
-                        throw std::runtime_error(
-                            "Configuration error: '" + key + "' must be an object.");
-                    }
-
-                    for (const auto& item : moisture_terms.items()) {
-                        if (item.value().value("enable", true)) {
-                            throw std::runtime_error(
-                                "Regular latitude-longitude dry buoyancy does not "
-                                "support enabled moisture tendencies for field '" +
-                                std::string(moisture_name) + "'.");
-                        }
-                    }
-                }
+                // qv is part of State independently of the microphysics switch;
+                // zero water fields naturally give the dry limit. The driver
+                // supplies zero diagnostic condensate when P3 is disabled.
+                return std::make_unique<GeneralizedTakacs>(grid_.geometry(),
+                    GeneralizedTakacs::BuoyancyMode::Moist,
+                    make_mapped_takacs_boundary());
             }
 
             return std::make_unique<GeneralizedTakacs>(grid_.geometry(),
-                horizontal_buoyancy ? GeneralizedTakacs::BuoyancyMode::Dry
-                                    : GeneralizedTakacs::BuoyancyMode::Disabled,
-                make_rll_takacs_boundary(grid_.geometry()));
+                GeneralizedTakacs::BuoyancyMode::Disabled,
+                make_mapped_takacs_boundary());
         }
 
         throw std::runtime_error("Spatial scheme 'Takacs' is not implemented for "

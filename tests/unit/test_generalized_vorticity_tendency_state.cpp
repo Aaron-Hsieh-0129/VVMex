@@ -514,8 +514,61 @@ run_test(const std::string& path
                     bitwise_equal(physical_eta, snapshot(state.get_field<3>("eta"))),
             label + ": integration wrote physical compatibility fields");
     }
+
+    // Exercise the representation boundary with real periodic/wall halos.
+    // Poison the destination before each conversion: a round trip through
+    // interior-only transforms otherwise hides stale values in both caches.
+    for (int version : {1, 2}) {
+        const int nz = dims[0], ny = dims[1], nx = dims[2];
+        const auto xi = state.get_field<3>("xi").get_mutable_device_data();
+        const auto eta = state.get_field<3>("eta").get_mutable_device_data();
+        Kokkos::parallel_for("SetPhysicalVorticityForHaloRoundTrip",
+            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
+            KOKKOS_LAMBDA(int k, int j, int i) {
+                xi(k, j, i) =
+                    real(1e-4) * version * (real(1) + real(.1) * k + real(.02) * j + real(.03) * i);
+                eta(k, j, i) = -real(2e-4) * version *
+                               (real(1) + real(.03) * k + real(.01) * j + real(.02) * i);
+            });
+        auto& xi_field = state.get_field<3>("xi");
+        auto& eta_field = state.get_field<3>("eta");
+        halo.exchange_multiple_halos(std::vector<Core::Field<3>*>{&xi_field, &eta_field});
+        for (auto* field : {&xi_field, &eta_field}) {
+            boundary.apply_horizontal_bcs(*field);
+            boundary.apply_vorticity_bc(*field);
+        }
+        const auto expected_xi = snapshot(xi_field);
+        const auto expected_eta = snapshot(eta_field);
+        for (const char* name : {"xi_con", "eta_con", "zeta_con"}) {
+            Kokkos::deep_copy(state.get_field<3>(name).get_mutable_device_data(), real(-999));
+        }
+        core.sync_contravariant_vorticity_from_physical();
+        require(bitwise_equal(snapshot(state.get_field<3>("zeta")),
+                    snapshot(state.get_field<3>("zeta_con"))),
+            "vertical component synchronization omitted halos");
+        const auto canonical_xi = snapshot(state.get_field<3>("xi_con"));
+        const auto canonical_eta = snapshot(state.get_field<3>("eta_con"));
+        Kokkos::deep_copy(xi, real(-999));
+        Kokkos::deep_copy(eta, real(-999));
+        core.sync_physical_horizontal_vorticity_from_contravariant();
+        const auto actual_xi = snapshot(xi_field);
+        const auto actual_eta = snapshot(eta_field);
+        const Real tolerance = real(8) * std::numeric_limits<Real>::epsilon();
+        for (std::size_t p = 0; p < expected_xi.size(); ++p) {
+            require(std::abs(actual_xi[p] - expected_xi[p]) <=
+                            tolerance * std::abs(expected_xi[p]) &&
+                        std::abs(actual_eta[p] - expected_eta[p]) <=
+                            tolerance * std::abs(expected_eta[p]),
+                "physical/canonical vorticity round trip left stale interior or halo values");
+        }
+        require(bitwise_equal(canonical_xi, snapshot(state.get_field<3>("xi_con"))) &&
+                    bitwise_equal(canonical_eta, snapshot(state.get_field<3>("eta_con"))),
+            "physical export modified canonical prognostic storage");
+    }
+
     std::cout << "PASS: RLL tendency evaluation preserves prognostic state; "
-                 "AB2 histories and isolated mixed AB2/FE explicit-target updates are canonical";
+                 "AB2 histories and isolated mixed AB2/FE explicit-target updates are canonical; "
+                 "physical/canonical halo round trips passed";
 #if defined(KOKKOS_ENABLE_CUDA)
     std::cout << "; changed-input graph replay passed";
 #endif

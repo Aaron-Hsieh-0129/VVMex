@@ -406,7 +406,7 @@ endforeach()
 add_test(NAME test_parameters_resolved_grid_rll_guard
     COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
             ${GPU_WRAP} $<TARGET_FILE:test_parameters_resolved_grid>
-            ${TEST_DIR}/configs/horizontal_elliptic_regular_latlon.json
+            ${TEST_DIR}/configs/parameters_resolved_regular_latlon.json
     WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
 
 set_tests_properties(test_parameters_resolved_grid_rll_guard PROPERTIES LABELS unit TIMEOUT 60)

@@ -25,20 +25,12 @@ validate_model_numerical_configuration(const Utils::ConfigurationManager& config
     const auto& horizontal = specification.horizontal;
     const auto& vertical = specification.vertical;
 
-    // Do not pass angular increments into fields that still describe
-    // Cartesian metre-valued spacing for full-model validation.
-    // RLL Grid, geometry, and standalone operator/solver tests remain usable.
-    if (horizontal.geometry.kind != Geometry::GeometryKind::Cartesian) {
-        if (is_rll_idealized(config)) {
-            validate_rll_idealized(config, specification);
-        }
-        else {
-            throw std::runtime_error(
-                "Non-Cartesian full-model execution is not enabled yet. "
-                "RLL Grid and component tests remain available, but the model's "
-                "spacing-dependent dynamics and physical lateral boundaries still require "
-                "migration.");
-        }
+    if (is_rll_idealized(config)) {
+        validate_rll_idealized(config, specification);
+    }
+    if (horizontal.geometry.kind != Geometry::GeometryKind::Cartesian &&
+        horizontal.topology.q1 != HorizontalEdgeTopology::Periodic) {
+        throw std::runtime_error("Mapped horizontal execution currently requires periodic q1.");
     }
 
     const Utils::NumericalConfigurationValues values{horizontal.nx,

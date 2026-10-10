@@ -23,6 +23,14 @@ public:
         HaloExchanger& halo_exchanger);
 
     void initialize_state() const;
+    bool
+    has_canonical_horizontal_vorticity() const {
+        return canonical_horizontal_vorticity_initialized_;
+    }
+    bool
+    restored_canonical_horizontal_state() const {
+        return restart_reader_ && restart_reader_->restored_canonical_horizontal_state();
+    }
     void initialize_barotropic_jet() const;
     void initialize_grid() const;
     void initialize_topo() const;
@@ -30,7 +38,7 @@ public:
     void assign_vars() const;
     void initialize_background_state() const;
     void initialize_case_terrain() const;
-    void finalize_rll_terrain_masks() const;
+    void finalize_mapped_terrain_masks() const;
     void initialize_prognostic_state() const;
     void initialize_surface_temperature() const;
     void initialize_geographic_coordinates() const;
@@ -40,6 +48,8 @@ public:
     void load_restart() const;
 
 private:
+    mutable bool canonical_horizontal_vorticity_initialized_ = false;
+
     // Restart-clock policy assembled from the "restart" configuration block.
     Utils::RestartTimePolicy restart_time_policy() const;
 

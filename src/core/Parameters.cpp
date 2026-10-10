@@ -4,10 +4,29 @@
 
 #include "Parameters.hpp"
 #include "core/geometry/GeometryKind.hpp"
-#include "core/RegularLatLonModelConfiguration.hpp"
 
 namespace VVM {
 namespace Core {
+
+namespace {
+
+// NVCC extended lambdas must be enclosed by an addressable function.
+// Keep the device kernel outside the Parameters constructor.
+void
+apply_nominal_horizontal_metric(const Grid& grid, Real& dx, Real& dy) {
+    const auto metric = grid.geometry().device_view(Geometry::HorizontalLocation::T).g_cov;
+    Kokkos::View<Real*> reference("nominal horizontal lengths", 2);
+    const int h = grid.get_halo_cells();
+    Kokkos::parallel_for("NominalHorizontalLengths", 1, KOKKOS_LAMBDA(int) {
+        reference(0) = Kokkos::sqrt(metric.a11(h, h));
+        reference(1) = Kokkos::sqrt(metric.a22(h, h));
+    });
+    const auto host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), reference);
+    dx *= host(0);
+    dy *= host(1);
+}
+
+} // namespace
 
 Parameters::Parameters(const Utils::ConfigurationManager& config, const Grid& grid)
     : gravity("gravity"), Rd("Rd"), PSFC("PSFC"), P0("P0"), Cp("Cp"), Lv("Lv"), dx("dx"), dy("dy"),
@@ -29,34 +48,17 @@ Parameters::Parameters(const Utils::ConfigurationManager& config, const Grid& gr
     const auto& horizontal = grid.horizontal_specification();
     const auto& vertical = grid.vertical_specification();
 
-    // Existing consumers interpret Parameters::dx/dy as Cartesian distances.
-    // RLL angular increments must not silently enter those legacy kernels.
-    // Geometry and standalone elliptic/operator tests do not need Parameters.
-    if (horizontal.geometry.kind != Geometry::GeometryKind::Cartesian) {
-        if (is_rll_idealized(config)) {
-            validate_rll_idealized(config, GridSpecification::from_config(config));
-        }
-        else {
-            throw std::runtime_error(
-                "Parameters still exposes Cartesian dx/dy in metres. Non-Cartesian Parameters "
-                "construction "
-                "is not enabled until its spacing-dependent consumers have been migrated. "
-                "Use Grid geometry directly in the existing RLL component tests.");
-        }
-    }
-
     Kokkos::deep_copy(gravity, config.get_value<VVM::Real>("constants.gravity"));
     Kokkos::deep_copy(Rd, config.get_value<VVM::Real>("constants.Rd"));
     Kokkos::deep_copy(P0, config.get_value<VVM::Real>("constants.P0"));
     Kokkos::deep_copy(Cp, config.get_value<VVM::Real>("constants.Cp"));
 
-    // Legacy spacing fields retain metres. RLL stencils consume geometry
-    // directly; these nominal equatorial lengths are for scalar diagnostics.
+    // Legacy spacing fields retain metres. Mapped stencils consume geometry
+    // directly; these nominal local physical lengths are for scalar diagnostics.
     VVM::Real dx_val = horizontal.geometry.dq1;
     VVM::Real dy_val = horizontal.geometry.dq2;
-    if (horizontal.geometry.kind == Geometry::GeometryKind::RegularLatLon) {
-        dx_val *= horizontal.geometry.regular_lat_lon.radius;
-        dy_val *= horizontal.geometry.regular_lat_lon.radius;
+    if (horizontal.geometry.kind != Geometry::GeometryKind::Cartesian) {
+        apply_nominal_horizontal_metric(grid, dx_val, dy_val);
     }
     const VVM::Real dz_val = vertical.dz;
 

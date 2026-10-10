@@ -2,7 +2,7 @@
 #include "numerical_methods/NumericalMethodFactory.hpp"
 #include "spatial_schemes/Takacs.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
-#include "core/RegularLatLonModelConfiguration.hpp"
+#include "dynamics/operators/StaggeredVectorTransform.hpp"
 #include "dynamics/solvers/VerticalWindDiagnostic.hpp"
 #include "dynamics/operators/HorizontalVectorConversion.hpp"
 
@@ -12,6 +12,19 @@
 
 namespace VVM {
 namespace Dynamics {
+namespace {
+struct PhysicalIncrementVolume {
+    Core::Field<3>::ViewType current, before;
+    KOKKOS_INLINE_FUNCTION int
+    extent(int dimension) const {
+        return current.extent(dimension);
+    }
+    KOKKOS_INLINE_FUNCTION Real
+    operator()(int k, int j, int i) const {
+        return current(k, j, i) - before(k, j, i);
+    }
+};
+}
 
 bool
 startsWith(const std::string& fullString, const std::string& prefix) {
@@ -45,7 +58,8 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
 
     std::vector<std::string> common_thermo = {"th", "qv"};
     const bool p3_enabled = config.get_value<bool>("physics.p3.enable_p3", false);
-    if (!p3_enabled && Core::is_rll_profile_atmosphere(config) && !state_.has_field("qp")) {
+    if (!p3_enabled && grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian &&
+        !state_.has_field("qp")) {
         // The sounding supplies water vapor even without microphysics. Moist
         // buoyancy uses that vapor with zero condensate in this configuration.
         state_.add_field<3>("qp", dims,
@@ -165,6 +179,16 @@ DynamicalCore::DynamicalCore(const Utils::ConfigurationManager& config,
 
         numerical_methods_[var_name] = std::move(numerical_method);
     }
+    const bool physical_vorticity_updates =
+        enable_turbulence_ || config_.get_value<bool>("physics.surface_process.enable", false) ||
+        config_.get_value<bool>("dynamics.forcings.sponge_layer.enable", false) ||
+        config_.get_value<bool>("dynamics.forcings.areamn.enable", false);
+    if (grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian &&
+        physical_vorticity_updates) {
+        physical_xi_before_ = std::make_unique<Core::Field<3>>("physical xi update scratch", dims);
+        physical_eta_before_ =
+            std::make_unique<Core::Field<3>>("physical eta update scratch", dims);
+    }
     // This is for predict utopmn and vtopmn
     state_.add_field<1>("d_utopmn", {2});
     state_.add_field<1>("d_vtopmn", {2});
@@ -210,11 +234,6 @@ DynamicalCore::update_contravariant_wind_shadow_state() {
 
     const auto geometry_kind = grid_.geometry().kind();
 
-    if (geometry_kind != GeometryKind::Cartesian && geometry_kind != GeometryKind::RegularLatLon) {
-        throw std::logic_error("Contravariant wind shadow state currently supports only Cartesian "
-                               "and regular latitude-longitude geometry.");
-    }
-
     const auto& u = u_ref_.get(state_, "u").get_device_data();
     const auto& v = v_ref_.get(state_, "v").get_device_data();
 
@@ -231,36 +250,14 @@ DynamicalCore::update_contravariant_wind_shadow_state() {
         return;
     }
 
-    // Regular latitude-longitude:
-    //
-    //     u^1 = U / h1    at U
-    //     u^2 = V / h2    at V
-    //
-    // with
-    //
-    //     h1 = a cos(phi)
-    //     h2 = a.
-    const auto u_geometry = grid_.geometry().device_view(HorizontalLocation::U);
-    const auto v_geometry = grid_.geometry().device_view(HorizontalLocation::V);
-
-    const auto inverse_h1_at_u = u_geometry.physical_to_contravariant.a11;
-
-    const auto inverse_h2_at_v = v_geometry.physical_to_contravariant.a22;
-
-    const int nz = grid_.get_local_total_points_z();
-    const int ny = grid_.get_local_total_points_y();
-    const int nx = grid_.get_local_total_points_x();
-
-    // Deliberately capture only the two metric fields required here.
-    Kokkos::parallel_for("UpdateContravariantWindShadow",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            u_con(k, j, i) = HorizontalVectorConversion::physical_to_contravariant(u(k, j, i),
-                inverse_h1_at_u(j, i));
-
-            v_con(k, j, i) = HorizontalVectorConversion::physical_to_contravariant(v(k, j, i),
-                inverse_h2_at_v(j, i));
-        });
+    const auto gu = grid_.geometry().device_view(HorizontalLocation::U);
+    const auto gv = grid_.geometry().device_view(HorizontalLocation::V);
+    Operators::transform_staggered_vector<true>(u,
+        v,
+        u_con,
+        v_con,
+        gu.physical_to_contravariant,
+        gv.physical_to_contravariant);
 }
 
 void
@@ -292,67 +289,16 @@ DynamicalCore::sync_contravariant_vorticity_from_physical() {
         return;
     }
 
-    // ------------------------------------------------------------
-    // Generalized horizontal geometry.
-    //
-    // Stored variables:
-    //
-    //     xi      = +omega_phys_1 @ V
-    //     eta     = -omega_phys_2 @ U
-    //
-    //     xi_con  = +omega^1      @ V
-    //     eta_con = -omega^2      @ U
-    //
-    // For a non-orthogonal coordinate system, the full 2x2
-    // transformation must be used.
-    // ------------------------------------------------------------
-
-    const auto u_geometry = grid_.geometry().device_view(HorizontalLocation::U);
-    const auto v_geometry = grid_.geometry().device_view(HorizontalLocation::V);
-
-    const auto A_u = u_geometry.physical_to_contravariant;
-    const auto A_v = v_geometry.physical_to_contravariant;
-
-    const int nz = grid_.get_local_total_points_z();
-    const int ny = grid_.get_local_total_points_y();
-    const int nx = grid_.get_local_total_points_x();
-    const int h = grid_.get_halo_cells();
-
-    Kokkos::parallel_for("SyncContravariantHorizontalVorticityFromPhysical",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            // ----------------------------------------------------
-            // U -> V interpolation:
-            //
-            // eta = -omega_phys_2
-            // ----------------------------------------------------
-
-            const VVM::Real eta_at_v =
-                VVM::real(0.25) *
-                (eta(k, j, i) + eta(k, j + 1, i) + eta(k, j, i - 1) + eta(k, j + 1, i - 1));
-
-            // omega_phys_2 = -eta
-            const VVM::Real omega2_phys_at_v = -eta_at_v;
-
-            xi_con(k, j, i) = A_v.a11(j, i) * xi(k, j, i) + A_v.a12(j, i) * omega2_phys_at_v;
-
-            // ----------------------------------------------------
-            // V -> U interpolation:
-            //
-            // xi = +omega_phys_1
-            // ----------------------------------------------------
-
-            const VVM::Real xi_at_u = VVM::real(0.25) * (xi(k, j, i) + xi(k, j, i + 1) +
-                                                            xi(k, j - 1, i) + xi(k, j - 1, i + 1));
-
-            const VVM::Real omega2_con_at_u =
-                A_u.a21(j, i) * xi_at_u + A_u.a22(j, i) * (-eta(k, j, i));
-
-            eta_con(k, j, i) = -omega2_con_at_u;
-
-            // Vertical direction remains Cartesian in VVMex.
-            zeta_con(k, j, i) = zeta(k, j, i);
-        });
+    const auto gu = grid_.geometry().device_view(HorizontalLocation::U);
+    const auto gv = grid_.geometry().device_view(HorizontalLocation::V);
+    Operators::transform_staggered_vector<false>(xi,
+        eta,
+        xi_con,
+        eta_con,
+        gv.physical_to_contravariant,
+        gu.physical_to_contravariant,
+        real(-1.0));
+    Kokkos::deep_copy(exec, zeta_con, zeta);
 }
 
 void
@@ -375,42 +321,71 @@ DynamicalCore::sync_physical_horizontal_vorticity_from_contravariant() {
         return;
     }
 
-    const auto u_geometry = grid_.geometry().device_view(HorizontalLocation::U);
-    const auto v_geometry = grid_.geometry().device_view(HorizontalLocation::V);
+    const auto gu = grid_.geometry().device_view(HorizontalLocation::U);
+    const auto gv = grid_.geometry().device_view(HorizontalLocation::V);
+    Operators::transform_staggered_vector<false>(xi_con,
+        eta_con,
+        xi,
+        eta,
+        gv.contravariant_to_physical,
+        gu.contravariant_to_physical,
+        real(-1.0));
+}
 
-    const auto B_u = u_geometry.contravariant_to_physical;
-    const auto B_v = v_geometry.contravariant_to_physical;
+void
+DynamicalCore::begin_physical_vorticity_update() {
+    if (!physical_xi_before_) {
+        return;
+    }
+    const auto exec = Kokkos::DefaultExecutionSpace();
+    Kokkos::deep_copy(exec,
+        physical_xi_before_->get_mutable_device_data(),
+        xi_ref_.get(state_, "xi").get_device_data());
+    Kokkos::deep_copy(exec,
+        physical_eta_before_->get_mutable_device_data(),
+        eta_ref_.get(state_, "eta").get_device_data());
+}
 
-    const int nz = grid_.get_local_total_points_z();
-    const int ny = grid_.get_local_total_points_y();
-    const int nx = grid_.get_local_total_points_x();
-    const int h = grid_.get_halo_cells();
-
-    Kokkos::parallel_for("SyncPhysicalHorizontalVorticityFromContravariant",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, h, h}, {nz, ny - h, nx - h}),
-        KOKKOS_LAMBDA(const int k, const int j, const int i) {
-            // ----------------------------------------------------
-            // U -> V interpolation of eta_con.
-            //
-            // eta_con = -omega^2
-            // ----------------------------------------------------
-
-            const VVM::Real eta_con_at_v =
-                VVM::real(0.25) * (eta_con(k, j, i) + eta_con(k, j + 1, i) + eta_con(k, j, i - 1) +
-                                      eta_con(k, j + 1, i - 1));
-
-            xi(k, j, i) = B_v.a11(j, i) * xi_con(k, j, i) - B_v.a12(j, i) * eta_con_at_v;
-
-            // ----------------------------------------------------
-            // V -> U interpolation of xi_con.
-            // ----------------------------------------------------
-
-            const VVM::Real xi_con_at_u =
-                VVM::real(0.25) * (xi_con(k, j, i) + xi_con(k, j, i + 1) + xi_con(k, j - 1, i) +
-                                      xi_con(k, j - 1, i + 1));
-
-            eta(k, j, i) = -B_u.a21(j, i) * xi_con_at_u + B_u.a22(j, i) * eta_con(k, j, i);
-        });
+void
+DynamicalCore::finish_physical_vorticity_update() {
+    if (!physical_xi_before_) {
+        if (grid_.geometry().kind() == Core::Geometry::GeometryKind::Cartesian) {
+            sync_contravariant_vorticity_from_physical();
+        }
+        else {
+            Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+                zeta_con_ref_.get(state_, "zeta_con").get_mutable_device_data(),
+                zeta_ref_.get(state_, "zeta").get_device_data());
+        }
+        return;
+    }
+    // Import increments. Reimporting the whole physical shadow repeatedly
+    // would filter canonical state through two staggered interpolations,
+    // including on a step with exactly zero physical forcing.
+    const auto xi = xi_ref_.get(state_, "xi").get_device_data();
+    const auto eta = eta_ref_.get(state_, "eta").get_device_data();
+    const PhysicalIncrementVolume dx{xi, physical_xi_before_->get_device_data()};
+    const PhysicalIncrementVolume de{eta, physical_eta_before_->get_device_data()};
+    using Core::Geometry::HorizontalLocation;
+    const auto gu = grid_.geometry().device_view(HorizontalLocation::U);
+    const auto gv = grid_.geometry().device_view(HorizontalLocation::V);
+    Operators::transform_staggered_vector<false>(dx,
+        de,
+        xi_con_ref_.get(state_, "xi_con").get_mutable_device_data(),
+        eta_con_ref_.get(state_, "eta_con").get_mutable_device_data(),
+        gv.physical_to_contravariant,
+        gu.physical_to_contravariant,
+        real(-1.0),
+        true);
+    auto& xf = xi_con_ref_.get(state_, "xi_con");
+    auto& ef = eta_con_ref_.get(state_, "eta_con");
+    halo_exchanger_.exchange_multiple_halos(std::vector<Core::Field<3>*>{&xf, &ef});
+    bc_manager_.apply_horizontal_vorticity_bcs(xf, ef);
+    bc_manager_.apply_vorticity_bc(xf);
+    bc_manager_.apply_vorticity_bc(ef);
+    Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+        zeta_con_ref_.get(state_, "zeta_con").get_mutable_device_data(),
+        zeta_ref_.get(state_, "zeta").get_device_data());
 }
 
 void
@@ -431,11 +406,11 @@ DynamicalCore::compute_diagnostic_fields() const {
 }
 
 void
-DynamicalCore::initialize_restart_history() {
+DynamicalCore::initialize_restart_history(bool canonical_horizontal_state) {
     const int rank = grid_.get_mpi_rank();
 
-    // Preserve loaded RLL wind and seed the solver's circulation target.
-    wind_solver_->initialize_regular_latlon_restart_state();
+    // Preserve loaded mapped wind and seed the solver's circulation target.
+    wind_solver_->initialize_generalized_restart_state(canonical_horizontal_state);
     if (grid_.geometry().kind() == Core::Geometry::GeometryKind::Cartesian) {
         // The Cartesian top-wind means are scalar solver state. Recover them
         // from the saved physical top wind, which is their value after the
@@ -531,8 +506,8 @@ DynamicalCore::initialize_restart_history() {
 
 void
 DynamicalCore::compute_zeta_vertical_structure(Core::State& state) const {
-    // The composed RLL wind diagnostic integrates zeta with metric factors.
-    if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+    // The composed generalized wind diagnostic integrates zeta with metric factors.
+    if (grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
         return;
     }
     auto& zeta_field = zeta_ref_.get(state, "zeta");
@@ -596,8 +571,8 @@ DynamicalCore::compute_wind_fields() {
         // contravariant horizontal components are identical.
         update_contravariant_wind_shadow_state();
     }
-    else if (geometry_kind == GeometryKind::RegularLatLon) {
-        // The RLL WindSolver has already committed its final physical wind,
+    else {
+        // The generalized WindSolver has already committed its final physical wind,
         // including topology correction and wall treatment, into u_con/v_con.
         //
         // The current horizontal-only generalized coordinate leaves the
@@ -606,15 +581,11 @@ DynamicalCore::compute_wind_fields() {
             zeta_con_ref_.get(state_, "zeta_con").get_mutable_device_data(),
             zeta_ref_.get(state_, "zeta").get_device_data());
     }
-    else {
-        throw std::logic_error("Wind-field finalization is not implemented for geometry '" +
-                               std::string(grid_.geometry().name()) + "'.");
-    }
 }
 
 void
 DynamicalCore::compute_uvtopmn() {
-    if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+    if (grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
         return;
     }
     const int nz = grid_.get_local_total_points_z();
@@ -954,12 +925,6 @@ DynamicalCore::calculate_vorticity_tendencies() {
         // Preserve the established Cartesian density-normalization path.
         prepare_vorticity_for_tendency_evaluation();
     }
-    else if (geometry_kind != GeometryKind::RegularLatLon) {
-        // Do not admit a new geometry before wind recovery and topology
-        // support it. Generalized tendency kernels alone are not sufficient.
-        throw std::logic_error("Vorticity tendency evaluation currently supports only "
-                               "Cartesian and regular latitude-longitude geometry.");
-    }
 
     for (const auto& var : vorticity_cache_) {
         if (var.method != nullptr) {
@@ -1036,6 +1001,9 @@ DynamicalCore::update_vorticity(VVM::Real dt) {
         halo_exchanger_.exchange_halos(*var.field);
         bc_manager_.apply_horizontal_bcs(*var.field);
     }
+
+    bc_manager_.apply_horizontal_vorticity_bcs(xi_con_ref_.get(state_, "xi_con"),
+        eta_con_ref_.get(state_, "eta_con"));
 
     // Vertical vorticity boundary conditions now apply directly to the
     // canonical horizontal prognostic components.

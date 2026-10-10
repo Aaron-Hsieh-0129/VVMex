@@ -1,0 +1,47 @@
+{
+    "grid": {
+        "horizontal": {
+            "nx": 24,
+            "ny": 12,
+            "n_halo_cells": 2,
+            "geometry": {
+                "kind": "regular_latlon",
+                "fix_lonlat": false,
+                "earth_radius_m": 6371220.0,
+                "longitude_bounds_deg": [
+                    0.0,
+                    360.0
+                ],
+                "latitude_bounds_deg": [
+                    -45.0,
+                    45.0
+                ]
+            },
+            "topology": {
+                "q1": "periodic",
+                "q2": "bounded"
+            }
+        },
+        "vertical": {
+            "nz": 4,
+            "type": "default",
+            "dz": 1000.0,
+            "dz1": 200.0
+        }
+    },
+    "constants": {
+        "gravity": 9.81,
+        "Rd": 287.0,
+        "P0": 100000.0,
+        "Cp": 1004.0
+    },
+    "simulation": {
+        "dt_s": 2.0
+    },
+    "dynamics": {
+        "solver": {
+            "WRXMU": 0.25,
+            "iteration": 4
+        }
+    }
+}
