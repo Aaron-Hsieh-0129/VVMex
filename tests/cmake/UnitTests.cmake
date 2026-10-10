@@ -227,8 +227,7 @@ set_tests_properties(test_grid_geometry_structured_bounded_r1
                      PROPERTIES LABELS unit TIMEOUT 300)
 _vvm_set_test_resources(test_grid_geometry_structured_bounded_r1 1)
 
-# RLL configuration is parsed, but it must not reach the legacy Cartesian
-# topology or dynamical core until those paths have been migrated.
+# Mapped model boundaries admit periodic-q1, bounded-q2 geographic charts.
 vvm_add_test_executable(test_grid_rll_guard
     LIBRARIES vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX)
 add_test(NAME test_grid_rll_guard

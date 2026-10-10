@@ -530,6 +530,56 @@ run_channel(const std::string& path
 
     require(close_vectors(snapshot_recovered_domain(covariant_q2_wind, grid), first_recovered_q2),
         "channel correction modified covariant q2 wind");
+
+    // Ordinary channels seed their incoming circulation before recovery.
+    fill_channel_state(state, grid, real(7.0) * radius);
+    populate_covariant_wind_from_physical(grid, state, covariant_q1_wind, covariant_q2_wind);
+    Kokkos::fence();
+    const Values incoming_q1 = snapshot_recovered_domain(covariant_q1_wind, grid);
+    const Values incoming_q2 = snapshot_recovered_domain(covariant_q2_wind, grid);
+    auto seeded = Dynamics::make_regular_lat_lon_circulation_constraint(
+        grid, state, covariant_q1_wind, covariant_q2_wind);
+    seeded->seed_from_physical_wind();
+    Kokkos::deep_copy(covariant_q1_wind.get_mutable_device_data(), real(0.0));
+    seeded->before_recovery(true);
+    seeded->after_recovery(true);
+    Kokkos::fence();
+    require(close_vectors(snapshot_recovered_domain(covariant_q1_wind, grid), incoming_q1),
+        "initial channel recovery discarded the incoming circulation");
+    require(close_vectors(snapshot_recovered_domain(covariant_q2_wind, grid), incoming_q2),
+        "seeded channel correction modified covariant q2 wind");
+
+    // A new checkpoint restores its canonical wind without reimporting the
+    // physical compatibility fields. Poison those fields to verify the source.
+    const auto inverse_u = grid.geometry()
+                               .device_view(Core::Geometry::HorizontalLocation::U)
+                               .physical_to_contravariant.a11;
+    const auto inverse_v = grid.geometry()
+                               .device_view(Core::Geometry::HorizontalLocation::V)
+                               .physical_to_contravariant.a22;
+    const auto u = state.get_field<3>("u").get_device_data();
+    const auto v = state.get_field<3>("v").get_device_data();
+    const auto uc = state.get_field<3>("u_con").get_mutable_device_data();
+    const auto vc = state.get_field<3>("v_con").get_mutable_device_data();
+    Kokkos::parallel_for("CheckpointCanonicalChannelWind",
+        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
+        KOKKOS_LAMBDA(int k, int j, int i) {
+            uc(k, j, i) = inverse_u(j, i) * u(k, j, i);
+            vc(k, j, i) = inverse_v(j, i) * v(k, j, i);
+        });
+    Kokkos::deep_copy(state.get_field<3>("u").get_mutable_device_data(), real(0.0));
+    Kokkos::deep_copy(state.get_field<3>("v").get_mutable_device_data(), real(0.0));
+    auto restored = Dynamics::make_regular_lat_lon_circulation_constraint(
+        grid, state, covariant_q1_wind, covariant_q2_wind);
+    restored->seed_from_contravariant_wind();
+    add_covariant_harmonic_drift(grid, covariant_q1_wind, covariant_q2_wind,
+        real(-7.0) * radius, real(0.0), false);
+    restored->after_recovery(false);
+    Kokkos::fence();
+    require(close_vectors(snapshot_recovered_domain(covariant_q1_wind, grid), incoming_q1),
+        "restart circulation was imported from physical rather than canonical wind");
+    require(close_vectors(snapshot_recovered_domain(covariant_q2_wind, grid), incoming_q2),
+        "canonical restart correction modified covariant q2 wind");
 }
 
 } // namespace

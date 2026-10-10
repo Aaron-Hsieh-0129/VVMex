@@ -822,13 +822,25 @@ struct DiagnosticState {
 
     bool
     free_slip_boundaries(const Grid& grid) const {
-        return positive_face_q2_dirichlet_halos(grid, psi) &&
-               positive_face_q2_dirichlet_halos(grid, psi_previous) &&
-               centered_q2_neumann_halos(grid, chi) &&
-               centered_q2_neumann_halos(grid, chi_previous) &&
-               positive_face_q2_dirichlet_halos(grid, zeta) && centered_q2_neumann_halos(grid, w) &&
-               centered_q2_neumann_halos(grid, w_previous) &&
-               free_slip_physical_wind_halos(grid, u, v);
+        const std::pair<const char*, bool> checks[] = {
+            {"psi", positive_face_q2_dirichlet_halos(grid, psi)},
+            {"psi_previous", positive_face_q2_dirichlet_halos(grid, psi_previous)},
+            {"chi", centered_q2_neumann_halos(grid, chi)},
+            {"chi_previous", centered_q2_neumann_halos(grid, chi_previous)},
+            {"zeta", positive_face_q2_dirichlet_halos(grid, zeta)},
+            {"w", centered_q2_neumann_halos(grid, w)},
+            {"w_previous", centered_q2_neumann_halos(grid, w_previous)},
+            {"physical_wind", free_slip_physical_wind_halos(grid, u, v)}
+        };
+        bool valid = true;
+        for (const auto& check : checks) {
+            if (!check.second) {
+                std::fprintf(stderr, "Rank %d FAIL: free-slip wall condition for %s\n",
+                    grid.get_mpi_rank(), check.first);
+                valid = false;
+            }
+        }
+        return valid;
     }
 
     bool

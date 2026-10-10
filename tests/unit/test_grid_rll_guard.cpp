@@ -53,20 +53,8 @@ main(int argc, char** argv) {
             check(horizontal.topology.q2 == VVM::Core::HorizontalEdgeTopology::Bounded,
                 "RLL q2 topology must be bounded");
 
-            bool model_guard_threw = false;
-
-            try {
-                const VVM::Core::BoundaryConditionManager boundary_conditions(grid);
-                (void)boundary_conditions;
-            }
-            catch (const std::runtime_error& error) {
-                model_guard_threw =
-                    std::string(error.what()).find("full model execution is not enabled yet") !=
-                    std::string::npos;
-            }
-
-            check(model_guard_threw,
-                "BoundaryConditionManager must prevent incomplete RLL full-model execution");
+            const VVM::Core::BoundaryConditionManager boundary_conditions(grid);
+            (void)boundary_conditions;
         }
         catch (const std::exception& error) {
             ++failures;

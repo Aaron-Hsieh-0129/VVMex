@@ -23,6 +23,7 @@ struct GeneralizedHorizontalEllipticDeviceView {
 
     Core::Geometry::GeometryField2D jacobian_t;
     Core::Geometry::GeometryField2D jacobian_z;
+    int q2_minus_wall = -1, q2_plus_wall = -1;
 
     struct ZeroPotential {
         KOKKOS_INLINE_FUNCTION Real
@@ -52,10 +53,15 @@ struct GeneralizedHorizontalEllipticDeviceView {
         const Real west =
             r.jacobian_u(j, i - 1) * r.calculate_contravariant_q1_at_u(zero, chi, j, i - 1);
 
-        const Real north = r.jacobian_v(j, i) * r.calculate_contravariant_q2_at_v(zero, chi, j, i);
+        const Real north =
+            j == q2_plus_wall
+                ? real(0.0)
+                : r.jacobian_v(j, i) * r.calculate_contravariant_q2_at_v(zero, chi, j, i);
 
         const Real south =
-            r.jacobian_v(j - 1, i) * r.calculate_contravariant_q2_at_v(zero, chi, j - 1, i);
+            j - 1 == q2_minus_wall
+                ? real(0.0)
+                : r.jacobian_v(j - 1, i) * r.calculate_contravariant_q2_at_v(zero, chi, j - 1, i);
 
         return (east - west) / r.dq1 + (north - south) / r.dq2;
     }

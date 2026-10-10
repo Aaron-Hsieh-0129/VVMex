@@ -6,6 +6,7 @@
 #include "core/Grid.hpp"
 #include "core/State.hpp"
 #include "core/Field.hpp"
+#include "core/haloexchange/HaloExchanger.hpp"
 
 namespace VVM::Dynamics {
 
@@ -24,22 +25,31 @@ public:
 
     virtual void before_recovery(bool initial) = 0;
     virtual void after_recovery(bool initial) = 0;
-    // Restore the circulation target from a checkpoint's physical wind.
+    // Preserve the direct rotational basis after covariant column recovery.
+    virtual void correct_canonical_recovered_wind() = 0;
+    // Seed from the incoming wind, or restore from a checkpoint's saved basis.
     virtual void seed_from_physical_wind() = 0;
+    virtual void seed_from_contravariant_wind() = 0;
+    virtual void prepare_physical_mean_constraint(Core::HaloExchanger& halo) = 0;
+    virtual void nudge_physical_top_mean(
+        const Core::Field<0>& target_u, const Core::Field<0>& target_v, Real fraction) = 0;
 };
 
-// Current RLL topology implementation:
-//
-// q1 periodic, q2 periodic:
-//   preserve the two non-contractible cycle integrals. The target belongs to
-//   the incoming physical wind, so it is captured before the first recovery.
-//
-// q1 periodic, q2 bounded:
-//   preserve the south-wall q1 circulation. The target belongs to the first
-//   diagnosed channel wind, so it is captured after the first recovery.
-//
-// The implementation remains RLL-specific because these cycles/walls are
-// topology-specific. WindSolver itself only sees the lifecycle interface.
+class HorizontalEllipticSolver;
+
+// Periodic cycles or a bounded-q2 wall circulation, using cached harmonic
+// covectors for the supplied metric. The harmonic solves run once before
+// diagnostic graph capture; timestep corrections remain entirely on device.
+std::unique_ptr<HorizontalWindTopologyConstraint> make_generalized_circulation_constraint(
+    const Core::Grid& grid,
+    Core::State& state,
+    Core::Field<3>& covariant_q1_wind,
+    Core::Field<3>& covariant_q2_wind,
+    Core::HaloExchanger& halo,
+    HorizontalEllipticSolver& solver,
+    int iterations);
+
+// Compatibility entry for charts with analytic separable harmonic covectors.
 std::unique_ptr<HorizontalWindTopologyConstraint> make_regular_lat_lon_circulation_constraint(
     const Core::Grid& grid,
     Core::State& state,

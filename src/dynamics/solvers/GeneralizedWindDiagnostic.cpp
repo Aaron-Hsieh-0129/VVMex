@@ -152,8 +152,8 @@ GeneralizedWindDiagnostic::diagnose(const Core::Grid& grid,
     if (free_slip_boundary) {
         halo.exchange_multiple_halos(std::vector<Core::Field<3>*>{&fields.w, &fields.w_previous});
 
-        boundary->fill_centered_q2_neumann_halos(fields.w);
-        boundary->fill_centered_q2_neumann_halos(fields.w_previous);
+        boundary->fill_physical_q2_neumann_halos(fields.w);
+        boundary->fill_physical_q2_neumann_halos(fields.w_previous);
     }
 
     const auto operation = make_vertical_wind_diagnostic_device_view(grid.geometry());
@@ -319,8 +319,8 @@ GeneralizedWindDiagnostic::diagnose_horizontal_potentials(const Core::Grid& grid
                 options.psi_q2_minus,
                 options.psi_q2_plus);
 
-            boundary.fill_centered_q2_neumann_halos(fields.chi);
-            boundary.fill_centered_q2_neumann_halos(fields.chi_previous);
+            boundary.fill_physical_q2_neumann_halos(fields.chi);
+            boundary.fill_physical_q2_neumann_halos(fields.chi_previous);
         }
         else {
             boundary.fill_constant_q2_halos(fields.psi);

@@ -12,7 +12,9 @@ enum class HorizontalBCType { Periodic, ZeroGradient };
 
 class BoundaryConditionManager {
 public:
-    explicit BoundaryConditionManager(const Grid& grid, bool enable_rll_channel = false);
+    explicit BoundaryConditionManager(const Grid& grid, bool enable_mapped_channel = false);
+
+    void apply_horizontal_vorticity_bcs(Field<3>& xi, Field<3>& eta) const;
 
     template <size_t Dim>
     void apply_dirichlet_zero(Field<Dim>& field) const;
@@ -46,7 +48,7 @@ public:
 
 private:
     const Grid& grid_;
-    bool rll_channel_ = false;
+    bool mapped_channel_ = false;
 
     HorizontalBCType x_bc_type_ = HorizontalBCType::Periodic;
     HorizontalBCType y_bc_type_ = HorizontalBCType::Periodic;

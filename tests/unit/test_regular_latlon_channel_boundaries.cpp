@@ -51,6 +51,8 @@ void check_canonical_vorticity_boundaries(const Grid& grid) {
     const int nx = grid.get_local_total_points_x();
     Field<3> physical("xi", {nz, ny, nx});
     Field<3> canonical("xi_con", {nz, ny, nx});
+    Field<3> canonical_eta("eta_con", {nz, ny, nx});
+    canonical_eta.set_to_zero();
     const auto h1 = grid.geometry().device_view(HorizontalLocation::V)
         .contravariant_to_physical.a11;
     auto p = physical.get_mutable_device_data();
@@ -63,7 +65,7 @@ void check_canonical_vorticity_boundaries(const Grid& grid) {
         });
     VVM::Core::BoundaryConditionManager bc(grid, true);
     bc.apply_horizontal_bcs(physical);
-    bc.apply_horizontal_bcs(canonical);
+    bc.apply_horizontal_vorticity_bcs(canonical, canonical_eta);
     Real error = 0;
     Kokkos::parallel_reduce("CheckCanonicalBoundaryRegression",
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
@@ -948,14 +950,25 @@ struct DiagnosticState {
 
     bool
     free_slip_boundaries(const Grid& grid) const {
-
-        return positive_face_q2_dirichlet_halos(grid, psi) &&
-               positive_face_q2_dirichlet_halos(grid, psi_previous) &&
-               centered_q2_neumann_halos(grid, chi) &&
-               centered_q2_neumann_halos(grid, chi_previous) &&
-               positive_face_q2_dirichlet_halos(grid, zeta) && centered_q2_neumann_halos(grid, w) &&
-               centered_q2_neumann_halos(grid, w_previous) &&
-               free_slip_physical_wind_halos(grid, u, v);
+        const std::pair<const char*, bool> checks[] = {
+            {"psi", positive_face_q2_dirichlet_halos(grid, psi)},
+            {"psi_previous", positive_face_q2_dirichlet_halos(grid, psi_previous)},
+            {"chi", centered_q2_neumann_halos(grid, chi)},
+            {"chi_previous", centered_q2_neumann_halos(grid, chi_previous)},
+            {"zeta", positive_face_q2_dirichlet_halos(grid, zeta)},
+            {"w", centered_q2_neumann_halos(grid, w)},
+            {"w_previous", centered_q2_neumann_halos(grid, w_previous)},
+            {"physical_wind", free_slip_physical_wind_halos(grid, u, v)}
+        };
+        bool valid = true;
+        for (const auto& check : checks) {
+            if (!check.second) {
+                std::fprintf(stderr, "Rank %d FAIL: free-slip wall condition for %s\n",
+                    grid.get_mpi_rank(), check.first);
+                valid = false;
+            }
+        }
+        return valid;
     }
 
     bool

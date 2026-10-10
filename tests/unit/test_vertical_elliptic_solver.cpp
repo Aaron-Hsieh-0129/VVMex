@@ -86,6 +86,16 @@ struct Reference {
         return (k * ny + j) * nx + i;
     }
 
+    // Centered solution halos reflect about the wall; source fixtures retain
+    // their separately prescribed constant extension.
+    int
+    solution_index(int k, int j, int i) const {
+        if (bounded) {
+            j = j < 0 ? -1 - j : (j >= ny ? 2 * ny - 1 - j : j);
+        }
+        return index(k, j, i);
+    }
+
     Real
     source(bool is_eta, int step, int k, int j, int i) const {
         const int n = index(k, j, i);
@@ -178,8 +188,8 @@ struct Reference {
                         rhs[level] =
                             shift * current[index(k, j, i)] + forcing +
                             east * (current[index(k, j, i + 1)] + current[index(k, j, i - 1)]) +
-                            north * current[index(k, j + 1, i)] +
-                            south_weight * current[index(k, j - 1, i)];
+                            north * current[solution_index(k, j + 1, i)] +
+                            south_weight * current[solution_index(k, j - 1, i)];
                     }
                     const auto solution = dense_solve(matrix, rhs);
                     for (int k = h; k <= last; ++k) {
@@ -292,7 +302,7 @@ run_case(const Grid& grid, HaloExchanger& halo, int iterations, bool stretched) 
                 for (int i = 0; i < nx; ++i) {
                     const int gj = grid.get_local_physical_start_y() + j - h,
                               gi = grid.get_local_physical_start_x() + i - h;
-                    const double expected = reference.w[reference.index(k, gj, gi)];
+                    const double expected = reference.w[reference.solution_index(k, gj, gi)];
                     finite = finite && std::isfinite(actual(k, j, i)) && std::isfinite(expected);
                     maximum_error =
                         std::max(maximum_error, std::abs(double(actual(k, j, i)) - expected));
