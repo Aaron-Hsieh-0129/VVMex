@@ -72,6 +72,7 @@ nav:
       - Job Submission: user-guides/job-submission.md
       - Model Configuration: user-guides/configuration.md
       - Output: user-guides/output.md
+      - CLEO Super-Droplet Microphysics: user-guides/cleo.md
   - Developer Guides:
       - Overview: developer-guides/index.md
       - System Architecture: developer-guides/architecture.md
