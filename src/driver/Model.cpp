@@ -40,15 +40,22 @@ Model::Model(const Utils::ConfigurationManager& config,
             state_);
     }
 
-    if (config_.get_value<bool>("physics.cleo.enable_cleo", false)) {
+    const auto microphysics_engine =
+        config_.get_value<std::string>("physics.microphysics.engine", "none");
+    if (microphysics_engine == "cleo") {
+        if (p3_) {
+            throw std::runtime_error(
+                "physics.microphysics.engine is \"cleo\" but physics.p3.enable_p3 is true");
+        }
         cleo_ = std::make_unique<Physics::VVM_CLEO_Interface>(config_,
             grid_,
             params_,
             halo_exchanger_,
             state_);
     }
-    if (grid_.get_mpi_rank() == 0 && p3_ && cleo_) {
-        std::cout << "Warning: P3 and CLEO should not be enabled at the same time" << std::endl;
+    else if (microphysics_engine != "none") {
+        throw std::runtime_error("Unknown physics.microphysics.engine \"" + microphysics_engine +
+                                 "\"; expected \"none\" or \"cleo\"");
     }
 
     if (config_.get_value<bool>("physics.turbulence.enable_turbulence", false)) {

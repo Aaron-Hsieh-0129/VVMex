@@ -1,26 +1,401 @@
 #include "VVM_cleo_process_interface.hpp"
+
+#include <mpi.h>
+
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <filesystem>
+#include <iostream>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "cartesiandomain/cartesian_decomposition.hpp"
+#include "cartesiandomain/collect_data_for_collective_dataset.hpp"
+#include "cartesiandomain/createcartesianmaps.hpp"
+#include "cartesiandomain/movement/cartesian_motion.hpp"
+#include "cartesiandomain/movement/cartesian_movement.hpp"
+#include "cleoconstants.hpp"
+#include "configuration/communicator.hpp"
+#include "initialise/init_all_supers_from_binary.hpp"
+#include "initialise/initgbxsnull.hpp"
+#include "initialise/timesteps.hpp"
+#include "observers/gbxindex_observer.hpp"
+#include "observers/massmoments_observer.hpp"
+#include "observers/nsupers_observer.hpp"
+#include "observers/observers.hpp"
+#include "observers/sdmmonitor/monitor_condensation_observer.hpp"
+#include "observers/sdmmonitor/monitor_massmoments_change_observer.hpp"
+#include "observers/sdmmonitor/monitor_precipitation_observer.hpp"
+#include "observers/streamout_observer.hpp"
+#include "observers/superdrops_observer.hpp"
+#include "observers/thermo_observer.hpp"
+#include "observers/time_observer.hpp"
+#include "observers/totnsupers_observer.hpp"
+#include "observers/windvel_observer.hpp"
+#include "runcleo/creategbxs.hpp"
+#include "runcleo/createsupers.hpp"
+#include "runcleo/sdmmethods.hpp"
+#include "superdrops/collisions/breakup_nfrags.hpp"
+#include "superdrops/collisions/coalbure.hpp"
+#include "superdrops/collisions/coalbure_flag.hpp"
+#include "superdrops/collisions/collisions.hpp"
+#include "superdrops/collisions/longhydroprob.hpp"
+#include "superdrops/condensation.hpp"
+#include "zarr/collective_dataset.hpp"
+#include "zarr/fsstore.hpp"
+
 #include "core/State.hpp"
 #include "core/vvm_types.hpp"
 
 namespace VVM::Physics {
 
+namespace {
+
+using Dataset = CollectiveDataset<FSStore, CartesianDecomposition>;
+
+std::string
+key(const std::string& k) {
+    return "physics.microphysics.cleo." + k;
+}
+
+size_t
+global_ngbxs(const Core::Grid& grid) {
+    return static_cast<size_t>(grid.get_global_points_z()) * grid.get_global_points_x() *
+           grid.get_global_points_y();
+}
+
+// zarr chunk size; CLEO's (time, gridbox) arrays need it >= the gridbox count.
+size_t
+zarr_maxchunk(const Core::Grid& grid) {
+    return std::max<size_t>(2500000, global_ngbxs(grid));
+}
+
+SuppliedDecomposition
+supplied_from_grid(const Core::Grid& grid) {
+    const MPI_Comm cart = grid.get_cart_comm();
+    int nprocs = 0;
+    MPI_Comm_size(cart, &nprocs);
+
+    // CLEO orders dimensions (z, x, y)
+    const std::array<size_t, 3> my_origin{0,
+        static_cast<size_t>(grid.get_local_physical_start_x()),
+        static_cast<size_t>(grid.get_local_physical_start_y())};
+    const std::array<size_t, 3> my_size{static_cast<size_t>(grid.get_global_points_z()),
+        static_cast<size_t>(grid.get_local_physical_points_x()),
+        static_cast<size_t>(grid.get_local_physical_points_y())};
+
+    SuppliedDecomposition supplied;
+    supplied.origins.resize(nprocs);
+    supplied.sizes.resize(nprocs);
+    MPI_Allgather(my_origin.data(), 3, MPI_UNSIGNED_LONG, supplied.origins.data(), 3,
+        MPI_UNSIGNED_LONG, cart);
+    MPI_Allgather(my_size.data(), 3, MPI_UNSIGNED_LONG, supplied.sizes.data(), 3,
+        MPI_UNSIGNED_LONG, cart);
+
+    for (int d = 0; d < 3; ++d) {
+        std::vector<size_t> distinct;
+        for (const auto& o : supplied.origins) {
+            distinct.push_back(o[d]);
+        }
+        std::sort(distinct.begin(), distinct.end());
+        distinct.erase(std::unique(distinct.begin(), distinct.end()), distinct.end());
+        supplied.decomposition[d] = distinct.size();
+    }
+    return supplied;
+}
+
+Timesteps
+timesteps_from(const Utils::ConfigurationManager& config) {
+    RequiredConfigParams::TimestepsParams p;
+    p.CONDTSTEP = config.get_value<double>(key("timesteps_s.condensation"));
+    p.COLLTSTEP = config.get_value<double>(key("timesteps_s.collision"));
+    p.MOTIONTSTEP = config.get_value<double>(key("timesteps_s.motion"));
+    p.COUPLTSTEP = config.get_value<double>(key("timesteps_s.coupling"));
+    p.OBSTSTEP = config.get_value<double>(key("timesteps_s.observation"));
+    p.T_END = config.get_value<double>("simulation.total_time_s");
+    return Timesteps(p);
+}
+
+inline MicrophysicalProcess auto
+create_microphysics(const Timesteps& ts, const Utils::ConfigurationManager& config) {
+    OptionalConfigParams::CondensationParams c;
+    c.do_alter_thermo = config.get_value(key("process.condensation.do_alter_thermo"), true);
+    c.maxniters = config.get_value(key("process.condensation.maxniters"), 100);
+    c.MINSUBTSTEP = config.get_value(key("process.condensation.MINSUBTSTEP"), 1e-5);
+    c.rtol = config.get_value(key("process.condensation.rtol"), 0.0);
+    c.atol = config.get_value(key("process.condensation.atol"), 0.01);
+
+    // An interval of LIMITVALUES::uintmax never fires, which switches a process off.
+    // Condensation is built by hand because Condensation() derives the solver step
+    // from that interval.
+    const auto condint = config.get_value<bool>(key("process.enable_condensation"), true)
+                             ? ts.get_condstep()
+                             : LIMITVALUES::uintmax;
+    const auto cond = ConstTstepMicrophysics(condint,
+        DoCondensation(c.do_alter_thermo,
+            step2dimlesstime(ts.get_condstep()),
+            c.maxniters,
+            c.rtol,
+            c.atol,
+            realtime2dimless(c.MINSUBTSTEP)));
+
+    const PairProbability auto collprob = LongHydroProb();
+    const NFragments auto nfrags =
+        ConstNFrags(config.get_value<double>(key("process.breakup_nfrags"), 5.0));
+    const CoalBuReFlag auto coalbure_flag = TSCoalBuReFlag(RogersGKTerminalVelocity{});
+    const auto collint = config.get_value<bool>(key("process.enable_collision"), true)
+                             ? ts.get_collstep()
+                             : LIMITVALUES::uintmax;
+
+    // 0 seeds from std::random_device
+    const auto collision_seed =
+        config.get_value<std::uint64_t>(key("process.collision_seed"), 0);
+    const MicrophysicalProcess auto colls =
+        collision_seed
+            ? CoalBuRe(collint, &step2realtime, collprob, nfrags, coalbure_flag, collision_seed)
+            : CoalBuRe(collint, &step2realtime, collprob, nfrags, coalbure_flag);
+    return colls >> cond;
+}
+
+template <GridboxMaps GbxMaps>
+inline auto
+create_movement(const Timesteps& ts, const GbxMaps& gbxmaps) {
+    const Motion<CartesianMaps> auto motion =
+        CartesianMotion(ts.get_motionstep(), &step2dimlesstime, RogersGKTerminalVelocity{});
+    const BoundaryConditions<CartesianMaps> auto boundary_conditions = NullBoundaryConditions();
+    return cartesian_movement(gbxmaps, motion, boundary_conditions);
+}
+
+inline Observer auto
+create_superdrops_observer(
+    const unsigned int interval, Dataset& dataset, FSStore& store, const size_t maxchunk) {
+    CollectDataForDataset<Dataset> auto sdid = CollectSdId(dataset, maxchunk);
+    CollectDataForDataset<Dataset> auto sdgbxindex = CollectSdgbxindex(dataset, maxchunk);
+    CollectDataForDataset<Dataset> auto xi = CollectXi(dataset, maxchunk);
+    CollectDataForDataset<Dataset> auto radius = CollectRadius(dataset, maxchunk);
+    CollectDataForDataset<Dataset> auto msol = CollectMsol(dataset, maxchunk);
+    CollectDataForDataset<Dataset> auto coord3 = CollectCoord3(dataset, maxchunk);
+    CollectDataForDataset<Dataset> auto coord1 = CollectCoord1(dataset, maxchunk);
+    CollectDataForDataset<Dataset> auto coord2 = CollectCoord2(dataset, maxchunk);
+
+    // sdId must be written first: CollectiveDataset orders the other ragged arrays by it.
+    const auto collect_sddata =
+        sdid >> sdgbxindex >> xi >> radius >> msol >> coord3 >> coord2 >> coord1;
+    return SuperdropsObserver(interval, dataset, store, maxchunk, collect_sddata);
+}
+
+inline Observer auto
+create_gridboxes_observer(
+    const unsigned int interval, Dataset& dataset, const size_t maxchunk, const size_t ngbxs) {
+    const CollectDataForDataset<Dataset> auto thermo = CollectThermo(dataset, maxchunk, ngbxs);
+    const CollectDataForDataset<Dataset> auto windvel = CollectWindVel(dataset, maxchunk, ngbxs);
+    const CollectDataForDataset<Dataset> auto nsupers = CollectNsupers(dataset, maxchunk, ngbxs);
+    return WriteToDatasetObserver(interval, dataset, nsupers >> windvel >> thermo);
+}
+
+inline Observer auto
+create_sdmmonitor_observer(const unsigned int interval,
+    Dataset& dataset,
+    FSStore& store,
+    const size_t maxchunk,
+    const size_t ngbxs) {
+    const Observer auto obs_cond =
+        MonitorCondensationObserver(interval, dataset, store, maxchunk, ngbxs);
+    const Observer auto obs_massmoms =
+        MonitorMassMomentsChangeObserver(interval, dataset, store, maxchunk, ngbxs);
+    const Observer auto obs_rainmassmoms =
+        MonitorRainMassMomentsObserver(interval, dataset, store, maxchunk, ngbxs);
+    const Observer auto obs_precip =
+        MonitorPrecipitationObserver(interval, dataset, store, maxchunk, ngbxs);
+    return obs_cond >> obs_massmoms >> obs_rainmassmoms >> obs_precip;
+}
+
+// ngbxs is the local gridbox count: CollectiveDataset sums it over ranks.
+inline Observer auto
+create_observer(const Timesteps& ts,
+    Dataset& dataset,
+    FSStore& store,
+    const size_t maxchunk,
+    const size_t ngbxs) {
+    const auto obsstep = ts.get_obsstep();
+
+    const Observer auto obs0 = StreamOutObserver(obsstep, &step2realtime);
+    const Observer auto obs1 = TimeObserver(obsstep, dataset, store, maxchunk, &step2dimlesstime);
+    const Observer auto obs2 = GbxindexObserver(dataset, store, maxchunk, ngbxs);
+    const Observer auto obs3 = TotNsupersObserver(obsstep, dataset, store, maxchunk);
+    const Observer auto obs4 = MassMomentsObserver(obsstep, dataset, store, maxchunk, ngbxs);
+    const Observer auto obs5 =
+        MassMomentsRaindropsObserver(obsstep, dataset, store, maxchunk, ngbxs);
+    const Observer auto obsgbx = create_gridboxes_observer(obsstep, dataset, maxchunk, ngbxs);
+    const Observer auto obssd = create_superdrops_observer(obsstep, dataset, store, maxchunk);
+    const Observer auto obsm = create_sdmmonitor_observer(obsstep, dataset, store, maxchunk, ngbxs);
+    return obsm >> obssd >> obsgbx >> obs5 >> obs4 >> obs3 >> obs2 >> obs1 >> obs0;
+}
+
+// Type-erases SDMMethods, whose type depends on the whole process/observer chain.
+struct SdmRunner {
+    virtual ~SdmRunner() = default;
+
+    virtual unsigned int get_couplstep() const = 0;
+    virtual unsigned int next_couplstep(unsigned int t_mdl) const = 0;
+    virtual void prepare_to_timestep(dualview_gbx gbxs, const SupersInDomain& allsupers) const = 0;
+    virtual void at_start_step(
+        unsigned int t_mdl, dualview_gbx gbxs, const SupersInDomain& allsupers) const = 0;
+    virtual void run_step(unsigned int t_mdl,
+        unsigned int t_mdl_next,
+        viewd_gbx d_gbxs,
+        SupersInDomain& allsupers) const = 0;
+    virtual void after_timestepping() const = 0;
+};
+
+template <typename SDM>
+struct SdmRunnerOf final : SdmRunner {
+    SDM sdm;
+
+    explicit SdmRunnerOf(SDM sdm) : sdm(std::move(sdm)) {}
+
+    unsigned int
+    get_couplstep() const override {
+        return sdm.get_couplstep();
+    }
+    unsigned int
+    next_couplstep(unsigned int t_mdl) const override {
+        return sdm.next_couplstep(t_mdl);
+    }
+    void
+    prepare_to_timestep(dualview_gbx gbxs, const SupersInDomain& allsupers) const override {
+        sdm.prepare_to_timestep(gbxs, allsupers);
+    }
+    void
+    at_start_step(
+        unsigned int t_mdl, dualview_gbx gbxs, const SupersInDomain& allsupers) const override {
+        sdm.at_start_step(t_mdl, gbxs, allsupers);
+    }
+    void
+    run_step(unsigned int t_mdl,
+        unsigned int t_mdl_next,
+        viewd_gbx d_gbxs,
+        SupersInDomain& allsupers) const override {
+        sdm.run_step(t_mdl, t_mdl_next, d_gbxs, allsupers);
+    }
+    void
+    after_timestepping() const override {
+        sdm.obs.after_timestepping();
+    }
+};
+
+template <typename SDM>
+std::unique_ptr<SdmRunner>
+erase_sdm(SDM sdm) {
+    return std::make_unique<SdmRunnerOf<SDM>>(std::move(sdm));
+}
+
+struct CleoState {
+    const Timesteps ts;
+    FSStore store;
+    Dataset dataset;
+    const CartesianMaps gbxmaps;
+    SupersInDomain allsupers;
+    dualview_gbx gbxs;
+    std::unique_ptr<SdmRunner> sdm;
+
+    const size_t lnz, lnx, lny, halo;
+
+    CleoState(const Utils::ConfigurationManager& config, const Core::Grid& grid)
+        : ts(timesteps_from(config)),
+          store(std::filesystem::path(config.get_value<std::string>("output.output_dir")) /
+                config.get_value<std::string>(key("output.zarrbasedir"), "vvm_sol.zarr")),
+          dataset(store),
+          gbxmaps(create_cartesian_maps(global_ngbxs(grid),
+              3,
+              config.get_value<std::string>(key("init_gbx_path")),
+              supplied_from_grid(grid))),
+          // Every rank reads the whole binary and keeps its own superdroplets; the
+          // capacity factor leaves room for the ones drifting in from neighbours.
+          allsupers(create_supers(
+              InitAllSupersFromBinary(config.get_value<std::size_t>(key("superdroplets.max_total")),
+                  config.get_value<std::string>(key("init_supers_path")),
+                  3),
+              gbxmaps,
+              config.get_value<double>(key("superdroplets.rank_capacity_factor"), 1.5))),
+          gbxs(create_gbxs(
+              gbxmaps, InitGbxsNull(gbxmaps.get_local_ngridboxes_hostcopy()), allsupers)),
+          sdm(erase_sdm(SDMMethods(ts.get_couplstep(),
+              gbxmaps,
+              create_microphysics(ts, config),
+              create_movement(ts, gbxmaps),
+              create_observer(ts,
+                  dataset,
+                  store,
+                  zarr_maxchunk(grid),
+                  gbxmaps.get_local_ngridboxes_hostcopy())))),
+          lnz(grid.get_local_physical_points_z()), lnx(grid.get_local_physical_points_x()),
+          lny(grid.get_local_physical_points_y()), halo(grid.get_halo_cells()) {
+        dataset.set_decomposition(gbxmaps.get_domain_decomposition());
+        dataset.set_max_superdroplets(
+            config.get_value<unsigned int>(key("superdroplets.max_total")));
+
+        sdm->prepare_to_timestep(gbxs, allsupers);
+
+        // The coupling decodes the gridbox index as k + nz * (i + nx * j).
+        if (lnz * lnx * lny != gbxs.extent(0)) {
+            throw std::runtime_error("CLEO built " + std::to_string(gbxs.extent(0)) +
+                                     " local gridboxes but the grid has " + std::to_string(lnz) +
+                                     "*" + std::to_string(lnx) + "*" + std::to_string(lny));
+        }
+    }
+};
+
+}
+
 // PIMPL
 struct VVM_CLEO_Interface::Impl {
-    Impl() {}
+    const Utils::ConfigurationManager& config;
+    const Core::Grid& grid;
+    Core::HaloExchanger& halo_exchanger;
+    std::unique_ptr<CleoState> cleo;
+
+    Impl(const Utils::ConfigurationManager& config,
+        const Core::Grid& grid,
+        Core::HaloExchanger& halo_exchanger)
+        : config(config), grid(grid), halo_exchanger(halo_exchanger) {}
 
     void
-    initialize(Core::State& state) {}
+    initialize(Core::State& state) {
+        // Before CleoState: the dataset takes the communicator in its constructor.
+        init_communicator::set_communicator(grid.get_cart_comm());
+        cleo = std::make_unique<CleoState>(config, grid);
+
+        std::cout << "[CLEO] rank " << grid.get_mpi_rank() << ": "
+                  << cleo->gbxmaps.get_local_ngridboxes_hostcopy() << " of "
+                  << global_ngbxs(grid) << " gridboxes, couplstep "
+                  << cleo->sdm->get_couplstep() << " (TIME0=" << dlc::TIME0 << " s)"
+                  << std::endl;
+    }
     void
-    run(Core::State& state) {}
+    run(Core::State& state, const Real dt) {}
     void
-    finalize() {}
+    finalize() {
+        if (cleo) {
+            cleo->sdm->after_timestepping();
+        }
+    }
 };
 
 VVM_CLEO_Interface::VVM_CLEO_Interface(const VVM::Utils::ConfigurationManager& config,
     const VVM::Core::Grid& grid,
     const VVM::Core::Parameters& params,
     Core::HaloExchanger& halo_exchanger,
-    Core::State& state) {
+    Core::State& state)
+    : impl_(std::make_unique<Impl>(config, grid, halo_exchanger)) {
+
+    if (grid.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
+        throw std::runtime_error("CLEO coupling supports Cartesian geometry only");
+    }
 
     const std::array<int, 3> shape{grid.get_local_total_points_z(),
         grid.get_local_total_points_y(),
@@ -34,7 +409,7 @@ VVM_CLEO_Interface::VVM_CLEO_Interface(const VVM::Utils::ConfigurationManager& c
         }
     };
     add_3d_field("qc", "kg kg-1", "cloud liquid water mass mixing ratio (radius <= 40um)");
-    add_3d_field("qr", "kg kg-1", "rain water mass mixing ratio (radius > 40um");
+    add_3d_field("qr", "kg kg-1", "rain water mass mixing ratio (radius > 40um)");
     add_3d_field("qp", "kg kg-1", "total hydrometeor mass mixing ratio");
 
     add_3d_field("nc", "kg-1", "cloud droplet number mixing ratio");
@@ -74,7 +449,7 @@ VVM_CLEO_Interface::initialize(Core::State& state) {
 
 void
 VVM_CLEO_Interface::run(Core::State& state, Real dt) {
-    impl_->run(state);
+    impl_->run(state, dt);
 }
 
 void
