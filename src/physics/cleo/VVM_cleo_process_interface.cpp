@@ -753,6 +753,8 @@ struct VVM_CLEO_Interface::Impl {
     void
     finalize() {
         if (cleo) {
+            // CLEO observes at the start of a step; this is the one at the end of the run.
+            cleo->sdm->at_start_step(t_cleo, cleo->gbxs, cleo->allsupers);
             cleo->sdm->after_timestepping();
         }
     }
