@@ -314,6 +314,9 @@ struct CleoState {
 
     const size_t lnz, lnx, lny, halo;
 
+    // Quasi-2-D runs: the y columns are replicates, so feed back their mean.
+    const bool average_over_y;
+
     CleoState(const Utils::ConfigurationManager& config, const Core::Grid& grid)
         : ts(timesteps_from(config)),
           store(std::filesystem::path(config.get_value<std::string>("output.output_dir")) /
@@ -343,7 +346,8 @@ struct CleoState {
                   zarr_maxchunk(grid),
                   gbxmaps.get_local_ngridboxes_hostcopy())))),
           lnz(grid.get_local_physical_points_z()), lnx(grid.get_local_physical_points_x()),
-          lny(grid.get_local_physical_points_y()), halo(grid.get_halo_cells()) {
+          lny(grid.get_local_physical_points_y()), halo(grid.get_halo_cells()),
+          average_over_y(config.get_value(key("average_over_y"), false)) {
         dataset.set_decomposition(gbxmaps.get_domain_decomposition());
         dataset.set_max_superdroplets(total_supers);
 
@@ -355,6 +359,83 @@ struct CleoState {
                                      " local gridboxes but the grid has " + std::to_string(lnz) +
                                      "*" + std::to_string(lnx) + "*" + std::to_string(lny));
         }
+        if (average_over_y && lny != static_cast<size_t>(grid.get_global_points_y())) {
+            throw std::runtime_error(key("average_over_y") + " needs y undivided across ranks");
+        }
+    }
+
+    void
+    send_dynamics(const Core::State& state) {
+        const auto u = state.get_field<3>("u").get_device_data();
+        const auto v = state.get_field<3>("v").get_device_data();
+        const auto w = state.get_field<3>("w").get_device_data();
+        const auto th = state.get_field<3>("th").get_device_data();
+        const auto qv = state.get_field<3>("qv").get_device_data();
+        const auto pibar = state.get_field<1>("pibar").get_device_data();
+        const auto pbar = state.get_field<1>("pbar").get_device_data();
+
+        const auto nz = lnz, nx = lnx, h = halo;
+        gbxs.sync_device();
+        const auto d_gbxs = gbxs.view_device();
+        Kokkos::parallel_for("cleo_send_dynamics",
+            Kokkos::RangePolicy<ExecSpace>(0, d_gbxs.extent(0)),
+            KOKKOS_LAMBDA(const size_t idx) {
+                const auto k = idx % nz;
+                const auto i = (idx / nz) % nx;
+                const auto j = idx / (nz * nx);
+                const auto ka = h + k, ja = h + j, ia = h + i;
+
+                // u, v, w live on the east, north and top faces
+                auto& gb_state = d_gbxs(idx).state;
+                gb_state.uvel = {u(ka, ja, ia - 1) / dlc::W0, u(ka, ja, ia) / dlc::W0};
+                gb_state.vvel = {v(ka, ja - 1, ia) / dlc::W0, v(ka, ja, ia) / dlc::W0};
+                gb_state.wvel = {w(ka - 1, ja, ia) / dlc::W0, w(ka, ja, ia) / dlc::W0};
+                gb_state.temp = th(ka, ja, ia) * pibar(ka) / dlc::TEMP0;
+                gb_state.qvap = qv(ka, ja, ia);
+                gb_state.press = pbar(ka) / dlc::P0;
+            });
+        gbxs.modify_device();
+    }
+
+    void
+    receive_dynamics(Core::State& state, Core::HaloExchanger& halo_exchanger) {
+        auto th = state.get_field<3>("th").get_mutable_device_data();
+        auto qv = state.get_field<3>("qv").get_mutable_device_data();
+        auto qp = state.get_field<3>("qp").get_mutable_device_data();
+        const auto pibar = state.get_field<1>("pibar").get_device_data();
+
+        const auto nz = lnz, nx = lnx, ny = lny, h = halo;
+        const bool average_y = average_over_y;
+        const auto d_gbxs = gbxs.view_device();
+        Kokkos::parallel_for("cleo_receive_dynamics",
+            Kokkos::RangePolicy<ExecSpace>(0, nz * nx),
+            KOKKOS_LAMBDA(const size_t ki) {
+                const auto k = ki % nz;
+                const auto i = ki / nz;
+                const auto ka = h + k, ia = h + i;
+                double t_sum = 0.0, qv_sum = 0.0, qc_sum = 0.0;
+                if (average_y) {
+                    for (size_t j = 0; j < ny; ++j) {
+                        const auto& st = d_gbxs(k + nz * (i + nx * j)).state;
+                        t_sum += st.temp;
+                        qv_sum += st.qvap;
+                        qc_sum += st.qcond;
+                    }
+                }
+                const double inv = average_y ? 1.0 / static_cast<double>(ny) : 1.0;
+                for (size_t j = 0; j < ny; ++j) {
+                    const auto ja = h + j;
+                    const auto& st = d_gbxs(k + nz * (i + nx * j)).state;
+                    const double temp = average_y ? t_sum * inv : st.temp;
+                    th(ka, ja, ia) = temp * dlc::TEMP0 / pibar(ka);
+                    qv(ka, ja, ia) = average_y ? qv_sum * inv : st.qvap;
+                    qp(ka, ja, ia) = average_y ? qc_sum * inv : st.qcond;
+                }
+            });
+
+        halo_exchanger.exchange_halos(state.get_field<3>("th"));
+        halo_exchanger.exchange_halos(state.get_field<3>("qv"));
+        halo_exchanger.exchange_halos(state.get_field<3>("qp"));
     }
 };
 
@@ -367,10 +448,30 @@ struct VVM_CLEO_Interface::Impl {
     Core::HaloExchanger& halo_exchanger;
     std::unique_ptr<CleoState> cleo;
 
+    double next_couple_s = 0.0;
+    unsigned int t_cleo = 0;
+
     Impl(const Utils::ConfigurationManager& config,
         const Core::Grid& grid,
         Core::HaloExchanger& halo_exchanger)
         : config(config), grid(grid), halo_exchanger(halo_exchanger) {}
+
+    void
+    couple(Core::State& state) {
+        auto& sdm = *cleo->sdm;
+        const auto t_mdl = t_cleo;
+        const auto t_next = t_mdl + sdm.get_couplstep();
+        if (t_next != sdm.next_couplstep(t_mdl)) {
+            throw std::runtime_error("CLEO is out of sync with the coupling at t_mdl " +
+                                     std::to_string(t_mdl));
+        }
+        t_cleo = t_next;
+
+        cleo->send_dynamics(state);
+        sdm.at_start_step(t_mdl, cleo->gbxs, cleo->allsupers);
+        sdm.run_step(t_mdl, t_next, cleo->gbxs.view_device(), cleo->allsupers);
+        cleo->receive_dynamics(state, halo_exchanger);
+    }
 
     void
     initialize(Core::State& state) {
@@ -383,9 +484,16 @@ struct VVM_CLEO_Interface::Impl {
                   << global_ngbxs(grid) << " gridboxes, couplstep "
                   << cleo->sdm->get_couplstep() << " (TIME0=" << dlc::TIME0 << " s)"
                   << std::endl;
+
+        cleo->send_dynamics(state);
     }
     void
-    run(Core::State& state, const Real dt) {}
+    run(Core::State& state, const Real dt) {
+        if (state.get_time() + 0.5 * dt >= next_couple_s) {
+            next_couple_s += step2realtime(cleo->sdm->get_couplstep());
+            couple(state);
+        }
+    }
     void
     finalize() {
         if (cleo) {
@@ -403,6 +511,10 @@ VVM_CLEO_Interface::VVM_CLEO_Interface(const VVM::Utils::ConfigurationManager& c
 
     if (grid.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
         throw std::runtime_error("CLEO coupling supports Cartesian geometry only");
+    }
+    // run() couples at most once per model step
+    if (config.get_value<double>(key("timesteps_s.coupling")) < params.get_value_host(params.dt)) {
+        throw std::runtime_error(key("timesteps_s.coupling") + " is shorter than simulation.dt_s");
     }
 
     const std::array<int, 3> shape{grid.get_local_total_points_z(),
