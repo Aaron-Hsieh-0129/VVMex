@@ -163,7 +163,7 @@ write_env() {
     local args=(--preset "$PRESET")
     [ -n "$BUILD_JOBS" ]   && args+=(--build-jobs "$BUILD_JOBS")
     [ -n "$TEST_THREADS" ] && args+=(--test-threads "$TEST_THREADS")
-    python3 "$VVM_ROOT/tools/ci_runner_env.py" "${args[@]}" > "$RUNNER_DIR/.env"
+    python3 "$VVM_ROOT/tools/ci/ci_runner_env.py" "${args[@]}" > "$RUNNER_DIR/.env"
     echo "==> wrote $RUNNER_DIR/.env"
 }
 
