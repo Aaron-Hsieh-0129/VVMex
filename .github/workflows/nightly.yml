@@ -62,7 +62,10 @@ jobs:
           lfs: false
 
       - name: Fetch LFS objects
-        run: git lfs pull
+        run: |
+          git lfs version
+          git -c lfs.skipdownloaderrors=false lfs pull origin --include="tests/baselines/*.h5" --exclude=""
+          python3 tests/scripts/check_hdf5_baselines.py
 
       - name: Read runner configuration
         run: |
