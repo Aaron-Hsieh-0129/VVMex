@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -22,6 +23,7 @@
 #include "configuration/communicator.hpp"
 #include "initialise/init_all_supers_from_binary.hpp"
 #include "initialise/initgbxsnull.hpp"
+#include "initialise/readbinary.hpp"
 #include "initialise/timesteps.hpp"
 #include "observers/gbxindex_observer.hpp"
 #include "observers/massmoments_observer.hpp"
@@ -106,6 +108,12 @@ supplied_from_grid(const Core::Grid& grid) {
         supplied.decomposition[d] = distinct.size();
     }
     return supplied;
+}
+
+size_t
+nsupers_in_binary(const std::filesystem::path& path) {
+    std::ifstream file(open_binary(path));
+    return metadata_from_binary(file).at(0).nvar;
 }
 
 Timesteps
@@ -299,6 +307,7 @@ struct CleoState {
     FSStore store;
     Dataset dataset;
     const CartesianMaps gbxmaps;
+    const size_t total_supers;
     SupersInDomain allsupers;
     dualview_gbx gbxs;
     std::unique_ptr<SdmRunner> sdm;
@@ -314,12 +323,12 @@ struct CleoState {
               3,
               config.get_value<std::string>(key("init_gbx_path")),
               supplied_from_grid(grid))),
+          total_supers(nsupers_in_binary(config.get_value<std::string>(key("init_supers_path")))),
           // Every rank reads the whole binary and keeps its own superdroplets; the
           // capacity factor leaves room for the ones drifting in from neighbours.
           allsupers(create_supers(
-              InitAllSupersFromBinary(config.get_value<std::size_t>(key("superdroplets.max_total")),
-                  config.get_value<std::string>(key("init_supers_path")),
-                  3),
+              InitAllSupersFromBinary(
+                  total_supers, config.get_value<std::string>(key("init_supers_path")), 3),
               gbxmaps,
               config.get_value<double>(key("superdroplets.rank_capacity_factor"), 1.5))),
           gbxs(create_gbxs(
@@ -336,8 +345,7 @@ struct CleoState {
           lnz(grid.get_local_physical_points_z()), lnx(grid.get_local_physical_points_x()),
           lny(grid.get_local_physical_points_y()), halo(grid.get_halo_cells()) {
         dataset.set_decomposition(gbxmaps.get_domain_decomposition());
-        dataset.set_max_superdroplets(
-            config.get_value<unsigned int>(key("superdroplets.max_total")));
+        dataset.set_max_superdroplets(total_supers);
 
         sdm->prepare_to_timestep(gbxs, allsupers);
 
