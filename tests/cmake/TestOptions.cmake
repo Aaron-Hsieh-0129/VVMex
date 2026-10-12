@@ -54,6 +54,7 @@ option(VVM_TEST_BP5       "Register direct BP5 output tests (CPU and GPU builds)
 option(VVM_TEST_SST       "Register the SST relay precision test (2 ranks, network)"  OFF)
 option(VVM_TEST_PHYSICS   "Register physics-tier tests (GPU builds only, ~80 s)"      OFF)
 option(VVM_TEST_MULTIRANK "Register rank-invariance tests (4 ranks, ~30 s)"           OFF)
+option(VVM_TEST_CLEO      "Register CLEO superdroplet coupling tests (needs cleopy)"  OFF)
 
 # ---------------------------------------------------------------------------
 # What a test occupies while it runs.
@@ -106,5 +107,6 @@ _report_test_tier("multirank" ${VVM_TEST_MULTIRANK} "4 ranks / 4 GPUs"  VVM_TEST
 _report_test_tier("rll      " ${VVM_TEST_RLL} "CPU or GPU model runs" VVM_TEST_RLL)
 _report_test_tier("rll-physics" ${VVM_TEST_RLL_PHYSICS} "CPU or GPU model runs" VVM_TEST_RLL_PHYSICS)
 _report_test_tier("regression" ${VVM_TEST_REGRESSION} "baseline model runs" VVM_TEST_REGRESSION)
+_report_test_tier("cleo     " ${VVM_TEST_CLEO}      "CPU or GPU, cleopy" VVM_TEST_CLEO)
 message(STATUS "  Select the test device with VVM_TEST_GPUS (e.g. VVM_TEST_GPUS=6 ctest --test-dir build)")
 
