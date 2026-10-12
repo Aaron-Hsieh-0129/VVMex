@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -47,6 +48,8 @@
 #include "superdrops/collisions/collisions.hpp"
 #include "superdrops/collisions/longhydroprob.hpp"
 #include "superdrops/condensation.hpp"
+#include "superdrops/sdmmonitor.hpp"
+#include "superdrops/thermodynamic_equations.hpp"
 #include "zarr/collective_dataset.hpp"
 #include "zarr/fsstore.hpp"
 
@@ -244,6 +247,67 @@ create_observer(const Timesteps& ts,
     return obsm >> obssd >> obsgbx >> obs5 >> obs4 >> obs3 >> obs2 >> obs1 >> obs0;
 }
 
+/* Condensate mass sum(m * xi) that falls through the bottom face of each local
+gridbox. CLEO's own precipitation monitor only reaches the zarr. */
+struct BottomFluxMonitor {
+    Kokkos::View<double*> d_mass;
+
+    void
+    reset_monitor() const {}
+
+    KOKKOS_FUNCTION
+    void
+    before_timestepping(const TeamMember&, const viewd_constsupers) const {}
+
+    KOKKOS_FUNCTION
+    void
+    monitor_condensation(const TeamMember&, const double) const {}
+
+    KOKKOS_FUNCTION
+    void
+    monitor_microphysics(const TeamMember&, const viewd_constsupers) const {}
+
+    void
+    monitor_motion(const auto, const auto) const {}
+
+    // Called before the drop's gridbox index is updated; league_rank() is the box it leaves.
+    KOKKOS_FUNCTION
+    void
+    monitor_precipitation(const TeamMember& team_member,
+        const unsigned int gbxindex,
+        const auto& gbxmaps,
+        Superdrop& drop) const {
+        if (drop.get_coord3() < gbxmaps.coord3bounds(gbxindex).first) {
+            Kokkos::atomic_add(&d_mass(team_member.league_rank()),
+                drop.condensate_mass() * static_cast<double>(drop.get_xi()));
+        }
+    }
+};
+
+// Never observes; only puts BottomFluxMonitor into the monitor chain.
+struct BottomFluxObserver {
+    BottomFluxMonitor mo;
+
+    void
+    before_timestepping(const viewd_constgbx, const subviewd_constsupers) const {}
+    void
+    after_timestepping() const {}
+    unsigned int
+    next_obs(const unsigned int) const {
+        return LIMITVALUES::uintmax;
+    }
+    bool
+    on_step(const unsigned int) const {
+        return false;
+    }
+    void
+    at_start_step(const unsigned int, const viewd_constgbx, const subviewd_constsupers) const {}
+    SDMMonitor auto
+    get_sdmmonitor() const {
+        return mo;
+    }
+};
+
 // Type-erases SDMMethods, whose type depends on the whole process/observer chain.
 struct SdmRunner {
     virtual ~SdmRunner() = default;
@@ -310,12 +374,20 @@ struct CleoState {
     const size_t total_supers;
     SupersInDomain allsupers;
     dualview_gbx gbxs;
+    // Before sdm: the observer chain keeps a copy of the view.
+    Kokkos::View<double*> bottom_mass;
     std::unique_ptr<SdmRunner> sdm;
 
     const size_t lnz, lnx, lny, halo;
 
     // Quasi-2-D runs: the y columns are replicates, so feed back their mean.
     const bool average_over_y;
+
+    // Haze < cloud_min_radius <= cloud < rain_min_radius <= rain
+    const double cloud_min_radius_um, rain_min_radius_um;
+    const double cell_area_m2;
+    // Per local gridbox: qc, qr, nc, nr, then sum(xi r^3), sum(xi r^2) for cloud and rain
+    Kokkos::View<double**> moments;
 
     CleoState(const Utils::ConfigurationManager& config, const Core::Grid& grid)
         : ts(timesteps_from(config)),
@@ -336,6 +408,7 @@ struct CleoState {
               config.get_value<double>(key("superdroplets.rank_capacity_factor"), 1.5))),
           gbxs(create_gbxs(
               gbxmaps, InitGbxsNull(gbxmaps.get_local_ngridboxes_hostcopy()), allsupers)),
+          bottom_mass("cleo_bottom_mass", gbxmaps.get_local_ngridboxes_hostcopy()),
           sdm(erase_sdm(SDMMethods(ts.get_couplstep(),
               gbxmaps,
               create_microphysics(ts, config),
@@ -344,10 +417,15 @@ struct CleoState {
                   dataset,
                   store,
                   zarr_maxchunk(grid),
-                  gbxmaps.get_local_ngridboxes_hostcopy())))),
+                  gbxmaps.get_local_ngridboxes_hostcopy()) >>
+                  BottomFluxObserver{BottomFluxMonitor{bottom_mass}}))),
           lnz(grid.get_local_physical_points_z()), lnx(grid.get_local_physical_points_x()),
           lny(grid.get_local_physical_points_y()), halo(grid.get_halo_cells()),
-          average_over_y(config.get_value(key("average_over_y"), false)) {
+          average_over_y(config.get_value(key("average_over_y"), false)),
+          cloud_min_radius_um(config.get_value(key("diagnostics.cloud_min_radius_um"), 1.0)),
+          rain_min_radius_um(config.get_value(key("diagnostics.rain_min_radius_um"), 40.0)),
+          cell_area_m2(static_cast<double>(grid.get_dx()) * static_cast<double>(grid.get_dy())),
+          moments("cleo_hydrometeor_moments", lnz * lnx * lny, 8) {
         dataset.set_decomposition(gbxmaps.get_domain_decomposition());
         dataset.set_max_superdroplets(total_supers);
 
@@ -437,6 +515,144 @@ struct CleoState {
         halo_exchanger.exchange_halos(state.get_field<3>("qv"));
         halo_exchanger.exchange_halos(state.get_field<3>("qp"));
     }
+
+    // The bulk fields P3 would provide, for radiation; diagnostic only.
+    void
+    diagnose_hydrometeors(Core::State& state) {
+        const auto nz = lnz, nx = lnx, ny = lny, h = halo;
+        const bool average_y = average_over_y;
+        const double r_cloud = cloud_min_radius_um * 1e-6 / dlc::R0;
+        const double r_rain = rain_min_radius_um * 1e-6 / dlc::R0;
+        const double um_per_r = dlc::R0 * 1e6;
+
+        const auto d_gbxs = gbxs.view_device();
+        const auto domainsupers = allsupers.domain_supers_readonly();
+        const auto mom = moments;
+        Kokkos::parallel_for("cleo_hydrometeor_moments",
+            Kokkos::RangePolicy<ExecSpace>(0, d_gbxs.extent(0)),
+            KOKKOS_LAMBDA(const size_t idx) {
+                const auto& st = d_gbxs(idx).state;
+                const auto supers = d_gbxs(idx).supersingbx.readonly(domainsupers);
+                double mc = 0.0, mr = 0.0, nc = 0.0, nr = 0.0;
+                double c3 = 0.0, c2 = 0.0, r3 = 0.0, r2 = 0.0;
+                for (size_t kk = 0; kk < supers.extent(0); ++kk) {
+                    const auto& drop = supers(kk);
+                    const double r = drop.get_radius();
+                    const double xi = static_cast<double>(drop.get_xi());
+                    const double xr2 = xi * r * r;
+                    if (r >= r_rain) {
+                        mr += drop.condensate_mass() * xi;
+                        nr += xi;
+                        r3 += xr2 * r;
+                        r2 += xr2;
+                    }
+                    else if (r >= r_cloud) {
+                        mc += drop.condensate_mass() * xi;
+                        nc += xi;
+                        c3 += xr2 * r;
+                        c2 += xr2;
+                    }
+                }
+                // dry-air mass of the gridbox [kg], as CLEO uses for qcond
+                const double air = st.get_volume() * dlc::VOL0 *
+                                   dry_air_density(st.press, st.temp, st.qvap) * dlc::RHO0;
+                mom(idx, 0) = mc * dlc::MASS0 / air;
+                mom(idx, 1) = mr * dlc::MASS0 / air;
+                mom(idx, 2) = nc / air;
+                mom(idx, 3) = nr / air;
+                mom(idx, 4) = c3;
+                mom(idx, 5) = c2;
+                mom(idx, 6) = r3;
+                mom(idx, 7) = r2;
+            });
+
+        auto qc = state.get_field<3>("qc").get_mutable_device_data();
+        auto qr = state.get_field<3>("qr").get_mutable_device_data();
+        auto ncf = state.get_field<3>("nc").get_mutable_device_data();
+        auto nrf = state.get_field<3>("nr").get_mutable_device_data();
+        auto re_c = state.get_field<3>("diag_eff_radius_qc").get_mutable_device_data();
+        auto re_r = state.get_field<3>("diag_eff_radius_qr").get_mutable_device_data();
+        Kokkos::parallel_for("cleo_diagnose_hydrometeors",
+            Kokkos::RangePolicy<ExecSpace>(0, nz * nx),
+            KOKKOS_LAMBDA(const size_t ki) {
+                const auto k = ki % nz;
+                const auto i = ki / nz;
+                const auto ka = h + k, ia = h + i;
+                constexpr int nmom = 8;
+                double sum[nmom] = {};
+                if (average_y) {
+                    for (size_t j = 0; j < ny; ++j) {
+                        for (int m = 0; m < nmom; ++m) {
+                            sum[m] += mom(k + nz * (i + nx * j), m);
+                        }
+                    }
+                }
+                const double inv = average_y ? 1.0 / static_cast<double>(ny) : 1.0;
+                for (size_t j = 0; j < ny; ++j) {
+                    const auto ja = h + j;
+                    double v[nmom];
+                    for (int m = 0; m < nmom; ++m) {
+                        v[m] = average_y ? sum[m] * inv : mom(k + nz * (i + nx * j), m);
+                    }
+                    qc(ka, ja, ia) = v[0];
+                    qr(ka, ja, ia) = v[1];
+                    ncf(ka, ja, ia) = v[2];
+                    nrf(ka, ja, ia) = v[3];
+                    // P3's values for an empty cell
+                    re_c(ka, ja, ia) = v[5] > 0.0 ? v[4] / v[5] * um_per_r : 10.0;
+                    re_r(ka, ja, ia) = v[7] > 0.0 ? v[6] / v[7] * um_per_r : 500.0;
+                }
+            });
+    }
+
+    // Mean surface liquid flux over the coupling step just run, taken at the first
+    // gridbox above topo; it is held until the next coupling.
+    void
+    collect_surface_precip(Core::State& state, const double interval_s) {
+        const auto nz = lnz, nx = lnx, ny = lny, h = halo;
+        const bool average_y = average_over_y;
+        const double to_flux = dlc::MASS0 / (cell_area_m2 * interval_s);
+
+        const auto mass = bottom_mass;
+        const auto topo = state.get_field<2>("topo").get_device_data();
+        auto flux = state.get_field<2>("precip_liq_surf_flux").get_mutable_device_data();
+        auto acc = state.get_field<2>("precip_liq_surf_mass").get_mutable_device_data();
+        Kokkos::parallel_for("cleo_surface_precip",
+            Kokkos::RangePolicy<ExecSpace>(0, nx),
+            KOKKOS_LAMBDA(const size_t i) {
+                const auto ia = h + i;
+                const auto surface_flux = [&](const size_t j) {
+                    const int k = static_cast<int>(topo(h + j, ia)) + 1 - static_cast<int>(h);
+                    const auto ks = static_cast<size_t>(
+                        Kokkos::max(0, Kokkos::min(k, static_cast<int>(nz) - 1)));
+                    return mass(ks + nz * (i + nx * j)) * to_flux;
+                };
+                double sum = 0.0;
+                if (average_y) {
+                    for (size_t j = 0; j < ny; ++j) {
+                        sum += surface_flux(j);
+                    }
+                }
+                const double inv = average_y ? 1.0 / static_cast<double>(ny) : 1.0;
+                for (size_t j = 0; j < ny; ++j) {
+                    const double f = average_y ? sum * inv : surface_flux(j);
+                    flux(h + j, ia) = f;
+                    acc(h + j, ia) += f * interval_s;
+                }
+            });
+        Kokkos::deep_copy(bottom_mass, 0.0);
+    }
+
+    // precip_liq_surf_mass [kg m-2] -> mean rate over interval_s
+    void
+    average_surface_precip(Core::State& state, const double interval_s) const {
+        const double inv = 1.0 / interval_s;
+        auto acc = state.get_field<2>("precip_liq_surf_mass").get_mutable_device_data();
+        Kokkos::parallel_for("cleo_average_precip",
+            Kokkos::MDRangePolicy<ExecSpace, Kokkos::Rank<2>>({0, 0},
+                {static_cast<long>(acc.extent(0)), static_cast<long>(acc.extent(1))}),
+            KOKKOS_LAMBDA(const long j, const long i) { acc(j, i) *= inv; });
+    }
 };
 
 }
@@ -451,10 +667,18 @@ struct VVM_CLEO_Interface::Impl {
     double next_couple_s = 0.0;
     unsigned int t_cleo = 0;
 
+    // precip_liq_surf_mass follows P3: accumulated, divided on the step before
+    // output, zeroed on the step after.
+    const double output_interval_s;
+    double next_output_s = -1.0;
+    double precip_window_s = 0.0;
+    bool need_reset_precip = false;
+
     Impl(const Utils::ConfigurationManager& config,
         const Core::Grid& grid,
         Core::HaloExchanger& halo_exchanger)
-        : config(config), grid(grid), halo_exchanger(halo_exchanger) {}
+        : config(config), grid(grid), halo_exchanger(halo_exchanger),
+          output_interval_s(config.get_value<double>("simulation.output_interval_s")) {}
 
     void
     couple(Core::State& state) {
@@ -471,6 +695,30 @@ struct VVM_CLEO_Interface::Impl {
         sdm.at_start_step(t_mdl, cleo->gbxs, cleo->allsupers);
         sdm.run_step(t_mdl, t_next, cleo->gbxs.view_device(), cleo->allsupers);
         cleo->receive_dynamics(state, halo_exchanger);
+        cleo->diagnose_hydrometeors(state);
+
+        const double couplstep_s = step2realtime(sdm.get_couplstep());
+        cleo->collect_surface_precip(state, couplstep_s);
+        precip_window_s += couplstep_s;
+    }
+
+    // Same arithmetic as main.cpp's output decision. Divides by the coupling time
+    // actually accumulated, which can differ from output_interval_s by a step.
+    void
+    average_precip_if_output_step(Core::State& state, const Real dt) {
+        if (next_output_s < 0.0) {
+            next_output_s =
+                (std::floor(state.get_time() / output_interval_s) + 1.0) * output_interval_s;
+        }
+        if (state.get_time() + dt < next_output_s) {
+            return;
+        }
+        next_output_s += output_interval_s;
+        if (precip_window_s > 0.0) {
+            cleo->average_surface_precip(state, precip_window_s);
+        }
+        precip_window_s = 0.0;
+        need_reset_precip = true;
     }
 
     void
@@ -486,13 +734,21 @@ struct VVM_CLEO_Interface::Impl {
                   << std::endl;
 
         cleo->send_dynamics(state);
+        // radiation runs before CLEO within a step
+        cleo->diagnose_hydrometeors(state);
     }
     void
     run(Core::State& state, const Real dt) {
+        if (need_reset_precip) {
+            Kokkos::deep_copy(
+                state.get_field<2>("precip_liq_surf_mass").get_mutable_device_data(), 0.0);
+            need_reset_precip = false;
+        }
         if (state.get_time() + 0.5 * dt >= next_couple_s) {
             next_couple_s += step2realtime(cleo->sdm->get_couplstep());
             couple(state);
         }
+        average_precip_if_output_step(state, dt);
     }
     void
     finalize() {
