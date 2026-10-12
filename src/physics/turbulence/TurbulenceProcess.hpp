@@ -11,6 +11,8 @@
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "core/Field.hpp"
 #include "core/vvm_types.hpp"
+#include "dynamics/operators/HorizontalFluxDivergence.hpp"
+#include "dynamics/operators/HorizontalScalarGradient.hpp"
 #include "utils/ConfigurationManager.hpp"
 
 namespace VVM {
@@ -167,6 +169,12 @@ private:
     VVM::Real vk_;
 
     TerrainMasks masks_;
+
+    // Immutable operators live on the device. Diffusion kernels capture
+    // their handles instead of six complete staggered geometry objects.
+    Kokkos::View<Dynamics::Operators::HorizontalFluxDivergenceDeviceView> divergence_;
+    Kokkos::View<Dynamics::Operators::HorizontalScalarGradientDeviceView> gradient_;
+    Kokkos::View<Dynamics::Operators::HorizontalScalarGradientAtUVDeviceView> gradient_uv_;
 
     Core::FieldRef<1> rhobar_ref_;
     Core::FieldRef<1> rhobar_up_ref_;

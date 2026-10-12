@@ -47,6 +47,11 @@ class State {
     friend class VVM::Dynamics::AdamsBashforth2;
 
 public:
+    const Grid&
+    get_grid() const {
+        return grid_;
+    }
+
 #if defined(ENABLE_NCCL)
     // Preferred constructor. State depends on configuration and grid geometry,
     // but not on Parameters.
@@ -486,6 +491,8 @@ public:
         const auto geometry =
             grid_.geometry().device_view(field.get_metadata().grid_staggering, field.get_name());
 
+        const auto jacobian = geometry.sqrt_g;
+
         const int ny_local = grid_.get_local_physical_points_y();
         const int nx_local = grid_.get_local_physical_points_x();
         const int h = grid_.get_halo_cells();
@@ -505,9 +512,13 @@ public:
             }
         }
 
-        Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space> d_local_sums(
-            "horizontal_area_weighted_mean_local_sums",
-            2);
+        if (area_weighted_local_sums_.extent(0) != 2) {
+            area_weighted_local_sums_ =
+                Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space>(
+                    "horizontal_area_weighted_mean_local_sums",
+                    2);
+        }
+        const auto d_local_sums = area_weighted_local_sums_;
 
         const VVM::Real computational_cell_area = geometry.dq1 * geometry.dq2;
 
@@ -535,7 +546,7 @@ public:
 
                     for (int i_offset = 0; i_offset < nx_count; ++i_offset) {
                         const int i = halo + i_offset;
-                        const VVM::Real area = geometry.sqrt_g(j, i) * computational_cell_area;
+                        const VVM::Real area = jacobian(j, i) * computational_cell_area;
 
                         weighted_sum += view(k_level, j, i) * area;
                         area_sum += area;
@@ -555,7 +566,7 @@ public:
 
                     for (int i_offset = 0; i_offset < nx_count; ++i_offset) {
                         const int i = halo + i_offset;
-                        const VVM::Real area = geometry.sqrt_g(j, i) * computational_cell_area;
+                        const VVM::Real area = jacobian(j, i) * computational_cell_area;
 
                         weighted_sum += view(j, i) * area;
                         area_sum += area;
@@ -588,7 +599,7 @@ public:
             Kokkos::parallel_reduce("calculate_3d_local_area_weighted_sum",
                 Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny_local + h, nx_local + h}),
                 KOKKOS_LAMBDA(const int j, const int i, VVM::Real& update_sum) {
-                    const VVM::Real area = geometry.sqrt_g(j, i) * computational_cell_area;
+                    const VVM::Real area = jacobian(j, i) * computational_cell_area;
 
                     update_sum += view(k_level, j, i) * area;
                 },
@@ -597,7 +608,7 @@ public:
             Kokkos::parallel_reduce("calculate_3d_local_area_sum",
                 Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny_local + h, nx_local + h}),
                 KOKKOS_LAMBDA(const int j, const int i, VVM::Real& update_sum) {
-                    update_sum += geometry.sqrt_g(j, i) * computational_cell_area;
+                    update_sum += jacobian(j, i) * computational_cell_area;
                 },
                 d_local_area_sum);
         }
@@ -605,7 +616,7 @@ public:
             Kokkos::parallel_reduce("calculate_2d_local_area_weighted_sum",
                 Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny_local + h, nx_local + h}),
                 KOKKOS_LAMBDA(const int j, const int i, VVM::Real& update_sum) {
-                    const VVM::Real area = geometry.sqrt_g(j, i) * computational_cell_area;
+                    const VVM::Real area = jacobian(j, i) * computational_cell_area;
 
                     update_sum += view(j, i) * area;
                 },
@@ -614,7 +625,7 @@ public:
             Kokkos::parallel_reduce("calculate_2d_local_area_sum",
                 Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny_local + h, nx_local + h}),
                 KOKKOS_LAMBDA(const int j, const int i, VVM::Real& update_sum) {
-                    update_sum += geometry.sqrt_g(j, i) * computational_cell_area;
+                    update_sum += jacobian(j, i) * computational_cell_area;
                 },
                 d_local_area_sum);
         }
@@ -824,6 +835,8 @@ private:
 
     mutable Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space>
         area_weighted_rank_sums_;
+    mutable Kokkos::View<VVM::Real*, Kokkos::DefaultExecutionSpace::memory_space>
+        area_weighted_local_sums_;
 #if defined(VVM_DETERMINISTIC_FP)
     mutable Kokkos::View<VVM::Real**, Kokkos::DefaultExecutionSpace::memory_space>
         area_weighted_row_sums_;

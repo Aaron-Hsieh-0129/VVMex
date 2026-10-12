@@ -227,8 +227,7 @@ set_tests_properties(test_grid_geometry_structured_bounded_r1
                      PROPERTIES LABELS unit TIMEOUT 300)
 _vvm_set_test_resources(test_grid_geometry_structured_bounded_r1 1)
 
-# RLL configuration is parsed, but it must not reach the legacy Cartesian
-# topology or dynamical core until those paths have been migrated.
+# Mapped model boundaries admit periodic-q1, bounded-q2 geographic charts.
 vvm_add_test_executable(test_grid_rll_guard
     LIBRARIES vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX)
 add_test(NAME test_grid_rll_guard
@@ -407,7 +406,7 @@ endforeach()
 add_test(NAME test_parameters_resolved_grid_rll_guard
     COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
             ${GPU_WRAP} $<TARGET_FILE:test_parameters_resolved_grid>
-            ${TEST_DIR}/configs/horizontal_elliptic_regular_latlon.json
+            ${TEST_DIR}/configs/parameters_resolved_regular_latlon.json
     WORKING_DIRECTORY "${VVM_TEST_WORKDIR}")
 
 set_tests_properties(test_parameters_resolved_grid_rll_guard PROPERTIES LABELS unit TIMEOUT 60)
@@ -841,3 +840,7 @@ add_vvm_unit_test(test_generalized_horizontal_elliptic DEVICE MPI
 add_vvm_unit_test(test_horizontal_wind_topology_constraint DEVICE MPI
     LIBRARIES vvm_dynamics vvm_core vvm_utils Kokkos::kokkos MPI::MPI_CXX
     TIMEOUT 180)
+
+# Startup data collectives, uneven mapped boundary-distance prefixes and
+# canonical/legacy checkpoint selection under both MPI and NCCL builds.
+add_vvm_device_unit_test(test_mapped_startup ${TEST_DIR}/configs/2dbubble.json 4)

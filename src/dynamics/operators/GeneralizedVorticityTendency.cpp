@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <stdexcept>
+#include <type_traits>
 
 namespace VVM::Dynamics::Operators {
 namespace {
@@ -189,13 +190,15 @@ struct HorizontalTransportFunctor {
     }
 };
 
+// Select the term on the host so inlining can eliminate the unused strain
+// calculations and their stencil loads/divisions from each GPU kernel.
+template <Term SelectedTerm>
 struct HorizontalDeformationFunctor {
     GeneralizedHorizontalDeformationDeviceView deformation;
     CanonicalHorizontalDeformationFields fields;
     Volume output;
 
     bool first_component = true;
-    Term term = Term::Stretching;
     bool evaluate = true;
 
     KOKKOS_INLINE_FUNCTION
@@ -208,9 +211,9 @@ struct HorizontalDeformationFunctor {
         const auto t = first_component ? deformation.calculate_omega1_at_v(fields, k, j, i)
                                        : deformation.calculate_omega2_at_u(fields, k, j, i);
 
-        const Real value = term == Term::Stretching ? t.stretching
-                           : term == Term::Twisting ? t.twisting
-                                                    : t.planetary;
+        const Real value = SelectedTerm == Term::Stretching ? t.stretching
+                           : SelectedTerm == Term::Twisting ? t.twisting
+                                                            : t.planetary;
 
         const Real sign = first_component ? real(1.0) : real(-1.0);
 
@@ -218,13 +221,13 @@ struct HorizontalDeformationFunctor {
     }
 };
 
+template <Term SelectedTerm>
 struct TopTendencyFunctor {
     Kokkos::View<const GeneralizedTopTransportDeviceView> transport;
     GeneralizedTopDeformationDeviceView deformation;
     TopFields fields;
     Volume output;
 
-    Term term = Term::Transport;
     bool evaluate = true;
 
     KOKKOS_INLINE_FUNCTION
@@ -237,23 +240,41 @@ struct TopTendencyFunctor {
 
         Real value = real(0.0);
 
-        if (term == Term::Transport || term == Term::Planetary) {
-            const auto t = transport().calculate_at_z(fields, k, j, i, term == Term::Planetary);
+        if constexpr (SelectedTerm == Term::Transport || SelectedTerm == Term::Planetary) {
+            const auto t =
+                transport().calculate_at_z(fields, k, j, i, SelectedTerm == Term::Planetary);
 
             value = t.q1 + t.q2 + t.vertical;
         }
 
-        if (term != Term::Transport) {
+        if constexpr (SelectedTerm != Term::Transport) {
             const auto t = deformation.calculate_at_z(fields, k, j, i);
 
-            value += term == Term::Stretching ? t.stretching
-                     : term == Term::Twisting ? t.twisting
-                                              : t.planetary;
+            value += SelectedTerm == Term::Stretching ? t.stretching
+                     : SelectedTerm == Term::Twisting ? t.twisting
+                                                      : t.planetary;
         }
 
         output(k, j, i) += value;
     }
 };
+
+template <Term SelectedTerm>
+void
+prepare_term_execution() {
+    const auto policy = Kokkos::Experimental::require(Policy({0, 0, 0}, {1, 1, 1}),
+        Kokkos::Experimental::WorkItemProperty::HintLightWeight);
+
+    if constexpr (SelectedTerm != Term::Transport) {
+        HorizontalDeformationFunctor<SelectedTerm> preparation{};
+        preparation.evaluate = false;
+        Kokkos::parallel_for("PrepareGeneralizedHorizontalDeformation", policy, preparation);
+    }
+
+    TopTendencyFunctor<SelectedTerm> preparation{};
+    preparation.evaluate = false;
+    Kokkos::parallel_for("PrepareGeneralizedTopVorticityTendency", policy, preparation);
+}
 
 } // namespace
 
@@ -284,21 +305,11 @@ GeneralizedVorticityTendency::prepare_execution() {
             Kokkos::Experimental::WorkItemProperty::HintLightWeight),
         transport_preparation);
 
-    HorizontalDeformationFunctor deformation_preparation{};
-    deformation_preparation.evaluate = false;
-
-    Kokkos::parallel_for("PrepareGeneralizedHorizontalDeformation",
-        Kokkos::Experimental::require(Policy({0, 0, 0}, {1, 1, 1}),
-            Kokkos::Experimental::WorkItemProperty::HintLightWeight),
-        deformation_preparation);
-
-    TopTendencyFunctor top_preparation{};
-    top_preparation.evaluate = false;
-
-    Kokkos::parallel_for("PrepareGeneralizedTopVorticityTendency",
-        Kokkos::Experimental::require(Policy({0, 0, 0}, {1, 1, 1}),
-            Kokkos::Experimental::WorkItemProperty::HintLightWeight),
-        top_preparation);
+    // Warm every specialized functor before CUDA graph capture.
+    prepare_term_execution<Term::Transport>();
+    prepare_term_execution<Term::Stretching>();
+    prepare_term_execution<Term::Twisting>();
+    prepare_term_execution<Term::Planetary>();
 
     Kokkos::fence();
 }
@@ -367,26 +378,57 @@ GeneralizedVorticityTendency::add_from_canonical_state(const Core::State& state,
                     top});
         }
         else {
-            Kokkos::parallel_for("GeneralizedHorizontalDeformation",
-                policy,
-                HorizontalDeformationFunctor{horizontal_deformation_,
-                    bind_horizontal_deformation_fields(state, params),
-                    output.get_mutable_device_data(),
-                    component == 0,
-                    term});
+            const auto launch = [&](auto selection) {
+                constexpr Term selected = decltype(selection)::value;
+                Kokkos::parallel_for("GeneralizedHorizontalDeformation",
+                    policy,
+                    HorizontalDeformationFunctor<selected>{horizontal_deformation_,
+                        bind_horizontal_deformation_fields(state, params),
+                        output.get_mutable_device_data(),
+                        component == 0});
+            };
+            switch (term) {
+            case Term::Stretching:
+                launch(std::integral_constant<Term, Term::Stretching>{});
+                break;
+            case Term::Twisting:
+                launch(std::integral_constant<Term, Term::Twisting>{});
+                break;
+            case Term::Planetary:
+                launch(std::integral_constant<Term, Term::Planetary>{});
+                break;
+            case Term::Transport:
+                break;
+            }
         }
 
         return;
     }
 
-    Kokkos::parallel_for("GeneralizedTopVorticityTendency",
-        Kokkos::Experimental::require(Policy({top, h, h}, {top + 1, ny - h, nx - h}),
-            Kokkos::Experimental::WorkItemProperty::HintLightWeight),
-        TopTendencyFunctor{top_transport_,
-            top_deformation_,
-            bind_top_fields(state, params),
-            output.get_mutable_device_data(),
-            term});
+    const auto launch = [&](auto selection) {
+        constexpr Term selected = decltype(selection)::value;
+        Kokkos::parallel_for("GeneralizedTopVorticityTendency",
+            Kokkos::Experimental::require(Policy({top, h, h}, {top + 1, ny - h, nx - h}),
+                Kokkos::Experimental::WorkItemProperty::HintLightWeight),
+            TopTendencyFunctor<selected>{top_transport_,
+                top_deformation_,
+                bind_top_fields(state, params),
+                output.get_mutable_device_data()});
+    };
+    switch (term) {
+    case Term::Transport:
+        launch(std::integral_constant<Term, Term::Transport>{});
+        break;
+    case Term::Stretching:
+        launch(std::integral_constant<Term, Term::Stretching>{});
+        break;
+    case Term::Twisting:
+        launch(std::integral_constant<Term, Term::Twisting>{});
+        break;
+    case Term::Planetary:
+        launch(std::integral_constant<Term, Term::Planetary>{});
+        break;
+    }
 }
 
 } // namespace VVM::Dynamics::Operators

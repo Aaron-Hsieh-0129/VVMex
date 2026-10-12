@@ -247,8 +247,7 @@ run_tests() {
         {"latitude_bounds_deg", {-45.0, 45.0}}};
     rll["grid"]["horizontal"]["topology"]["q2"] = "bounded";
 
-    // Distinguish a valid RLL specification from permission to run the
-    // still-unmigrated full model.
+    // Mapped model admission is independent of the analytic RLL test case.
     const auto rll_path = write_configuration(directory, "rll_specification", rll);
     const ConfigurationManager rll_configuration(rll_path.string());
     const auto rll_specification = GridSpecification::from_config(rll_configuration);
@@ -258,12 +257,7 @@ run_tests() {
         std::fprintf(stderr, "FAIL: RLL specification must remain available to component tests.\n");
     }
 
-    check_validation(directory,
-        "rll_model_guard",
-        rll,
-        1,
-        false,
-        "Non-Cartesian full-model execution");
+    check_validation(directory, "rll_general_model", rll, 1, true, "");
 
     // These are admission checks only: no input files or physics are executed.
     Json moist = rll;

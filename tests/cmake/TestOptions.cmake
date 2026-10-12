@@ -27,16 +27,10 @@ else()
 endif()
 message(STATUS "Test reference data: ${VVM_BASELINE_DIR}, ${VVM_REFERENCE_DIR}")
 
-# OpenMPI binds each rank to a single core by default. On a CPU build that pins
-# every OpenMP thread of a rank onto one CPU, so raising OMP_NUM_THREADS makes
-# the run slower rather than faster (measured: advection_u 20 s -> 45 s at 16
-# threads, Cpus_allowed_list: 0). core_run.sh passes --bind-to none for the same
-# reason. The GPU path is one thread per rank, so leave its binding alone.
-if(VVM_ENABLE_GPU)
-    set(VVM_MPI_BIND_ARGS "")
-else()
-    set(VVM_MPI_BIND_ARGS --bind-to none)
-endif()
+# Avoid OpenMPI's implicit core binding in tests, including GPU builds: CPU
+# masks imposed by schedulers/containers may exclude a selected core. Tests
+# do not depend on rank affinity; MPIEXEC_PREFLAGS can request it explicitly.
+set(VVM_MPI_BIND_ARGS --bind-to none)
 
 # Use VVM_ROOT as the runtime working directory for CTest tests.
 # Root CMakeLists.txt already requires VVM_ROOT, so this should normally exist.

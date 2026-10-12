@@ -34,6 +34,10 @@ set(VVM_CORE_HEADERS
     geometry/GeometryField2D.hpp
     geometry/HorizontalGridSpec.hpp
     geometry/HorizontalGeometry.hpp
+    geometry/HorizontalBoundaryDistances.hpp
+    StartupCollectives.hpp
+    geometry/AffineGeometry.hpp
+    geometry/StaggeredVectorTransform.hpp
     geometry/CartesianGeometry.hpp
     geometry/RegularLatLonGeometry.hpp
     geometry/HorizontalGeometryFactory.hpp
@@ -65,6 +69,9 @@ target_link_libraries(vvm_core
         ${NVCPUMATH_LIBRARY}
         ${PNETCDF_LIBRARY}
     PRIVATE
+        # Initializer constructs readers implemented in vvm_io. Both libraries
+        # are static; CMake repeats their link group to resolve the cycle.
+        vvm_io
         Kokkos::kokkos
         ${OpenMP_LIBRARIES}
 	${NVTOOLSEXT_LIBRARY}

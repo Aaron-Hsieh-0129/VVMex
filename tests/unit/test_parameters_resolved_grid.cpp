@@ -55,18 +55,16 @@ check_value(const Parameters& parameters,
 void
 run_tests(const ConfigurationManager& config, const Grid& grid) {
     if (grid.geometry().kind() != GeometryKind::Cartesian) {
-        bool rejected_for_units = false;
-
-        try {
-            Parameters parameters(config, grid);
-        }
-        catch (const std::runtime_error& error) {
-            rejected_for_units =
-                std::string(error.what()).find("Cartesian dx/dy") != std::string::npos;
-        }
-
-        check(rejected_for_units,
-            "Non-Cartesian Parameters must reject angular spacing entering Cartesian dx/dy.");
+        const Parameters parameters(config, grid);
+        const auto& spec = grid.horizontal_specification().geometry;
+        const Real latitude = spec.regular_lat_lon.latitude_south_edge +
+                              (Real(grid.get_local_physical_start_y()) + real(0.5)) * spec.dq2;
+        const Real dx = spec.dq1 * spec.regular_lat_lon.radius * std::cos(latitude);
+        const Real dy = spec.dq2 * spec.regular_lat_lon.radius;
+        check_value(parameters, parameters.dx, dx, "mapped nominal dx in metres");
+        check_value(parameters, parameters.dy, dy, "mapped nominal dy in metres");
+        check_value(parameters, parameters.rdx, real(1.0) / dx, "mapped nominal rdx");
+        check_value(parameters, parameters.rdy, real(1.0) / dy, "mapped nominal rdy");
         return;
     }
 

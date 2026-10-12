@@ -34,6 +34,14 @@ HorizontalEllipticSolver::HorizontalEllipticSolver(const Core::Grid& grid,
 
         auto host = Kokkos::create_mirror_view(generalized_);
         host() = Operators::make_generalized_horizontal_elliptic_device_view(grid_.geometry());
+        if (horizontal.topology.q2 == Core::HorizontalEdgeTopology::Bounded) {
+            if (grid_.get_local_physical_start_y() == 0) {
+                host().q2_minus_wall = grid_.get_halo_cells() - 1;
+            }
+            if (grid_.get_local_physical_end_y() == grid_.get_global_points_y() - 1) {
+                host().q2_plus_wall = grid_.get_local_total_points_y() - grid_.get_halo_cells() - 1;
+            }
+        }
         Kokkos::deep_copy(generalized_, host);
 
         prepare_generalized_execution();

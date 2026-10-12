@@ -130,12 +130,20 @@ OutputManager::OutputManager(const Utils::ConfigurationManager& config,
 
     if (engine_type_ == "HDF5" || engine_type_ == "SST") {
         // Stored in the file for restart (including HDF5 output relayed by
-        // SST), without adding solver scratch to the user's fields_to_output
+        // SST), without adding checkpoint internals to the user's fields_to_output
         // or the GrADS variable list.
-        for (const char* name : {"psi", "psinm1", "chi", "chinm1", "W3DNM1"}) {
+        const auto add_checkpoint_field = [&](const char* name) {
             if (std::find(fields_to_output_.begin(), fields_to_output_.end(), name) ==
                 fields_to_output_.end()) {
                 fields_to_output_.push_back(std::string("restart/") + name);
+            }
+        };
+        for (const char* name : {"psi", "psinm1", "chi", "chinm1", "W3DNM1"}) {
+            add_checkpoint_field(name);
+        }
+        if (grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
+            for (const char* name : {"xi_con", "eta_con", "u_con", "v_con"}) {
+                add_checkpoint_field(name);
             }
         }
     }
@@ -316,11 +324,23 @@ OutputManager::define_variables() {
     const bool rll = grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon;
     io_.DefineAttribute<std::string>("units", rll ? "degrees_north" : "meter", "coordinates/y");
     io_.DefineAttribute<std::string>("units", rll ? "degrees_east" : "meter", "coordinates/x");
+    if (grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
+        io_.DefineAttribute<std::string>("horizontal_geometry", grid_.geometry().name());
+        io_.DefineAttribute<std::string>("q1_topology",
+            Core::horizontal_edge_topology_to_string(grid_.horizontal_specification().topology.q1));
+        io_.DefineAttribute<std::string>("q2_topology",
+            Core::horizontal_edge_topology_to_string(grid_.horizontal_specification().topology.q2));
+        if (grid_.geometry().kind() == Core::Geometry::GeometryKind::Affine) {
+            const auto& basis = grid_.horizontal_specification().geometry.affine_basis;
+            io_.DefineAttribute<Real>("horizontal_affine_basis", basis.data(), basis.size());
+        }
+    }
     if (rll) {
-        io_.DefineAttribute<std::string>("horizontal_geometry", "regular_latlon");
+
         io_.DefineAttribute<std::string>("latitude_topology",
             grid_.horizontal_specification().geometry.regular_lat_lon.periodic_latitude
-                ? "experimental_periodic" : "bounded");
+                ? "experimental_periodic"
+                : "bounded");
         io_.DefineAttribute<VVM::Real>("earth_radius_m",
             grid_.horizontal_specification().geometry.regular_lat_lon.radius);
     }

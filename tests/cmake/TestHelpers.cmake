@@ -51,7 +51,9 @@ endfunction()
 # A default_cases case, checked against a stored per-variable digest. Full
 # baselines do not scale here (rcemip output is ~1 GB), so check_output.py
 # compares SHA-256 digests instead. A reference can self-declare canonical
-# float32 narrowing when cross-machine FP64 low bits are not portable.
+# float32 narrowing when cross-machine FP64 low bits are not portable. RCEMIP's
+# six wind/vorticity fields also have whole-field bounded roundoff digests for
+# FP32 rounding midpoints; see docs/developer-guides/reproducibility.md.
 #   add_case_test(<case> <ranks> <label>)   label "" => default tier
 function(add_case_test CASE_NAME RANKS LABEL)
     set(EXTRA_CFG_ARGS ${ARGN})

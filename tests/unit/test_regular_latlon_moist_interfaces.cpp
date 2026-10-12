@@ -291,6 +291,8 @@ main(int argc, char** argv) {
         // Moist scalar transport
         // --------------------------------------------------------------------
 
+        std::cout << "Checking moist scalar transport and graph replay" << std::endl;
+
         for (const char* name : {"qv", "qc", "qr", "qi", "qm", "nc", "nr", "ni", "bm"}) {
 
             fill(name, real(.01));
@@ -450,6 +452,8 @@ main(int argc, char** argv) {
         // Moist buoyancy
         // --------------------------------------------------------------------
 
+        std::cout << "Checking moist buoyancy" << std::endl;
+
         auto vapor = state.get_field<3>("qv").get_host_data();
 
         for (int k = 0; k < nz; ++k) {
@@ -586,6 +590,7 @@ main(int argc, char** argv) {
         };
 
         for (const std::string name : {"xi", "eta", "zeta"}) {
+            std::cout << "Checking canonical vorticity assembly: " << name << std::endl;
             const std::string history = "fe_tendency_" + name;
             if (!state.has_field(history)) {
                 state.add_field<3>(history, dims);

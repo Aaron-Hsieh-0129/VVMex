@@ -127,6 +127,13 @@ WENO5::calculate_advection_tendency(const Core::State& state,
     const auto face_y = ITYPEV_ref_.get(state, "ITYPEV").get_device_data();
     const auto rdx = params.rdx;
     const auto rdy = params.rdy;
+    const bool cartesian = grid.geometry().kind() == Core::Geometry::GeometryKind::Cartesian;
+    using Core::Geometry::HorizontalLocation;
+    const auto ju = grid.geometry().device_view(HorizontalLocation::U).sqrt_g;
+    const auto jv = grid.geometry().device_view(HorizontalLocation::V).sqrt_g;
+    const auto inv_j = grid.geometry().device_view(HorizontalLocation::T).inv_sqrt_g;
+    const Real rdq1 = real(1.0) / grid.geometry().dq1();
+    const Real rdq2 = real(1.0) / grid.geometry().dq2();
     auto tendency = out_tendency.get_mutable_device_data();
 
     // u(k,j,i) is located between centered tracer cells i and i+1.
@@ -179,7 +186,13 @@ WENO5::calculate_advection_tendency(const Core::State& state,
 
             const VVM::Real flux_right = face_flux(i);
             const VVM::Real flux_left = face_flux(i - 1);
-            tendency(k, j, i) += -(flux_right - flux_left) * rdx();
+            if (cartesian) {
+                tendency(k, j, i) += -(flux_right - flux_left) * rdx();
+            }
+            else {
+                tendency(k, j, i) -=
+                    inv_j(j, i) * (ju(j, i) * flux_right - ju(j, i - 1) * flux_left) * rdq1;
+            }
         });
 
     // v(k,j,i) is located between centered tracer cells j and j+1.
@@ -232,7 +245,13 @@ WENO5::calculate_advection_tendency(const Core::State& state,
 
             const VVM::Real flux_top = face_flux(j);
             const VVM::Real flux_bottom = face_flux(j - 1);
-            tendency(k, j, i) += -(flux_top - flux_bottom) * rdy();
+            if (cartesian) {
+                tendency(k, j, i) += -(flux_top - flux_bottom) * rdy();
+            }
+            else {
+                tendency(k, j, i) -=
+                    inv_j(j, i) * (jv(j, i) * flux_top - jv(j - 1, i) * flux_bottom) * rdq2;
+            }
         });
 
     // Deliberately preserve the established stretched-grid vertical scheme,

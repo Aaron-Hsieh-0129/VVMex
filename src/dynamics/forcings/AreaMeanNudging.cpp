@@ -1,4 +1,5 @@
 #include "AreaMeanNudging.hpp"
+#include "core/StartupCollectives.hpp"
 #include <netcdf.h>
 #include <algorithm>
 #include <cmath>
@@ -295,6 +296,30 @@ AreaMeanNudging::initialize(Core::State& state) {
     int nx = grid_.get_local_total_points_x();
     int h = grid_.get_halo_cells();
     int top_k = nz - h - 1;
+    const bool mapped = grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian;
+    using Core::Geometry::HorizontalLocation;
+    const auto area_u = grid_.geometry().device_view(HorizontalLocation::U).sqrt_g;
+    const auto area_v = grid_.geometry().device_view(HorizontalLocation::V).sqrt_g;
+    const auto area_z = grid_.geometry().device_view(HorizontalLocation::Z).sqrt_g;
+
+    if (mapped) {
+        Real au = real(0.0), av = real(0.0), az = real(0.0);
+        Kokkos::parallel_reduce("MappedNudgingAreas",
+            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
+            KOKKOS_LAMBDA(int j, int i, Real& u, Real& v, Real& z) {
+                u += area_u(j, i);
+                v += area_v(j, i);
+                z += area_z(j, i);
+            },
+            au,
+            av,
+            az);
+        Real local[3]{au, av, az}, total[3];
+        Core::StartupCollectives::sum(grid_, state, local, total, 3);
+        inverse_area_u_ = real(1.0) / total[0];
+        inverse_area_v_ = real(1.0) / total[1];
+        inverse_area_z_ = real(1.0) / total[2];
+    }
 
     if (!state.has_field("areamn_xi0")) {
         state.add_field<1>("areamn_xi0",
@@ -412,12 +437,14 @@ AreaMeanNudging::initialize(Core::State& state) {
                 VVM::Real sxi = 0.0, seta = 0.0;
                 Kokkos::parallel_reduce(Kokkos::TeamThreadRange(team, ncol),
                     [&](const long c, VVM::Real& acc) {
-                    acc += xi(k, h + static_cast<int>(c / ni), h + static_cast<int>(c % ni));
+                    const int j = h + static_cast<int>(c / ni), i = h + static_cast<int>(c % ni);
+                    acc += mapped ? area_v(j, i) * xi(k, j, i) : xi(k, j, i);
                 },
                     sxi);
                 Kokkos::parallel_reduce(Kokkos::TeamThreadRange(team, ncol),
                     [&](const long c, VVM::Real& acc) {
-                    acc += eta(k, h + static_cast<int>(c / ni), h + static_cast<int>(c % ni));
+                    const int j = h + static_cast<int>(c / ni), i = h + static_cast<int>(c % ni);
+                    acc += mapped ? area_u(j, i) * eta(k, j, i) : eta(k, j, i);
                 },
                     seta);
                 Kokkos::single(Kokkos::PerTeam(team), [&]() {
@@ -430,9 +457,9 @@ AreaMeanNudging::initialize(Core::State& state) {
         Kokkos::parallel_reduce("AREAMN_Init_Local_Sum_top",
             Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
             KOKKOS_LAMBDA(const int j, const int i, VVM::Real& az, VVM::Real& au, VVM::Real& av) {
-                az += zeta(top_k, j, i);
-                au += u(top_k, j, i);
-                av += v(top_k, j, i);
+                az += mapped ? area_z(j, i) * zeta(top_k, j, i) : zeta(top_k, j, i);
+                au += mapped ? area_u(j, i) * u(top_k, j, i) : u(top_k, j, i);
+                av += mapped ? area_v(j, i) * v(top_k, j, i) : v(top_k, j, i);
             },
             szeta,
             su,
@@ -459,15 +486,18 @@ AreaMeanNudging::initialize(Core::State& state) {
     auto& vtopmn = vtopmn_ref_.get(state, "vtopmn").get_mutable_device_data();
 
     VVM::Real inv_pts = inv_total_xy_pts_;
+    const Real inv_u = mapped ? inverse_area_u_ : inv_pts;
+    const Real inv_v = mapped ? inverse_area_v_ : inv_pts;
+    const Real inv_z = mapped ? inverse_area_z_ : inv_pts;
 
     Kokkos::parallel_for("AREAMN_Init_Save", nz, KOKKOS_LAMBDA(const int k) {
-        xi0(k) = g_sum_xi(k) * inv_pts;
-        eta0(k) = g_sum_eta(k) * inv_pts;
+        xi0(k) = g_sum_xi(k) * inv_v;
+        eta0(k) = g_sum_eta(k) * inv_u;
 
         if (k == top_k) {
-            zeta0_top() = g_sum_zeta() * inv_pts;
-            utopmn0() = g_sum_u() * inv_pts;
-            vtopmn0() = g_sum_v() * inv_pts;
+            zeta0_top() = g_sum_zeta() * inv_z;
+            utopmn0() = g_sum_u() * inv_u;
+            vtopmn0() = g_sum_v() * inv_v;
 
             utopmn() = utopmn0();
             vtopmn() = vtopmn0();
@@ -565,6 +595,11 @@ AreaMeanNudging::apply_vorticity(Core::State& state, VVM::Real dt) {
     int nx = grid_.get_local_total_points_x();
     int h = grid_.get_halo_cells();
     int top_k = nz - h - 1;
+    const bool mapped = grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian;
+    using Core::Geometry::HorizontalLocation;
+    const auto area_u = grid_.geometry().device_view(HorizontalLocation::U).sqrt_g;
+    const auto area_v = grid_.geometry().device_view(HorizontalLocation::V).sqrt_g;
+    const auto area_z = grid_.geometry().device_view(HorizontalLocation::Z).sqrt_g;
 
     auto& xi = xi_ref_.get(state, "xi").get_mutable_device_data();
     auto& eta = eta_ref_.get(state, "eta").get_mutable_device_data();
@@ -615,12 +650,14 @@ AreaMeanNudging::apply_vorticity(Core::State& state, VVM::Real dt) {
                 VVM::Real sxi = 0.0, seta = 0.0;
                 Kokkos::parallel_reduce(Kokkos::TeamThreadRange(team, ncol),
                     [&](const long c, VVM::Real& acc) {
-                    acc += xi(k, h + static_cast<int>(c / ni), h + static_cast<int>(c % ni));
+                    const int j = h + static_cast<int>(c / ni), i = h + static_cast<int>(c % ni);
+                    acc += mapped ? area_v(j, i) * xi(k, j, i) : xi(k, j, i);
                 },
                     sxi);
                 Kokkos::parallel_reduce(Kokkos::TeamThreadRange(team, ncol),
                     [&](const long c, VVM::Real& acc) {
-                    acc += eta(k, h + static_cast<int>(c / ni), h + static_cast<int>(c % ni));
+                    const int j = h + static_cast<int>(c / ni), i = h + static_cast<int>(c % ni);
+                    acc += mapped ? area_u(j, i) * eta(k, j, i) : eta(k, j, i);
                 },
                     seta);
                 Kokkos::single(Kokkos::PerTeam(team), [&]() {
@@ -632,7 +669,9 @@ AreaMeanNudging::apply_vorticity(Core::State& state, VVM::Real dt) {
         VVM::Real szeta = 0.0;
         Kokkos::parallel_reduce("AREAMN_Sum_top",
             Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {ny - h, nx - h}),
-            KOKKOS_LAMBDA(const int j, const int i, VVM::Real& az) { az += zeta(top_k, j, i); },
+            KOKKOS_LAMBDA(const int j, const int i, VVM::Real& az) {
+                az += mapped ? area_z(j, i) * zeta(top_k, j, i) : zeta(top_k, j, i);
+            },
             szeta);
         Kokkos::deep_copy(l_sum_zeta, szeta);
     }
@@ -649,13 +688,16 @@ AreaMeanNudging::apply_vorticity(Core::State& state, VVM::Real dt) {
     VVM::Real uvtau = uvtau_;
     VVM::Real nlim = nudgelim_;
     VVM::Real inv_pts = inv_total_xy_pts_;
+    const Real inv_u = mapped ? inverse_area_u_ : inv_pts;
+    const Real inv_v = mapped ? inverse_area_v_ : inv_pts;
+    const Real inv_z = mapped ? inverse_area_z_ : inv_pts;
 
     Kokkos::parallel_for("AREAMN_Apply",
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {nz - h, ny - h, nx - h}),
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
             if (z_coords(k) >= nlim) {
-                VVM::Real sum_xi = g_sum_xi(k) * inv_pts;
-                VVM::Real sum_eta = g_sum_eta(k) * inv_pts;
+                VVM::Real sum_xi = g_sum_xi(k) * inv_v;
+                VVM::Real sum_eta = g_sum_eta(k) * inv_u;
 
                 VVM::Real sumxn =
                     (uvtau == 0.0) ? xi0(k) : (1.0 - dt / uvtau) * sum_xi + xi0(k) * (dt / uvtau);
@@ -672,7 +714,7 @@ AreaMeanNudging::apply_vorticity(Core::State& state, VVM::Real dt) {
             }
 
             if (k == top_k) {
-                VVM::Real sum_zeta = g_sum_zeta() * inv_pts;
+                VVM::Real sum_zeta = g_sum_zeta() * inv_z;
                 zeta(top_k, j, i) = zeta(top_k, j, i) - sum_zeta + z0_top();
             }
         });

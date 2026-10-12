@@ -822,17 +822,29 @@ struct DiagnosticState {
 
     bool
     free_slip_boundaries(const Grid& grid) const {
-        return positive_face_q2_dirichlet_halos(grid, psi) &&
-               positive_face_q2_dirichlet_halos(grid, psi_previous) &&
-               centered_q2_neumann_halos(grid, chi) &&
-               centered_q2_neumann_halos(grid, chi_previous) &&
-               positive_face_q2_dirichlet_halos(grid, zeta) && centered_q2_neumann_halos(grid, w) &&
-               centered_q2_neumann_halos(grid, w_previous) &&
-               free_slip_physical_wind_halos(grid, u, v);
+        const std::pair<const char*, bool> checks[] = {
+            {"psi", positive_face_q2_dirichlet_halos(grid, psi)},
+            {"psi_previous", positive_face_q2_dirichlet_halos(grid, psi_previous)},
+            {"chi", centered_q2_neumann_halos(grid, chi)},
+            {"chi_previous", centered_q2_neumann_halos(grid, chi_previous)},
+            {"zeta", positive_face_q2_dirichlet_halos(grid, zeta)},
+            {"w", centered_q2_neumann_halos(grid, w)},
+            {"w_previous", centered_q2_neumann_halos(grid, w_previous)},
+            {"physical_wind", free_slip_physical_wind_halos(grid, u, v)}
+        };
+        bool valid = true;
+        for (const auto& check : checks) {
+            if (!check.second) {
+                std::fprintf(stderr, "Rank %d FAIL: free-slip wall condition for %s\n",
+                    grid.get_mpi_rank(), check.first);
+                valid = false;
+            }
+        }
+        return valid;
     }
 
     bool
-    physical_checks(const Grid& grid, const Sources& sources, int step) const {
+    physical_checks(const Grid& grid, const std::vector<Real>& initial_zeta) const {
         const int nz = grid.get_local_total_points_z();
         const int ny = grid.get_local_total_points_y();
         const int nx = grid.get_local_total_points_x();
@@ -848,13 +860,12 @@ struct DiagnosticState {
         bool valid = true;
 
         for (int j = h; j < ny - h; ++j) {
-            const int global_j = grid.get_local_physical_start_y() + j - h;
-
             for (int i = h; i < nx - h; ++i) {
-                const int global_i = grid.get_local_physical_start_x() + i - h;
-
-                valid = valid && zeta_data(top, j, i) ==
-                                     sources.top_zeta_value(grid, step, global_j, global_i);
+                // Check preservation of the actual supplied boundary bits.
+                // Re-evaluating the trigonometric fixture under host compiler
+                // optimization can round differently from prepare_step().
+                const auto index = (std::size_t(top) * ny + j) * nx + i;
+                valid = valid && zeta_data(top, j, i) == initial_zeta[index];
 
                 valid =
                     valid && w_data(bottom, j, i) == real(0.0) && w_data(top, j, i) == real(0.0);
@@ -991,6 +1002,8 @@ run_case(const Grid& grid, HaloExchanger& halo, bool stretched) {
         Kokkos::fence();
 
         const auto before_sources = sources.values();
+        const auto direct_initial_zeta = snapshot(direct.zeta);
+        const auto replayed_initial_zeta = snapshot(replayed.zeta);
 
         MPI_Barrier(grid.get_comm());
 
@@ -1013,8 +1026,8 @@ run_case(const Grid& grid, HaloExchanger& halo, bool stretched) {
 
         const bool sources_preserved = sources.values() == before_sources;
 
-        const bool physical = direct.physical_checks(grid, sources, step) &&
-                              replayed.physical_checks(grid, sources, step);
+        const bool physical = direct.physical_checks(grid, direct_initial_zeta) &&
+                              replayed.physical_checks(grid, replayed_initial_zeta);
 
         const bool free_slip_walls = sources.free_slip_boundaries(grid) &&
                                      direct.free_slip_boundaries(grid) &&

@@ -22,21 +22,8 @@ TendencyCalculator::calculate_tendencies(
         return;
     }
 
-    const int& nz = grid.get_local_total_points_z();
-    const int& ny = grid.get_local_total_points_y();
-    const int& nx = grid.get_local_total_points_x();
-
-    auto& field_to_update = var_ref_.get(state, variable_name_);
-    auto& field_current_view = field_to_update.get_mutable_device_data();
-
     // Calculate AB2 tendencies
     if (!ab2_tendency_terms_.empty()) {
-        if (!temp_tendency_field_) {
-            temp_tendency_field_ =
-                std::make_unique<Core::Field<3>>("temp_ab2_tendency_" + variable_name_,
-                    std::array<int, 3>{nz, ny, nx});
-        }
-
         const size_t now_idx = state.get_step() % 2;
         auto& current_tendency_field = (now_idx == 0) ? hist_0_ref_.get(state, hist_0_name_)
                                                       : hist_1_ref_.get(state, hist_1_name_);

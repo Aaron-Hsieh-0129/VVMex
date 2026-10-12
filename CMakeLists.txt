@@ -510,6 +510,9 @@ set(EKAT_ENABLE_ALL_PACKAGES ON)
 set(EKAT_DISABLE_TPL_WARNINGS ON)
 set (EKAT_ENABLE_TESTS OFF)
 set(EKAT_ENABLE_EXAMPLES OFF CACHE BOOL "")
+# Use EKAT's bundled yaml-cpp; external installations may expose NodeType as
+# a namespace rather than the struct expected by EKAT's parser.
+set(EKAT_SKIP_FIND_YAML_CPP ON CACHE BOOL "Use EKAT's bundled yaml-cpp" FORCE)
 add_subdirectory(${EKAT_SOURCE_DIR} ${CMAKE_BINARY_DIR}/externals/ekat)
 
 include(EkatSetCompilerFlags)

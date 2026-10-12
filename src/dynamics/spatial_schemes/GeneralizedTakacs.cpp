@@ -97,13 +97,6 @@ GeneralizedTakacs::validate_dry_buoyancy(
                 "GeneralizedTakacs dry buoyancy does not support moist State fields.");
         }
     }
-
-    // Retain the existing dry-mode capability restriction. Moist mode
-    // retains its native face-mask behavior inside GeneralizedBuoyancy.
-    if (params.max_topo_idx != grid.get_halo_cells()) {
-        throw std::runtime_error(
-            "GeneralizedTakacs dry buoyancy requires initialized flat terrain.");
-    }
 }
 
 void

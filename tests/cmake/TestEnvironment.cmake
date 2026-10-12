@@ -97,4 +97,15 @@ if(NOT VVM_ENABLE_GPU)
         set_tests_properties(${VVM_ALL_TESTS} PROPERTIES
             ENVIRONMENT_MODIFICATION "${VVM_TEST_ENV_MODS}")
     endif()
+else()
+    # CUDA Kokkos builds can also enable OpenMP as their host execution space.
+    # Host mirrors then use OpenMP for initialization. With an unset thread
+    # count, many tiny mirrors can repeatedly wake every core on the host and
+    # make GPU interface tests exceed their timeout. Device kernels still run
+    # on CUDA; one host worker is sufficient for these allocations and copies.
+    get_property(VVM_ALL_TESTS DIRECTORY PROPERTY TESTS)
+    if(VVM_ALL_TESTS)
+        set_tests_properties(${VVM_ALL_TESTS} PROPERTIES
+            ENVIRONMENT_MODIFICATION "OMP_NUM_THREADS=set:1;OMP_PROC_BIND=set:false")
+    endif()
 endif()

@@ -206,13 +206,25 @@ test_one_iteration(
     const VVM::Real inverse_dq2_squared =
         VVM::real(1.0) / (grid.geometry().dq2() * grid.geometry().dq2());
 
+    // The generalized T operator closes wall-normal fluxes at bounded q2.
+    const bool bounded_q2 = grid.geometry().kind() != GeometryKind::Cartesian &&
+        grid.horizontal_specification().topology.q2 ==
+            VVM::Core::HorizontalEdgeTopology::Bounded;
+    const int south_wall_row = bounded_q2 && grid.get_local_physical_start_y() == 0
+                                  ? halo : -1;
+    const int north_wall_row = bounded_q2 &&
+        grid.get_local_physical_end_y() == grid.get_global_points_y() - 1
+                                  ? ny - halo - 1 : -1;
+
     Kokkos::parallel_for("BuildHorizontalEllipticOneIterationReference",
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({halo, halo}, {ny - halo, nx - halo}),
         KOKKOS_LAMBDA(const int j, const int i) {
             const VVM::Real t_q1_west = u.sqrt_g_g_contra.a11(j, i - 1) * inverse_dq1_squared;
             const VVM::Real t_q1_east = u.sqrt_g_g_contra.a11(j, i) * inverse_dq1_squared;
-            const VVM::Real t_q2_south = v.sqrt_g_g_contra.a22(j - 1, i) * inverse_dq2_squared;
-            const VVM::Real t_q2_north = v.sqrt_g_g_contra.a22(j, i) * inverse_dq2_squared;
+            const VVM::Real t_q2_south = j == south_wall_row ? VVM::real(0.0)
+                : v.sqrt_g_g_contra.a22(j - 1, i) * inverse_dq2_squared;
+            const VVM::Real t_q2_north = j == north_wall_row ? VVM::real(0.0)
+                : v.sqrt_g_g_contra.a22(j, i) * inverse_dq2_squared;
             const VVM::Real t_denominator =
                 diagonal_shift + t_q1_west + t_q1_east + t_q2_south + t_q2_north;
 

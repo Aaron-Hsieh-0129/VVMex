@@ -6,6 +6,7 @@
 #include "io/bp5/Bp5RestartReader.hpp"
 #include "vvm_types.hpp"
 #include "core/RegularLatLonModelConfiguration.hpp"
+#include "dynamics/operators/GeneralizedTerrain.hpp"
 #include <Kokkos_Core.hpp>
 #include <algorithm>
 #include <iostream>
@@ -124,6 +125,7 @@ Initializer::Initializer(const Utils::ConfigurationManager& config,
 
 void
 Initializer::initialize_state() const {
+    canonical_horizontal_vorticity_initialized_ = false;
     initialize_background_state();
 
     // Construct case-specific topography first. For flat cases this is a no-op.
@@ -134,7 +136,7 @@ Initializer::initialize_state() const {
 
     // RLL mountain face masks need a decomposition-independent correction after
     // the common ITYPE fields have been constructed.
-    finalize_rll_terrain_masks();
+    finalize_mapped_terrain_masks();
 
     // Cartesian cases use assign_vars(); RLL idealized cases use the analytic state.
     initialize_prognostic_state();
@@ -148,6 +150,13 @@ Initializer::initialize_state() const {
     if (pnetcdf_reader_ &&
         config_.get_value<bool>("initial_conditions.reapply_spatial_initial_conditions", false)) {
         pnetcdf_reader_->read_and_initialize(state_);
+        const auto fields = config_.get_value<std::vector<std::string>>(
+            "netcdf_reader.variables_to_read.3d", std::vector<std::string>{});
+        if (!config_.has_key("netcdf_reader.variables_to_read.3d") ||
+            std::find(fields.begin(), fields.end(), "xi") != fields.end() ||
+            std::find(fields.begin(), fields.end(), "eta") != fields.end()) {
+            canonical_horizontal_vorticity_initialized_ = false;
+        }
     }
 
     if (restart_reader_) {
@@ -536,8 +545,8 @@ Initializer::initialize_surface_temperature() const {
 }
 
 void
-Initializer::finalize_rll_terrain_masks() const {
-    if (!is_rll_idealized(config_) || !is_rll_mountain(config_)) {
+Initializer::finalize_mapped_terrain_masks() const {
+    if (grid_.geometry().kind() == Geometry::GeometryKind::Cartesian) {
         return;
     }
 
@@ -609,6 +618,8 @@ Initializer::load_restart() const {
     }
 
     restart_reader_->read_and_initialize(state_);
+    canonical_horizontal_vorticity_initialized_ =
+        restart_reader_->restored_canonical_horizontal_state();
 
     // The clock comes from the file's own metadata, never from its name. Every
     // rank reads the same bytes, but rank 0's answer is broadcast anyway so the
@@ -1154,14 +1165,60 @@ Initializer::assign_vars() const {
 
     auto& eta = state_.get_field<3>("eta").get_mutable_device_data();
     auto& xi = state_.get_field<3>("xi").get_mutable_device_data();
-    Kokkos::parallel_for("assign_vorticity",
-        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {nz - h - 1, ny - h, nx - h}),
-        KOKKOS_LAMBDA(int k, int j, int i) {
-            eta(k, j, i) = (w(k, j, i + 1) - w(k, j, i)) * rdx() -
-                           (u(k + 1, j, i) - u(k, j, i)) * rdz() * flex_height_coef_up(k);
-            xi(k, j, i) = (w(k, j + 1, i) - w(k, j, i)) * rdy() -
-                          (v(k + 1, j, i) - v(k, j, i)) * rdz() * flex_height_coef_up(k);
-        });
+    if (grid_.geometry().kind() == Geometry::GeometryKind::Cartesian) {
+        Kokkos::parallel_for("assign_vorticity",
+            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {nz - h - 1, ny - h, nx - h}),
+            KOKKOS_LAMBDA(int k, int j, int i) {
+                eta(k, j, i) = (w(k, j, i + 1) - w(k, j, i)) * rdx() -
+                               (u(k + 1, j, i) - u(k, j, i)) * rdz() * flex_height_coef_up(k);
+                xi(k, j, i) = (w(k, j + 1, i) - w(k, j, i)) * rdy() -
+                              (v(k + 1, j, i) - v(k, j, i)) * rdz() * flex_height_coef_up(k);
+            });
+    }
+    else {
+        auto& xf = state_.get_field<3>("xi_con");
+        auto& ef = state_.get_field<3>("eta_con");
+        const auto xc = xf.get_mutable_device_data(), ec = ef.get_mutable_device_data();
+        const auto operation =
+            Dynamics::Operators::make_generalized_terrain_device_view(grid_.geometry());
+        Kokkos::parallel_for("InitializeMappedVorticity",
+            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {nz - h - 1, ny - h, nx - h}),
+            KOKKOS_LAMBDA(int k, int j, int i) {
+                const Real inverse_dz = rdz() * flex_height_coef_up(k);
+                xc(k, j, i) = operation.xi(u, v, w, inverse_dz, k, j, i);
+                ec(k, j, i) = operation.eta(u, v, w, inverse_dz, k, j, i);
+            });
+        // Constant physical profiles can have horizontal curl in a varying
+        // basis (e.g. a zonal wind on a sphere). Initialize top zeta as well.
+        const auto zz = state_.get_field<3>("zeta").get_mutable_device_data();
+        const auto inv_jz =
+            grid_.geometry().device_view(Geometry::HorizontalLocation::Z).inv_sqrt_g;
+        const Real rdq1 = real(1.0) / grid_.geometry().dq1(),
+                   rdq2 = real(1.0) / grid_.geometry().dq2();
+        Kokkos::parallel_for("InitializeMappedVerticalVorticity",
+            Kokkos::MDRangePolicy<Kokkos::Rank<3>>({h, h, h}, {nz - h, ny - h, nx - h}),
+            KOKKOS_LAMBDA(int k, int j, int i) {
+                zz(k, j, i) = inv_jz(j, i) * ((operation.covariant_q2(u, v, k, j, i + 1) -
+                                                  operation.covariant_q2(u, v, k, j, i)) *
+                                                     rdq1 -
+                                                 (operation.covariant_q1(u, v, k, j + 1, i) -
+                                                     operation.covariant_q1(u, v, k, j, i)) *
+                                                     rdq2);
+            });
+        halo_exchanger_.exchange_multiple_halos(std::vector<Field<3>*>{&xf, &ef});
+        BoundaryConditionManager boundary(grid_);
+        boundary.apply_horizontal_vorticity_bcs(xf, ef);
+        const auto gu = grid_.geometry().device_view(Geometry::HorizontalLocation::U);
+        const auto gv = grid_.geometry().device_view(Geometry::HorizontalLocation::V);
+        Geometry::transform_staggered_vector<false>(xc,
+            ec,
+            xi,
+            eta,
+            gv.contravariant_to_physical,
+            gu.contravariant_to_physical,
+            real(-1.0));
+        canonical_horizontal_vorticity_initialized_ = true;
+    }
 
     // Assign pbar_up
     const auto& pbar = state_.get_field<1>("pbar").get_device_data();
@@ -1227,12 +1284,19 @@ Initializer::assign_vars() const {
         config_.get_value<VVM::Real>("constants.coriolis_beta", real(0.0));
     const VVM::Real coriolis_reference_y =
         config_.get_value<VVM::Real>("constants.coriolis_reference_y_m",
-            real(0.5) * grid_.get_global_points_y() * grid_.get_dy());
+            real(0.5) * grid_.get_global_points_y() * parameters_.get_value_host(parameters_.dy));
     auto& f = state_.get_field<1>("f").get_mutable_device_data();
     auto& f_2d = state_.get_field<2>("f_2d").get_mutable_device_data();
     const int global_start_j = grid_.get_local_physical_start_y();
     const VVM::Real grid_dy = grid_.get_dy();
     const auto& dy = parameters_.dy;
+    const bool cartesian = grid_.geometry().kind() == Geometry::GeometryKind::Cartesian;
+    const auto latitude = grid_.geometry().device_view(Geometry::HorizontalLocation::Z).latitude;
+    const auto transform =
+        grid_.geometry().device_view(Geometry::HorizontalLocation::Z).contravariant_to_physical;
+    const auto b21 = transform.a21, b22 = transform.a22;
+    const Real dq1 = grid_.geometry().dq1(), dq2 = grid_.geometry().dq2();
+    const int global_start_i = grid_.get_local_physical_start_x();
     Kokkos::parallel_for("Init_Coriolis",
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {ny, nx}),
         KOKKOS_LAMBDA(const int j, const int i) {
@@ -1244,9 +1308,16 @@ Initializer::assign_vars() const {
                     : real(2.) * OMEGA *
                           Kokkos::sin((global_j - real(1540.) / real(2.) - real(0.5)) * dy() /
                                       real(6.37e6));
-            // VVM::Real coriolis = 5e-5;
-            f(j) = coriolis;
-            f_2d(j, i) = coriolis;
+            const Real mapped_y = b21(j, i) * Real(global_start_i + i - h + 1) * dq1 +
+                                  b22(j, i) * Real(global_start_j + j - h + 1) * dq2;
+            const Real mapped_coriolis =
+                use_constant_coriolis
+                    ? constant_coriolis + coriolis_beta * (mapped_y - coriolis_reference_y)
+                    : real(2.0) * OMEGA * Kokkos::sin(latitude(j, i));
+            if (i == h) {
+                f(j) = cartesian ? coriolis : mapped_coriolis;
+            }
+            f_2d(j, i) = cartesian ? coriolis : mapped_coriolis;
         });
     halo_exchanger_.exchange_halos(state_.get_field<2>("f_2d"));
 
@@ -1276,6 +1347,10 @@ Initializer::initialize_perturbation() const {
     const int global_center_j = static_cast<int>(grid_.get_global_points_y() / 2) + h;
     VVM::Real PI = config_.get_value<VVM::Real>("constants.PI");
 
+    const bool cartesian = grid_.geometry().kind() == Geometry::GeometryKind::Cartesian;
+    const auto metric = grid_.geometry().device_view(Geometry::HorizontalLocation::T).g_cov;
+    const Real dq1 = grid_.geometry().dq1(), dq2 = grid_.geometry().dq2();
+
     auto& th = state_.get_field<3>("th").get_mutable_device_data();
     auto& xi = state_.get_field<3>("xi").get_mutable_device_data();
     auto& eta = state_.get_field<3>("eta").get_mutable_device_data();
@@ -1287,6 +1362,8 @@ Initializer::initialize_perturbation() const {
     std::string test_mode = config_.get_value<std::string>("simulation.idealized_test", "none");
     if (test_mode == "advection_u" || test_mode == "advection_v" || test_mode == "advection_w" ||
         test_mode == "stretching" || test_mode == "twisting") {
+        // These fixtures prescribe physical vorticity directly.
+        canonical_horizontal_vorticity_initialized_ = false;
         auto& rhobar = state_.get_field<1>("rhobar").get_mutable_device_data();
         auto& rhobar_up = state_.get_field<1>("rhobar_up").get_mutable_device_data();
 
@@ -1358,9 +1435,13 @@ Initializer::initialize_perturbation() const {
             KOKKOS_LAMBDA(int k, int j, int i) {
                 const int global_i = global_start_i + i;
 
+                const Real s1 = Real((global_i + 1) - global_center_i) * dq1 / real(1000.);
                 VVM::Real radius_norm = Kokkos::sqrt(
-                    Kokkos::pow(((global_i + 1) - global_center_i) * dx() / real(1000.), 2) +
-                    Kokkos::pow((z_mid(k) - real(5000.)) / real(1000.), 2));
+                    cartesian
+                        ? (Kokkos::pow(((global_i + 1) - global_center_i) * dx() / real(1000.), 2) +
+                              Kokkos::pow((z_mid(k) - real(5000.)) / real(1000.), 2))
+                        : (metric.a11(j, i) * s1 * s1 +
+                              Kokkos::pow((z_mid(k) - real(5000.)) / real(1000.), 2)));
                 if (radius_norm <= real(1.)) {
                     th(k, j, i) += real(5.) * (Kokkos::cos(PI * real(0.5) * radius_norm));
                 }
@@ -1373,10 +1454,17 @@ Initializer::initialize_perturbation() const {
                 const int global_i = global_start_i + i;
                 const int global_j = global_start_j + j;
 
+                const Real s1 = Real((global_i + 1) - global_center_i) * dq1 / real(1000.);
+                const Real s2 = Real((global_j + 1) - global_center_j) * dq2 / real(1000.);
                 VVM::Real radius_norm = Kokkos::sqrt(
-                    Kokkos::pow(((global_i + 1) - global_center_i) * dx() / real(1000.), 2) +
-                    Kokkos::pow(((global_j + 1) - global_center_j) * dy() / real(1000.), 2) +
-                    Kokkos::pow((z_mid(k) - real(5000.)) / real(1000.), 2));
+                    cartesian
+                        ? (Kokkos::pow(((global_i + 1) - global_center_i) * dx() / real(1000.), 2) +
+                              Kokkos::pow(((global_j + 1) - global_center_j) * dy() / real(1000.),
+                                  2) +
+                              Kokkos::pow((z_mid(k) - real(5000.)) / real(1000.), 2))
+                        : (metric.a11(j, i) * s1 * s1 + real(2.0) * metric.a12(j, i) * s1 * s2 +
+                              metric.a22(j, i) * s2 * s2 +
+                              Kokkos::pow((z_mid(k) - real(5000.)) / real(1000.), 2)));
                 if (radius_norm <= real(1.)) {
                     th(k, j, i) += real(5.) * (Kokkos::cos(PI * real(0.5) * radius_norm));
                 }
@@ -1397,9 +1485,13 @@ Initializer::initialize_perturbation() const {
             KOKKOS_LAMBDA(int k, int j, int i) {
                 const int global_i = global_start_i + i;
 
+                const Real s1 = Real((global_i + 1) - global_center_i) * dq1 / real(5000.);
                 VVM::Real radius_norm = Kokkos::sqrt(
-                    Kokkos::pow(((global_i + 1) - global_center_i) * dx() / real(5000.), 2) +
-                    Kokkos::pow((z_mid(k) - real(1000.)) / real(2000.), 2));
+                    cartesian
+                        ? (Kokkos::pow(((global_i + 1) - global_center_i) * dx() / real(5000.), 2) +
+                              Kokkos::pow((z_mid(k) - real(1000.)) / real(2000.), 2))
+                        : (metric.a11(j, i) * s1 * s1 +
+                              Kokkos::pow((z_mid(k) - real(1000.)) / real(2000.), 2)));
                 if (radius_norm <= real(1.)) {
                     th(k, j, i) += real(5.) * (Kokkos::cos(PI * real(0.5) * radius_norm));
                 }
@@ -1412,10 +1504,17 @@ Initializer::initialize_perturbation() const {
                 const int global_j = global_start_j + j;
                 const int global_i = global_start_i + i;
 
+                const Real s1 = Real((global_i + 1) - global_center_i) * dq1 / real(2000.);
+                const Real s2 = Real((global_j + 1) - global_center_j) * dq2 / real(2000.);
                 VVM::Real radius_norm = Kokkos::sqrt(
-                    Kokkos::pow(((global_i + 1) - global_center_i) * dx() / real(2000.), 2) +
-                    Kokkos::pow(((global_j + 1) - global_center_j) * dy() / real(2000.), 2) +
-                    Kokkos::pow((z_mid(k) - real(3000.)) / real(2000.), 2));
+                    cartesian
+                        ? (Kokkos::pow(((global_i + 1) - global_center_i) * dx() / real(2000.), 2) +
+                              Kokkos::pow(((global_j + 1) - global_center_j) * dy() / real(2000.),
+                                  2) +
+                              Kokkos::pow((z_mid(k) - real(3000.)) / real(2000.), 2))
+                        : (metric.a11(j, i) * s1 * s1 + real(2.0) * metric.a12(j, i) * s1 * s2 +
+                              metric.a22(j, i) * s2 * s2 +
+                              Kokkos::pow((z_mid(k) - real(3000.)) / real(2000.), 2)));
                 if (radius_norm <= real(1.)) {
                     th(k, j, i) += real(5.) * (Kokkos::cos(PI * real(0.5) * radius_norm));
                 }

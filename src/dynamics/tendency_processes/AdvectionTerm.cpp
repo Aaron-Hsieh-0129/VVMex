@@ -233,12 +233,12 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
                 });
             });
     }
-    else if (geometry_kind == Core::Geometry::GeometryKind::RegularLatLon) {
+    else if (geometry_kind != Core::Geometry::GeometryKind::Cartesian) {
         const auto mu = state.get_field<3>("ITYPEU").get_device_data();
         const auto mv = state.get_field<3>("ITYPEV").get_device_data();
         const auto mw = state.get_field<3>("ITYPEW").get_device_data();
 
-        // RLL terrain masks act directly on canonical mass flux:
+        // Terrain masks act directly on canonical mass flux:
         //
         //     u_mean = ITYPEU * rho    * u^1
         //     v_mean = ITYPEV * rho    * u^2
@@ -285,11 +285,11 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
         halo_exchanger_.exchange_halos(v_mean_field);
         halo_exchanger_.exchange_halos(w_mean_field);
 
-        const bool rll_bounded_q2 =
-            geometry_kind == Core::Geometry::GeometryKind::RegularLatLon &&
+        const bool mapped_bounded_q2 =
+            geometry_kind != Core::Geometry::GeometryKind::Cartesian &&
             grid.horizontal_specification().topology.q2 == Core::HorizontalEdgeTopology::Bounded;
 
-        if (rll_bounded_q2) {
+        if (mapped_bounded_q2) {
             // The old RLL scalar path applied the physical wall condition
             // before converting rho*U -> rho*u^1.
             //
@@ -298,8 +298,7 @@ AdvectionTerm::compute_tendency_impl(Core::State& state,
             // halo relation.
             Core::Boundary::HorizontalBoundaryStencils boundary(grid);
 
-            boundary.fill_regular_lat_lon_contravariant_scalar_mass_flux_halos(u_mean_field,
-                v_mean_field);
+            boundary.fill_contravariant_scalar_mass_flux_halos(u_mean_field, v_mean_field);
 
             // w remains a physical vertical mass flux.
             bc_manager_.apply_horizontal_bcs(w_mean_field);

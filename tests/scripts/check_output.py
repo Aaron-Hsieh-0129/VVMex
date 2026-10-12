@@ -6,7 +6,9 @@ Full baseline files do not scale past the 32^2 cases (rcemip output alone is
 values plus a few statistics for diagnostics. Native digests hash the raw bytes
 and fail on any bit-level change. A float32 digest first narrows every value to
 a canonical little-endian float32; this keeps a whole-field spatial check while
-ignoring low FP64 mantissa bits that can vary across GPU architectures.
+ignoring low FP64 mantissa bits that can vary across GPU architectures. Float32
+hashes can still differ at rounding midpoints or near zero. Explicit validated
+hash variants can cover known GPU/compiler differences for those variables.
 
     --update --digest-dtype {native,float32}
         (re)write the reference from this output
@@ -30,6 +32,17 @@ def digest_values(arr, digest_dtype):
         narrowed[narrowed == 0] = 0
         return narrowed
     raise ValueError(f"unsupported digest dtype: {digest_dtype}")
+
+
+def matches_reference(actual, reference):
+    if actual['shape'] != reference['shape']:
+        return False
+    if actual['sha256'] == reference['sha256']:
+        return True
+    # Native references stay bit-for-bit against their single original digest.
+    variants = reference.get('sha256_variants', {})
+    return (reference.get('digest_dtype', 'native') == 'float32' and
+            actual['sha256'] in variants.values())
 
 
 def digests(path, digest_dtype='native'):
@@ -115,7 +128,7 @@ def main():
         g = got.get(name)
         if g is None:
             missing.append(name)
-        elif g['shape'] != r['shape'] or g['sha256'] != r['sha256']:
+        elif not matches_reference(g, r):
             bad.append((name, r, g))
 
     extra = sorted(set(got) - set(ref))

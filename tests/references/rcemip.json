@@ -69,6 +69,9 @@
   "mean": 3.395918692844773e-10,
   "min": -0.003671711246640123,
   "sha256": "05f740bdfa6ab73c6a0cb9bb150f8c6d7495da6e7035bac3e7065f45b607250e",
+  "sha256_variants": {
+   "GB10_NVHPC26.5_CUDA13.2": "3ef5a6bb5d3b66d6a25f41972685710e4bbe6a2aef4c9304eab1bedbcb9f8e63"
+  },
   "shape": [
    74,
    384,
@@ -442,6 +445,9 @@
   "mean": -5.465811755195936e-07,
   "min": -0.6667734399363171,
   "sha256": "aa3b74ae555c00d062c8a9b303affa82f2b3abb42c2a8162881ed18f6b52a88d",
+  "sha256_variants": {
+   "GB10_NVHPC26.5_CUDA13.2": "4eaf07a3c48608798557e4ad2d0a3e1e9996809731555be40e7195aa4dd1c897"
+  },
   "shape": [
    74,
    384,
@@ -454,6 +460,9 @@
   "mean": 2.989855057115225e-07,
   "min": -0.6662592082502621,
   "sha256": "b0b813d60e0cd5f09448d115a4f61827b151e23bdf4550f4aa1b10ca713c1243",
+  "sha256_variants": {
+   "GB10_NVHPC26.5_CUDA13.2": "707229e50c8074939145b3b6c879772cbf38c42e6859fa4076db96935daffee5"
+  },
   "shape": [
    74,
    384,
@@ -466,6 +475,9 @@
   "mean": 2.165275664715385e-22,
   "min": -0.11706425806265075,
   "sha256": "f3e93d0c5df650650dd7875b9d30152ee7dda913202c521177a3d7b7ce554b04",
+  "sha256_variants": {
+   "GB10_NVHPC26.5_CUDA13.2": "43e5a3a3e0887e792b13cbafff7c75ccf839a7419b5d5c03ffdcba1f5093ac87"
+  },
   "shape": [
    74,
    384,
@@ -488,6 +500,9 @@
   "mean": -7.416921796627892e-10,
   "min": -0.0036899356409335663,
   "sha256": "3e3c1e041ac6ef67c7a82369b3283cb40908f391640a44eb198862cb3fd26b16",
+  "sha256_variants": {
+   "GB10_NVHPC26.5_CUDA13.2": "fedd5082b2828d2bee4e218a060b0c63e71571d68dfd247a7d22b7114f0dca58"
+  },
   "shape": [
    74,
    384,
@@ -520,6 +535,9 @@
   "mean": 1.2067592007707655e-24,
   "min": -2.1032583351140364e-05,
   "sha256": "0df6491f5d6da7754d4770bd684502335621a71abccaab38ddf1dbe61c076291",
+  "sha256_variants": {
+   "GB10_NVHPC26.5_CUDA13.2": "3f5922c2a7e80752b0221e6ae0ee74746b735e12ae3088262e7363ddf5ea464b"
+  },
   "shape": [
    74,
    384,

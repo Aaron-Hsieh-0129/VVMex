@@ -1,11 +1,11 @@
 #include "core/GridSpecification.hpp"
+#include "core/geometry/GeometryKind.hpp"
+#include "utils/ConfigurationManager.hpp"
 
 #include <cmath>
 #include <stdexcept>
 #include <string>
 #include <vector>
-
-#include "utils/ConfigurationManager.hpp"
 
 namespace VVM {
 namespace Core {
@@ -94,9 +94,12 @@ parse_vertical_coordinate_type(const std::string& value, const char* key) {
 
 Geometry::GeometryKind
 parse_geometry_kind(const std::string& value, const char* key) {
-
     if (value == "cartesian") {
         return Geometry::GeometryKind::Cartesian;
+    }
+
+    if (value == "affine") {
+        return Geometry::GeometryKind::Affine;
     }
 
     if (value == "regular_latlon") {
@@ -107,8 +110,8 @@ parse_geometry_kind(const std::string& value, const char* key) {
         return Geometry::GeometryKind::CubedSphere;
     }
 
-    configuration_error(
-        std::string("'") + key + "' must be 'cartesian', 'regular_latlon', or 'cubed_sphere'.");
+    configuration_error(std::string("'") + key +
+                        "' must be 'cartesian', 'affine', 'regular_latlon', or 'cubed_sphere'.");
 
     return Geometry::GeometryKind::Cartesian;
 }
@@ -132,7 +135,6 @@ void
 configure_cartesian_geometry(HorizontalDomainSpec& horizontal,
     const Utils::ConfigurationManager& config,
     const bool structured) {
-
     const char* dx_key = structured ? "grid.horizontal.geometry.dx" : "grid.dx";
     const char* dy_key = structured ? "grid.horizontal.geometry.dy" : "grid.dy";
 
@@ -232,9 +234,50 @@ configure_regular_lat_lon_geometry(HorizontalDomainSpec& horizontal,
     require_finite_positive(horizontal.geometry.dq2, "derived RLL latitude spacing");
 }
 
+void
+configure_affine_geometry(HorizontalDomainSpec& horizontal,
+    const Utils::ConfigurationManager& config) {
+    auto& geometry = horizontal.geometry;
+
+    geometry.kind = Geometry::GeometryKind::Affine;
+    geometry.dq1 = config.get_value<Real>("grid.horizontal.geometry.dq1");
+    geometry.dq2 = config.get_value<Real>("grid.horizontal.geometry.dq2");
+
+    require_finite_positive(geometry.dq1, "grid.horizontal.geometry.dq1");
+    require_finite_positive(geometry.dq2, "grid.horizontal.geometry.dq2");
+
+    const auto basis = config.get_value<std::vector<Real>>("grid.horizontal.geometry.basis");
+    if (basis.size() != 4) {
+        configuration_error("Affine basis requires four row-major entries.");
+    }
+    for (int n = 0; n < 4; ++n) {
+        if (!std::isfinite(basis[n])) {
+            configuration_error("Affine basis entries must be finite.");
+        }
+        geometry.affine_basis[n] = basis[n];
+    }
+    const Real determinant = basis[0] * basis[3] - basis[1] * basis[2];
+    if (!std::isfinite(determinant) || determinant <= real(0.0)) {
+        configuration_error("Affine basis must have a positive finite determinant.");
+    }
+    const Real radians = std::acos(real(-1.0)) / real(180.0);
+    geometry.reference_longitude =
+        config.get_value<Real>("grid.horizontal.geometry.reference_longitude_deg", real(0.0)) *
+        radians;
+    geometry.reference_latitude =
+        config.get_value<Real>("grid.horizontal.geometry.reference_latitude_deg", real(0.0)) *
+        radians;
+
+    if (!std::isfinite(geometry.reference_longitude) ||
+        !std::isfinite(geometry.reference_latitude) ||
+        std::abs(geometry.reference_latitude) > real(90.0) * radians) {
+        configuration_error("Affine reference longitude/latitude must be finite with latitude "
+                            "within the poles.");
+    }
+}
+
 HorizontalDomainSpec
 parse_structured_horizontal(const Utils::ConfigurationManager& config) {
-
     HorizontalDomainSpec horizontal;
 
     horizontal.nx = config.get_value<int>("grid.horizontal.nx");
@@ -265,6 +308,11 @@ parse_structured_horizontal(const Utils::ConfigurationManager& config) {
     case Geometry::GeometryKind::RegularLatLon:
         configure_regular_lat_lon_geometry(horizontal, config);
         break;
+
+    case Geometry::GeometryKind::Affine: {
+        configure_affine_geometry(horizontal, config);
+        break;
+    }
 
     case Geometry::GeometryKind::CubedSphere:
         configuration_error("cubed-sphere geometry is recognized but is not implemented.");
@@ -302,7 +350,6 @@ parse_legacy_horizontal(const Utils::ConfigurationManager& config) {
 void
 validate_vertical_spec(
     const VerticalGridSpec& vertical, const char* nz_key, const char* dz_key, const char* dz1_key) {
-
     require_positive_integer(vertical.nz, nz_key);
     require_finite_positive(vertical.dz, dz_key);
     require_finite_positive(vertical.dz1, dz1_key);
@@ -364,7 +411,6 @@ parse_legacy_vertical(const Utils::ConfigurationManager& config) {
 
 const char*
 horizontal_edge_topology_to_string(const HorizontalEdgeTopology topology) noexcept {
-
     switch (topology) {
     case HorizontalEdgeTopology::Periodic:
         return "periodic";
@@ -378,7 +424,6 @@ horizontal_edge_topology_to_string(const HorizontalEdgeTopology topology) noexce
 
 const char*
 vertical_coordinate_type_to_string(const VerticalCoordinateType type) noexcept {
-
     switch (type) {
     case VerticalCoordinateType::Default:
         return "default";

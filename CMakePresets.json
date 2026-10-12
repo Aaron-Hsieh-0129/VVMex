@@ -255,6 +255,62 @@
         "SCREAM_SMALL_PACK_SIZE": "1",
         "SCREAM_P3_SMALL_KERNELS": "ON"
       }
+    },
+    {
+      "name": "gaia-ntu-cpu",
+      "displayName": "NVHPC 24.9 on gaia-ntu, CPU-only",
+      "description": "Kokkos OpenMP, MPI instead of NCCL, land model without OpenACC",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build_cpu",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "NVHPC_DIR": "/data/Aaron/nvhpc_24_9/Linux_x86_64/24.9",
+        "VVM_GCC_TOOLCHAIN": "/data/Aaron/libs_VVMex/gcc11",
+        "HDF5_DIR": "/data/Aaron/libs_VVMex",
+        "NETCDF_C_DIR": "/data/Aaron/libs_VVMex",
+        "NETCDF_Fortran_DIR": "/data/Aaron/libs_VVMex",
+        "PNETCDF_DIR": "/data/Aaron/libs_VVMex",
+        "Kokkos_DIR": "/data/Aaron/libs_VVMex-cpu",
+        "ADIOS2_DIR": "/data/Aaron/libs_VVMex",
+        "VVM_ENABLE_GPU": "OFF",
+        "ENABLE_NCCL": "OFF",
+        "EAMXX_ENABLE_GPU": "OFF",
+        "Kokkos_ENABLE_CUDA": "OFF",
+        "VVM_USE_DOUBLE_PRECISION": "ON",
+        "SCREAM_DOUBLE_PRECISION": "ON",
+        "RRTMGP_USE_DOUBLE_PRECISION": "ON",
+        "SCREAM_PACK_SIZE": "1",
+        "SCREAM_SMALL_PACK_SIZE": "1",
+        "SCREAM_P3_SMALL_KERNELS": "ON"
+      }
+    },
+    {
+      "name": "gaia-ntu",
+      "displayName": "NVHPC 24.9 on gaia-ntu",
+      "description": "8x H200, NVHPC 24.9",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "NVHPC_DIR": "/data/Aaron/nvhpc_24_9/Linux_x86_64/24.9",
+        "VVM_GCC_TOOLCHAIN": "/data/Aaron/libs_VVMex/gcc11",
+        "HDF5_DIR": "/data/Aaron/libs_VVMex",
+        "NETCDF_C_DIR": "/data/Aaron/libs_VVMex",
+        "NETCDF_Fortran_DIR": "/data/Aaron/libs_VVMex",
+        "PNETCDF_DIR": "/data/Aaron/libs_VVMex",
+        "Kokkos_DIR": "/data/Aaron/libs_VVMex",
+        "ADIOS2_DIR": "/data/Aaron/libs_VVMex",
+        "VVM_ENABLE_GPU": "ON",
+        "ENABLE_NCCL": "ON",
+        "EAMXX_ENABLE_GPU": "ON",
+        "Kokkos_ENABLE_CUDA": "ON",
+        "VVM_USE_DOUBLE_PRECISION": "ON",
+        "SCREAM_DOUBLE_PRECISION": "ON",
+        "RRTMGP_USE_DOUBLE_PRECISION": "ON",
+        "SCREAM_PACK_SIZE": "1",
+        "SCREAM_SMALL_PACK_SIZE": "1",
+        "SCREAM_P3_SMALL_KERNELS": "ON"
+      }
     }
   ]
 }

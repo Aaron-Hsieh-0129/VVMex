@@ -1,6 +1,7 @@
 #ifndef VVM_CORE_GEOMETRY_HORIZONTAL_GRID_SPEC_HPP
 #define VVM_CORE_GEOMETRY_HORIZONTAL_GRID_SPEC_HPP
 
+#include <array>
 #include "core/geometry/GeometryKind.hpp"
 #include "core/vvm_types.hpp"
 
@@ -26,6 +27,9 @@ struct HorizontalGridSpec {
     VVM::Real dq2 = VVM::real(0.0);
 
     RegularLatLonParameters regular_lat_lon;
+    // Row-major physical = B * contravariant; q1/q2 have metre units.
+    std::array<VVM::Real, 4> affine_basis{real(1.0), real(0.0), real(0.0), real(1.0)};
+    VVM::Real reference_longitude = real(0.0), reference_latitude = real(0.0);
 };
 
 } // namespace Geometry

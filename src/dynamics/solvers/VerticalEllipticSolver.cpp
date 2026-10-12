@@ -264,7 +264,7 @@ VerticalEllipticSolver::refresh(WorkField& field, int depth) {
     halo_.exchange_halos(field, depth);
 
     if (boundary_) {
-        boundary_->fill_constant_q2_halos(field);
+        boundary_->fill_physical_q2_neumann_halos(field);
     }
 }
 

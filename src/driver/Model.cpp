@@ -1,7 +1,6 @@
 #include "Model.hpp"
 #include "utils/ProcessScheduling.hpp"
 #include "utils/Timer.hpp"
-#include "core/RegularLatLonModelConfiguration.hpp"
 
 namespace VVM {
 namespace Driver {
@@ -12,7 +11,7 @@ Model::Model(const Utils::ConfigurationManager& config,
     Core::State& state,
     Core::HaloExchanger& halo_exchanger)
     : config_(config), params_(params), grid_(grid), state_(state), halo_exchanger_(halo_exchanger),
-      bc_manager_(grid, Core::is_rll_idealized(config)) {
+      bc_manager_(grid, grid.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
     VVM::Real dt_s = params_.get_value_host(params_.dt);
 
     std::string mode = config_.get_value<std::string>("simulation.idealized_test", "none");
@@ -171,7 +170,8 @@ Model::init() {
         halo_exchanger_.exchange_multiple_halos(thermo_boundary_fields_);
 
         for (const auto& target : thermo_boundary_targets_) {
-            if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+            if (grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian &&
+                target.name != "xi" && target.name != "eta") {
                 bc_manager_.apply_horizontal_bcs(*target.field);
             }
 
@@ -188,7 +188,8 @@ Model::init() {
         // ---------------------------------------------------------
         halo_exchanger_.exchange_multiple_halos(dynamics_boundary_fields_);
         for (const auto& target : dynamics_boundary_targets_) {
-            if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+            if (grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian &&
+                target.name != "xi" && target.name != "eta") {
                 bc_manager_.apply_horizontal_bcs(*target.field);
             }
             if (target.name == "zeta") {
@@ -223,12 +224,31 @@ Model::init() {
         predict_uvtopmn_ = false;
     }
 
-    dycore_->sync_contravariant_vorticity_from_physical();
-    if (restart_enabled) {
-        dycore_->update_contravariant_wind_shadow_state();
+    if (!initializer.has_canonical_horizontal_vorticity()) {
+        dycore_->sync_contravariant_vorticity_from_physical();
     }
-    else if (config_.get_value<bool>("initial_conditions.diagnose_wind_from_vorticity", false) ||
-             Core::is_rll_idealized(config_)) {
+    else {
+        halo_exchanger_.exchange_multiple_halos(std::vector<Core::Field<3>*>{
+            &state_.get_field<3>("xi_con"), &state_.get_field<3>("eta_con")});
+        Kokkos::deep_copy(Kokkos::DefaultExecutionSpace(),
+            state_.get_field<3>("zeta_con").get_mutable_device_data(),
+            state_.get_field<3>("zeta").get_device_data());
+    }
+    if (grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
+        bc_manager_.apply_horizontal_vorticity_bcs(state_.get_field<3>("xi_con"),
+            state_.get_field<3>("eta_con"));
+        bc_manager_.apply_vorticity_bc(state_.get_field<3>("xi_con"));
+        bc_manager_.apply_vorticity_bc(state_.get_field<3>("eta_con"));
+        dycore_->sync_physical_horizontal_vorticity_from_contravariant();
+    }
+    if (restart_enabled) {
+        if (!initializer.restored_canonical_horizontal_state()) {
+            dycore_->update_contravariant_wind_shadow_state();
+        }
+    }
+    else if (wind_solver_ &&
+             (config_.get_value<bool>("initial_conditions.diagnose_wind_from_vorticity", false) ||
+                 grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian)) {
         dycore_->compute_wind_fields();
     }
     else {
@@ -237,7 +257,7 @@ Model::init() {
     dycore_->compute_diagnostic_fields();
 
     if (restart_enabled) {
-        dycore_->initialize_restart_history();
+        dycore_->initialize_restart_history(initializer.restored_canonical_horizontal_state());
     }
 }
 
@@ -475,7 +495,8 @@ Model::run_step(VVM::Real dt) {
         VVM::Utils::Timer timer("halo_exchange");
         halo_exchanger_.exchange_multiple_halos(thermo_boundary_fields_);
         for (const auto& target : thermo_boundary_targets_) {
-            if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+            if (grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian &&
+                target.name != "xi" && target.name != "eta") {
                 bc_manager_.apply_horizontal_bcs(*target.field);
             }
             if (target.zero_gradient_top) {
@@ -502,6 +523,10 @@ Model::run_step(VVM::Real dt) {
         dycore_->calculate_vorticity_tendencies();
         // Update vorticity to t+1
         dycore_->update_vorticity(dt);
+    }
+
+    if (turbulence_ || sponge_layer_ || enable_surface_process_ || area_mean_nudging_) {
+        dycore_->begin_physical_vorticity_update();
     }
 
     // Vorticity diffusion
@@ -582,12 +607,13 @@ Model::run_step(VVM::Real dt) {
         VVM::Utils::Timer timer("halo_exchange");
         halo_exchanger_.exchange_multiple_halos(dynamics_boundary_fields_);
         for (const auto& target : dynamics_boundary_targets_) {
-            if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+            if (grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian &&
+                target.name != "xi" && target.name != "eta") {
                 bc_manager_.apply_horizontal_bcs(*target.field);
             }
             if (target.name == "zeta" &&
-                grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
-                // RLL advances physical top zeta as the horizontal elliptic
+                grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
+                // Mapped dynamics advance physical top zeta as the horizontal elliptic
                 // right-hand side. Keep that value for the wind recovery.
                 bc_manager_.apply_zero_gradient(*target.field);
             }
@@ -597,7 +623,7 @@ Model::run_step(VVM::Real dt) {
         }
         dycore_->compute_zeta_vertical_structure(state_);
 
-        dycore_->sync_contravariant_vorticity_from_physical();
+        dycore_->finish_physical_vorticity_update();
     }
 
     if (wind_solver_) {

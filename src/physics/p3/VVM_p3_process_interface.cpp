@@ -993,7 +993,7 @@ void VVM_P3_Interface::postprocessing_and_unpacking(VVM::Core::State& state) {
         }
     }
     halo_exchanger_.exchange_multiple_halos(m_p3_update_fields);
-    if (grid_.geometry().kind() == Core::Geometry::GeometryKind::RegularLatLon) {
+    if (grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
         Core::BoundaryConditionManager boundary(grid_, true);
         for (auto* field : m_p3_update_fields) {
             boundary.apply_horizontal_bcs(*field);

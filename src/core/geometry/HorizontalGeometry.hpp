@@ -109,7 +109,6 @@ struct Matrix2DeviceView {
     KOKKOS_INLINE_FUNCTION
     VVM::Real
     component_1(const int j, const int i, const VVM::Real x1, const VVM::Real x2) const noexcept {
-
         return a11(j, i) * x1 + a12(j, i) * x2;
     }
 

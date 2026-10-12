@@ -2,6 +2,8 @@
 #define VVM_CORE_BOUNDARY_HORIZONTAL_BOUNDARY_STENCILS_HPP
 
 #include <cstddef>
+#include <memory>
+#include "core/geometry/StaggeredVectorTransform.hpp"
 #include <stdexcept>
 #include <Kokkos_Core.hpp>
 
@@ -272,172 +274,276 @@ public:
         }
     }
 
-    // Fill RLL bounded-q2 halos for canonical scalar-advection mass fluxes:
-    //
-    //   F^1 = rho * u^1
-    //   F^2 = rho * u^2
-    //
-    // The historical scalar-advection boundary sequence first applied the
-    // centered physical q1 condition to rho*U and only then divided by h1.
-    // Reproducing the same wall condition directly in canonical storage gives
-    //
-    //   F^1_ext = F^1_int * h1_int / h1_ext.
-    //
-    // The q2 component is normal to the channel wall and remains homogeneous
-    // Dirichlet.
-    //
-    // This is deliberately topology/geometry-specific boundary logic. The
-    // generalized transport operator itself remains free of RLL h1/h2 assumptions.
+    // Free-slip chart wall: covariant tangential velocity is even; the
+    // contravariant normal mass flux is odd and zero on the wall face.
+    // Scalar transport instead reflects physical tangential flux evenly.
     template <typename Q1Layout, typename Q2Layout>
     void
-    fill_regular_lat_lon_contravariant_scalar_mass_flux_halos(Field<3, Q1Layout>& q1_mass_flux,
-        Field<3, Q2Layout>& q2_mass_flux) const {
-
-        if (grid_.geometry().kind() != Geometry::GeometryKind::RegularLatLon) {
-
-            throw std::invalid_argument("RLL canonical scalar mass-flux boundaries "
-                                        "require regular latitude-longitude geometry.");
-        }
-
-        const int halo = grid_.get_halo_cells();
-
-        if (halo == 0 || grid_.get_global_points_y() == 1) {
+    fill_contravariant_wind_halos(
+        Field<3, Q1Layout>& first, Field<3, Q2Layout>& second, bool scalar_flux = false) const {
+        const int h = grid_.get_halo_cells();
+        if (h == 0 || grid_.get_global_points_y() == 1) {
             return;
         }
-
-        auto q1 = q1_mass_flux.get_mutable_device_data();
-        auto q2 = q2_mass_flux.get_mutable_device_data();
-
-        if (q1.extent(0) != q2.extent(0) || q1.extent(1) != q2.extent(1) ||
-            q1.extent(2) != q2.extent(2)) {
-
-            throw std::invalid_argument("RLL canonical scalar mass-flux fields "
-                                        "must have matching extents.");
+        const auto q1 = first.get_mutable_device_data();
+        const auto q2 = second.get_mutable_device_data();
+        const int nz = q1.extent(0), ny = q1.extent(1), nx = q1.extent(2);
+        if (q2.extent(0) != q1.extent(0) || q2.extent(1) != q1.extent(1) ||
+            q2.extent(2) != q1.extent(2)) {
+            throw std::invalid_argument("Horizontal vector fields must have matching extents.");
         }
-
-        const int nz = static_cast<int>(q1.extent(0));
-
-        const int ny = static_cast<int>(q1.extent(1));
-
-        const int nx = static_cast<int>(q1.extent(2));
-
-        const bool is_south_boundary = grid_.get_local_physical_start_y() == 0;
-
-        const bool is_north_boundary =
-            grid_.get_local_physical_end_y() == grid_.get_global_points_y() - 1;
-
-        const auto h1_at_u = grid_.geometry()
-                                 .device_view(Geometry::HorizontalLocation::U)
-                                 .contravariant_to_physical.a11;
-
-        if (is_south_boundary) {
-            Kokkos::parallel_for("FillRLLCanonicalScalarMassFluxQ1South",
-                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, halo, nx}),
-                KOKKOS_LAMBDA(const int k, const int distance, const int i) {
-                    const int exterior_j = halo - 1 - distance;
-
-                    const int interior_j = halo + distance;
-
-                    q1(k, exterior_j, i) =
-                        q1(k, interior_j, i) * h1_at_u(interior_j, i) / h1_at_u(exterior_j, i);
+        const auto gu = grid_.geometry().device_view(Geometry::HorizontalLocation::U);
+        const auto gv = grid_.geometry().device_view(Geometry::HorizontalLocation::V);
+        const auto g11 = gu.g_cov.a11, g12 = gv.g_cov.a12;
+        const auto normal_g11 = gv.g_cov.a11, normal_inv_j = gv.inv_sqrt_g;
+        const bool south = grid_.get_local_physical_start_y() == 0;
+        const bool north = grid_.get_local_physical_end_y() == grid_.get_global_points_y() - 1;
+        for (int side = 0; side < 2; ++side) {
+            if ((side == 0 && !south) || (side == 1 && !north)) {
+                continue;
+            }
+            const int wall = side == 0 ? h - 1 : ny - h - 1;
+            const int direction = side == 0 ? -1 : 1;
+            const int count = side == 0 ? h : h + 1;
+            Kokkos::parallel_for("ReflectContravariantNormalFlux",
+                Kokkos::Experimental::require(
+                    Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, count, nx}),
+                    Kokkos::Experimental::WorkItemProperty::HintLightWeight),
+                KOKKOS_LAMBDA(int k, int distance, int i) {
+                    const int exterior = wall + direction * distance;
+                    const int interior = wall - direction * distance;
+                    q2(k, exterior, i) =
+                        distance == 0
+                            ? real(0.0)
+                            : -q2(k, interior, i) *
+                                  Kokkos::sqrt(normal_g11(exterior, i) / normal_g11(interior, i)) *
+                                  normal_inv_j(exterior, i) / normal_inv_j(interior, i);
+                });
+            Kokkos::parallel_for("ReflectCovariantTangentialWind",
+                Kokkos::Experimental::require(
+                    Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, h, nx}),
+                    Kokkos::Experimental::WorkItemProperty::HintLightWeight),
+                KOKKOS_LAMBDA(int k, int distance, int i) {
+                    const int exterior = side == 0 ? h - 1 - distance : ny - h + distance;
+                    const int interior = side == 0 ? h + distance : ny - h - 1 - distance;
+                    Real covariant = g11(interior, i) * q1(k, interior, i) +
+                                     Geometry::weighted_cross<true>(q2, g12, k, interior, i);
+                    if (scalar_flux) {
+                        covariant *= Kokkos::sqrt(g11(exterior, i) / g11(interior, i));
+                    }
+                    q1(k, exterior, i) =
+                        (covariant - Geometry::weighted_cross<true>(q2, g12, k, exterior, i)) /
+                        g11(exterior, i);
                 });
         }
-
-        if (is_north_boundary) {
-            const int first_north_halo_j = ny - halo;
-
-            const int last_physical_j = first_north_halo_j - 1;
-
-            Kokkos::parallel_for("FillRLLCanonicalScalarMassFluxQ1North",
-                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, halo, nx}),
-                KOKKOS_LAMBDA(const int k, const int distance, const int i) {
-                    const int exterior_j = first_north_halo_j + distance;
-
-                    const int interior_j = last_physical_j - distance;
-
-                    q1(k, exterior_j, i) =
-                        q1(k, interior_j, i) * h1_at_u(interior_j, i) / h1_at_u(exterior_j, i);
-                });
-        }
-
-        fill_positive_face_q2_homogeneous_dirichlet_halos(q2_mass_flux);
     }
 
-    // Apply the RLL physical free-slip wall rule to physical eastward and
-    // northward wind:
-    //
-    //   v_N = 0
-    //   d(u_1)/dphi = 0, where u_1 = R cos(phi) u_E.
-    //
-    // Normal wind uses positive-face odd reflection. Eastward physical wind
-    // uses centered reflection of its covariant component, rather than
-    // reflection of physical u_E itself.
-    template <typename ULayout, typename VLayout>
+    template <typename Q1Layout, typename Q2Layout>
     void
-    fill_regular_lat_lon_free_slip_physical_wind_halos(Field<3, ULayout>& u,
-        Field<3, VLayout>& v) const {
+    fill_contravariant_scalar_mass_flux_halos(Field<3, Q1Layout>& q1,
+        Field<3, Q2Layout>& q2) const {
+        fill_contravariant_wind_halos(q1, q2, true);
+    }
 
-        if (grid_.geometry().kind() != Geometry::GeometryKind::RegularLatLon) {
-            throw std::invalid_argument("RLL free-slip physical wind boundaries require regular "
-                                        "latitude-longitude geometry.");
-        }
-
-        const int halo = grid_.get_halo_cells();
-
-        if (halo == 0 || grid_.get_global_points_y() == 1) {
+    // VVM stores xi=omega^1@V and eta=-omega^2@U. At a free-slip
+    // wall the tangential covector component vanishes; the normal component
+    // is reflected evenly. Treat the pair together on a skew chart.
+    void
+    fill_contravariant_vorticity_halos(Field<3>& xi, Field<3>& eta) const {
+        const int h = grid_.get_halo_cells();
+        if (h == 0 || grid_.get_global_points_y() == 1) {
             return;
         }
-
-        auto u_data = u.get_mutable_device_data();
-        auto v_data = v.get_mutable_device_data();
-
-        if (u_data.extent(0) != v_data.extent(0) || u_data.extent(1) != v_data.extent(1) ||
-            u_data.extent(2) != v_data.extent(2)) {
-
-            throw std::invalid_argument(
-                "RLL free-slip physical u and v fields must have matching extents.");
-        }
-
-        const int nz = static_cast<int>(u_data.extent(0));
-        const int ny = static_cast<int>(u_data.extent(1));
-        const int nx = static_cast<int>(u_data.extent(2));
-
-        const bool is_south_boundary = grid_.get_local_physical_start_y() == 0;
-        const bool is_north_boundary =
-            grid_.get_local_physical_end_y() == grid_.get_global_points_y() - 1;
-
-        const auto h1_at_u = grid_.geometry()
-                                 .device_view(Geometry::HorizontalLocation::U)
-                                 .contravariant_to_physical.a11;
-
-        if (is_south_boundary) {
-            Kokkos::parallel_for("FillRLLFreeSlipUAtSouth",
-                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, halo, nx}),
-                KOKKOS_LAMBDA(const int k, const int distance, const int i) {
-                    const int exterior_j = halo - 1 - distance;
-                    const int interior_j = halo + distance;
-
-                    u_data(k, exterior_j, i) =
-                        u_data(k, interior_j, i) * h1_at_u(interior_j, i) / h1_at_u(exterior_j, i);
+        const auto x = xi.get_mutable_device_data(), e = eta.get_mutable_device_data();
+        const int nz = x.extent(0), ny = x.extent(1), nx = x.extent(2);
+        const auto gv = grid_.geometry().device_view(Geometry::HorizontalLocation::V);
+        const auto gu = grid_.geometry().device_view(Geometry::HorizontalLocation::U);
+        const auto g11 = gv.g_cov.a11, g12 = gu.g_cov.a12;
+        const auto normal_g11 = gu.g_cov.a11, normal_inv_j = gu.inv_sqrt_g;
+        for (int side = 0; side < 2; ++side) {
+            if (side == 0 && grid_.get_local_physical_start_y() != 0) {
+                continue;
+            }
+            if (side == 1 && grid_.get_local_physical_end_y() != grid_.get_global_points_y() - 1) {
+                continue;
+            }
+            const int wall = side == 0 ? h - 1 : ny - h - 1;
+            const int direction = side == 0 ? -1 : 1;
+            const int count = side == 0 ? h : h + 1;
+            Kokkos::parallel_for("ReflectNormalVorticityComponent",
+                Kokkos::Experimental::require(
+                    Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, h, nx}),
+                    Kokkos::Experimental::WorkItemProperty::HintLightWeight),
+                KOKKOS_LAMBDA(int k, int distance, int i) {
+                    const int exterior = side == 0 ? h - 1 - distance : ny - h + distance;
+                    const int interior = side == 0 ? h + distance : ny - h - 1 - distance;
+                    e(k, exterior, i) =
+                        e(k, interior, i) *
+                        Kokkos::sqrt(normal_g11(exterior, i) / normal_g11(interior, i)) *
+                        normal_inv_j(exterior, i) / normal_inv_j(interior, i);
+                });
+            Kokkos::parallel_for("ReflectHorizontalVorticityPair",
+                Kokkos::Experimental::require(
+                    Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, count, nx}),
+                    Kokkos::Experimental::WorkItemProperty::HintLightWeight),
+                KOKKOS_LAMBDA(int k, int distance, int i) {
+                    const int exterior = wall + direction * distance;
+                    const int interior = wall - direction * distance;
+                    const Real cov =
+                        distance == 0
+                            ? real(0.0)
+                            : -(g11(interior, i) * x(k, interior, i) -
+                                  Geometry::weighted_cross<false>(e, g12, k, interior, i)) *
+                                  Kokkos::sqrt(g11(exterior, i) / g11(interior, i));
+                    x(k, exterior, i) =
+                        (cov + Geometry::weighted_cross<false>(e, g12, k, exterior, i)) /
+                        g11(exterior, i);
                 });
         }
+    }
 
-        if (is_north_boundary) {
-            const int first_north_halo_j = ny - halo;
-            const int last_physical_j = first_north_halo_j - 1;
-
-            Kokkos::parallel_for("FillRLLFreeSlipUAtNorth",
-                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, halo, nx}),
-                KOKKOS_LAMBDA(const int k, const int distance, const int i) {
-                    const int exterior_j = first_north_halo_j + distance;
-                    const int interior_j = last_physical_j - distance;
-
-                    u_data(k, exterior_j, i) =
-                        u_data(k, interior_j, i) * h1_at_u(interior_j, i) / h1_at_u(exterior_j, i);
+    // Oblique physical Neumann condition g^2i d_i(s)=0 on q2 walls.
+    // Interior tangential differences avoid simultaneous ghost-row reads.
+    template <size_t Dim, typename Layout>
+    void
+    fill_physical_q2_neumann_halos(Field<Dim, Layout>& field) const {
+        static_assert(Dim == 2 || Dim == 3);
+        const int h = grid_.get_halo_cells();
+        if (h == 0 || grid_.get_global_points_y() == 1) {
+            return;
+        }
+        auto data = field.get_mutable_device_data();
+        const int ny = grid_.get_local_total_points_y(), nx = grid_.get_local_total_points_x();
+        const int nz = Dim == 3 ? grid_.get_local_total_points_z() : 1;
+        const auto gv = grid_.geometry().device_view(Geometry::HorizontalLocation::V);
+        const auto c12 = gv.sqrt_g_g_contra.a12, c22 = gv.sqrt_g_g_contra.a22;
+        const Real spacing = grid_.geometry().dq2() / (real(2.0) * grid_.geometry().dq1());
+        for (int side = 0; side < 2; ++side) {
+            if (side == 0 && grid_.get_local_physical_start_y() != 0) {
+                continue;
+            }
+            if (side == 1 && grid_.get_local_physical_end_y() != grid_.get_global_points_y() - 1) {
+                continue;
+            }
+            const int wall = side == 0 ? h - 1 : ny - h - 1;
+            Kokkos::parallel_for("PhysicalQ2NeumannHalos",
+                Kokkos::Experimental::require(
+                    Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, h, nx}),
+                    Kokkos::Experimental::WorkItemProperty::HintLightWeight),
+                KOKKOS_LAMBDA(int k, int d, int i) {
+                    // Capture the view before constexpr branching for NVCC.
+                    const auto values = data;
+                    const int exterior = side == 0 ? h - 1 - d : ny - h + d;
+                    const int interior = side == 0 ? h + d : ny - h - 1 - d;
+                    const int im = i > 0 ? i - 1 : i, ip = i + 1 < nx ? i + 1 : i;
+                    const Real scale = (side == 0 ? real(1.0) : real(-1.0)) * real(2 * d + 1) *
+                                       spacing * c12(wall, i) / c22(wall, i);
+                    if constexpr (Dim == 2) {
+                        values(exterior, i) =
+                            values(interior, i) + scale * (values(interior, ip) - values(interior, im));
+                    }
+                    else {
+                        values(k, exterior, i) =
+                            values(k, interior, i) +
+                            scale * (values(k, interior, ip) - values(k, interior, im));
+                    }
                 });
         }
+    }
 
-        fill_positive_face_q2_homogeneous_dirichlet_halos(v);
+    // Physical compatibility halos are exported from a canonical pair. The
+    // original physical interior is retained, avoiding a staggered round trip.
+    template <typename ULayout, typename VLayout>
+    void
+    fill_free_slip_physical_wind_halos(Field<3, ULayout>& u, Field<3, VLayout>& v) const {
+        const int h = grid_.get_halo_cells();
+        if (h == 0 || grid_.get_global_points_y() == 1) {
+            return;
+        }
+        const auto ud = u.get_mutable_device_data(), vd = v.get_mutable_device_data();
+        if (ud.extent(0) != vd.extent(0) || ud.extent(1) != vd.extent(1) ||
+            ud.extent(2) != vd.extent(2)) {
+            throw std::invalid_argument("Physical wind fields must have matching extents.");
+        }
+        const auto gu = grid_.geometry().device_view(Geometry::HorizontalLocation::U);
+        const auto gv = grid_.geometry().device_view(Geometry::HorizontalLocation::V);
+        const auto zero = [](const auto& coefficient) {
+            return coefficient.layout == Geometry::GeometryFieldLayout::Constant &&
+                   coefficient.constant == real(0.0);
+        };
+        if (zero(gu.physical_to_contravariant.a12) &&
+            zero(gv.physical_to_contravariant.a21)) {
+            // On a diagonal chart, reflect physical normal wind directly.
+            // A physical/canonical round trip would lose exact odd symmetry.
+            const auto h1 = gu.contravariant_to_physical.a11;
+            const int nz = ud.extent(0), ny = ud.extent(1), nx = ud.extent(2);
+            for (int side = 0; side < 2; ++side) {
+                if ((side == 0 && grid_.get_local_physical_start_y() != 0) ||
+                    (side == 1 && grid_.get_local_physical_end_y() !=
+                                      grid_.get_global_points_y() - 1)) {
+                    continue;
+                }
+                Kokkos::parallel_for("ReflectDiagonalPhysicalTangentialWind",
+                    Kokkos::Experimental::require(
+                        Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, h, nx}),
+                        Kokkos::Experimental::WorkItemProperty::HintLightWeight),
+                    KOKKOS_LAMBDA(int k, int distance, int i) {
+                        const int exterior = side == 0 ? h - 1 - distance : ny - h + distance;
+                        const int interior = side == 0 ? h + distance : ny - h - 1 - distance;
+                        ud(k, exterior, i) =
+                            ud(k, interior, i) * h1(interior, i) / h1(exterior, i);
+                    });
+            }
+            fill_positive_face_q2_homogeneous_dirichlet_halos(v);
+            return;
+        }
+        if (!wind_q1_) {
+            const std::array<int, 3> shape{grid_.get_local_total_points_z(),
+                grid_.get_local_total_points_y(),
+                grid_.get_local_total_points_x()};
+            wind_q1_ = std::make_unique<Field<3>>("wall canonical q1 scratch", shape);
+            wind_q2_ = std::make_unique<Field<3>>("wall canonical q2 scratch", shape);
+        }
+        auto q1 = wind_q1_->get_mutable_device_data(), q2 = wind_q2_->get_mutable_device_data();
+        Geometry::transform_staggered_vector<true>(u.get_device_data(),
+            v.get_device_data(),
+            q1,
+            q2,
+            gu.physical_to_contravariant,
+            gv.physical_to_contravariant);
+        fill_contravariant_wind_halos(*wind_q1_, *wind_q2_);
+        const auto b11 = gu.contravariant_to_physical.a11, b12 = gv.contravariant_to_physical.a12;
+        const auto b21 = gu.contravariant_to_physical.a21, b22 = gv.contravariant_to_physical.a22;
+        const int nz = ud.extent(0), ny = ud.extent(1), nx = ud.extent(2);
+        const bool south = grid_.get_local_physical_start_y() == 0;
+        const bool north = grid_.get_local_physical_end_y() == grid_.get_global_points_y() - 1;
+        Kokkos::parallel_for("ExportPhysicalWallWindHalos",
+            Kokkos::Experimental::require(
+                    Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
+                    Kokkos::Experimental::WorkItemProperty::HintLightWeight),
+            KOKKOS_LAMBDA(int k, int j, int i) {
+                if ((south && j < h) || (north && j >= ny - h)) {
+                    ud(k, j, i) =
+                        b11(j, i) * q1(k, j, i) + Geometry::weighted_cross<true>(q2, b12, k, j, i);
+                }
+                if ((south && j < h) || (north && j >= ny - h - 1)) {
+                    vd(k, j, i) =
+                        b22(j, i) * q2(k, j, i) + Geometry::weighted_cross<false>(q1, b21, k, j, i);
+                }
+            });
+    }
+
+    // Compatibility names for downstream callers of the former RLL API.
+    template <typename A, typename B>
+    void
+    fill_regular_lat_lon_free_slip_physical_wind_halos(Field<3, A>& u, Field<3, B>& v) const {
+        fill_free_slip_physical_wind_halos(u, v);
+    }
+    template <typename A, typename B>
+    void
+    fill_regular_lat_lon_contravariant_scalar_mass_flux_halos(Field<3, A>& u,
+        Field<3, B>& v) const {
+        fill_contravariant_scalar_mass_flux_halos(u, v);
     }
 
     // Constant wall values for the total streamfunction. The wall difference
@@ -468,6 +574,7 @@ public:
 
 private:
     const Grid& grid_;
+    mutable std::unique_ptr<Field<3>> wind_q1_, wind_q2_;
 };
 
 } // namespace Boundary

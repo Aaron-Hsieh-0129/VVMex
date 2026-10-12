@@ -15,6 +15,29 @@ namespace Physics {
 
 namespace {
 
+// Keep only the geometry used by deformation/coefficient kernels. Capturing
+// three complete HorizontalGeometryDeviceViews brings geographic coordinates,
+// inverse metrics and unused transforms into every GPU launch.
+struct TurbulenceGeometryDeviceView {
+    Core::Geometry::SymmetricTensorDeviceView g_cov;
+    Core::Geometry::Matrix2DeviceView physical_to_contravariant;
+    Core::Geometry::GeometryField2D sqrt_g;
+    VVM::Real dq1, dq2, rdq1, rdq2;
+};
+
+TurbulenceGeometryDeviceView
+make_turbulence_geometry_device_view(const Core::Geometry::HorizontalGeometry& geometry,
+    const Core::Geometry::HorizontalLocation location) {
+    const auto geom = geometry.device_view(location);
+    return {geom.g_cov,
+        geom.physical_to_contravariant,
+        geom.sqrt_g,
+        geom.dq1,
+        geom.dq2,
+        geom.rdq1,
+        geom.rdq2};
+}
+
 struct CovariantHorizontalStrain {
     VVM::Real r11 = VVM::real(0.0);
     VVM::Real r12 = VVM::real(0.0);
@@ -28,7 +51,7 @@ horizontal_strain_at_t(const U1View& u1,
     const int k,
     const int j,
     const int i,
-    const Core::Geometry::HorizontalGeometryDeviceView& geom) noexcept {
+    const TurbulenceGeometryDeviceView& geom) noexcept {
     const VVM::Real u1_t = VVM::real(0.5) * (u1(k, j, i) + u1(k, j, i - 1));
     const VVM::Real u2_t = VVM::real(0.5) * (u2(k, j, i) + u2(k, j - 1, i));
 
@@ -82,7 +105,7 @@ horizontal_strain_at_z(const U1View& u1,
     const int k,
     const int j,
     const int i,
-    const Core::Geometry::HorizontalGeometryDeviceView& geom) noexcept {
+    const TurbulenceGeometryDeviceView& geom) noexcept {
     const VVM::Real u1_z = VVM::real(0.5) * (u1(k, j, i) + u1(k, j + 1, i));
     const VVM::Real u2_z = VVM::real(0.5) * (u2(k, j, i) + u2(k, j, i + 1));
 
@@ -127,7 +150,7 @@ horizontal_strain_at_z(const U1View& u1,
 KOKKOS_INLINE_FUNCTION
 VVM::Real
 physical_horizontal_strain_norm_squared(const CovariantHorizontalStrain& strain,
-    const Core::Geometry::HorizontalGeometryDeviceView& geom,
+    const TurbulenceGeometryDeviceView& geom,
     const int j,
     const int i) noexcept {
     const VVM::Real b11 = geom.physical_to_contravariant.a11(j, i);
@@ -148,7 +171,7 @@ physical_horizontal_strain_norm_squared(const CovariantHorizontalStrain& strain,
 KOKKOS_INLINE_FUNCTION
 VVM::Real
 physical_horizontal_shear_12(const CovariantHorizontalStrain& strain,
-    const Core::Geometry::HorizontalGeometryDeviceView& geom,
+    const TurbulenceGeometryDeviceView& geom,
     const int j,
     const int i) noexcept {
     const VVM::Real b11 = geom.physical_to_contravariant.a11(j, i);
@@ -170,6 +193,20 @@ TurbulenceProcess::TurbulenceProcess(const Utils::ConfigurationManager& config,
       masks_(grid.get_local_total_points_z(),
           grid.get_local_total_points_y(),
           grid.get_local_total_points_x()) {
+    if (grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
+        // Allocate/upload once, outside the timestep and any graph capture.
+        divergence_ = decltype(divergence_)("Turbulence horizontal divergence");
+        gradient_ = decltype(gradient_)("Turbulence horizontal gradient");
+        gradient_uv_ = decltype(gradient_uv_)("Turbulence horizontal UV gradient");
+        Kokkos::deep_copy(divergence_,
+            Dynamics::Operators::make_horizontal_flux_divergence_device_view(grid_.geometry()));
+        Kokkos::deep_copy(gradient_,
+            Dynamics::Operators::make_horizontal_scalar_gradient_device_view(grid_.geometry()));
+        Kokkos::deep_copy(gradient_uv_,
+            Dynamics::Operators::make_horizontal_scalar_gradient_at_uv_device_view(
+                grid_.geometry()));
+    }
+
     int nz = grid_.get_local_total_points_z();
     int ny = grid_.get_local_total_points_y();
     int nx = grid_.get_local_total_points_x();
@@ -781,9 +818,12 @@ TurbulenceProcess::compute_generalized_deformation(Core::State& state) {
 
     const auto& flex_height_coef_up = params_.flex_height_coef_up.get_device_data();
 
-    const auto geom_u = grid_.geometry().device_view(HorizontalLocation::U);
-    const auto geom_v = grid_.geometry().device_view(HorizontalLocation::V);
-    const auto geom_z = grid_.geometry().device_view(HorizontalLocation::Z);
+    const auto geom_u =
+        make_turbulence_geometry_device_view(grid_.geometry(), HorizontalLocation::U);
+    const auto geom_v =
+        make_turbulence_geometry_device_view(grid_.geometry(), HorizontalLocation::V);
+    const auto geom_z =
+        make_turbulence_geometry_device_view(grid_.geometry(), HorizontalLocation::Z);
 
     const VVM::Real rdz = rdz_;
 
@@ -902,7 +942,8 @@ TurbulenceProcess::compute_generalized_coefficients(Core::State& state, VVM::Rea
     auto& rkm = RKM_ref_.get(state, "RKM").get_mutable_device_data();
     auto& rkh = RKH_ref_.get(state, "RKH").get_mutable_device_data();
 
-    const auto geom_t = grid_.geometry().device_view(HorizontalLocation::T);
+    const auto geom_t =
+        make_turbulence_geometry_device_view(grid_.geometry(), HorizontalLocation::T);
 
     const VVM::Real rdz = rdz_;
     const VVM::Real grav = grav_;
@@ -1018,8 +1059,6 @@ void
 TurbulenceProcess::calculate_generalized_scalar_tendency(
     Core::State& state, const std::string& var_name, Core::Field<3>& out_tendency) {
     using Dynamics::Operators::load_scalar_stencil_at_t;
-    using Dynamics::Operators::make_horizontal_flux_divergence_device_view;
-    using Dynamics::Operators::make_horizontal_scalar_gradient_device_view;
 
     const auto& RKH = RKH_ref_.get(state, "RKH").get_device_data();
     const auto& var = state.get_field<3>(var_name).get_device_data();
@@ -1035,15 +1074,20 @@ TurbulenceProcess::calculate_generalized_scalar_tendency(
     const int nx = grid_.get_local_total_points_x();
     const int h = grid_.get_halo_cells();
 
+    const bool bounded =
+        grid_.horizontal_specification().topology.q2 == Core::HorizontalEdgeTopology::Bounded;
+    const bool south = bounded && grid_.get_local_physical_start_y() == 0;
+    const bool north =
+        bounded && grid_.get_local_physical_end_y() == grid_.get_global_points_y() - 1;
     const int NK2 = nz - h - 1;
     const int NK1 = nz - h - 2;
     const VVM::Real rdz2 = rdz2_;
 
     const auto masks = masks_;
 
-    const auto gradient = make_horizontal_scalar_gradient_device_view(grid_.geometry());
+    const auto gradient = gradient_;
 
-    const auto divergence = make_horizontal_flux_divergence_device_view(grid_.geometry());
+    const auto divergence = divergence_;
 
     auto policy = Kokkos::Experimental::require(
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{h, h, h}}, {{nz - h, ny - h, nx - h}}),
@@ -1053,7 +1097,7 @@ TurbulenceProcess::calculate_generalized_scalar_tendency(
         policy,
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
             const auto grad =
-                gradient.calculate_uv_around_t(j, i, load_scalar_stencil_at_t(var, k, j, i));
+                gradient().calculate_uv_around_t(j, i, load_scalar_stencil_at_t(var, k, j, i));
 
             const VVM::Real kh_e =
                 real(0.5) * (RKH(k, j, i + 1) + RKH(k, j, i)) * masks.val(k, j, i, WU1);
@@ -1067,12 +1111,12 @@ TurbulenceProcess::calculate_generalized_scalar_tendency(
             const VVM::Real kh_s =
                 real(0.5) * (RKH(k, j, i) + RKH(k, j - 1, i)) * masks.val(k, j, i, WV2);
 
-            const VVM::Real horizontal = divergence.at_t(j,
+            const VVM::Real horizontal = divergence().at_t(j,
                 i,
                 kh_e * grad.q1_at_u_j_i,
                 kh_w * grad.q1_at_u_j_im1,
-                kh_n * grad.q2_at_v_j_i,
-                kh_s * grad.q2_at_v_jm1_i);
+                north && j == ny - h - 1 ? real(0.0) : kh_n * grad.q2_at_v_j_i,
+                south && j == h ? real(0.0) : kh_s * grad.q2_at_v_jm1_i);
 
             VVM::Real vertical = real(0.0);
 
@@ -1103,8 +1147,6 @@ TurbulenceProcess::calculate_generalized_zeta_tendency(Core::State& state,
     Core::Field<2>& out_tendency) {
 
     using Dynamics::Operators::load_scalar_stencil_at_z;
-    using Dynamics::Operators::make_horizontal_flux_divergence_device_view;
-    using Dynamics::Operators::make_horizontal_scalar_gradient_device_view;
 
     const auto& RKM = RKM_ref_.get(state, "RKM").get_device_data();
     const auto& zeta = state.get_field<3>("zeta").get_device_data();
@@ -1126,9 +1168,9 @@ TurbulenceProcess::calculate_generalized_zeta_tendency(Core::State& state,
 
     const VVM::Real rdz2 = rdz2_;
 
-    const auto gradient = make_horizontal_scalar_gradient_device_view(grid_.geometry());
+    const auto gradient = gradient_;
 
-    const auto divergence = make_horizontal_flux_divergence_device_view(grid_.geometry());
+    const auto divergence = divergence_;
 
     auto policy = Kokkos::Experimental::require(
         Kokkos::MDRangePolicy<Kokkos::Rank<2>>({{h, h}}, {{ny - h, nx - h}}),
@@ -1138,7 +1180,7 @@ TurbulenceProcess::calculate_generalized_zeta_tendency(Core::State& state,
         policy,
         KOKKOS_LAMBDA(const int j, const int i) {
             const auto grad =
-                gradient.calculate_vu_around_z(j, i, load_scalar_stencil_at_z(zeta, NK2, j, i));
+                gradient().calculate_vu_around_z(j, i, load_scalar_stencil_at_z(zeta, NK2, j, i));
 
             const VVM::Real km_e = real(0.5) * (RKM(NK2, j, i + 1) + RKM(NK2, j + 1, i + 1));
 
@@ -1148,7 +1190,7 @@ TurbulenceProcess::calculate_generalized_zeta_tendency(Core::State& state,
 
             const VVM::Real km_s = real(0.5) * (RKM(NK2, j, i) + RKM(NK2, j, i + 1));
 
-            const VVM::Real horizontal = divergence.at_z(j,
+            const VVM::Real horizontal = divergence().at_z(j,
                 i,
                 km_e * grad.q1_at_v_j_ip1,
                 km_w * grad.q1_at_v_j_i,
@@ -1173,8 +1215,6 @@ void
 TurbulenceProcess::calculate_generalized_xi_tendency(Core::State& state,
     Core::Field<3>& out_tendency) {
     using Dynamics::Operators::load_scalar_stencil_at_v;
-    using Dynamics::Operators::make_horizontal_flux_divergence_device_view;
-    using Dynamics::Operators::make_horizontal_scalar_gradient_at_uv_device_view;
 
     const auto& RKM = RKM_ref_.get(state, "RKM").get_device_data();
 
@@ -1195,9 +1235,9 @@ TurbulenceProcess::calculate_generalized_xi_tendency(Core::State& state,
     const VVM::Real rdz2 = rdz2_;
     const auto masks = masks_;
 
-    const auto gradient = make_horizontal_scalar_gradient_at_uv_device_view(grid_.geometry());
+    const auto gradient = gradient_uv_;
 
-    const auto divergence = make_horizontal_flux_divergence_device_view(grid_.geometry());
+    const auto divergence = divergence_;
 
     auto policy = Kokkos::Experimental::require(
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{h, h, h}}, {{nz - h - 1, ny - h, nx - h}}),
@@ -1207,7 +1247,7 @@ TurbulenceProcess::calculate_generalized_xi_tendency(Core::State& state,
         policy,
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
             const auto grad =
-                gradient.calculate_zt_around_v(j, i, load_scalar_stencil_at_v(xi, k, j, i));
+                gradient().calculate_zt_around_v(j, i, load_scalar_stencil_at_v(xi, k, j, i));
 
             const VVM::Real km_e =
                 real(0.125) * (RKM(k, j, i) + RKM(k, j, i + 1) + RKM(k, j + 1, i) +
@@ -1223,7 +1263,7 @@ TurbulenceProcess::calculate_generalized_xi_tendency(Core::State& state,
 
             const VVM::Real km_s = real(0.5) * (RKM(k, j, i) + RKM(k + 1, j, i));
 
-            const VVM::Real horizontal = divergence.at_v(j,
+            const VVM::Real horizontal = divergence().at_v(j,
                 i,
                 km_e * grad.q1_at_z_j_i * masks.val(k, j, i, VU1),
                 km_w * grad.q1_at_z_j_im1 * masks.val(k, j, i, VU2),
@@ -1247,8 +1287,6 @@ void
 TurbulenceProcess::calculate_generalized_eta_tendency(Core::State& state,
     Core::Field<3>& out_tendency) {
     using Dynamics::Operators::load_scalar_stencil_at_u;
-    using Dynamics::Operators::make_horizontal_flux_divergence_device_view;
-    using Dynamics::Operators::make_horizontal_scalar_gradient_at_uv_device_view;
 
     const auto& RKM = RKM_ref_.get(state, "RKM").get_device_data();
 
@@ -1269,9 +1307,9 @@ TurbulenceProcess::calculate_generalized_eta_tendency(Core::State& state,
 
     const auto masks = masks_;
 
-    const auto gradient = make_horizontal_scalar_gradient_at_uv_device_view(grid_.geometry());
+    const auto gradient = gradient_uv_;
 
-    const auto divergence = make_horizontal_flux_divergence_device_view(grid_.geometry());
+    const auto divergence = divergence_;
 
     auto policy = Kokkos::Experimental::require(
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({{h, h, h}}, {{nz - h - 1, ny - h, nx - h}}),
@@ -1281,7 +1319,7 @@ TurbulenceProcess::calculate_generalized_eta_tendency(Core::State& state,
         policy,
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
             const auto grad =
-                gradient.calculate_tz_around_u(j, i, load_scalar_stencil_at_u(eta, k, j, i));
+                gradient().calculate_tz_around_u(j, i, load_scalar_stencil_at_u(eta, k, j, i));
 
             const VVM::Real km_e = real(0.5) * (RKM(k, j, i + 1) + RKM(k + 1, j, i + 1));
 
@@ -1297,7 +1335,7 @@ TurbulenceProcess::calculate_generalized_eta_tendency(Core::State& state,
                                   RKM(k, j, i + 1) + RKM(k + 1, j - 1, i) + RKM(k + 1, j, i) +
                                   RKM(k + 1, j - 1, i + 1) + RKM(k + 1, j, i + 1));
 
-            const VVM::Real horizontal = divergence.at_u(j,
+            const VVM::Real horizontal = divergence().at_u(j,
                 i,
                 km_e * grad.q1_at_t_j_ip1 * masks.val(k, j, i, UU1),
                 km_w * grad.q1_at_t_j_i * masks.val(k, j, i, UU2),

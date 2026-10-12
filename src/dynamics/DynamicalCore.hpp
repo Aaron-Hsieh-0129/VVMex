@@ -47,11 +47,13 @@ public:
     void calculate_vorticity_tendencies();
     void update_vorticity(VVM::Real dt);
     void diagnose_wind_fields(Core::State& state);
-    void initialize_restart_history();
+    void initialize_restart_history(bool canonical_horizontal_state = false);
 
     void update_contravariant_wind_shadow_state();
     void sync_contravariant_vorticity_from_physical();
     void sync_physical_horizontal_vorticity_from_contravariant();
+    void begin_physical_vorticity_update();
+    void finish_physical_vorticity_update();
 
     void prepare_vorticity_for_tendency_evaluation();
     void restore_vorticity_after_tendency_evaluation();
@@ -91,6 +93,8 @@ private:
     std::unique_ptr<Takacs> diagnostic_scheme_;
 
     Core::HaloExchanger& halo_exchanger_;
+
+    std::unique_ptr<Core::Field<3>> physical_xi_before_, physical_eta_before_;
 
     bool enable_coriolis_ = false;
     bool enable_turbulence_ = false;

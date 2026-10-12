@@ -123,7 +123,7 @@ State::State(const Utils::ConfigurationManager& config, const Grid& grid)
         FieldMetadata{GridStaggering::Centered, "s-1", "Coriolis parameter"});
     add_field<2>("f_2d",
         {ny_total, nx_total},
-        FieldMetadata{grid.geometry().kind() == Geometry::GeometryKind::RegularLatLon
+        FieldMetadata{grid.geometry().kind() != Geometry::GeometryKind::Cartesian
                           ? GridStaggering::StaggeredXY
                           : GridStaggering::Centered,
             "s-1",

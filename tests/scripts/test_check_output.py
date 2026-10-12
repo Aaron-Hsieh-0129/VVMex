@@ -37,6 +37,38 @@ class CheckOutputDigestTest(unittest.TestCase):
         self.assertEqual(check_output.reference_digest_dtype(portable_original),
                          'float32')
 
+    def test_approved_float32_variants_keep_exact_whole_field_checks(self):
+        values = np.array([1.0 + 2**-24, 0.0, 3.0])
+        adjacent = np.nextafter(values, np.inf)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, 'output.h5')
+            self.write_values(path, values)
+            original = check_output.digests(path, 'float32')['state']
+            self.write_values(path, adjacent)
+            variant = check_output.digests(path, 'float32')['state']
+            self.assertFalse(check_output.matches_reference(variant, original))
+
+            original['sha256_variants'] = {'validated_gpu': variant['sha256']}
+            self.assertTrue(check_output.matches_reference(original, original))
+            self.assertTrue(check_output.matches_reference(variant, original))
+
+            self.write_values(path, adjacent.reshape((1, 3)))
+            changed_shape = check_output.digests(path, 'float32')['state']
+            self.assertFalse(check_output.matches_reference(changed_shape, original))
+
+            for index in range(values.size):
+                changed = adjacent.copy()
+                changed[index] += 1e-6
+                self.write_values(path, changed)
+                unknown = check_output.digests(path, 'float32')['state']
+                self.assertFalse(check_output.matches_reference(unknown, original))
+
+    def test_native_reference_does_not_accept_variants(self):
+        reference = {'sha256': 'original', 'shape': [3],
+                     'sha256_variants': {'validated_gpu': 'variant'}}
+        actual = {'sha256': 'variant', 'shape': [3]}
+        self.assertFalse(check_output.matches_reference(actual, reference))
+
 
 if __name__ == '__main__':
     unittest.main()

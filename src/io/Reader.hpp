@@ -13,10 +13,18 @@ public:
     virtual ~Reader() = default;
     virtual void read_and_initialize(VVM::Core::State& state) = 0;
 
+    bool
+    restored_canonical_horizontal_state() const {
+        return restored_canonical_horizontal_state_;
+    }
+
     virtual VVM::Utils::RestartFileMetadata
     read_restart_metadata() {
         return VVM::Utils::RestartFileMetadata{};
     }
+
+protected:
+    bool restored_canonical_horizontal_state_ = false;
 };
 
 } // namespace IO
