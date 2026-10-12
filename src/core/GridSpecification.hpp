@@ -8,6 +8,7 @@
 #include "core/vvm_types.hpp"
 
 namespace VVM {
+// Forward declaration
 namespace Utils {
 class ConfigurationManager;
 }
@@ -15,7 +16,6 @@ class ConfigurationManager;
 namespace Core {
 
 enum class HorizontalEdgeTopology : std::uint8_t { Periodic, Bounded };
-
 enum class VerticalCoordinateType : std::uint8_t { Default, TaiwanVVM, RCEMIP };
 
 const char* horizontal_edge_topology_to_string(HorizontalEdgeTopology topology) noexcept;

@@ -13,7 +13,6 @@ namespace Geometry {
 
 std::unique_ptr<HorizontalGeometry>
 HorizontalGeometryFactory::create(const HorizontalGridSpec& spec, HorizontalDomainLayout layout) {
-
     switch (spec.kind) {
     case GeometryKind::Cartesian:
         return std::make_unique<CartesianGeometry>(layout, spec.dq1, spec.dq2);
