@@ -4,7 +4,7 @@ include(FetchContent)
 FetchContent_Declare(
   cleo
   GIT_REPOSITORY https://github.com/Lance798/CLEO.git
-  GIT_TAG        b92eb77
+  GIT_TAG        649d4bcc654153b4184eca735739761762de3783
   FIND_PACKAGE_ARGS 0.69 NAMES CLEO
 )
 
