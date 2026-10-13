@@ -28,6 +28,10 @@ So CI is split by what a job needs:
 automatically for repository administrators. Other contributors, including
 non-admin repository members, require approval.
 
+Each CPU/GPU build-and-test job has a **30-minute timeout**. GitHub cancels the
+job if it exceeds that limit. The hosted permission check has a separate
+5-minute timeout.
+
 ## What each job checks
 
 ### `checks.yml` — hermetic

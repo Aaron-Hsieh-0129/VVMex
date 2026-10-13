@@ -68,7 +68,7 @@ jobs:
     environment:
       name: ${{ needs.approval.outputs.admin_actor != '' && needs.approval.outputs.admin_actor == github.triggering_actor && 'ci-self-hosted-admin' || 'ci-self-hosted' }}
     runs-on: [self-hosted, vvmex-cpu]
-    timeout-minutes: 60
+    timeout-minutes: 30
 
     env:
       VVM_ROOT: ${{ github.workspace }}
