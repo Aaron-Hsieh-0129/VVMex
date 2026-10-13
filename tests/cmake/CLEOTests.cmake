@@ -16,7 +16,8 @@ if(VVM_TEST_CLEO)
     set(_vvm_cleo_test_libraries
         vvm_cleo vvm_core vvm_io vvm_utils Kokkos::kokkos MPI::MPI_CXX)
 
-    # The constructor's field contract, and that a regular_latlon grid is
+    # The constructor's field contract, and that a regular_latlon grid, a
+    # bounded edge, raised terrain and a run not ending on a coupling are
     # refused. Reads no CLEO input.
     vvm_add_test_executable(test_cleo_interface LIBRARIES ${_vvm_cleo_test_libraries})
     add_test(NAME test_cleo_interface

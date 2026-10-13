@@ -9,7 +9,8 @@
 //
 //   transport     condensation and collision off, haze everywhere. The
 //                 thermodynamics must round-trip through CLEO unchanged, the
-//                 bulk diagnostics must read "no cloud", halos must be fresh.
+//                 bulk diagnostics must read "no cloud", qp must hold the haze
+//                 water from initialize() on, halos must be fresh.
 //   condensation  2% supersaturation, coupling every 2 model steps. Pins the
 //                 cadence, water conservation and the latent heating, which
 //                 between them pin the unit conversion in both directions.
@@ -349,7 +350,11 @@ run_transport(Case& c) {
         check(initial.f3.at("diag_eff_radius_qr")(k, j, i) == EMPTY_RAIN_RADIUS_UM,
             "empty-cell rain effective radius is not P3's 500 um after initialize",
             at(k, j, i, initial.f3.at("diag_eff_radius_qr")(k, j, i), EMPTY_RAIN_RADIUS_UM));
+        // The initial output and the buoyancy of the first step read qp.
+        const double qp = initial.f3.at("qp")(k, j, i);
+        check(qp > 0.0, "qp holds no haze water after initialize", at_bound(k, j, i, qp, ">", 0.0));
     });
+    check_periodic_halos(c, initial, "qp");
 
     for (int n = 0; n < 2; ++n) {
         c.step();
@@ -424,8 +429,7 @@ run_condensation(Case& c) {
         }
     });
 
-    // Across the second coupling (t = 1 -> 2), when qp already carries CLEO's
-    // condensate. Before the first one qp is whatever add_field left.
+    // Across the second coupling (t = 1 -> 2).
     c.for_physical([&](int k, int j, int i) {
         const double dqv = s2.f3.at("qv")(k, j, i) - s1.f3.at("qv")(k, j, i);
         const double dqp = s2.f3.at("qp")(k, j, i) - s1.f3.at("qp")(k, j, i);
@@ -491,7 +495,8 @@ run_average_y(Case& c) {
     // columns agree -- and the diagnostics must agree as well, or radiation
     // reintroduces the y asymmetry averaging is there to remove.
     const Snapshot after_init = take_snapshot(c.state);
-    for (const char* name : {"qc", "qr", "nc", "nr", "diag_eff_radius_qc", "diag_eff_radius_qr"}) {
+    for (const char* name :
+        {"qp", "qc", "qr", "nc", "nr", "diag_eff_radius_qc", "diag_eff_radius_qr"}) {
         const auto& f = after_init.f3.at(name);
         c.for_physical([&](int k, int j, int i) {
             check(f(k, j, i) == f(k, c.h, i),
@@ -571,18 +576,19 @@ run_rain(Case& c) {
     }
     check(total_flux > 0.0, "no rain reached the surface from drops seeded in the lowest level");
 
-    // What leaves through the bottom is exactly what the surface flux reports.
-    // From step 1 on: qp is not written before the first coupling.
+    // What leaves through the bottom is exactly what the surface flux reports,
+    // from the first coupling on: initialize() gives qp the seeded drops.
     const double area = c.dx * c.dy;
-    for (int n = 1; n < 5; ++n) {
-        const double lost = c.condensate_mass(after[n - 1]) - c.condensate_mass(after[n]);
+    for (int n = 0; n < 5; ++n) {
+        const Snapshot& before = n == 0 ? initial : after[n - 1];
+        const double lost = c.condensate_mass(before) - c.condensate_mass(after[n]);
         double precipitated = 0.0;
         c.for_surface([&](int j, int i) { precipitated += flux(n, j, i) * area * coupling; });
         std::ostringstream detail;
         detail.precision(17);
         detail << "step " << n << ": domain lost " << lost << " kg, surface flux says "
                << precipitated << " kg";
-        check(close(precipitated, lost, 1e-6, 1e-12 * c.condensate_mass(after[n - 1])),
+        check(close(precipitated, lost, 1e-6, 1e-12 * c.condensate_mass(before)),
             "surface precipitation does not match the condensate that left the domain",
             detail.str());
     }

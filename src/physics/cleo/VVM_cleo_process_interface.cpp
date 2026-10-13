@@ -22,6 +22,7 @@
 #include "cartesiandomain/movement/cartesian_movement.hpp"
 #include "cleoconstants.hpp"
 #include "configuration/communicator.hpp"
+#include "gridboxes/movesupersindomain.hpp"
 #include "initialise/init_all_supers_from_binary.hpp"
 #include "initialise/initgbxsnull.hpp"
 #include "initialise/readbinary.hpp"
@@ -314,6 +315,7 @@ struct SdmRunner {
 
     virtual unsigned int get_couplstep() const = 0;
     virtual unsigned int next_couplstep(unsigned int t_mdl) const = 0;
+    virtual unsigned int next_obs(unsigned int t_mdl) const = 0;
     virtual void prepare_to_timestep(dualview_gbx gbxs, const SupersInDomain& allsupers) const = 0;
     virtual void at_start_step(
         unsigned int t_mdl, dualview_gbx gbxs, const SupersInDomain& allsupers) const = 0;
@@ -337,6 +339,10 @@ struct SdmRunnerOf final : SdmRunner {
     unsigned int
     next_couplstep(unsigned int t_mdl) const override {
         return sdm.next_couplstep(t_mdl);
+    }
+    unsigned int
+    next_obs(unsigned int t_mdl) const override {
+        return sdm.obs.next_obs(t_mdl);
     }
     void
     prepare_to_timestep(dualview_gbx gbxs, const SupersInDomain& allsupers) const override {
@@ -475,8 +481,18 @@ struct CleoState {
         gbxs.modify_device();
     }
 
+    // qcond from the superdroplets, as CLEO sets it after every motion step
     void
-    receive_dynamics(Core::State& state, Core::HaloExchanger& halo_exchanger) {
+    diagnose_qcond() {
+        const auto d_gbxs = gbxs.view_device();
+        Kokkos::parallel_for("cleo_diagnose_qcond",
+            TeamPolicy(d_gbxs.extent(0), KCS::team_size),
+            EffectOnHydrometeorStatesFunctor{d_gbxs, allsupers.domain_supers_readonly()});
+    }
+
+    // qp from qcond, and th and qv too if thermo
+    void
+    receive_dynamics(Core::State& state, Core::HaloExchanger& halo_exchanger, const bool thermo) {
         auto th = state.get_field<3>("th").get_mutable_device_data();
         auto qv = state.get_field<3>("qv").get_mutable_device_data();
         auto qp = state.get_field<3>("qp").get_mutable_device_data();
@@ -504,15 +520,19 @@ struct CleoState {
                 for (size_t j = 0; j < ny; ++j) {
                     const auto ja = h + j;
                     const auto& st = d_gbxs(k + nz * (i + nx * j)).state;
-                    const double temp = average_y ? t_sum * inv : st.temp;
-                    th(ka, ja, ia) = temp * dlc::TEMP0 / pibar(ka);
-                    qv(ka, ja, ia) = average_y ? qv_sum * inv : st.qvap;
+                    if (thermo) {
+                        const double temp = average_y ? t_sum * inv : st.temp;
+                        th(ka, ja, ia) = temp * dlc::TEMP0 / pibar(ka);
+                        qv(ka, ja, ia) = average_y ? qv_sum * inv : st.qvap;
+                    }
                     qp(ka, ja, ia) = average_y ? qc_sum * inv : st.qcond;
                 }
             });
 
-        halo_exchanger.exchange_halos(state.get_field<3>("th"));
-        halo_exchanger.exchange_halos(state.get_field<3>("qv"));
+        if (thermo) {
+            halo_exchanger.exchange_halos(state.get_field<3>("th"));
+            halo_exchanger.exchange_halos(state.get_field<3>("qv"));
+        }
         halo_exchanger.exchange_halos(state.get_field<3>("qp"));
     }
 
@@ -605,8 +625,8 @@ struct CleoState {
             });
     }
 
-    // Mean surface liquid flux over the coupling step just run, taken at the first
-    // gridbox above topo; it is held until the next coupling.
+    // Mean surface liquid flux over the coupling step just run, taken at the
+    // bottom gridboxes; it is held until the next coupling.
     void
     collect_surface_precip(Core::State& state, const double interval_s) {
         const auto nz = lnz, nx = lnx, ny = lny, h = halo;
@@ -614,7 +634,6 @@ struct CleoState {
         const double to_flux = dlc::MASS0 / (cell_area_m2 * interval_s);
 
         const auto mass = bottom_mass;
-        const auto topo = state.get_field<2>("topo").get_device_data();
         auto flux = state.get_field<2>("precip_liq_surf_flux").get_mutable_device_data();
         auto acc = state.get_field<2>("precip_liq_surf_mass").get_mutable_device_data();
         Kokkos::parallel_for("cleo_surface_precip",
@@ -622,10 +641,7 @@ struct CleoState {
             KOKKOS_LAMBDA(const size_t i) {
                 const auto ia = h + i;
                 const auto surface_flux = [&](const size_t j) {
-                    const int k = static_cast<int>(topo(h + j, ia)) + 1 - static_cast<int>(h);
-                    const auto ks = static_cast<size_t>(
-                        Kokkos::max(0, Kokkos::min(k, static_cast<int>(nz) - 1)));
-                    return mass(ks + nz * (i + nx * j)) * to_flux;
+                    return mass(nz * (i + nx * j)) * to_flux;
                 };
                 double sum = 0.0;
                 if (average_y) {
@@ -692,9 +708,14 @@ struct VVM_CLEO_Interface::Impl {
         t_cleo = t_next;
 
         cleo->send_dynamics(state);
-        sdm.at_start_step(t_mdl, cleo->gbxs, cleo->allsupers);
-        sdm.run_step(t_mdl, t_next, cleo->gbxs.view_device(), cleo->allsupers);
-        cleo->receive_dynamics(state, halo_exchanger);
+        // Observations inside the interval are taken on the way, as CLEO's own driver does.
+        for (auto t = t_mdl; t < t_next;) {
+            const auto t_sub = std::min(t_next, sdm.next_obs(t));
+            sdm.at_start_step(t, cleo->gbxs, cleo->allsupers);
+            sdm.run_step(t, t_sub, cleo->gbxs.view_device(), cleo->allsupers);
+            t = t_sub;
+        }
+        cleo->receive_dynamics(state, halo_exchanger, true);
         cleo->diagnose_hydrometeors(state);
 
         const double couplstep_s = step2realtime(sdm.get_couplstep());
@@ -721,8 +742,26 @@ struct VVM_CLEO_Interface::Impl {
         need_reset_precip = true;
     }
 
+    // Superdroplets would sink into terrain: CLEO's lower boundary is the bottom of the domain.
+    void
+    require_flat_terrain(const Core::State& state) const {
+        const auto topo = state.get_field<2>("topo").get_host_data();
+        const int h = grid.get_halo_cells();
+        int raised = 0;
+        for (int j = h; j < h + grid.get_local_physical_points_y(); ++j) {
+            for (int i = h; i < h + grid.get_local_physical_points_x(); ++i) {
+                raised = raised || topo(j, i) >= h;
+            }
+        }
+        MPI_Allreduce(MPI_IN_PLACE, &raised, 1, MPI_INT, MPI_MAX, grid.get_cart_comm());
+        if (raised) {
+            throw std::runtime_error("CLEO coupling needs flat terrain (topo = 0)");
+        }
+    }
+
     void
     initialize(Core::State& state) {
+        require_flat_terrain(state);
         // Before CleoState: the dataset takes the communicator in its constructor.
         init_communicator::set_communicator(grid.get_cart_comm());
         cleo = std::make_unique<CleoState>(config, grid);
@@ -733,7 +772,10 @@ struct VVM_CLEO_Interface::Impl {
                   << cleo->sdm->get_couplstep() << " (TIME0=" << dlc::TIME0 << " s)"
                   << std::endl;
 
+        // qp and qcond from the initial superdroplets, before the first output and observation
         cleo->send_dynamics(state);
+        cleo->diagnose_qcond();
+        cleo->receive_dynamics(state, halo_exchanger, false);
         // radiation runs before CLEO within a step
         cleo->diagnose_hydrometeors(state);
     }
@@ -744,7 +786,7 @@ struct VVM_CLEO_Interface::Impl {
                 state.get_field<2>("precip_liq_surf_mass").get_mutable_device_data(), 0.0);
             need_reset_precip = false;
         }
-        if (state.get_time() + 0.5 * dt >= next_couple_s) {
+        if (t_cleo < cleo->ts.get_t_end() && state.get_time() + 0.5 * dt >= next_couple_s) {
             next_couple_s += step2realtime(cleo->sdm->get_couplstep());
             couple(state);
         }
@@ -770,9 +812,24 @@ VVM_CLEO_Interface::VVM_CLEO_Interface(const VVM::Utils::ConfigurationManager& c
     if (grid.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
         throw std::runtime_error("CLEO coupling supports Cartesian geometry only");
     }
+    const auto& topology = grid.horizontal_specification().topology;
+    if (topology.q1 != Core::HorizontalEdgeTopology::Periodic ||
+        topology.q2 != Core::HorizontalEdgeTopology::Periodic) {
+        throw std::runtime_error(
+            "CLEO coupling needs periodic grid.boundary_condition.x and .y: CLEO wraps "
+            "superdroplets periodically");
+    }
     // run() couples at most once per model step
-    if (config.get_value<double>(key("timesteps_s.coupling")) < params.get_value_host(params.dt)) {
+    const double coupling_s = config.get_value<double>(key("timesteps_s.coupling"));
+    if (coupling_s < params.get_value_host(params.dt)) {
         throw std::runtime_error(key("timesteps_s.coupling") + " is shorter than simulation.dt_s");
+    }
+    // Each coupling runs CLEO one interval ahead of the model; the last must end at total_time_s.
+    if (realtime2step(config.get_value<double>("simulation.total_time_s")) %
+            realtime2step(coupling_s) !=
+        0) {
+        throw std::runtime_error(
+            "simulation.total_time_s is not a whole number of " + key("timesteps_s.coupling"));
     }
 
     const std::array<int, 3> shape{grid.get_local_total_points_z(),

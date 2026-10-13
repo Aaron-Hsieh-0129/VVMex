@@ -67,8 +67,11 @@ cmake --preset blaze -DBUILD_TESTS=ON -DVVM_TEST_CLEO=ON
 ctest --test-dir build --output-on-failure -L '^cleo$'
 ```
 
+`test_cleo_interface` checks the fields the constructor registers and the
+cases it must refuse: a non-Cartesian grid, a bounded x or y edge, raised
+terrain, and a `total_time_s` that is not a whole number of couplings.
 `test_cleo_coupling` runs the scenarios of `configs/cleo_coupling.json`:
-`transport` (th/qv round trip, halos, haze diagnostics), `condensation`
+`transport` (th/qv round trip, halos, haze diagnostics, initial qp), `condensation`
 (cadence, water conservation, latent heating), `average_y`, `rain` (cloud/rain
 split, surface flux against water lost, precipitation averaging),
 `rain_collision` (the same budget with collisions on) and `advection` (uniform
@@ -76,7 +79,9 @@ diagonal wind). `Verify_cleo_advection` follows every superdroplet through
 CLEO's zarr with `scripts/check_cleo_superdroplets.py`: counts, sdId order,
 sdgbxindex against position, displacement u·t, no vertical motion beyond
 sedimentation, and stripes. `test_cleo_model` runs the full model and compares
-CLEO's zarr record of the state it was sent with the model's own output.
+CLEO's zarr record of the state it was sent, and of the initial condensate,
+with the model's own output; it also requires an observation every second up
+to `total_time_s` with a 2 s coupling.
 
 With `VVM_TEST_MULTIRANK` (4 GPUs) the advection case also runs on 4 ranks and
 is compared with the 1-rank run superdroplet by superdroplet, collisions off so

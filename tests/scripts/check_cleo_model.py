@@ -11,8 +11,12 @@ real `vvm` executable. It checks that:
   3. What CLEO was sent is what the model holds, gridbox by gridbox: CLEO's
      own zarr record of temperature, pressure and vapour at t = 0 against the
      model's initial th * pibar, pbar and qv. This is the index mapping and the
-     unit conversion of send_dynamics, read back from CLEO's side.
-  4. With average_over_y, every CLEO-written field is identical across y.
+     unit conversion of send_dynamics, read back from CLEO's side. CLEO's
+     qcond at t = 0 must also be the model's initial qp: both hold the water
+     of the initial superdroplets before the first output.
+  4. CLEO observes every second although it is coupled every 2 s, from t = 0
+     to total_time_s and no further.
+  5. With average_over_y, every CLEO-written field is identical across y.
 
 With --ranks N it instead runs the same case on 1 and on N ranks, collisions
 off so CLEO is deterministic, and requires the two to agree: the model
@@ -98,7 +102,7 @@ def make_config(case_dir, collisions, average_over_y):
     cleo = copy.deepcopy(template["physics"]["microphysics"]["cleo"])
     cleo["average_over_y"] = average_over_y
     cleo["timesteps_s"].update(condensation=0.1, collision=0.1, motion=0.1,
-                               coupling=1.0, observation=10.0)
+                               coupling=2.0, observation=1.0)
     cleo["superdroplets"].update(per_gridbox=8, seed_below_z_m=None)
     cleo["process"].update(enable_condensation=True, enable_collision=collisions,
                            collision_seed=1234)
@@ -226,6 +230,7 @@ def read_zarr(case_dir):
         "temp": var("temp"),      # K
         "press": var("press"),    # hPa
         "qvap": var("qvap"),      # g/kg
+        "qcond": var("qcond"),    # g/kg
         "nsupers": np.asarray(group["nsupers"][...], dtype=np.int64),
     }
 
@@ -259,15 +264,14 @@ def check_fields(outputs, total_time):
               f"t={time}: diag_eff_radius_qi moved off 25 um")
         for name in ("precip_ice_surf_mass", "precip_ice_surf_flux"):
             check((f[name] == 0).all(), f"t={time}: {name} is not zero")
-        if time > 0:
-            check((f["qp"] >= f["qc"] + f["qr"] - 1e-15).all(),
-                  f"t={time}: qp < qc + qr somewhere; qp counts every superdroplet")
-            check((f["qp"] > 0).all(), f"t={time}: qp is zero in a seeded gridbox")
+        check((f["qp"] >= f["qc"] + f["qr"] - 1e-15).all(),
+              f"t={time}: qp < qc + qr somewhere; qp counts every superdroplet")
+        check((f["qp"] > 0).all(), f"t={time}: qp is zero in a seeded gridbox")
         print(f"t={time:6.1f}: max qp {f['qp'].max():.3e}, max qc {f['qc'].max():.3e}, "
               f"max qr {f['qr'].max():.3e}, th {f['th'].min():.3f}..{f['th'].max():.3f}")
 
 
-def check_sent_state(outputs, zarr_data):
+def check_sent_state(outputs, zarr_data, average_over_y):
     """CLEO's record of t = 0 against the model's initial fields."""
     f = outputs[min(outputs)]
     # Without horizontal structure in th an x/y mapping error would pass.
@@ -291,6 +295,26 @@ def check_sent_state(outputs, zarr_data):
             check(False, f"CLEO {name} at t=0 differs from the model in {bad.sum()} of "
                          f"{bad.size} gridboxes; first: gbx {zarr_data['gbxindex'][n]} "
                          f"(k,j,i)=({k[n]},{j[n]},{i[n]}) CLEO {got[n]:.7g}, model {want[n]:.7g}")
+
+    # The model's qp is CLEO's qcond, averaged over y with average_over_y.
+    qcond = np.empty((NZ, NY, NX))
+    qcond[k, j, i] = zarr_data["qcond"][0]
+    if average_over_y:
+        qcond[:] = qcond.mean(axis=1, keepdims=True)
+    qp_gkg = f["qp"] * 1000.0
+    bad = ~np.isclose(qcond, qp_gkg, rtol=1e-5, atol=0)
+    check(not bad.any(), f"CLEO qcond at t=0 differs from the model's initial qp in {bad.sum()} "
+                         f"cells; max qcond {qcond.max():.7g} g/kg, max qp {qp_gkg.max():.7g} g/kg")
+
+
+def check_observation_times(zarr_data, config):
+    cleo = config["physics"]["microphysics"]["cleo"]["timesteps_s"]
+    total = config["simulation"]["total_time_s"]
+    want = np.arange(0.0, total + 0.5 * cleo["observation"], cleo["observation"])
+    got = zarr_data["time"]
+    check(got.shape == want.shape and np.allclose(got, want, rtol=0, atol=1e-3),
+          f"CLEO observed at {got.tolist()} s, expected every {cleo['observation']} s "
+          f"from 0 to {total} s (coupling every {cleo['coupling']} s)")
 
 
 def check_uniform_in_y(outputs):
@@ -342,8 +366,10 @@ def main():
         config = make_config(case, collisions=True, average_over_y=True)
         run_model(case, prepare(case, config), 1)
         outputs = read_outputs(case)
+        zarr_data = read_zarr(case)
         check_fields(outputs, config["simulation"]["total_time_s"])
-        check_sent_state(outputs, read_zarr(case))
+        check_sent_state(outputs, zarr_data, average_over_y=True)
+        check_observation_times(zarr_data, config)
         check_uniform_in_y(outputs)
     else:
         runs = {}
@@ -358,7 +384,8 @@ def main():
             run_model(case, prepare(case, config, inputs_from), ranks)
             runs[ranks] = (read_outputs(case), read_zarr(case))
             check_fields(runs[ranks][0], config["simulation"]["total_time_s"])
-            check_sent_state(*runs[ranks])
+            check_sent_state(*runs[ranks], average_over_y=False)
+            check_observation_times(runs[ranks][1], config)
         label = f"1 rank vs {args.ranks} ranks"
         compare_runs(runs[1][0], runs[args.ranks][0], label)
         compare_zarr(runs[1][1], runs[args.ranks][1], label)

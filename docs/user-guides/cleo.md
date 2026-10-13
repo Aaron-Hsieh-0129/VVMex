@@ -69,12 +69,12 @@ condensate. Ice is not represented.
 | Field | Meaning |
 | --- | --- |
 | `th`, `qv` | Updated by condensation and its latent heating. |
-| `qp` | All condensate carried by the superdroplets, haze included; read by the buoyancy. |
+| `qp` | All condensate carried by the superdroplets, haze included, from initialization on; read by the buoyancy. |
 | `qc`, `nc` | Cloud: superdroplets with `cloud_min_radius_um <= r < rain_min_radius_um`. |
 | `qr`, `nr` | Rain: superdroplets with `r >= rain_min_radius_um`. |
 | `diag_eff_radius_qc`, `diag_eff_radius_qr` | `sum(xi r^3) / sum(xi r^2)` [um]; 10 and 500 um in empty cells, as P3. Read by RRTMGP. |
 | `qi`, `diag_eff_radius_qi` | Zero and 25 um (P3's ice-free value), for RRTMGP. |
-| `precip_liq_surf_flux` | Condensate leaving the first gridbox above `topo` through its bottom, as a mean over the last coupling step [kg m-2 s-1]. Read by the land model. |
+| `precip_liq_surf_flux` | Condensate leaving the bottom gridboxes through the ground, as a mean over the last coupling step [kg m-2 s-1]. Read by the land model. |
 | `precip_liq_surf_mass` | The same, averaged over each output interval, as P3 does. |
 | `precip_ice_surf_*` | Zero. |
 
@@ -84,7 +84,8 @@ superdroplets after every coupling and are not advected.
 ## CLEO's own output
 
 CLEO writes a zarr store to `output.output_dir` + `output.zarrbasedir` every
-`timesteps_s.observation`, including the end of the run: every superdroplet
+`timesteps_s.observation` from t = 0 up to `simulation.total_time_s`, between
+couplings too: every superdroplet
 (`sdId`, `xi`, `radius`, `msol`, coordinates, gridbox), the gridbox state
 (`press`, `temp`, `qvap`, `qcond`, winds), mass moments and process monitors.
 Each array carries `units` and `scale_factor` attributes; multiply by
@@ -95,7 +96,12 @@ Each array carries `units` and `scale_factor` attributes; multiply by
 - **When.** `VVM_CLEO_Interface::run` is called once per model step, after the
   thermodynamic update and before turbulence, where P3 would run. When the model
   time reaches the next coupling time (the first at t = 0), CLEO is advanced by
-  one `timesteps_s.coupling` interval.
+  one `timesteps_s.coupling` interval, stopping at each observation time on the
+  way. CLEO thus runs one interval ahead of the model, and its last interval
+  ends at `simulation.total_time_s`.
+- **Initialization.** `qp`, CLEO's `qcond` and the cloud and rain diagnostics are
+  computed from the initial superdroplets, so the initial output and the first
+  observation already hold their water.
 - **Sent.** For each gridbox: `u`, `v`, `w` on its two faces in each direction,
   `T = th * pibar`, `qv` and `pbar`.
 - **Returned.** `th`, `qv` and `qp` in the physical cells, followed by a halo
@@ -112,7 +118,12 @@ Each array carries `units` and `scale_factor` attributes; multiply by
 
 ## Limitations
 
-- Cartesian grids only; other geometries are refused.
+- Cartesian grids with periodic x and y only. CLEO wraps superdroplets around
+  both horizontal edges, so other geometries and `zero_gradient` boundaries are
+  refused.
+- Flat terrain only: superdroplets would fall into raised ground, so a nonzero
+  `topo` is refused.
+- `simulation.total_time_s` must be a whole number of `timesteps_s.coupling`.
 - No restart: superdroplets are not written to the checkpoint, so a restart
   would start again from the initial binary.
 - `physics.microphysics.engine` selects CLEO only; P3 is still switched by

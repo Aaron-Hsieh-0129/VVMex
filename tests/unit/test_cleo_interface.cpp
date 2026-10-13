@@ -12,17 +12,27 @@
 // refused. CLEO is built with CLEO_DOMAIN=cartesian (externals/cleo), so its
 // gridboxes are boxes of dx*dy*dz; coupling them to a latitude-longitude grid
 // would put every droplet in a cell of the wrong volume, silently.
+//
+// Variants of the Cartesian config check the other cases CLEO would run
+// wrongly without an error: a bounded x or y edge (CLEO wraps superdroplets
+// periodically), raised terrain (they would fall into it) and a run that does
+// not end on a coupling (CLEO would run past total_time_s).
 #include "core/Grid.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "core/Parameters.hpp"
 #include "core/State.hpp"
 #include "physics/cleo/VVM_cleo_process_interface.hpp"
 #include "utils/ConfigurationManager.hpp"
+#include "../../externals/json/json.hpp"
 
 #include <Kokkos_Core.hpp>
 #include <mpi.h>
 
+#include <unistd.h>
+
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <string>
 
@@ -239,6 +249,95 @@ check_non_cartesian_refused(const VVM::Utils::ConfigurationManager& config,
     check(threw, "VVM_CLEO_Interface accepted a non-Cartesian grid; CLEO is built Cartesian");
 }
 
+// config_path with the value at `pointer` replaced, written to a temporary file.
+std::filesystem::path
+config_variant(const char* config_path, const std::string& pointer, const nlohmann::json& value) {
+    std::ifstream in(config_path);
+    nlohmann::json config = nlohmann::json::parse(in);
+    config[nlohmann::json::json_pointer(pointer)] = value;
+    std::string name = pointer;
+    for (auto& ch : name) {
+        ch = ch == '/' ? '_' : ch;
+    }
+    const auto path = std::filesystem::temp_directory_path() /
+                      ("test_cleo_interface" + name + "_" + std::to_string(getpid()) + ".json");
+    std::ofstream(path) << config.dump(2);
+    return path;
+}
+
+// Must be refused with a message naming `reason`; any other error would mean
+// the check under test never ran. `then` runs after construction.
+void
+check_refused(const char* config_path,
+    const std::string& what,
+    const std::string& reason,
+    const std::function<void(
+        const VVM::Core::Grid&, VVM::Core::State&, VVM::Physics::VVM_CLEO_Interface&)>& then = {}) {
+    with_model_state(config_path,
+        [&](const VVM::Utils::ConfigurationManager& config,
+            const VVM::Core::Grid& grid,
+            const VVM::Core::Parameters& parameters,
+            VVM::Core::HaloExchanger& halo,
+            VVM::Core::State& state) {
+        std::string message;
+        try {
+            VVM::Physics::VVM_CLEO_Interface cleo(config, grid, parameters, halo, state);
+            if (then) {
+                then(grid, state, cleo);
+            }
+        }
+        catch (const std::exception& e) {
+            message = e.what();
+        }
+        if (message.find(reason) == std::string::npos) {
+            fail(what + " was not refused for " + reason +
+                 (message.empty() ? "" : "; error was: " + message));
+        }
+        else if (rank == 0) {
+            std::printf("%s refused as expected: %s\n", what.c_str(), message.c_str());
+        }
+    });
+}
+
+void
+check_variant_refused(const char* config_path,
+    const std::string& pointer,
+    const nlohmann::json& value,
+    const std::string& reason) {
+    const auto path = config_variant(config_path, pointer, value);
+    check_refused(path.c_str(), pointer + " = " + value.dump(), reason);
+    std::filesystem::remove(path);
+}
+
+void
+check_refusals(const char* config_path) {
+    check_variant_refused(config_path,
+        "/grid/boundary_condition/x",
+        "zero_gradient",
+        "boundary_condition");
+    check_variant_refused(config_path,
+        "/grid/boundary_condition/y",
+        "zero_gradient",
+        "boundary_condition");
+    // 10.5 s is ten 1 s couplings and half of an eleventh.
+    check_variant_refused(config_path, "/simulation/total_time_s", 10.5, "total_time_s");
+    // One column's ground raised to the first physical level. CLEO's own
+    // inputs do not exist here, so only a check made before reading them can
+    // give the expected message.
+    check_refused(config_path,
+        "raised topo",
+        "flat terrain",
+        [](const VVM::Core::Grid& grid,
+            VVM::Core::State& state,
+            VVM::Physics::VVM_CLEO_Interface& cleo) {
+        const int h = grid.get_halo_cells();
+        auto topo = state.get_field<2>("topo").get_host_data();
+        topo(h, h) = h;
+        Kokkos::deep_copy(state.get_field<2>("topo").get_mutable_device_data(), topo);
+        cleo.initialize(state);
+    });
+}
+
 } // namespace
 
 int
@@ -258,6 +357,7 @@ main(int argc, char* argv[]) {
     Kokkos::initialize(Kokkos::InitializationSettings().set_device_id(0));
     try {
         with_model_state(argv[1], check_registered_fields);
+        check_refusals(argv[1]);
         if (argc == 3) {
             with_model_state(argv[2], check_non_cartesian_refused);
         }

@@ -919,8 +919,8 @@ aerosol settings change.
 | `timesteps_s.condensation` | real | required | Condensation substep [s]. |
 | `timesteps_s.collision` | real | required | Collision substep [s]. |
 | `timesteps_s.motion` | real | required | Superdroplet motion step [s]. |
-| `timesteps_s.coupling` | real | required | Interval between VVMex–CLEO exchanges [s]; must not be shorter than `simulation.dt_s`. |
-| `timesteps_s.observation` | real | required | Interval of CLEO's zarr output [s]. |
+| `timesteps_s.coupling` | real | required | Interval between VVMex–CLEO exchanges [s]; must not be shorter than `simulation.dt_s`, and `simulation.total_time_s` must be a whole number of it. |
+| `timesteps_s.observation` | real | required | Interval of CLEO's zarr output [s]; need not be a multiple of `coupling`. |
 | `superdroplets.rank_capacity_factor` | real | `1.5` | Each rank's superdroplet storage as a multiple of what it starts with, as room for superdroplets migrating in. |
 | `process.enable_condensation` | bool | `true` | Condensation and evaporation. |
 | `process.enable_collision` | bool | `true` | Collision–coalescence, rebound and breakup. |
