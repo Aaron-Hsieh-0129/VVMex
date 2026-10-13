@@ -30,10 +30,10 @@ concurrency:
 jobs:
   gpu:
     name: Build and test (GPU)
-    # Fork PRs use GitHub's "Approve and run" gate, as in cpu-tests.yml.
-    # Require approval for all external contributors in the repository's
-    # Actions settings before enabling fork code on this self-hosted runner.
+    # The protected environment requires approval for every run, including
+    # repository members, just like cpu-tests.yml.
     if: vars.VVMEX_GPU_RUNNER == 'true'
+    environment: ci-self-hosted
     runs-on: [self-hosted, vvmex-gpu]
     timeout-minutes: 120
 

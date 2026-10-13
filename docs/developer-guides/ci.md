@@ -19,13 +19,13 @@ So CI is split by what a job needs:
 | Workflow | Runner | Trigger | Cost |
 |---|---|---|---|
 | `checks.yml` | GitHub-hosted | every push and PR, forks included | ~1 min |
-| `cpu-tests.yml` | self-hosted | every push and PR; fork PRs require approval | ~11 min |
-| `gpu-tests.yml` | self-hosted | every push and PR; fork PRs require approval | ~14 min |
+| `cpu-tests.yml` | self-hosted | every push and PR, or manual; approval required for every run | ~11 min |
+| `gpu-tests.yml` | self-hosted | every push and PR, or manual; approval required for every run | ~14 min |
 | `nightly.yml` | self-hosted | 19:00 UTC daily, or manual | ~10 min GPU, ~1.5 h CPU |
 | `docs.yml` | GitHub-hosted | push to `main` touching `docs/` | ~1 min |
 
-`checks.yml` runs without a self-hosted runner. Fork pull requests can also run
-the CPU and GPU workflows after a maintainer approves their workflow runs.
+`checks.yml` runs without a self-hosted runner. CPU and GPU workflow jobs require
+approval for every contributor, including repository members and the owner.
 
 ## What each job checks
 
@@ -253,9 +253,21 @@ see [What to require](#what-to-require).
 
 Under **Settings → Actions → General → Approval for running fork pull request
 workflows from contributors**, select **Require approval for all external
-contributors** and save. This is the approval gate for fork CPU/GPU runs; the
-workflow YAML alone does not require approval. Set this policy before enabling
-the fork workflows. See [Running fork PR tests](#running-fork-pr-tests).
+contributors** and save. This holds all workflows from outside contributors,
+including `checks.yml`, but does not require approval for repository members.
+
+Under **Settings → Environments**, create **ci-self-hosted** and configure:
+
+- **Required reviewers:** `Aaron-Hsieh-0129`.
+- **Allow administrators to bypass configured protection rules:** disabled.
+- **Prevent self-review:** disabled, so the owner can explicitly approve runs
+  they initiated. Their runs still wait for approval.
+- **Deployment branches and tags:** no restriction, so branch pushes and PR
+  merge refs can reach the approval gate.
+
+Both CPU/GPU workflows reference this environment. Required reviewers must be
+configured before enabling those workflows; the YAML reference alone does not
+create a review requirement. See [Approving CPU and GPU tests](#approving-cpu-and-gpu-tests).
 
 The README carries a badge for `checks.yml` only. Add one for the CPU gate once
 a runner is live — a badge for a workflow that has never run renders as "no
@@ -322,29 +334,35 @@ Now that the CPU gate runs on every push, the hook's `ctest` is largely
 redundant with it; what the hook still does that nothing else does is run
 `git lfs pre-push`, which is how LFS objects get uploaded at all.
 
-## Running fork PR tests
+## Approving CPU and GPU tests
 
-`cpu-tests.yml` and `gpu-tests.yml` accept `pull_request` events from forks.
-With **Require approval for all external contributors** configured as above,
-GitHub holds outside contributors' workflow runs until a maintainer with write
-access approves them. This includes returning contributors, so merging an
-earlier PR does not let a contributor bypass approval. The policy also applies
-to `checks.yml`; it is a repository setting, not a CPU/GPU-only gate.
+Every run of `cpu-tests.yml` and `gpu-tests.yml` references the protected
+`ci-self-hosted` environment. GitHub waits for its required reviewer to approve
+the job before assigning it to a self-hosted runner. Repository membership
+does not bypass this requirement: PRs, branch pushes, and manual runs from
+members and the owner all need an explicit approval. Administrator bypass is
+disabled; the owner can approve their own runs because self-review is allowed.
 
-1. Open the fork pull request and review its changes, including
-   `.github/workflows/`, build scripts, and test scripts.
-2. In the pull request's **Conversation** tab, find the workflow approval
-   notice and click **Approve and run** for the runs you want to allow. You can
-   also approve a waiting run from the **Actions** tab.
-3. Watch **Build and test (CPU)** and **Build and test (GPU)** in the PR checks.
-   Each enabled backend uses its existing self-hosted runner and tests the PR's
-   merge commit against the base branch. No branch copy or manual PR checkout
-   is needed.
+1. Review the commit or pull request, including `.github/workflows/`, build
+   scripts, and test scripts.
+2. For outside contributors' fork PRs, first click **Approve and run** on the
+   PR's workflow notice. This separate repository policy also holds the hosted
+   Checks workflow. Members do not encounter this first gate.
+3. Open the **CPU tests** or **GPU tests** run in the **Actions** tab. Click
+   **Review deployments**, select **ci-self-hosted**, and click **Approve and
+   deploy**. GitHub calls this a deployment review even though the job runs
+   tests. Approve each workflow run you want to execute.
+4. Watch **Build and test (CPU)** and **Build and test (GPU)** in the PR checks.
+   Each enabled backend uses its existing runner and tests the PR's merge
+   commit against the base branch. No branch copy or manual PR checkout is
+   needed.
 
-New fork PR updates are subject to the same approval policy; review the updated
-diff before approving another run. A disabled backend skips, and an enabled
-backend with no online runner waits in the queue. `nightly.yml` remains a
-scheduled or manually dispatched workflow, not a fork PR test.
+Approval is per workflow run. New commits require another approval; review the
+updated diff before allowing another run. The existing `push` and
+`pull_request` triggers can produce two runs for a branch with an open PR;
+each needs its own approval. A disabled backend skips, and an approved backend
+with no online runner waits in the queue. `nightly.yml` remains automatic for
+scheduled runs and does not reference this environment.
 
 The workflows use a read-only `GITHUB_TOKEN`, and checkout does not persist its
 credentials. GitHub does not pass repository secrets to fork `pull_request`
@@ -354,7 +372,8 @@ you trust to run there. Keep the trigger as `pull_request`:
 `pull_request_target` bypasses GitHub's fork approval policy.
 
 GitHub documents the [approval policy settings](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository#controlling-changes-from-forks-to-workflows-in-public-repositories)
-and [approving fork workflow runs](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/approve-runs-from-forks).
+and [approving fork workflow runs](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/approve-runs-from-forks),
+plus [reviewing environment jobs](https://docs.github.com/en/actions/how-tos/managing-workflow-runs-and-deployments/managing-deployments/reviewing-deployments).
 
 ## Could CI run entirely on GitHub?
 

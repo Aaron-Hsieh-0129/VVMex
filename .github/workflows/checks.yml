@@ -6,7 +6,7 @@
 # of Kokkos, ADIOS2, PnetCDF, NetCDF, HDF5 and the EAMxx physics stack. So the
 # compile-and-test gate lives in cpu-tests.yml on a self-hosted runner, and this
 # workflow covers everything that can be judged from the sources alone. Fork
-# PRs also get CPU/GPU tests after a maintainer approves their workflow runs.
+# PRs also get CPU/GPU tests after a required reviewer approves those jobs.
 name: Checks
 
 # Runs on every branch, not just main. This workflow is free and takes about a

@@ -55,12 +55,12 @@ concurrency:
 jobs:
   cpu:
     name: Build and test (CPU)
-    # Fork PRs run after a maintainer clicks "Approve and run" in GitHub.
-    # Settings > Actions > General MUST require approval for all external
-    # contributors: that repository policy supplies the approval gate, not YAML.
-    # Review the PR (including workflow changes) before allowing it to execute
-    # on this self-hosted runner. See docs/developer-guides/ci.md.
+    # Every run needs approval, including members' PRs, pushes and manual runs.
+    # Configure required reviewers on the ci-self-hosted environment in GitHub;
+    # naming an environment in YAML alone does not require approval.
+    # See docs/developer-guides/ci.md for setup and the separate fork-run gate.
     if: vars.VVMEX_RUNNER == 'true'
+    environment: ci-self-hosted
     runs-on: [self-hosted, vvmex-cpu]
     timeout-minutes: 60
 
