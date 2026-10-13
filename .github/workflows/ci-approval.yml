@@ -1,0 +1,48 @@
+# No PR checkout: determine the triggering user's role on GitHub-hosted compute.
+name: CI approval policy
+
+on:
+  workflow_call:
+    outputs:
+      admin_actor:
+        description: Triggering user verified to have repository admin permission
+        value: ${{ jobs.approval.outputs.admin_actor }}
+
+permissions:
+  contents: read
+
+jobs:
+  approval:
+    name: Determine CI approval
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      admin_actor: ${{ steps.role.outputs.admin_actor }}
+    steps:
+      - name: Check repository role
+        id: role
+        uses: actions/github-script@v7
+        env:
+          RUN_ACTOR: ${{ github.triggering_actor }}
+        with:
+          script: |
+            core.setOutput('admin_actor', '');
+            const actor = process.env.RUN_ACTOR;
+            if (!actor) {
+              core.warning('Missing triggering user; CI approval is required.');
+              return;
+            }
+            try {
+              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                ...context.repo,
+                username: actor,
+              });
+              if (data.permission === 'admin') {
+                core.setOutput('admin_actor', actor);
+                core.info(`${actor} is a repository administrator; CI runs automatically.`);
+              } else {
+                core.info(`${actor} is not a repository administrator; CI approval is required.`);
+              }
+            } catch (error) {
+              core.warning(`Cannot verify repository role (HTTP ${error.status || 'unknown'}); CI approval is required.`);
+            }

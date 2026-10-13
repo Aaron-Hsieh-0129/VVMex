@@ -53,18 +53,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  approval:
+    if: vars.VVMEX_RUNNER == 'true'
+    uses: ./.github/workflows/ci-approval.yml
+
   cpu:
     name: Build and test (CPU)
-    # A self-hosted runner executes whatever the workflow says, on real
-    # hardware, with the runner's credentials. A pull request from a fork must
-    # never reach it. Fork PRs still get the full Checks workflow, which is
-    # hermetic and runs on GitHub's infrastructure.
-    if: >-
-      vars.VVMEX_RUNNER == 'true' &&
-      (github.event_name != 'pull_request' ||
-       github.event.pull_request.head.repo.full_name == github.repository)
+    needs: approval
+    # Verified administrators run automatically; everyone else needs approval.
+    # Comparing the verified actor also protects reruns that reuse job outputs.
+    # Configure ci-self-hosted with required reviewers and ci-self-hosted-admin
+    # without required reviewers. See docs/developer-guides/ci.md.
+    if: vars.VVMEX_RUNNER == 'true'
+    environment:
+      name: ${{ needs.approval.outputs.admin_actor != '' && needs.approval.outputs.admin_actor == github.triggering_actor && 'ci-self-hosted-admin' || 'ci-self-hosted' }}
     runs-on: [self-hosted, vvmex-cpu]
-    timeout-minutes: 60
+    timeout-minutes: 30
 
     env:
       VVM_ROOT: ${{ github.workspace }}
@@ -77,6 +81,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          persist-credentials: false
           # tests/baselines_cpu/*.h5 are ordinary git objects, so the CPU tier
           # needs no LFS fetch. Skipping it keeps LFS bandwidth for the GPU job.
           lfs: false

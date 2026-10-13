@@ -28,14 +28,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  approval:
+    if: vars.VVMEX_GPU_RUNNER == 'true'
+    uses: ./.github/workflows/ci-approval.yml
+
   gpu:
     name: Build and test (GPU)
-    if: >-
-      vars.VVMEX_GPU_RUNNER == 'true' &&
-      (github.event_name != 'pull_request' ||
-       github.event.pull_request.head.repo.full_name == github.repository)
+    needs: approval
+    # The shared role check lets administrators run automatically and requires
+    # approval for all other contributors, including members, as in CPU tests.
+    if: vars.VVMEX_GPU_RUNNER == 'true'
+    environment:
+      name: ${{ needs.approval.outputs.admin_actor != '' && needs.approval.outputs.admin_actor == github.triggering_actor && 'ci-self-hosted-admin' || 'ci-self-hosted' }}
     runs-on: [self-hosted, vvmex-gpu]
-    timeout-minutes: 120
+    timeout-minutes: 30
 
     env:
       VVM_ROOT: ${{ github.workspace }}
@@ -44,6 +50,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          persist-credentials: false
           # tests/baselines/*.h5 are LFS objects and the default tier reads them.
           # NOT lfs: true. actions/checkout implements that by running
           # `git lfs install --local`, which refuses to proceed when a pre-push
