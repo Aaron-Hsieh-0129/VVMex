@@ -30,10 +30,10 @@ concurrency:
 jobs:
   gpu:
     name: Build and test (GPU)
-    if: >-
-      vars.VVMEX_GPU_RUNNER == 'true' &&
-      (github.event_name != 'pull_request' ||
-       github.event.pull_request.head.repo.full_name == github.repository)
+    # Fork PRs use GitHub's "Approve and run" gate, as in cpu-tests.yml.
+    # Require approval for all external contributors in the repository's
+    # Actions settings before enabling fork code on this self-hosted runner.
+    if: vars.VVMEX_GPU_RUNNER == 'true'
     runs-on: [self-hosted, vvmex-gpu]
     timeout-minutes: 120
 
@@ -44,6 +44,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          persist-credentials: false
           # tests/baselines/*.h5 are LFS objects and the default tier reads them.
           # NOT lfs: true. actions/checkout implements that by running
           # `git lfs install --local`, which refuses to proceed when a pre-push
