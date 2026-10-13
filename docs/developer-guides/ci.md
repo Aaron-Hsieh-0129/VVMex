@@ -259,7 +259,7 @@ including `checks.yml`, but does not require approval for repository members.
 Under **Settings → Environments**, create **ci-self-hosted** and configure:
 
 - **Required reviewers:** `Aaron-Hsieh-0129`.
-- **Allow administrators to bypass configured protection rules:** disabled.
+- **Allow administrators to bypass configured protection rules:** enabled.
 - **Prevent self-review:** disabled, so the owner can explicitly approve runs
   they initiated. Their runs still wait for approval.
 - **Deployment branches and tags:** no restriction, so branch pushes and PR
@@ -340,8 +340,10 @@ Every run of `cpu-tests.yml` and `gpu-tests.yml` references the protected
 `ci-self-hosted` environment. GitHub waits for its required reviewer to approve
 the job before assigning it to a self-hosted runner. Repository membership
 does not bypass this requirement: PRs, branch pushes, and manual runs from
-members and the owner all need an explicit approval. Administrator bypass is
-disabled; the owner can approve their own runs because self-review is allowed.
+members wait for an explicit approval. Administrators can instead bypass the
+gate using **Start all waiting jobs** in the workflow run; ordinary contributors
+cannot bypass it. The owner can also approve their own runs because self-review
+is allowed. Administrator runs still wait until approved or manually bypassed.
 
 1. Review the commit or pull request, including `.github/workflows/`, build
    scripts, and test scripts.
