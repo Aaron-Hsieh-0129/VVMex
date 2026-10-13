@@ -317,6 +317,11 @@
         "microphysics": {
             "engine": "cleo",
             "__engine": "none, cleo",
+            "aerosol": {
+                "geometric_mean_radius_m": [2.0e-8, 1.5e-7],
+                "geometric_stddev": [1.4, 1.6],
+                "number_conc_per_m3": [6.0e7, 4.0e7]
+            },
             "cleo": {
                 "init_gbx_path": "./build/cleo/share/vvm_dimlessGBxboundaries.dat",
                 "init_supers_path": "./build/cleo/share/vvm_dimlessSDsinit.dat",
@@ -339,11 +344,6 @@
                     "wet_scale": 1.0,
                     "seed": 1234,
                     "rank_capacity_factor": 1.5
-                },
-                "aerosol": {
-                    "geometric_mean_radius_m": [2.0e-8, 1.5e-7],
-                    "geometric_stddev": [1.4, 1.6],
-                    "number_conc_per_m3": [6.0e7, 4.0e7]
                 },
                 "process": {
                     "enable_condensation": true,

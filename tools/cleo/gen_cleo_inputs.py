@@ -163,7 +163,7 @@ def model_grid(g: dict, domain: float) -> dict:
 
 
 def read_settings(cfg: dict) -> dict:
-    sd, ae = f"{CLEO}.superdroplets", f"{CLEO}.aerosol"
+    sd, ae = f"{CLEO}.superdroplets", "physics.microphysics.aerosol"
     zlim = get(cfg, f"{sd}.seed_below_z_m")
     s = {
         "gbx_path": resolve(get(cfg, f"{CLEO}.init_gbx_path")),

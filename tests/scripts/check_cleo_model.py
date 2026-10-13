@@ -112,7 +112,9 @@ def make_config(case_dir, collisions, average_over_y):
         "rrtmgp": {"enable_rrtmgp": False},
         "turbulence": {"enable_turbulence": False},
         "surface": {"enable_surface": False},
-        "microphysics": {"engine": "cleo", "cleo": cleo},
+        "microphysics": {"engine": "cleo",
+                         "aerosol": template["physics"]["microphysics"]["aerosol"],
+                         "cleo": cleo},
     }
     output_fields = set(FIELDS_3D + FIELDS_2D + ["pibar", "pbar"])
     # float64, so comparing runs is not at the mercy of float32 rounding.

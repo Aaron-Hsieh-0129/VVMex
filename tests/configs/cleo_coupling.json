@@ -37,6 +37,20 @@
         },
         "microphysics": {
             "engine": "cleo",
+            "aerosol": {
+                "geometric_mean_radius_m": [
+                    2e-08,
+                    1.5e-07
+                ],
+                "geometric_stddev": [
+                    1.4,
+                    1.6
+                ],
+                "number_conc_per_m3": [
+                    60000000.0,
+                    40000000.0
+                ]
+            },
             "cleo": {
                 "init_gbx_path": "./build/testing_output_cleo_coupling/share/dimlessGBxboundaries.dat",
                 "init_supers_path": "./build/testing_output_cleo_coupling/share/dimlessSDsinit.dat",
@@ -58,20 +72,6 @@
                     "wet_scale": 2.0,
                     "__haze": "radius_min_m/radius_max_m are DRY radii; the wet radius is dry * wet_scale. Every superdroplet must stay below diagnostics.cloud_min_radius_um (1 um) so the scenarios start with haze only, and wet_scale > 1 gives the haze water, so qp > 0.",
                     "seed": 20261002
-                },
-                "aerosol": {
-                    "geometric_mean_radius_m": [
-                        2e-08,
-                        1.5e-07
-                    ],
-                    "geometric_stddev": [
-                        1.4,
-                        1.6
-                    ],
-                    "number_conc_per_m3": [
-                        60000000.0,
-                        40000000.0
-                    ]
                 },
                 "diagnostics": {
                     "cloud_min_radius_um": 1.0,
@@ -132,13 +132,13 @@
             "physics.microphysics.cleo.superdroplets.radius_max_m": 1e-06,
             "physics.microphysics.cleo.superdroplets.wet_scale": 1000.0,
             "physics.microphysics.cleo.superdroplets.numconc_tolerance": 0.1,
-            "physics.microphysics.cleo.aerosol.geometric_mean_radius_m": [
+            "physics.microphysics.aerosol.geometric_mean_radius_m": [
                 5e-07
             ],
-            "physics.microphysics.cleo.aerosol.geometric_stddev": [
+            "physics.microphysics.aerosol.geometric_stddev": [
                 1.3
             ],
-            "physics.microphysics.cleo.aerosol.number_conc_per_m3": [
+            "physics.microphysics.aerosol.number_conc_per_m3": [
                 1000.0
             ],
             "simulation.output_interval_s": 3.0
@@ -151,13 +151,13 @@
             "physics.microphysics.cleo.superdroplets.radius_max_m": 1e-06,
             "physics.microphysics.cleo.superdroplets.wet_scale": 1000.0,
             "physics.microphysics.cleo.superdroplets.numconc_tolerance": 0.1,
-            "physics.microphysics.cleo.aerosol.geometric_mean_radius_m": [
+            "physics.microphysics.aerosol.geometric_mean_radius_m": [
                 5e-07
             ],
-            "physics.microphysics.cleo.aerosol.geometric_stddev": [
+            "physics.microphysics.aerosol.geometric_stddev": [
                 1.3
             ],
-            "physics.microphysics.cleo.aerosol.number_conc_per_m3": [
+            "physics.microphysics.aerosol.number_conc_per_m3": [
                 1000.0
             ],
             "simulation.output_interval_s": 3.0,

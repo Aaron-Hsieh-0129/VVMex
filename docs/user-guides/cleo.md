@@ -33,6 +33,7 @@ condensate. Ice is not represented.
         "p3": { "enable_p3": false },
         "microphysics": {
             "engine": "cleo",
+            "aerosol": { ... },
             "cleo": { ... }
         }
     }
@@ -55,7 +56,7 @@ condensate. Ice is not represented.
     needs. The gridboxes are the model's physical cells, with the vertical
     levels rebuilt as `Initializer.cpp` builds them (`default`, including the
     `dz1` stretching, or `rcemip`; `taiwanvvm` is not supported). Superdroplets
-    are sampled from the lognormal aerosol modes in `aerosol`, `per_gridbox` in
+    are sampled from the lognormal modes in `physics.microphysics.aerosol`, `per_gridbox` in
     every gridbox below `seed_below_z_m`. Regenerate whenever the grid or these
     settings change. Relative paths are taken from the repository root, where
     `submit.py` runs the model.

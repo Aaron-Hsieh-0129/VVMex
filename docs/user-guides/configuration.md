@@ -891,6 +891,19 @@ on the rank, so no fixed number is correct for all runs.
 | --- | --- | --- | --- |
 | `engine` | string | `"none"` | `none` or `cleo`. `cleo` enables the CLEO super-droplet microphysics; P3 is still switched by `physics.p3.enable_p3`, and enabling both is an error. |
 
+### `physics.microphysics.aerosol`
+
+The initial dry aerosol, shared by the microphysics schemes. At present only
+the CLEO input generator reads it.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `geometric_mean_radius_m` | real array | required | Geometric mean dry radius of each lognormal mode [m]. |
+| `geometric_stddev` | real array | required | Geometric standard deviation of each mode. |
+| `number_conc_per_m3` | real array | required | Number concentration of each mode [m-3]. |
+
+The three arrays have one entry per mode and the same length.
+
 ### `physics.microphysics.cleo`
 
 Read only when `engine` is `cleo`. See [CLEO super-droplet microphysics](cleo.md)
@@ -926,9 +939,8 @@ and rounds every step to 0.01 s.
 
 The generator alone reads `superdroplets.per_gridbox`, `seed_below_z_m`
 (`null` seeds every gridbox), `radius_min_m`, `radius_max_m`,
-`numconc_tolerance`, `common_multiplicity`, `wet_scale` and `seed`, and
-`aerosol.geometric_mean_radius_m`, `geometric_stddev` and `number_conc_per_m3`
-(one entry per lognormal mode).
+`numconc_tolerance`, `common_multiplicity`, `wet_scale` and `seed`, together
+with [`physics.microphysics.aerosol`](#physicsmicrophysicsaerosol).
 
 ### `physics.turbulence`
 
