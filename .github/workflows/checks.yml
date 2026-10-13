@@ -6,7 +6,8 @@
 # of Kokkos, ADIOS2, PnetCDF, NetCDF, HDF5 and the EAMxx physics stack. So the
 # compile-and-test gate lives in cpu-tests.yml on a self-hosted runner, and this
 # workflow covers everything that can be judged from the sources alone. Fork
-# PRs also get CPU/GPU tests after a required reviewer approves those jobs.
+# PRs also get CPU/GPU tests: administrators run automatically and other
+# contributors need approval from a required reviewer.
 name: Checks
 
 # Runs on every branch, not just main. This workflow is free and takes about a
@@ -98,6 +99,9 @@ jobs:
 
       - name: Test suite switches and runtime policy
         run: python3 tests/scripts/test_cmake_registration.py
+
+      - name: CI approval policy
+        run: python3 tests/scripts/test_ci_approval.py
 
       # .gitmodules and the index have to agree: a submodule declared in one but
       # not the other gives "No url found for submodule path" on a fresh clone,

@@ -53,14 +53,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  approval:
+    if: vars.VVMEX_RUNNER == 'true'
+    uses: ./.github/workflows/ci-approval.yml
+
   cpu:
     name: Build and test (CPU)
-    # Every run needs approval, including members' PRs, pushes and manual runs.
-    # Configure required reviewers on the ci-self-hosted environment in GitHub;
-    # naming an environment in YAML alone does not require approval.
-    # See docs/developer-guides/ci.md for setup and the separate fork-run gate.
+    needs: approval
+    # Verified administrators run automatically; everyone else needs approval.
+    # Comparing the verified actor also protects reruns that reuse job outputs.
+    # Configure ci-self-hosted with required reviewers and ci-self-hosted-admin
+    # without required reviewers. See docs/developer-guides/ci.md.
     if: vars.VVMEX_RUNNER == 'true'
-    environment: ci-self-hosted
+    environment:
+      name: ${{ needs.approval.outputs.admin_actor != '' && needs.approval.outputs.admin_actor == github.triggering_actor && 'ci-self-hosted-admin' || 'ci-self-hosted' }}
     runs-on: [self-hosted, vvmex-cpu]
     timeout-minutes: 60
 

@@ -19,13 +19,14 @@ So CI is split by what a job needs:
 | Workflow | Runner | Trigger | Cost |
 |---|---|---|---|
 | `checks.yml` | GitHub-hosted | every push and PR, forks included | ~1 min |
-| `cpu-tests.yml` | self-hosted | every push and PR, or manual; approval required for every run | ~11 min |
-| `gpu-tests.yml` | self-hosted | every push and PR, or manual; approval required for every run | ~14 min |
+| `cpu-tests.yml` | self-hosted | every push and PR, or manual; admins automatic, other contributors need approval | ~11 min |
+| `gpu-tests.yml` | self-hosted | every push and PR, or manual; admins automatic, other contributors need approval | ~14 min |
 | `nightly.yml` | self-hosted | 19:00 UTC daily, or manual | ~10 min GPU, ~1.5 h CPU |
 | `docs.yml` | GitHub-hosted | push to `main` touching `docs/` | ~1 min |
 
-`checks.yml` runs without a self-hosted runner. CPU and GPU workflow jobs require
-approval for every contributor, including repository members and the owner.
+`checks.yml` runs without a self-hosted runner. CPU and GPU workflow jobs run
+automatically for repository administrators. Other contributors, including
+non-admin repository members, require approval.
 
 ## What each job checks
 
@@ -260,14 +261,22 @@ Under **Settings → Environments**, create **ci-self-hosted** and configure:
 
 - **Required reviewers:** `Aaron-Hsieh-0129`.
 - **Allow administrators to bypass configured protection rules:** enabled.
-- **Prevent self-review:** disabled, so the owner can explicitly approve runs
-  they initiated. Their runs still wait for approval.
+- **Prevent self-review:** disabled, so a required reviewer can approve a run
+  they initiated if it reaches the protected environment.
 - **Deployment branches and tags:** no restriction, so branch pushes and PR
   merge refs can reach the approval gate.
 
-Both CPU/GPU workflows reference this environment. Required reviewers must be
-configured before enabling those workflows; the YAML reference alone does not
-create a review requirement. See [Approving CPU and GPU tests](#approving-cpu-and-gpu-tests).
+Also create **ci-self-hosted-admin** with **no required reviewers**, no wait
+timer, and no branch or tag restrictions. Verified administrator runs use this
+environment to start automatically.
+
+Both CPU/GPU workflows use the shared `ci-approval.yml` job to check the
+triggering user's repository permissions on GitHub-hosted compute, without
+checking out PR code. Only a verified `admin` role selects
+`ci-self-hosted-admin`; all other roles and failed lookups select
+`ci-self-hosted`. Configure both environments before enabling those workflows;
+a YAML environment reference alone does not create a review requirement.
+See [Approving CPU and GPU tests](#approving-cpu-and-gpu-tests).
 
 The README carries a badge for `checks.yml` only. Add one for the CPU gate once
 a runner is live — a badge for a workflow that has never run renders as "no
@@ -336,14 +345,21 @@ redundant with it; what the hook still does that nothing else does is run
 
 ## Approving CPU and GPU tests
 
-Every run of `cpu-tests.yml` and `gpu-tests.yml` references the protected
-`ci-self-hosted` environment. GitHub waits for its required reviewer to approve
-the job before assigning it to a self-hosted runner. Repository membership
-does not bypass this requirement: PRs, branch pushes, and manual runs from
-members wait for an explicit approval. Administrators can instead bypass the
-gate using **Start all waiting jobs** in the workflow run; ordinary contributors
-cannot bypass it. The owner can also approve their own runs because self-review
-is allowed. Administrator runs still wait until approved or manually bypassed.
+`cpu-tests.yml` and `gpu-tests.yml` check the triggering user's repository role
+before scheduling a self-hosted job. Verified administrators use the
+unprotected `ci-self-hosted-admin` environment and run automatically, without
+an approval or bypass click. Other contributors, including non-admin members,
+use the protected `ci-self-hosted` environment and wait for its required
+reviewer's approval before a self-hosted runner receives the job. A failed or
+missing permission lookup also requires approval.
+
+The check uses `github.triggering_actor`, including on reruns. The test job
+compares that actor with the verified administrator output, so rerunning an
+administrator's run as a different user does not reuse their automatic access.
+If a rerun reuses another user's role-check output, select **Re-run all jobs**
+to refresh the permission check. Administrators can also manually release a
+protected run using **Start all waiting jobs**; ordinary contributors cannot
+bypass the gate.
 
 1. Review the commit or pull request, including `.github/workflows/`, build
    scripts, and test scripts.
@@ -359,10 +375,12 @@ is allowed. Administrator runs still wait until approved or manually bypassed.
    commit against the base branch. No branch copy or manual PR checkout is
    needed.
 
-Approval is per workflow run. New commits require another approval; review the
-updated diff before allowing another run. The existing `push` and
+For non-admin contributors, approval is per workflow run. New commits require
+another approval; review the updated diff before allowing another run.
+The existing `push` and
 `pull_request` triggers can produce two runs for a branch with an open PR;
-each needs its own approval. A disabled backend skips, and an approved backend
+each follows the same administrator-or-approval policy. A disabled backend
+skips, and an allowed backend
 with no online runner waits in the queue. `nightly.yml` remains automatic for
 scheduled runs and does not reference this environment.
 

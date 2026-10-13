@@ -28,12 +28,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  approval:
+    if: vars.VVMEX_GPU_RUNNER == 'true'
+    uses: ./.github/workflows/ci-approval.yml
+
   gpu:
     name: Build and test (GPU)
-    # The protected environment requires approval for every run, including
-    # repository members, just like cpu-tests.yml.
+    needs: approval
+    # The shared role check lets administrators run automatically and requires
+    # approval for all other contributors, including members, as in CPU tests.
     if: vars.VVMEX_GPU_RUNNER == 'true'
-    environment: ci-self-hosted
+    environment:
+      name: ${{ needs.approval.outputs.admin_actor != '' && needs.approval.outputs.admin_actor == github.triggering_actor && 'ci-self-hosted-admin' || 'ci-self-hosted' }}
     runs-on: [self-hosted, vvmex-gpu]
     timeout-minutes: 120
 
