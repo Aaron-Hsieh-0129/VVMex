@@ -157,15 +157,24 @@ struct Snapshot {
     std::map<std::string, Host2> f2;
 };
 
+// A copy: on a host backend get_host_data() returns the field's own view.
+template <typename FieldType>
+auto
+host_copy(const FieldType& field) {
+    auto copy = Kokkos::create_mirror(field.get_device_data());
+    Kokkos::deep_copy(copy, field.get_device_data());
+    return copy;
+}
+
 Snapshot
 take_snapshot(const VVM::Core::State& state) {
     Kokkos::fence();
     Snapshot s;
     for (const char* name : fields3) {
-        s.f3.emplace(name, state.get_field<3>(name).get_host_data());
+        s.f3.emplace(name, host_copy(state.get_field<3>(name)));
     }
     for (const char* name : fields2) {
-        s.f2.emplace(name, state.get_field<2>(name).get_host_data());
+        s.f2.emplace(name, host_copy(state.get_field<2>(name)));
     }
     return s;
 }
