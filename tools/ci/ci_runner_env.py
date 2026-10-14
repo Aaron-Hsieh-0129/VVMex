@@ -13,6 +13,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import shutil
 import sys
 
@@ -26,6 +27,30 @@ def load_submit(vvm_root):
 
 
 _ALL_PRESETS = []
+
+
+def preset_environment(entry, parent, source_dir):
+    """Resolve the preset's environment without depending on the caller's shell."""
+    raw = entry.get("environment", {})
+    macro = re.compile(r"\$env\{([^}]+)\}|\$penv\{([^}]+)\}")
+
+    def resolve(key, chain=()):
+        if key in chain:
+            raise ValueError(f"Preset environment reference cycle: {chain + (key,)}")
+        value = raw.get(key, parent.get(key, ""))
+        if value is None:
+            return ""
+        value = str(value).replace("${sourceDir}", source_dir)
+        value = value.replace("${presetName}", entry["name"])
+
+        def replace(match):
+            if match.group(2):
+                return parent.get(match.group(2), "")
+            return resolve(match.group(1), chain + (key,))
+
+        return macro.sub(replace, value)
+
+    return {key: resolve(key) for key in raw if raw[key] is not None}
 
 
 def preset_entry(vvm_root, name):
@@ -147,6 +172,9 @@ def gcc_toolchain_prefixes(entry, all_presets=None):
     prefixes = []
 
     def scan(cache):
+        value = cache.get("VVM_GCC_TOOLCHAIN")
+        if value and value not in prefixes:
+            prefixes.append(value)
         for flag_key in ("CMAKE_CXX_FLAGS", "CMAKE_C_FLAGS", "CMAKE_Fortran_FLAGS"):
             for token in str(cache.get(flag_key, "")).split():
                 if token.startswith("--gcc-toolchain="):
@@ -205,6 +233,24 @@ def main():
         os.environ.clear()
         os.environ.update(saved)
 
+    # A runner prepares a clean build. An existing local CMakeCache must not
+    # override the preset's dependency paths when generating its environment.
+    dependency_dirs = []
+    for key in ("ADIOS2_DIR", "Kokkos_DIR", "HDF5_DIR", "NETCDF_C_DIR",
+                "NETCDF_Fortran_DIR", "PNETCDF_DIR"):
+        value = entry.get("cacheVariables", {}).get(key)
+        if value:
+            submit._append_lib_dirs(dependency_dirs, key, str(value))
+    if dependency_dirs:
+        env["VVM_EXTRA_LD_LIBRARY_PATH"] = os.pathsep.join(dependency_dirs)
+        env["LD_LIBRARY_PATH"] = env["VVM_EXTRA_LD_LIBRARY_PATH"]
+
+    explicit_env = preset_environment(entry, scrubbed, vvm_root)
+    env.update(explicit_env)
+    for key, value in entry.get("environment", {}).items():
+        if value is None:
+            env.pop(key, None)
+
     cores = os.cpu_count() or 8
     build_jobs = a.build_jobs or cores
     ctest_jobs = a.ctest_jobs or cores
@@ -226,7 +272,9 @@ def main():
     # full interactive PATH is deliberately not carried over -- it would pin the
     # runner to whatever happened to be loaded when this ran.
     path_parts = []
-    for d in toolchain_bin_dirs(entry):
+    compiler_paths = (explicit_env["PATH"].split(os.pathsep)
+                      if "PATH" in explicit_env else toolchain_bin_dirs(entry))
+    for d in compiler_paths:
         if d not in path_parts:
             path_parts.append(d)
     for d in env.get("PATH", "").split(os.pathsep):
@@ -257,13 +305,17 @@ def main():
         # globalization sidesteps the probe; the runner needs no locale support.
         "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1",
     ]
-    for key in ("LD_LIBRARY_PATH", "VVM_EXTRA_LD_LIBRARY_PATH", "HPCX_HOME"):
+    for key in ("LD_LIBRARY_PATH", "VVM_EXTRA_LD_LIBRARY_PATH", "HPCX_HOME",
+                "LIBRARY_PATH", "CMAKE_PREFIX_PATH", "PKG_CONFIG_PATH",
+                "INSTALL_DIR", "NVHPC_ROOT", "CUDA_HOME", "CUDA_ROOT",
+                "NVHPC_CUDA_HOME", "OPAL_PREFIX", "NVLOCALRC",
+                "OMPI_CC", "OMPI_CXX", "OMPI_FC", "NVCC_WRAPPER_DEFAULT_COMPILER"):
         value = env.get(key)
         if not value:
             continue
         if key.endswith("PATH"):
             parts = value.split(os.pathsep)
-            if key == "LD_LIBRARY_PATH":
+            if key == "LD_LIBRARY_PATH" and key not in explicit_env:
                 # Preset TPLs stay in front -- CPU and CUDA Kokkos share a
                 # SONAME, so whichever comes first is the one that loads.
                 parts = parts + toolchain_lib_dirs(entry, gpu)

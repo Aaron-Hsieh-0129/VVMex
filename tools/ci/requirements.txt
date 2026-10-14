@@ -1,0 +1,6 @@
+# Python dependencies used by CTest verifiers and CLEO input preparation.
+h5py
+numpy
+matplotlib
+scipy
+ruamel.yaml

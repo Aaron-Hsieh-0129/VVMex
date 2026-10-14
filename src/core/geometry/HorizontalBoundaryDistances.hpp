@@ -28,8 +28,7 @@ struct HorizontalBoundaryDistances {
         initialize(grid, state);
     }
 
-private:
-    // A named functor avoids NVCC's restrictions on constructor/private lambdas.
+    // CUDA kernel template arguments require a public functor type.
     struct PhysicalNormalSpacing {
         Field<2>::ViewType wx, sy;
         GeometryField2D inv_j, c11, c22;
@@ -43,6 +42,7 @@ private:
         }
     };
 
+private:
     void
     initialize(const Grid& grid, const State& state) {
         const int h = grid.get_halo_cells(), ny = grid.get_local_physical_points_y(),

@@ -449,6 +449,10 @@ if(ENABLE_NCCL)
     )
     if (NCCL_INCLUDE_DIR AND NCCL_LIBRARY)
         message(STATUS "Found NCCL: ${NCCL_INCLUDE_DIR}, ${NCCL_LIBRARY}")
+        # core/vvm_types.hpp includes nccl.h, so every target needs it, tests
+        # included. NVHPC's own nvcc wrapper used to add it implicitly; plain
+        # nvcc (as with NVHPC 26.9 pinned to CUDA 12.9) does not.
+        include_directories(SYSTEM ${NCCL_INCLUDE_DIR})
     else()
         message(FATAL_ERROR "Could not find NCCL. Please check hints in Root CMakeLists.txt")
     endif()

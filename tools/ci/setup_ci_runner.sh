@@ -163,8 +163,11 @@ write_env() {
     local args=(--preset "$PRESET")
     [ -n "$BUILD_JOBS" ]   && args+=(--build-jobs "$BUILD_JOBS")
     [ -n "$TEST_THREADS" ] && args+=(--test-threads "$TEST_THREADS")
-    python3 "$VVM_ROOT/tools/ci/ci_runner_env.py" "${args[@]}" > "$RUNNER_DIR/.env"
-    echo "==> wrote $RUNNER_DIR/.env"
+    python3 "$VVM_ROOT/tools/ci/ci_runner_env.py" "${args[@]}" > "$RUNNER_DIR/.env.next"
+    mv "$RUNNER_DIR/.env.next" "$RUNNER_DIR/.env"
+    # runsvc.sh reads .path before starting the listener and overrides PATH.
+    sed -n 's/^PATH=//p' "$RUNNER_DIR/.env" > "$RUNNER_DIR/.path"
+    echo "==> wrote $RUNNER_DIR/.env and .path"
 }
 
 if [ "$ENV_ONLY" -eq 1 ]; then
