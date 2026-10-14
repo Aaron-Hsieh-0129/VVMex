@@ -76,7 +76,8 @@ add_subdirectory("{ROOT.as_posix()}/tests" tests)
 
             physics = registry(RLL_PHYSICS=True)
             added = set(physics) - set(default)
-            self.assertEqual(len(added), 8)
+            self.assertEqual(len(added), 9)
+            self.assertIn("test_p3_column_chunks", added)
             self.assertIn("test_rll_periodic_rest_model", added)
             for name in added:
                 self.assertIn("rll-physics", props(physics[name])["LABELS"])

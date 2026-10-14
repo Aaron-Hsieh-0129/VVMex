@@ -21,6 +21,9 @@ if(VVM_TEST_RLL)
 endif()
 
 if(VVM_TEST_RLL_PHYSICS)
+    vvm_add_model_test(test_p3_column_chunks
+        SCRIPT check_p3_column_chunks.py OUTPUT p3_column_chunk_tests
+        TIMEOUT 600 LABELS rll-physics physics)
     vvm_add_model_test(test_rll_turbulence_model
         SCRIPT check_rll_turbulence_model.py OUTPUT rll_turbulence_model_tests
         TIMEOUT 240 LABELS rll-physics)

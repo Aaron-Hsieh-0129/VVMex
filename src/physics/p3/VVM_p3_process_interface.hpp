@@ -407,7 +407,10 @@ protected:
     const VVM::Core::Parameters& params_;
     Core::HaloExchanger& halo_exchanger_;
 
-    int m_num_cols; // nx * ny
+    int m_num_cols; // nx * ny on this rank
+    int m_buffer_cols; // reusable P3 column capacity
+    int m_active_cols; // columns in the current chunk
+    int m_column_offset = 0; // rank-local first column of the current chunk
     int m_num_levs; // nz
     int m_num_lev_packs; // Spacks dim for P3 
 
@@ -494,7 +497,6 @@ protected:
 
     using MemberType = typename P3F::KT::MemberType;
 
-    std::unique_ptr<VVM::Core::Field<3>> m_pseudo_density;
 
     VVM::Real m_output_interval_s;
     bool m_need_reset_precip = false;
