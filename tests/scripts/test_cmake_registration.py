@@ -39,7 +39,8 @@ add_subdirectory("{ROOT.as_posix()}/tests" tests)
 
             def registry(gpu=False, **switches):
                 flags = dict(RLL=False, RLL_PHYSICS=False, REGRESSION=True,
-                             BP5=False, SST=False, PHYSICS=False, MULTIRANK=False)
+                             BP5=False, SST=False, PHYSICS=False, MULTIRANK=False,
+                             CLEO=False)
                 flags.update(switches)
                 command = ["cmake", "-S", str(source), "-B", str(build),
                            f"-DVVM_ENABLE_GPU={'ON' if gpu else 'OFF'}",
@@ -82,13 +83,47 @@ add_subdirectory("{ROOT.as_posix()}/tests" tests)
             self.assertEqual(physics["test_rll_periodic_rest_model"]["command"][-2:],
                              ["--periodic", "--rest"])
 
+            self.assertFalse(any("cleo" in n for n in default))
+            cleo = registry(CLEO=True)
+            cleo_added = set(cleo) - set(default)
+            scenarios = ("transport", "condensation", "average_y", "rain", "rain_collision",
+                         "advection")
+            self.assertEqual(cleo_added,
+                             {"test_cleo_interface", "test_cleo_model", "Verify_cleo_advection"}
+                             | {f"Prep_cleo_{s}" for s in scenarios}
+                             | {f"test_cleo_coupling_{s}" for s in scenarios})
+            self.assertEqual(props(cleo["Verify_cleo_advection"])["FIXTURES_REQUIRED"],
+                             ["cleo_advection_r1"])
+            for name in cleo_added:
+                self.assertIn("cleo", props(cleo[name])["LABELS"])
+            for s in scenarios:
+                run = props(cleo[f"test_cleo_coupling_{s}"])
+                self.assertEqual(run["FIXTURES_REQUIRED"], [f"cleo_{s}"])
+                self.assertEqual(props(cleo[f"Prep_cleo_{s}"])["FIXTURES_SETUP"], [f"cleo_{s}"])
+            cleo_multirank = registry(CLEO=True, MULTIRANK=True)
+            self.assertEqual(
+                {n for n in set(cleo_multirank) - set(cleo) if "cleo" in n},
+                {"test_cleo_model_r2", "test_cleo_coupling_advection_r4",
+                 "Verify_cleo_advection_r4", "Prep_cleo_average_y_split",
+                 "test_cleo_coupling_average_y_split_r2"})
+            self.assertIn("--ranks", cleo_multirank["test_cleo_model_r2"]["command"])
+            self.assertEqual(
+                sorted(props(cleo_multirank["Verify_cleo_advection_r4"])["FIXTURES_REQUIRED"]),
+                ["cleo_advection_r1", "cleo_advection_r4"])
+            for name in ("test_cleo_coupling_advection_r4", "test_cleo_coupling_average_y_split_r2"):
+                self.assertIn("multirank", props(cleo_multirank[name])["LABELS"])
+                self.assertGreater(props(cleo_multirank[name])["PROCESSORS"], 2)
+
             bp5 = registry(BP5=True)
             self.assertNotIn("test_rll_bp5_history", bp5)
             both = registry(RLL=True, BP5=True)
             self.assertIn("test_rll_bp5_history", both)
 
             all_gpu = registry(gpu=True, RLL=True, RLL_PHYSICS=True,
-                               BP5=True, SST=True, PHYSICS=True, MULTIRANK=True)
+                               BP5=True, SST=True, PHYSICS=True, MULTIRANK=True, CLEO=True)
+            for name in ("test_cleo_interface", "test_cleo_coupling_rain", "test_cleo_model"):
+                self.assertEqual(props(all_gpu[name])["RESOURCE_LOCK"], ["gpu"])
+            self.assertNotIn("RESOURCE_LOCK", props(all_gpu["Prep_cleo_rain"]))
             for name in added | (set(dynamics) - set(default)):
                 self.assertEqual(props(all_gpu[name])["RESOURCE_LOCK"], ["gpu"])
             device = all_gpu["test_horizontal_scalar_gradient"]

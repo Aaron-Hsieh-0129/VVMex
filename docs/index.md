@@ -26,6 +26,7 @@ resources consistent with the binary that was built.
   forcings, and idealized benchmarks.
 - Modified P3 microphysics based on E3SM EAMxx and the original Fortran P3
   process coupling.
+- Super-droplet microphysics coupled from CLEO, as an alternative to P3.
 - Kokkos-enabled RRTMGP radiation.
 - Turbulence, surface fluxes, and the Noah land-surface model.
 - HDF5, SST, and BP5 output, including restart support.

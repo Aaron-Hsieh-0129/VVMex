@@ -885,6 +885,65 @@ on the rank, so no fixed number is correct for all runs.
 | `do_prescribed_ccn` | bool | `false` | Use prescribed CCN. |
 | `max_total_ni` | real | `2000.0e3` | Cap on total ice number concentration. |
 
+### `physics.microphysics`
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `engine` | string | `"none"` | `none` or `cleo`. `cleo` enables the CLEO super-droplet microphysics; P3 is still switched by `physics.p3.enable_p3`, and enabling both is an error. |
+
+### `physics.microphysics.aerosol`
+
+The initial dry aerosol, shared by the microphysics schemes. At present only
+the CLEO input generator reads it.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `geometric_mean_radius_m` | real array | required | Geometric mean dry radius of each lognormal mode [m]. |
+| `geometric_stddev` | real array | required | Geometric standard deviation of each mode. |
+| `number_conc_per_m3` | real array | required | Number concentration of each mode [m-3]. |
+
+The three arrays have one entry per mode and the same length.
+
+### `physics.microphysics.cleo`
+
+Read only when `engine` is `cleo`. See [CLEO super-droplet microphysics](cleo.md)
+for the workflow; the input binaries must be regenerated with
+`tools/cleo/gen_cleo_inputs.py` whenever the grid or the superdroplet and
+aerosol settings change.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `init_gbx_path` | string | required | Gridbox-boundary binary written by the generator. |
+| `init_supers_path` | string | required | Initial-superdroplet binary written by the generator; its superdroplet count is read from the file. |
+| `average_over_y` | bool | `false` | Quasi-2-D runs only: feed back the y mean of every column. Requires y undivided across ranks. |
+| `timesteps_s.condensation` | real | required | Condensation substep [s]. |
+| `timesteps_s.collision` | real | required | Collision substep [s]. |
+| `timesteps_s.motion` | real | required | Superdroplet motion step [s]. |
+| `timesteps_s.coupling` | real | required | Interval between VVMex–CLEO exchanges [s]; must not be shorter than `simulation.dt_s`, and `simulation.total_time_s` must be a whole number of it. |
+| `timesteps_s.observation` | real | required | Interval of CLEO's zarr output [s]; need not be a multiple of `coupling`. |
+| `superdroplets.rank_capacity_factor` | real | `1.5` | Each rank's superdroplet storage as a multiple of what it starts with, as room for superdroplets migrating in. |
+| `process.enable_condensation` | bool | `true` | Condensation and evaporation. |
+| `process.enable_collision` | bool | `true` | Collision–coalescence, rebound and breakup. |
+| `process.collision_seed` | int | `0` | Seed of the collision random numbers; `0` seeds from the system. |
+| `process.breakup_nfrags` | real | `5.0` | Mean number of fragments per breakup (> 2.5). |
+| `process.condensation.do_alter_thermo` | bool | `true` | Let condensation change temperature and vapour, i.e. feed back on `th` and `qv`. |
+| `process.condensation.maxniters` | int | `100` | Maximum implicit-solver iterations. |
+| `process.condensation.MINSUBTSTEP` | real | `1e-5` | Minimum adaptive substep of the condensation solver [s]. |
+| `process.condensation.rtol`, `atol` | real | `0.0`, `0.01` | Condensation solver tolerances. |
+| `diagnostics.cloud_min_radius_um` | real | `1.0` | Superdroplets below this radius are haze and are left out of `qc`/`nc`. |
+| `diagnostics.rain_min_radius_um` | real | `40.0` | Superdroplets at or above this radius are rain (`qr`/`nr`). |
+| `output.zarrbasedir` | string | `"vvm_sol.zarr"` | CLEO's zarr store, relative to `output.output_dir`. |
+
+CLEO requires `max(condensation, collision) <= min(coupling, motion, observation)`
+and rounds every step to 0.01 s.
+
+The generator alone reads `superdroplets.per_gridbox`, `seed_below_z_m`
+(`null` seeds every gridbox), `radius_min_m`, `radius_max_m`,
+`numconc_tolerance`, `common_multiplicity`, `wet_scale` and `seed`, together
+with [`physics.microphysics.aerosol`](#physicsmicrophysicsaerosol). The same JSON
+and CLEO checkout give the same binaries byte for byte. When `seed` is missing or
+`null`, the generator draws one and writes it into the JSON.
+
 ### `physics.turbulence`
 
 | Key | Type | Default | Meaning |
@@ -1083,6 +1142,7 @@ Before submitting a long run, check:
 - If `restart.enable` is true, the restart file stores `model_time_s`/`model_step` (or an elapsed-seconds `time`); otherwise set `restart.legacy_time_s` explicitly. The file *name* no longer affects the restart time.
 - The NetCDF variables listed in `netcdf_reader.variables_to_read.2d` exist in `netcdf_reader.source_file`.
 - P3 hydrometeor variables are present in `dynamics.prognostic_variables` when `physics.p3.enable_p3` is true.
+- With `physics.microphysics.engine: "cleo"`, P3 is off and the CLEO binaries were generated from this same JSON.
 - CUDA graph field lists match the fields actually allocated in the run.
 - Optional keys you added are spelled exactly as in this page — a typo is silently ignored.
 

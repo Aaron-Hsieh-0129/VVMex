@@ -9,6 +9,7 @@ if(VVM_TEST_REGRESSION)
 endif()
 include(cmake/RLLTests.cmake)
 include(cmake/OptionalTests.cmake)
+include(cmake/CLEOTests.cmake)
 
 # Apply runtime policy after every suite has registered its tests.
 include(cmake/TestEnvironment.cmake)

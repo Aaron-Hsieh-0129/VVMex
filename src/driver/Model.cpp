@@ -1,4 +1,5 @@
 #include "Model.hpp"
+#include "physics/cleo/VVM_cleo_process_interface.hpp"
 #include "utils/ProcessScheduling.hpp"
 #include "utils/Timer.hpp"
 
@@ -32,11 +33,29 @@ Model::Model(const Utils::ConfigurationManager& config,
         halo_exchanger_,
         bc_manager_);
     if (config_.get_value<bool>("physics.p3.enable_p3", false)) {
-        microphysics_ = std::make_unique<Physics::VVM_P3_Interface>(config_,
+        p3_ = std::make_unique<Physics::VVM_P3_Interface>(config_,
             grid_,
             params_,
             halo_exchanger_,
             state_);
+    }
+
+    const auto microphysics_engine =
+        config_.get_value<std::string>("physics.microphysics.engine", "none");
+    if (microphysics_engine == "cleo") {
+        if (p3_) {
+            throw std::runtime_error(
+                "physics.microphysics.engine is \"cleo\" but physics.p3.enable_p3 is true");
+        }
+        cleo_ = std::make_unique<Physics::VVM_CLEO_Interface>(config_,
+            grid_,
+            params_,
+            halo_exchanger_,
+            state_);
+    }
+    else if (microphysics_engine != "none") {
+        throw std::runtime_error("Unknown physics.microphysics.engine \"" + microphysics_engine +
+                                 "\"; expected \"none\" or \"cleo\"");
     }
 
     if (config_.get_value<bool>("physics.turbulence.enable_turbulence", false)) {
@@ -135,8 +154,11 @@ Model::init() {
     Core::Initializer initializer(config_, grid_, params_, state_, halo_exchanger_);
     initializer.initialize_state();
 
-    if (microphysics_) {
-        microphysics_->initialize(state_);
+    if (p3_) {
+        p3_->initialize(state_);
+    }
+    if (cleo_) {
+        cleo_->initialize(state_);
     }
     if (turbulence_) {
         turbulence_->initialize(state_);
@@ -203,9 +225,10 @@ Model::init() {
         }
 
         // qp is diagnostic and is not part of the checkpoint.
-        if (microphysics_) {
-            microphysics_->refresh_total_condensate(state_);
+        if (p3_) {
+            p3_->refresh_total_condensate(state_);
         }
+        // TODO: cleo
     }
 
     if (rank == 0) {
@@ -390,9 +413,14 @@ Model::run_step(VVM::Real dt) {
     }
 
     // P3 Microphysics based on (t+1) thermodynamics variables
-    if (microphysics_) {
-        VVM::Utils::Timer timer("microphysics");
-        microphysics_->run(state_, dt);
+    if (p3_) {
+        VVM::Utils::Timer timer("p3");
+        p3_->run(state_, dt);
+    }
+
+    if (cleo_) {
+        VVM::Utils::Timer timer("cleo");
+        cleo_->run(state_, dt);
     }
 
     // Turbulence diffusion on thermodynamics variables
@@ -508,10 +536,11 @@ Model::run_step(VVM::Real dt) {
         }
     }
 
-    if (microphysics_ && grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
+    if (p3_ && grid_.geometry().kind() != Core::Geometry::GeometryKind::Cartesian) {
         // Buoyancy must see condensate after diffusion/sponge, not P3's earlier snapshot.
-        microphysics_->refresh_total_condensate(state_);
+        p3_->refresh_total_condensate(state_);
     }
+    //TODO: CLEO
 
     // Calculate buoyancy based on thermodynamics variables at t+1
     // dycore_->update_buoyancy_term(state_);
@@ -644,8 +673,11 @@ Model::run_step(VVM::Real dt) {
 
 void
 Model::finalize() {
-    if (microphysics_) {
-        microphysics_->finalize();
+    if (p3_) {
+        p3_->finalize();
+    }
+    if (cleo_) {
+        cleo_->finalize();
     }
     if (radiation_) {
         radiation_->finalize();
