@@ -21,7 +21,9 @@ endif()
 if (NOT TARGET Kokkos::kokkos)
   find_package(Kokkos REQUIRED)
 endif ()
-target_link_libraries(rrtmgp INTERFACE Kokkos::kokkos)
+# Select Kokkos headers before the NetCDF prefix, which can also contain a
+# different Kokkos backend. Keep NetCDF's includes on its imported target.
+target_link_libraries(rrtmgp INTERFACE Kokkos::kokkos NetCDF::netcdf)
 target_include_directories(rrtmgp INTERFACE
     ${EAM_RRTMGP_DIR}/external/cpp
     ${EAM_RRTMGP_DIR}/external/cpp/extensions/cloud_optics
@@ -31,7 +33,6 @@ target_include_directories(rrtmgp INTERFACE
     ${EAM_RRTMGP_DIR}/external/cpp/rte/kernels
     ${EAM_RRTMGP_DIR}/external/cpp/rrtmgp
     ${EAM_RRTMGP_DIR}/external/cpp/rrtmgp/kernels
-    ${NETCDF_C_INCLUDE_DIR}
 )
 
 # Build RRTMGP interface; note that we separate the SCREAM-specific RRTMGP interface
@@ -46,12 +47,11 @@ set(SCREAM_RRTMGP_SOURCES_INTERFACE
 
 add_library(eamxx_rrtmgp_interface ${SCREAM_RRTMGP_SOURCES_INTERFACE})
 
-target_link_libraries(eamxx_rrtmgp_interface PUBLIC ${NETCDF_C_LIBRARY} rrtmgp scream_share Kokkos::kokkos)
+target_link_libraries(eamxx_rrtmgp_interface PUBLIC rrtmgp scream_share Kokkos::kokkos)
 
 target_include_directories(eamxx_rrtmgp_interface PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(eamxx_rrtmgp_interface SYSTEM PUBLIC
-    ${NETCDF_C_INCLUDE_DIR}
     ${EAM_RRTMGP_DIR}/external)
 
 if(ENABLE_NCCL)
