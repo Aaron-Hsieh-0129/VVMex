@@ -69,9 +69,9 @@ ruff check --select E9,F63,F7,F82 submit.py tools/*.py tests/scripts/*.py
 
 ### `cpu-tests.yml` — the pull-request gate
 
-A clean CPU build plus `ctest` with no optional tier enabled, which is exactly
-the default tier: the unit tests, the HDF5 precision cases, and the seven
-dynamical-core regression cases against `tests/baselines_cpu/`.
+A clean CPU build plus `ctest` covering the default tier, CLEO coupling, and
+multi-rank tests. The default tier includes the unit tests, HDF5 precision
+cases, and seven dynamical-core regressions against `tests/baselines_cpu/`.
 
 Enabling a tier is a **configure-time** decision (see `tests/cmake/TestOptions.cmake`
 and the selection examples in `tests/README.md`), so `ctest` with no arguments is already the right
@@ -86,7 +86,7 @@ reused tree can keep objects holding a stale class layout.
 ### `gpu-tests.yml` — the reference backend
 
 The same shape as the CPU gate, on a runner labelled `vvmex-gpu`, running the
-default **and physics** tiers. The physics tier is the reason it exists: P3,
+default, physics, CLEO, and multi-rank tiers. The physics tier checks P3,
 RRTMGP and the Noah land model are checked nowhere else, because every digest
 under `tests/references/` was generated on a GPU and `tests/references_cpu/`
 has one case.
@@ -276,7 +276,8 @@ environment to start automatically.
 
 Both CPU/GPU workflows use the shared `ci-approval.yml` job to check the
 triggering user's repository permissions on GitHub-hosted compute, without
-checking out PR code. Only a verified `admin` role selects
+checking out PR code. That hosted job also evaluates the backend enable
+switch. Only a verified `admin` role selects
 `ci-self-hosted-admin`; all other roles and failed lookups select
 `ci-self-hosted`. Configure both environments before enabling those workflows;
 a YAML environment reference alone does not create a review requirement.
@@ -349,6 +350,25 @@ redundant with it; what the hook still does that nothing else does is run
 
 ## Approving CPU and GPU tests
 
+Install the test dependencies into the Python interpreter selected by the
+machine's `Python3_EXECUTABLE` preset entry before running CI. On gaia-ntu:
+
+```bash
+/data/Aaron/miniconda3/bin/python3.14 -m pip install -r tools/ci/requirements.txt
+```
+
+CLEO imports matplotlib while preparing its inputs even when figures are
+disabled. Both gaia-ntu presets pin the same Python interpreter so CTest uses
+the environment where these dependencies were installed.
+
+Fork PR workflows cannot read the base repository's configuration variables.
+The hosted policy therefore allows a fork PR with an unavailable backend
+switch to reach the approval gate. It does not skip the run before you can
+approve it. Ordinary branch pushes, same-repository PRs, and manual runs still
+require their backend's `VVMEX_RUNNER` or `VVMEX_GPU_RUNNER` switch to be
+`true`; an explicit nonempty value other than `true` disables the backend.
+For fork runs, reject or leave a backend pending if you do not want to run it.
+
 `cpu-tests.yml` and `gpu-tests.yml` check the triggering user's repository role
 before scheduling a self-hosted job. Verified administrators use the
 unprotected `ci-self-hosted-admin` environment and run automatically, without
@@ -383,7 +403,8 @@ For non-admin contributors, approval is per workflow run. New commits require
 another approval; review the updated diff before allowing another run.
 The existing `push` and
 `pull_request` triggers can produce two runs for a branch with an open PR;
-each follows the same administrator-or-approval policy. A disabled backend
+each follows the same administrator-or-approval policy. A backend disabled by
+an available configuration variable
 skips, and an allowed backend
 with no online runner waits in the queue. `nightly.yml` remains automatic for
 scheduled runs and does not reference this environment.

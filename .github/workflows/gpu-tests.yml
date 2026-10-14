@@ -5,8 +5,9 @@
 # presets (tools/setup_ci_runner.sh --preset blaze  and  --preset blaze-cpu),
 # which is what gives each job the right build tree and TPL stack.
 #
-# Switched by vars.VVMEX_GPU_RUNNER alone, independently of the CPU gate's
-# VVMEX_RUNNER. The separate switch is not ceremony: a self-hosted job with no
+# Ordinary runs use VVMEX_GPU_RUNNER independently of the CPU switch.
+# Fork PRs lack repository variables and reach the manual approval gate.
+# A self-hosted job with no
 # runner carrying its label does not skip, it queues for 24 hours and then
 # fails, so every push would show a stuck check until a GPU runner exists.
 name: GPU tests
@@ -29,15 +30,16 @@ concurrency:
 
 jobs:
   approval:
-    if: vars.VVMEX_GPU_RUNNER == 'true'
     uses: ./.github/workflows/ci-approval.yml
+    with:
+      runner_setting: ${{ vars.VVMEX_GPU_RUNNER }}
 
   gpu:
     name: Build and test (GPU)
     needs: approval
     # The shared role check lets administrators run automatically and requires
     # approval for all other contributors, including members, as in CPU tests.
-    if: vars.VVMEX_GPU_RUNNER == 'true'
+    if: needs.approval.outputs.runner_enabled == 'true'
     environment:
       name: ${{ needs.approval.outputs.admin_actor != '' && needs.approval.outputs.admin_actor == github.triggering_actor && 'ci-self-hosted-admin' || 'ci-self-hosted' }}
     runs-on: [self-hosted, vvmex-gpu]
@@ -91,6 +93,7 @@ jobs:
       - name: Configure
         run: >-
           cmake --preset "$PRESET" -DBUILD_TESTS=ON -DVVM_TEST_PHYSICS=ON
+          -DVVM_TEST_CLEO=ON -DVVM_TEST_MULTIRANK=ON
 
       - name: Build
         run: cmake --build "$BUILD_DIR" -j "$BUILD_JOBS"
@@ -98,7 +101,7 @@ jobs:
       # No -j: on a GPU build every model test takes a RESOURCE_LOCK, because
       # several NCCL ranks sharing one device is unsupported and silently
       # changes results.
-      - name: Run default and physics tiers
+      - name: Run default, physics, CLEO, and multirank tiers
         run: ctest --test-dir "$BUILD_DIR" --output-on-failure
 
       - name: Upload test log

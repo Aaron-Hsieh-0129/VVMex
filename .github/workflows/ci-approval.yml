@@ -3,7 +3,16 @@ name: CI approval policy
 
 on:
   workflow_call:
+    inputs:
+      runner_setting:
+        description: Backend enable switch; unavailable on fork pull requests
+        type: string
+        required: false
+        default: ''
     outputs:
+      runner_enabled:
+        description: Whether this run can proceed to self-hosted CI approval
+        value: ${{ jobs.approval.outputs.runner_enabled }}
       admin_actor:
         description: Triggering user verified to have repository admin permission
         value: ${{ jobs.approval.outputs.admin_actor }}
@@ -17,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      runner_enabled: ${{ steps.role.outputs.runner_enabled }}
       admin_actor: ${{ steps.role.outputs.admin_actor }}
     steps:
       - name: Check repository role
@@ -24,9 +34,28 @@ jobs:
         uses: actions/github-script@v7
         env:
           RUN_ACTOR: ${{ github.triggering_actor }}
+          RUNNER_SETTING: ${{ inputs.runner_setting }}
         with:
           script: |
             core.setOutput('admin_actor', '');
+            core.setOutput('runner_enabled', 'false');
+            const setting = (process.env.RUNNER_SETTING || '').trim();
+            const pr = context.payload.pull_request;
+            const baseRepository = `${context.repo.owner}/${context.repo.repo}`;
+            const forkPR = context.eventName === 'pull_request' &&
+              pr?.head?.repo?.full_name && pr.head.repo.full_name !== baseRepository;
+            // GitHub withholds repository variables from fork PR workflows.
+            // Let those runs reach the required-reviewer gate after GitHub's
+            // fork-workflow approval instead of skipping them before review.
+            const enabled = setting === 'true' || (setting === '' && forkPR);
+            if (!enabled) {
+              core.info('This CI backend is disabled; no self-hosted job will run.');
+              return;
+            }
+            core.setOutput('runner_enabled', 'true');
+            if (setting === '' && forkPR) {
+              core.info('Fork PR variables are unavailable; self-hosted CI can proceed after approval.');
+            }
             const actor = process.env.RUN_ACTOR;
             if (!actor) {
               core.warning('Missing triggering user; CI approval is required.');

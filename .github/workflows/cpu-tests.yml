@@ -5,9 +5,8 @@
 # tools/setup_ci_runner.sh -- so a second development machine joins by running
 # that script with its own --preset, and this file does not change.
 #
-# Inert until the repository variable VVMEX_RUNNER is set to "true". Without
-# that guard, merging this would leave every pull request waiting forever on a
-# runner that does not exist.
+# Ordinary runs require VVMEX_RUNNER=true. Fork PRs cannot read repository
+# variables, so the hosted policy lets them reach the manual approval gate.
 name: CPU tests
 
 # Runs on every branch, so a topic branch gets a real build-and-test result
@@ -54,8 +53,9 @@ concurrency:
 
 jobs:
   approval:
-    if: vars.VVMEX_RUNNER == 'true'
     uses: ./.github/workflows/ci-approval.yml
+    with:
+      runner_setting: ${{ vars.VVMEX_RUNNER }}
 
   cpu:
     name: Build and test (CPU)
@@ -64,7 +64,7 @@ jobs:
     # Comparing the verified actor also protects reruns that reuse job outputs.
     # Configure ci-self-hosted with required reviewers and ci-self-hosted-admin
     # without required reviewers. See docs/developer-guides/ci.md.
-    if: vars.VVMEX_RUNNER == 'true'
+    if: needs.approval.outputs.runner_enabled == 'true'
     environment:
       name: ${{ needs.approval.outputs.admin_actor != '' && needs.approval.outputs.admin_actor == github.triggering_actor && 'ci-self-hosted-admin' || 'ci-self-hosted' }}
     runs-on: [self-hosted, vvmex-cpu]
@@ -121,19 +121,18 @@ jobs:
         run: >-
           cmake --preset "$PRESET" -DBUILD_TESTS=ON
           -DVVM_TEST_CPU_THREADS="$TEST_THREADS"
+          -DVVM_TEST_CLEO=ON -DVVM_TEST_MULTIRANK=ON
 
       - name: Build
         run: cmake --build "$BUILD_DIR" -j "$BUILD_JOBS"
 
-      # No optional tier is enabled above, so this is exactly the default tier:
-      # the unit tests, the HDF5 precision cases, and the seven dynamical-core
-      # regression cases against tests/baselines_cpu/. Enabling a tier is a
-      # configure-time decision, so `ctest` with no selection is already right.
+      # Run the default CPU tier plus CLEO and multi-rank coverage.
+      # Tier selection happens at configure time, so no label filter is needed.
       #
       # -j is a PROCESSORS budget, not a job count: on a CPU build each test
       # declares ranks x threads (see tests/CMakeLists.txt), so CTest packs them
       # onto the machine instead of running one at a time behind a GPU lock.
-      - name: Run default and unit tiers
+      - name: Run default, CLEO, and multirank tiers
         run: >-
           ctest --test-dir "$BUILD_DIR"
           -j "$CTEST_JOBS" --output-on-failure
