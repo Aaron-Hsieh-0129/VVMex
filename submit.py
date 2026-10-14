@@ -816,7 +816,7 @@ def write_submit_command(out_dir_abs, vvm_root, args):
     print(f"[Info] Submit command written to: {path}")
 
 
-def create_code_snapshot(repo_root, snapshot_dir, config_path, prof_path, spat_path, out_dir_raw):
+def create_code_snapshot(repo_root, snapshot_dir, config_path, input_paths, out_dir_raw):
     print(f"\n[Info] Creating code snapshot at: {snapshot_dir}")
 
     if os.path.exists(snapshot_dir):
@@ -832,11 +832,9 @@ def create_code_snapshot(repo_root, snapshot_dir, config_path, prof_path, spat_p
     shutil.copytree(repo_root, snapshot_dir, ignore=ignore_patterns)
     shutil.copy2(config_path, snapshot_dir)
 
-    if prof_path and os.path.isfile(prof_path):
-        shutil.copy2(prof_path, snapshot_dir)
-
-    if spat_path and os.path.isfile(spat_path):
-        shutil.copy2(spat_path, snapshot_dir)
+    for path in input_paths:
+        if os.path.isfile(path):
+            shutil.copy2(path, snapshot_dir)
 
     info = collect_git_version_info(repo_root)
 
@@ -1057,6 +1055,7 @@ def interactive_wizard():
     args.export = DEFAULT_EXPORT
     args.exclusive = DEFAULT_EXCLUSIVE
     args.slurm_arg = []
+    args.snapshot_cleo_inputs = False
 
     cmd_parts = [sys.argv[0]]
 
@@ -1113,6 +1112,11 @@ def parse_args():
     parser.add_argument("-c", "--config", help="Path to JSON configuration file")
     parser.add_argument("--preset", type=str, help="CMake preset name to load environment from")
     parser.add_argument("--local", action="store_true", help="Run locally without SLURM")
+    parser.add_argument(
+        "--snapshot-cleo-inputs",
+        action="store_true",
+        help="Also copy CLEO's init_gbx_path and init_supers_path into code_snapshot/",
+    )
 
     parser.add_argument("--compute", type=int, default=DEFAULT_COMPUTE, help="Compute MPI ranks")
     parser.add_argument(
@@ -1318,12 +1322,23 @@ def main():
               f"Use --io {next_io} or another multiple of --nodes.")
         sys.exit(1)
 
-    prof_file = config_data.get("initial_conditions", {}).get("source_file", "")
-    spat_file = config_data.get("netcdf_reader", {}).get("source_file", "")
+    input_files = [
+        config_data.get("initial_conditions", {}).get("source_file", ""),
+        config_data.get("netcdf_reader", {}).get("source_file", ""),
+    ]
+    microphysics = config_data.get("physics", {}).get("microphysics", {})
+    if microphysics.get("engine") == "cleo":
+        cleo = microphysics.get("cleo", {})
+        for key in ("init_gbx_path", "init_supers_path"):
+            path = cleo.get(key, "")
+            if not os.path.isfile(path):
+                print(f"[Warning] physics.microphysics.cleo.{key} not found: {path!r}; "
+                      "run tools/cleo/gen_cleo_inputs.py first")
+            elif args.snapshot_cleo_inputs:
+                input_files.append(path)
 
     out_dir_abs = os.path.abspath(out_dir_raw)
-    prof_path = os.path.abspath(prof_file) if prof_file else ""
-    spat_path = os.path.abspath(spat_file) if spat_file else ""
+    input_paths = [os.path.abspath(f) for f in input_files if f]
 
     os.makedirs(out_dir_abs, exist_ok=True)
 
@@ -1350,8 +1365,7 @@ def main():
         vvm_root,
         snapshot_dir,
         config_path_user,
-        prof_path,
-        spat_path,
+        input_paths,
         out_dir_raw,
     )
 

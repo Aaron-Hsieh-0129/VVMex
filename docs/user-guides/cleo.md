@@ -64,7 +64,8 @@ condensate. Ice is not represented.
     writes it into the JSON, so the copy in `code_snapshot/` regenerates them.
 
 3. **Run** as any other case, e.g.
-   `python3 submit.py -c <case.json> --compute N`.
+   `python3 submit.py -c <case.json> --compute N`. Add `--snapshot-cleo-inputs`
+   to keep the binaries themselves in `code_snapshot/`.
 
 ## What the model receives
 
