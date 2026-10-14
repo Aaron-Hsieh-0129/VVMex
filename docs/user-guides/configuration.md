@@ -940,7 +940,9 @@ and rounds every step to 0.01 s.
 The generator alone reads `superdroplets.per_gridbox`, `seed_below_z_m`
 (`null` seeds every gridbox), `radius_min_m`, `radius_max_m`,
 `numconc_tolerance`, `common_multiplicity`, `wet_scale` and `seed`, together
-with [`physics.microphysics.aerosol`](#physicsmicrophysicsaerosol).
+with [`physics.microphysics.aerosol`](#physicsmicrophysicsaerosol). The same JSON
+and CLEO checkout give the same binaries byte for byte. When `seed` is missing or
+`null`, the generator draws one and writes it into the JSON.
 
 ### `physics.turbulence`
 

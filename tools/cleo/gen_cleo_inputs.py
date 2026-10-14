@@ -16,6 +16,7 @@ Usage:
 import argparse
 import json
 import re
+import secrets
 import sys
 from pathlib import Path
 
@@ -176,7 +177,7 @@ def read_settings(cfg: dict) -> dict:
         "numconc_tolerance": float(get(cfg, f"{sd}.numconc_tolerance")),
         "common_xi": bool(get(cfg, f"{sd}.common_multiplicity")),
         "wet_scale": float(get(cfg, f"{sd}.wet_scale")),
-        "seed": int(get(cfg, f"{sd}.seed")),
+        "seed": get(cfg, f"{sd}.seed", None),
         "geomeans": [float(v) for v in get(cfg, f"{ae}.geometric_mean_radius_m")],
         "geosigs": [float(v) for v in get(cfg, f"{ae}.geometric_stddev")],
         "scalefacs": [float(v) for v in get(cfg, f"{ae}.number_conc_per_m3")],
@@ -185,6 +186,23 @@ def read_settings(cfg: dict) -> dict:
     if n == 0 or not (len(s["geosigs"]) == len(s["scalefacs"]) == n):
         die(f"{ae}: the three mode arrays must be non-empty and the same length")
     return s
+
+
+def record_seed(config_path: Path, text: str, seed: int) -> None:
+    """Writes the drawn seed into the JSON, leaving the rest of the file as it is."""
+    key = f"{CLEO}.superdroplets.seed"
+    new, n = re.subn(r'("seed"\s*:\s*)null\b', rf"\g<1>{seed}", text)
+    if n == 0:
+        new, n = re.subn(r'("superdroplets"\s*:\s*\{)(\s*)', rf'\g<1>\g<2>"seed": {seed},\g<2>', text)
+    try:
+        ok = n == 1 and get(json.loads(new), key, None) == seed
+    except json.JSONDecodeError:
+        ok = False
+    if not ok:
+        print(f"warning: could not write {key} = {seed} into {config_path}; add it by hand")
+        return
+    config_path.write_text(new)
+    print(f"seed  : {key} = {seed} written to {config_path}")
 
 
 def write_grid(paths: dict, grid: dict, figures, figpath: Path) -> None:
@@ -277,7 +295,8 @@ def main():
     args = parse_args()
     config_path = args.config.resolve()
     try:
-        cfg = json.loads(config_path.read_text())
+        text = config_path.read_text()
+        cfg = json.loads(text)
     except (OSError, json.JSONDecodeError) as e:
         die(f"cannot read {config_path}: {e}")
 
@@ -287,6 +306,8 @@ def main():
     g = read_grid(cfg)
     grid = model_grid(g, parse_initializer_domain(REPO / "src" / "core" / "Initializer.cpp"))
     s = read_settings(cfg)
+    drawn = s["seed"] is None
+    s["seed"] = secrets.randbelow(2**32) if drawn else int(s["seed"])
 
     print(f"config: {config_path}")
     print(f"model : nx={g['nx']} ny={g['ny']} nz={g['nz']} dx={g['dx']} dy={g['dy']} "
@@ -317,6 +338,8 @@ def main():
     np.random.seed(s["seed"])
     write_initsupers(paths, s, nsupers, figures, figpath)
     report_domain_totals(paths)
+    if drawn:
+        record_seed(config_path, text, s["seed"])
 
     print("\nwrote:")
     for k in ("grid", "initsupers", "config"):

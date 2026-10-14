@@ -59,7 +59,9 @@ condensate. Ice is not represented.
     are sampled from the lognormal modes in `physics.microphysics.aerosol`, `per_gridbox` in
     every gridbox below `seed_below_z_m`. Regenerate whenever the grid or these
     settings change. Relative paths are taken from the repository root, where
-    `submit.py` runs the model.
+    `submit.py` runs the model. The binaries follow from the JSON alone: with
+    `superdroplets.seed` missing or `null`, the generator draws a seed and
+    writes it into the JSON, so the copy in `code_snapshot/` regenerates them.
 
 3. **Run** as any other case, e.g.
    `python3 submit.py -c <case.json> --compute N`.
