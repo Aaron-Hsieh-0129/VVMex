@@ -13,6 +13,12 @@ condensate. Ice is not represented.
 - **A Kokkos built with relocatable device code** on GPU systems:
   `-DKokkos_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE=ON -DBUILD_SHARED_LIBS=OFF`
   (see [GPU environment](../environment/gpu.md)).
+- **NVHPC 25.3 or newer with CUDA 12.8 or newer** on GPU systems.
+  `src/physics/cleo/VVM_cleo_process_interface.cpp` compiles with NVHPC 25.3
+  (CUDA 12.8), 25.7 and 26.9 (CUDA 12.9) and 26.5 (CUDA 13.2). With CUDA 11.8
+  it fails at once because C++20 is not supported; with CUDA 12.6 under NVHPC
+  24.9, 24.11 and 25.1 the compiler hangs on it for 20 minutes or more. CPU builds
+  have been tested only with NVHPC 26.5.
 - **The CLEO source.** CMake fetches the fork named in
   `externals/cleo/CMakeLists.txt`. To build against a local checkout instead,
   add `-DFETCHCONTENT_SOURCE_DIR_CLEO=/path/to/CLEO`. Only this one target,

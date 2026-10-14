@@ -92,6 +92,11 @@ before building dependencies. Other NVHPC releases may bundle different CUDA
 or HPC-X versions; use the directory names shipped by that SDK rather than
 copying the example unchanged.
 
+**CLEO needs NVHPC 25.3 or newer.** The CLEO interface is always compiled, and
+with the CUDA 12.6 of NVHPC 24.9 to 25.1 the compiler hangs on it. Use NVHPC
+25.3 or newer with CUDA 12.8 or newer; see
+[CLEO requirements](../user-guides/cleo.md#requirements).
+
 ### CMake 4.2.0
 
 ```bash
@@ -492,6 +497,7 @@ architectures even though its perturbation field is deterministic.
 | I/O ranks each hold ~520 MB of GPU memory | ADIOS2 was built with Kokkos, so it calls `Kokkos::initialize()` on I/O ranks | Rebuild ADIOS2 with `-DADIOS2_USE_Kokkos=OFF`, or point `ADIOS2_DIR` at a Kokkos-free prefix |
 | Model runs but never uses the GPU | CMake linked a CPU Kokkos | `grep Kokkos_DIR build/CMakeCache.txt`; point `Kokkos_DIR` at the CUDA prefix and rebuild cleanly |
 | RRTMGP or P3 initialization reports `cudaErrorIllegalAddress` only for large column counts or allocations above 4 GiB | The CUDA Kokkos dependency uses legacy `cudaMalloc`; some systems cannot reliably access a large allocation across a 4 GiB boundary | Rebuild the CUDA Kokkos dependency with `-DKokkos_ENABLE_IMPL_CUDA_MALLOC_ASYNC=ON`, point `Kokkos_DIR` at that installation, cleanly rebuild VVMex, and verify `Kokkos_DIR` in `build/CMakeCache.txt` |
+| Compiling `VVM_cleo_process_interface.cpp` fails on C++20, or runs for over 20 minutes without finishing | CUDA 11.8 has no C++20; CUDA 12.6 (NVHPC 24.9 to 25.1) hangs on this file | Use NVHPC 25.3 or newer with CUDA 12.8 or newer, then rebuild cleanly |
 | Linking `vvm` fails with `nvlink` undefined references in CLEO code | Kokkos was built without relocatable device code | Rebuild Kokkos with `-DKokkos_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE=ON -DBUILD_SHARED_LIBS=OFF`, then rebuild VVMex cleanly |
 | Very slow first time step, then normal | Kokkos CUDA architecture does not match the device, so kernels JIT at launch | Rebuild Kokkos with the correct `Kokkos_ARCH_*` |
 | `version 'GLIBCXX_3.4.30' not found` starting `vvm` | NVHPC compiled against a newer GCC than the `libstdc++` loaded at run time | Pin GCC via `makelocalrc`, or pass `--gcc-toolchain` for **C, C++ and Fortran** |
