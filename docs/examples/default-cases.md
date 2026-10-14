@@ -10,7 +10,6 @@ its input and output paths, and change one part at a time.
 | Smallest dynamics check | `advection_u.json` |
 | Warm-bubble dynamics | `2dbubble.json` |
 | P3 microphysics | `p3_bubble_shear.json` |
-| CLEO super-droplet microphysics | `cleo_2dbubble.json` |
 | Radiative-convective equilibrium | `rcemip.json` |
 | Land and terrain physics | `sea_grass_mountain.json` |
 | Large Taiwan workflow | `taiwanvvm_2048.json` |
@@ -61,7 +60,6 @@ VVM_GPU_LIST=0,1,2,3,4,5,6,7 ./submit.py --local \
 | `stretching.json` | Idealized dynamics, `idealized_test = stretching` | `profile_dry.txt` | `init_regression_test.nc` |
 | `twisting.json` | Idealized dynamics, `idealized_test = twisting` | `profile_dry.txt` | `init_regression_test.nc` |
 | `p3_bubble_shear.json` | Moist bubble / P3-oriented sample | `p3_bubble_shear.txt` | `p3_bubble_shear.nc` |
-| `cleo_2dbubble.json` | `2dbubble` with CLEO microphysics; run `tools/cleo/gen_cleo_inputs.py` first ([guide](../user-guides/cleo.md)) | `profile_dry.txt` | `init_regression_test.nc` |
 | `rcemip.json` | RCEMIP-style radiative-convective equilibrium | `RCEMIP_VVM_300k_init.txt` | `rcemip.nc` |
 | `grass.json` | Full-physics land sample over grass surface | `tpe_20240717i.txt` | `grass.nc` |
 | `evergreen.json` | Full-physics land sample over evergreen surface | `tpe_20240717i.txt` | `evergreen.nc` |

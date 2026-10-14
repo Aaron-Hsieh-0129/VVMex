@@ -185,6 +185,13 @@ macro(vvm_unset_flag VAR FLAG DOC)
 endmacro()
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
+    message(STATUS "Applying NVHPC dependency flag workaround.")
+    # Disable automatic dependency generation flags that NVHPC might set
+    set(CMAKE_CXX_DEPENDS "")
+    set(CMAKE_C_DEPENDS "")
+    set(CMAKE_DEPFILE_FLAGS_CXX "")
+    set(CMAKE_DEPFILE_FLAGS_C "")
+
     # No CMAKE_CUDA_FLAGS here. This project declares LANGUAGES CXX C Fortran and
     # has no .cu sources -- device code reaches nvcc through nvcc_wrapper as CXX
     # -- so CUDA-language flags are never consumed. Setting them wrote a cache
@@ -440,11 +447,11 @@ endif()
 
 if(ENABLE_NCCL)
     find_path(NCCL_INCLUDE_DIR nccl.h
-        HINTS
+        HINTS 
         ${NVHPC_DIR}/comm_libs/nccl/include
     )
     find_library(NCCL_LIBRARY nccl
-        HINTS
+        HINTS 
         ${NVHPC_DIR}/comm_libs/nccl/lib
     )
     if (NCCL_INCLUDE_DIR AND NCCL_LIBRARY)
@@ -629,12 +636,6 @@ else()
     message(FATAL_ERROR "PnetCDF library or includes not found at the specified path: ${PNETCDF_DIR}")
 endif()
 
-# ------------------------------
-# CLEO
-# ------------------------------
-set(cleopath ${CMAKE_SOURCE_DIR}/externals/cleo)
-message(STATUS "Using CLEO installation from: ${cleopath}")
-add_subdirectory(${cleopath} ${CMAKE_BINARY_DIR}/externals/cleo)
 
 # ------------------------------
 # Project sources

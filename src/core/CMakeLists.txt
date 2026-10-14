@@ -2,6 +2,8 @@ set(VVM_CORE_SOURCES
     State.cpp
     Grid.cpp
     GridSpecification.cpp
+    Initializer.cpp
+    InitializeBarotropic.cpp
     BoundaryConditionManager.cpp
     Parameters.cpp
 
@@ -16,6 +18,7 @@ set(VVM_CORE_HEADERS
     State.hpp
     Grid.hpp
     GridSpecification.hpp
+    Initializer.hpp
     BoundaryConditionManager.hpp
     Parameters.hpp
     Field.hpp
@@ -54,8 +57,8 @@ target_include_directories(vvm_core
 
 # NCCL is only a dependency of the NCCL communication backend.
 if(ENABLE_NCCL)
-  target_include_directories(vvm_core PUBLIC ${NCCL_INCLUDE_DIR})
-  target_link_libraries(vvm_core PUBLIC ${NCCL_LIBRARY})
+    target_include_directories(vvm_core PUBLIC ${NCCL_INCLUDE_DIR})
+    target_link_libraries(vvm_core PUBLIC ${NCCL_LIBRARY})
 endif()
 
 
@@ -71,20 +74,6 @@ target_link_libraries(vvm_core
         vvm_io
         Kokkos::kokkos
         ${OpenMP_LIBRARIES}
-        ${NVTOOLSEXT_LIBRARY}
+	${NVTOOLSEXT_LIBRARY}
         PnetCDF::pnetcdf
-)
-
-add_library(vvm_initializer STATIC
-    Initializer.cpp
-    InitializeBarotropic.cpp
-    Initializer.hpp
-)
-
-target_link_libraries(vvm_initializer
-    PUBLIC
-        vvm_core
-        vvm_io
-    PRIVATE
-        Kokkos::kokkos
 )

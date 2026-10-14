@@ -413,7 +413,7 @@ set_tests_properties(test_parameters_resolved_grid_rll_guard PROPERTIES LABELS u
 _vvm_set_test_resources(test_parameters_resolved_grid_rll_guard 1)
 
 vvm_add_test_executable(test_vertical_grid_configuration
-    LIBRARIES vvm_initializer vvm_core vvm_io vvm_utils Kokkos::kokkos MPI::MPI_CXX)
+    LIBRARIES vvm_core vvm_io vvm_utils Kokkos::kokkos MPI::MPI_CXX)
 
 add_test(NAME test_vertical_grid_configuration
     COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1 ${VVM_MPI_BIND_ARGS}
@@ -452,7 +452,7 @@ set_tests_properties(test_surface_vertical_configuration PROPERTIES
 )
 
 vvm_add_test_executable(test_horizontal_configuration_consumers
-    LIBRARIES vvm_initializer vvm_core vvm_io vvm_utils Kokkos::kokkos MPI::MPI_CXX)
+    LIBRARIES vvm_core vvm_io vvm_utils Kokkos::kokkos MPI::MPI_CXX)
 
 add_test(
     NAME test_horizontal_configuration_consumers
@@ -730,7 +730,7 @@ add_vvm_unit_test(test_regular_latlon_dry_buoyancy DEVICE
 
 # Shared RLL moist interfaces; full-model capability remains guarded.
 vvm_add_test_executable(test_regular_latlon_moist_interfaces
-    LIBRARIES vvm_initializer vvm_dynamics vvm_core vvm_io)
+    LIBRARIES vvm_dynamics vvm_core vvm_io)
 add_test(NAME test_regular_latlon_moist_interfaces
          COMMAND ${MPIEXEC_EXECUTABLE} ${VVM_MPI_BIND_ARGS} -n 1 ${GPU_WRAP}
                  $<TARGET_FILE:test_regular_latlon_moist_interfaces>)

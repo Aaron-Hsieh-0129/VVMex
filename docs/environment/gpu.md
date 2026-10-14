@@ -92,11 +92,6 @@ before building dependencies. Other NVHPC releases may bundle different CUDA
 or HPC-X versions; use the directory names shipped by that SDK rather than
 copying the example unchanged.
 
-**CLEO needs NVHPC 25.3 or newer.** The CLEO interface is always compiled, and
-with the CUDA 12.6 of NVHPC 24.9 to 25.1 the compiler hangs on it. Use NVHPC
-25.3 or newer with CUDA 12.8 or newer; see
-[CLEO requirements](../user-guides/cleo.md#requirements).
-
 ### CMake 4.2.0
 
 ```bash
@@ -219,9 +214,8 @@ cmake .. \
     -DKokkos_ENABLE_CUDA=ON \
     -DKokkos_ENABLE_CUDA_LAMBDA=ON \
     -DKokkos_ENABLE_IMPL_CUDA_MALLOC_ASYNC=ON \
-    -DKokkos_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE=ON \
     -DKokkos_ARCH_HOPPER90=ON \
-    -DBUILD_SHARED_LIBS=OFF
+    -DBUILD_SHARED_LIBS=TRUE
 make -j$(nproc)
 make install
 cd ../..
@@ -236,23 +230,17 @@ allocations use CUDA's stream-ordered allocator instead of the legacy
 reliably access allocations crossing a 4 GiB boundary, and is suitable for the
 modern CUDA toolkit and driver used by this guide.
 
-`Kokkos_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE` (RDC) is required by the CLEO
-super-droplet microphysics: CLEO defines device functions in one translation
-unit and calls them from another, which CUDA can only link as relocatable
-device code. Kokkos supports RDC only as static libraries, hence
-`BUILD_SHARED_LIBS=OFF`; Kokkos is then linked into `vvm` itself.
-
 Verify that CUDA really was enabled and that the architecture matches your GPU:
 
 ```bash
 grep -E "Kokkos_DEVICES|Kokkos_ARCH" \
-     $INSTALL_DIR/lib*/cmake/Kokkos/KokkosConfigCommon.cmake
-#   set(Kokkos_DEVICES OPENMP;SERIAL;CUDA)
+     $INSTALL_DIR/lib/cmake/Kokkos/KokkosConfigCommon.cmake
+#   set(Kokkos_DEVICES CUDA;OPENMP;SERIAL)
 #   set(Kokkos_ARCH HOPPER90)
 
-ls $INSTALL_DIR/lib*/libkokkoscore.a                          # static library
-grep -E "KOKKOS_ENABLE_IMPL_CUDA_MALLOC_ASYNC|KOKKOS_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE" \
-     $INSTALL_DIR/include/KokkosCore_config.h                 # expect both #define
+ldd $INSTALL_DIR/lib/libkokkoscore.so.4.7 | grep -i cudart   # expect a hit
+grep KOKKOS_ENABLE_IMPL_CUDA_MALLOC_ASYNC \
+     $INSTALL_DIR/include/KokkosCore_config.h                 # expect #define
 ```
 
 An architecture mismatch does not fail the build. It produces a library that
@@ -416,14 +404,13 @@ ADIOS2 being Kokkos-enabled means each I/O rank will occupy a GPU it never uses
 Confirm the binary picked up the intended stack:
 
 ```bash
-grep "^Kokkos_DIR" build/CMakeCache.txt
-ldd build/vvm | grep -E 'libadios2_cxx11|libnccl'
+ldd build/vvm | grep -E 'libkokkoscore|libadios2_cxx11|libnccl'
 nm -D --undefined-only build/vvm | grep -c nccl     # non-zero with NCCL on
 ```
 
-Kokkos is linked statically, so `Kokkos_DIR` must be **your** CUDA prefix: a
-CPU Kokkos found there instead silently produces a model that never touches
-the GPU.
+`libkokkoscore` must resolve to **your** prefix. CPU and CUDA Kokkos share a
+SONAME, so a stray CPU prefix earlier on `LD_LIBRARY_PATH` silently produces a
+model that never touches the GPU.
 
 ---
 
@@ -495,10 +482,8 @@ architectures even though its perturbation field is deterministic.
 | `[Rank N] ERROR: no visible CUDA device` | `CUDA_VISIBLE_DEVICES` empty, or fewer GPUs than compute ranks | Check `--gpus` and `VVM_GPU_LIST`; the model aborts rather than silently sharing a device |
 | Warning that ranks may share GPUs | `--gpus` below compute ranks per node | Request `>= ceil(compute / nodes)` |
 | I/O ranks each hold ~520 MB of GPU memory | ADIOS2 was built with Kokkos, so it calls `Kokkos::initialize()` on I/O ranks | Rebuild ADIOS2 with `-DADIOS2_USE_Kokkos=OFF`, or point `ADIOS2_DIR` at a Kokkos-free prefix |
-| Model runs but never uses the GPU | CMake linked a CPU Kokkos | `grep Kokkos_DIR build/CMakeCache.txt`; point `Kokkos_DIR` at the CUDA prefix and rebuild cleanly |
-| RRTMGP or P3 initialization reports `cudaErrorIllegalAddress` only for large column counts or allocations above 4 GiB | The CUDA Kokkos dependency uses legacy `cudaMalloc`; some systems cannot reliably access a large allocation across a 4 GiB boundary | Rebuild the CUDA Kokkos dependency with `-DKokkos_ENABLE_IMPL_CUDA_MALLOC_ASYNC=ON`, point `Kokkos_DIR` at that installation, cleanly rebuild VVMex, and verify `Kokkos_DIR` in `build/CMakeCache.txt` |
-| Compiling `VVM_cleo_process_interface.cpp` fails on C++20, or runs for over 20 minutes without finishing | CUDA 11.8 has no C++20; CUDA 12.6 (NVHPC 24.9 to 25.1) hangs on this file | Use NVHPC 25.3 or newer with CUDA 12.8 or newer, then rebuild cleanly |
-| Linking `vvm` fails with `nvlink` undefined references in CLEO code | Kokkos was built without relocatable device code | Rebuild Kokkos with `-DKokkos_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE=ON -DBUILD_SHARED_LIBS=OFF`, then rebuild VVMex cleanly |
+| Model runs but never uses the GPU | A CPU Kokkos with the same SONAME loaded first | `ldd build/vvm \| grep libkokkoscore`; keep the CUDA prefix ahead on `LD_LIBRARY_PATH` |
+| RRTMGP or P3 initialization reports `cudaErrorIllegalAddress` only for large column counts or allocations above 4 GiB | The CUDA Kokkos dependency uses legacy `cudaMalloc`; some systems cannot reliably access a large allocation across a 4 GiB boundary | Rebuild the CUDA Kokkos dependency with `-DKokkos_ENABLE_IMPL_CUDA_MALLOC_ASYNC=ON`, point `Kokkos_DIR` at that installation, cleanly rebuild VVMex, and verify that the same Kokkos prefix comes first at runtime with `ldd build/vvm \| grep libkokkoscore` |
 | Very slow first time step, then normal | Kokkos CUDA architecture does not match the device, so kernels JIT at launch | Rebuild Kokkos with the correct `Kokkos_ARCH_*` |
 | `version 'GLIBCXX_3.4.30' not found` starting `vvm` | NVHPC compiled against a newer GCC than the `libstdc++` loaded at run time | Pin GCC via `makelocalrc`, or pass `--gcc-toolchain` for **C, C++ and Fortran** |
 | `undefined reference to std::ios_base_library_init()` | Same GCC mismatch, at link time | Add `--gcc-toolchain=$INSTALL_DIR/gcc11` to that library's build |

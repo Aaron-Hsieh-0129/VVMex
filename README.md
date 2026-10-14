@@ -28,7 +28,6 @@ VVMex is a GPU-capable, object-oriented C++ implementation of the Vector Vortici
 - **3D Cloud-Resolving Dynamics**: High-performance atmospheric dynamics utilizing the Vector Vorticity formulation.
 - **Advanced Physics Schemes**:
   - **Microphysics**: P3 microphysics scheme adapted from E3SM EAMxx, with restored vapor-cloud water (qv $\leftrightarrow$ qc) conversion processes based on the original Fortran P3 formulation.
-  - **Super-droplet microphysics**: Lagrangian super-droplet microphysics from CLEO, selected with `physics.microphysics.engine = "cleo"` (Cartesian grids).
   - **Radiation**: RRTMGP radiation scheme adapted from E3SM EAMxx.
   - **Land Surface Model**: Noah land surface model with GPU acceleration (Fortran OpenACC), provided by the Central Weather Administration (CWA) of Taiwan.
 - **TaiwanVVM Support**: Capable of simulating high-resolution Taiwan topography using generated terrain datasets (example scripts provided).
@@ -47,7 +46,6 @@ pages most people need first:
 | [Model Configuration](https://aaron-hsieh-0129.github.io/VVMex/user-guides/configuration/) | Every configuration key the model reads, with types and defaults. |
 | [Job Submission](https://aaron-hsieh-0129.github.io/VVMex/user-guides/job-submission/) | `submit.py`, SLURM, and rank/GPU layout. |
 | [Output](https://aaron-hsieh-0129.github.io/VVMex/user-guides/output/) | Output engines, precision, restarts, and GrADS descriptors. |
-| [CLEO Super-Droplet Microphysics](https://aaron-hsieh-0129.github.io/VVMex/user-guides/cleo/) | Building, input generation, coupling, and limitations of the CLEO option. |
 | [Developer Guides](https://aaron-hsieh-0129.github.io/VVMex/developer-guides/) | Architecture, physics implementation, and reproducibility rules. |
 
 
@@ -141,33 +139,6 @@ in this repository. Simulation output is archived separately at
 
 - **P3 Microphysics**: The explicit condensation and evaporation processes between water vapor and cloud water, which are absent in the EAMxx version, have been re-implemented according to the original P3 formulation (e.g., *Morrison and Milbrandt, 2015*).
 - **CWA Noah LSM**: The GPU-accelerated Noah land surface model is generously provided by the Central Weather Administration (CWA) of Taiwan.
-- **CLEO**: The super-droplet microphysics is provided by
-  [CLEO](https://github.com/yoctoyotta1024/CLEO), developed by Clara J. A. Bayley
-  at the Max Planck Institute for Meteorology, which implements the
-  Super-Droplet Method (*Shima et al., 2009*). VVMex builds a fork of it
-  (`externals/cleo/CMakeLists.txt`). If your work uses it, please also cite:
-
-  ```bibtex
-  @software{bayley_cleo,
-    author = {Bayley, Clara},
-    title  = {{Cleo, an implementation of a Super-Droplet Model}},
-    year   = {2025},
-    url    = {https://github.com/yoctoyotta1024/CLEO},
-  }
-
-  @article{shima2009,
-    author  = {Shima, S. and Kusano, K. and Kawano, A. and Sugiyama, T. and Kawahara, S.},
-    title   = {{The super-droplet method for the numerical simulation of clouds and
-               precipitation: a particle-based and probabilistic microphysics model
-               coupled with a non-hydrostatic model}},
-    journal = {Quarterly Journal of the Royal Meteorological Society},
-    volume  = {135},
-    number  = {642},
-    pages   = {1307--1320},
-    year    = {2009},
-    doi     = {10.1002/qj.441},
-  }
-  ```
 
 
 ## Citation

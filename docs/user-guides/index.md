@@ -7,7 +7,6 @@ Use these guides after VVMex and its dependencies have been built.
 | Run locally or submit a SLURM job | [Job submission](job-submission.md) |
 | Understand or edit the case JSON | [Model configuration](configuration.md) |
 | Choose HDF5, SST, or BP5 and estimate storage | [Output](output.md) |
-| Use super-droplet (CLEO) microphysics instead of P3 | [CLEO super-droplet microphysics](cleo.md) |
 | Start from a known runnable case | [Default cases](../examples/default-cases.md) |
 
 If this is your first run, follow the [Quick start](../quick-start.md) first.

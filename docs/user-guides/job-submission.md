@@ -106,7 +106,6 @@ fills the rest in for you.
 | `-c`, `--config PATH` | *(required)* | Case JSON handed to the executable. Its `output.engine` decides whether I/O ranks are required, and its `output.output_dir` is created before launch. |
 | `--preset NAME` | *(none)* | `CMakePresets.json` entry to take the environment from. It also selects the **backend** (`VVM_ENABLE_GPU`) and the **binary** (`binaryDir/vvm`), so the launcher can never hand a CPU build a GPU mapping. Without it, library paths are whatever your shell already has. |
 | `--local` | off | Run `tools/core_run.sh` immediately in this shell instead of submitting it with `sbatch`. All SLURM-only flags below are ignored. |
-| `--snapshot-cleo-inputs` | off | With `physics.microphysics.engine` `"cleo"`, also copy `init_gbx_path` and `init_supers_path` into `code_snapshot/`. They can be large; without the flag they are regenerated from the snapshot's JSON. |
 
 ### Rank and core sizing
 
@@ -369,7 +368,7 @@ read back and repeated without guessing what produced it.
 | --- | --- |
 | `%j.out` / `%j.err` | SLURM logs, unless `--out` / `--err` say otherwise. |
 | `submit_command.sh` | Executable script holding the exact `submit.py` command that started the run, with `VVM_ROOT` exported and a `cd` into it. Run it to repeat the run. |
-| `code_snapshot/` | Copy of the source tree as it was at submit time, plus the case JSON, any profile/spatial input files and, with `--snapshot-cleo-inputs`, CLEO's `init_gbx_path` and `init_supers_path`. |
+| `code_snapshot/` | Copy of the source tree as it was at submit time, plus the case JSON and any profile/spatial input files. |
 | `code_snapshot/ORIGINAL_GIT_VERSION.txt` | Commit, branch, `git describe`, upstream, remote, author, date, subject, and the `git status --porcelain` listing of the source repository at submit time. |
 | `code_snapshot/ORIGINAL_GIT_UNCOMMITTED.patch` | The uncommitted diff at submit time. Written only when the source tree was dirty. |
 
