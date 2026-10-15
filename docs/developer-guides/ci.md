@@ -102,12 +102,18 @@ working tree, since it is a tracked file. Fetching the objects needs no hooks.
 
 ### `nightly.yml` — the slow tiers
 
-- **GPU** — the whole suite with `VVM_TEST_BP5`, `VVM_TEST_PHYSICS` and
-  `VVM_TEST_MULTIRANK` on. This is the reference backend: every digest under
-  `tests/references/` was generated here, and it is the only place the physics
+- **GPU** — the whole suite with `VVM_TEST_BP5`, `VVM_TEST_PHYSICS`,
+  `VVM_TEST_CLEO` and `VVM_TEST_MULTIRANK` on. This is the reference backend:
+  every digest under `tests/references/` was generated here, and it is the only place the physics
   tier can run, since `tests/references_cpu/` has digests for one case. It needs
   4 physical GPUs for the multirank tier and takes about six minutes.
-- **CPU full** — the CPU tiers the PR gate leaves out, BP5 and multirank.
+- **CPU full** — the CPU gate's default, CLEO and multirank tiers, plus BP5.
+
+Before building, the GPU job waits up to 30 minutes for the selected devices
+(`VVM_TEST_GPUS`, default `0,1,2,3`) to have no active compute processes.
+If simulations still occupy them, it fails with an availability message.
+CTest's GPU resource lock only coordinates tests within that CTest invocation;
+it does not reserve devices against simulations launched outside Actions.
 
 Measured tier costs on blaze, which is why the split falls where it does. CPU
 figures are at 64 threads per rank:

@@ -186,8 +186,10 @@ if(VVM_TEST_BP5)
     endforeach()
     add_executable(test_bp5_model_output integration/test_bp5_model_output.cpp)
     target_include_directories(test_bp5_model_output PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    # The shared ADIOS2/HDF5 prefix can also contain CUDA Kokkos headers.
+    # Select this build's Kokkos backend before those dependency includes.
     target_link_libraries(test_bp5_model_output PRIVATE
-                          adios2::adios2 Kokkos::kokkos MPI::MPI_CXX)
+                          Kokkos::kokkos adios2::adios2 MPI::MPI_CXX)
     add_test(NAME Run_bp5_model_smoke
              COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
                      ${VVM_MPI_BIND_ARGS} ${GPU_WRAP} $<TARGET_FILE:vvm>
@@ -225,7 +227,7 @@ if(VVM_TEST_BP5)
     add_executable(test_bp5_restart integration/test_bp5_restart.cpp)
     target_include_directories(test_bp5_restart PRIVATE ${CMAKE_SOURCE_DIR}/src)
     target_link_libraries(test_bp5_restart PRIVATE
-                          adios2::adios2 HDF5::HL Kokkos::kokkos MPI::MPI_CXX)
+                          Kokkos::kokkos adios2::adios2 HDF5::HL MPI::MPI_CXX)
     add_test(NAME Run_bp5_restart_source
              COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
                      ${VVM_MPI_BIND_ARGS} ${GPU_WRAP} $<TARGET_FILE:vvm>
@@ -277,7 +279,7 @@ if(VVM_TEST_BP5)
     add_executable(test_engine_output_compat integration/test_engine_output_compat.cpp)
     target_include_directories(test_engine_output_compat PRIVATE ${CMAKE_SOURCE_DIR}/src)
     target_link_libraries(test_engine_output_compat PRIVATE
-                          adios2::adios2 HDF5::HL Kokkos::kokkos MPI::MPI_CXX)
+                          Kokkos::kokkos adios2::adios2 HDF5::HL MPI::MPI_CXX)
     add_test(NAME Run_hdf5_model_smoke
              COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
                      ${VVM_MPI_BIND_ARGS} ${GPU_WRAP} $<TARGET_FILE:vvm>
