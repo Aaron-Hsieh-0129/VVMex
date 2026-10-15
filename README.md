@@ -1,6 +1,9 @@
 # VVMex
 
 [![Checks](https://github.com/Aaron-Hsieh-0129/VVMex/actions/workflows/checks.yml/badge.svg)](https://github.com/Aaron-Hsieh-0129/VVMex/actions/workflows/checks.yml)
+[![CPU tests](https://github.com/Aaron-Hsieh-0129/VVMex/actions/workflows/cpu-tests.yml/badge.svg)](https://github.com/Aaron-Hsieh-0129/VVMex/actions/workflows/cpu-tests.yml)
+[![GPU tests](https://github.com/Aaron-Hsieh-0129/VVMex/actions/workflows/gpu-tests.yml/badge.svg)](https://github.com/Aaron-Hsieh-0129/VVMex/actions/workflows/gpu-tests.yml)
+[![Nightly](https://github.com/Aaron-Hsieh-0129/VVMex/actions/workflows/nightly.yml/badge.svg)](https://github.com/Aaron-Hsieh-0129/VVMex/actions/workflows/nightly.yml)
 [![C++](https://img.shields.io/badge/C++-17%2B-blue.svg)](https://isocpp.org/)
 [![Kokkos](https://img.shields.io/badge/Kokkos-Performance_Portability-blueviolet.svg)](https://kokkos.org/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -16,6 +19,8 @@ VVMex is a GPU-capable, object-oriented C++ implementation of the Vector Vortici
 - [Repository contents](#repository-contents)
 - [Requirements](#requirements)
 - [Quick Start](#quick-start)
+- [Output and restarts](#output-and-restarts)
+- [Testing and CI](#testing-and-ci)
 - [Reproducing the paper experiments](#reproducing-the-paper-experiments)
 - [Acknowledgments & References](#acknowledgments--references)
 - [Citation](#citation)
@@ -26,13 +31,15 @@ VVMex is a GPU-capable, object-oriented C++ implementation of the Vector Vortici
 ## Features
 
 - **3D Cloud-Resolving Dynamics**: High-performance atmospheric dynamics utilizing the Vector Vorticity formulation.
+- **CPU and GPU backends**: Kokkos CUDA with NCCL halo exchange on NVIDIA GPUs, or Kokkos OpenMP with MPI halo exchange on CPUs.
 - **Advanced Physics Schemes**:
   - **Microphysics**: P3 microphysics scheme adapted from E3SM EAMxx, with restored vapor-cloud water (qv $\leftrightarrow$ qc) conversion processes based on the original Fortran P3 formulation.
   - **Super-droplet microphysics**: Lagrangian super-droplet microphysics from CLEO, selected with `physics.microphysics.engine = "cleo"` (Cartesian grids).
   - **Radiation**: RRTMGP radiation scheme adapted from E3SM EAMxx.
   - **Land Surface Model**: Noah land surface model with GPU acceleration (Fortran OpenACC), provided by the Central Weather Administration (CWA) of Taiwan.
 - **TaiwanVVM Support**: Capable of simulating high-resolution Taiwan topography using generated terrain datasets (example scripts provided).
-- **Reproducibility**: Results are held bit-for-bit against the v1.0.0 reference, and an optional deterministic mode makes the dry dynamical core identical between the GPU and CPU backends.
+- **Output and restarts**: HDF5, asynchronous SST-to-HDF5 output, and direct multi-step BP5 datasets, with configurable output precision and restart support.
+- **Reproducibility**: Backend-specific regression baselines and reference digests check model results. Optional `VVM_DETERMINISTIC_FP=ON` aligns the CPU and GPU dry-core cases described in the [reproducibility guide](docs/developer-guides/reproducibility.md).
 
 
 ## Documentation
@@ -48,6 +55,8 @@ pages most people need first:
 | [Job Submission](https://aaron-hsieh-0129.github.io/VVMex/user-guides/job-submission/) | `submit.py`, SLURM, and rank/GPU layout. |
 | [Output](https://aaron-hsieh-0129.github.io/VVMex/user-guides/output/) | Output engines, precision, restarts, and GrADS descriptors. |
 | [CLEO Super-Droplet Microphysics](https://aaron-hsieh-0129.github.io/VVMex/user-guides/cleo/) | Building, input generation, coupling, and limitations of the CLEO option. |
+| [Default Cases](https://aaron-hsieh-0129.github.io/VVMex/examples/default-cases/) | Runnable dynamics, microphysics, radiation, land, and Taiwan examples. |
+| [Continuous Integration](https://aaron-hsieh-0129.github.io/VVMex/developer-guides/ci/) | Test tiers, workflows, self-hosted runners, and approval policy. |
 | [Developer Guides](https://aaron-hsieh-0129.github.io/VVMex/developer-guides/) | Architecture, physics implementation, and reproducibility rules. |
 
 
@@ -57,10 +66,10 @@ pages most people need first:
 |---|---|
 | `src/` | Main VVMex source code. |
 | `tests/` | Verification and regression tests. |
-| `rundata/` | Example configurations and input files. |
-| `tools/` | Preprocessing, utility, and data-generation scripts. |
+| `rundata/` | Case configurations, sounding profiles, spatial inputs, and physics data. |
+| `tools/` | Job-launching helpers, preprocessing, CLEO input generation, and CI runner setup. |
 | `docs/` | User and developer documentation. |
-| `externals/` | External dependencies included as Git submodules. |
+| `externals/` | External dependency integration, including Git submodules and the fetched CLEO fork. |
 
 
 ## Requirements
@@ -70,48 +79,128 @@ CPU-only backend. Other GPU backends are not yet part of the validated workflow.
 
 | Component | Tested version / requirement | Notes |
 |---|---:|---|
-| C++ compiler | GCC ≥ 11 and NVHPC ≥ 24.9 | NVHPC is recommended on NVIDIA GPU systems. |
-| CUDA Toolkit | ≥ 12.6 | Currently tested on NVIDIA GPUs. |
-| MPI | System MPI or NVHPC/HPC-X MPI | Use the MPI implementation provided by the target HPC system when possible. |
+| Compiler toolchain | NVHPC and GCC 11+ | NVHPC is required on both backends for Noah Fortran and `libnvcpumath`; GCC supplies its C++ standard library. |
+| GPU compiler / CUDA | NVHPC ≥ 25.3 with CUDA ≥ 12.8 | The always-built CLEO interface requires C++20. CUDA is only required for GPU builds. |
+| MPI | Open MPI or NVHPC/HPC-X MPI | Keep `mpicc`, `mpic++`, and `mpifort` in the same toolchain. |
 | CMake | ≥ 3.20 | Required for CMake presets. |
-| Kokkos | ≥ 4.7.01 | Used for performance-portable C++ kernels. |
+| Kokkos | 4.7+ | CUDA for GPU builds; OpenMP for CPU builds. GPU CLEO needs relocatable device code and static Kokkos libraries. |
 | HDF5 | ≥ 1.14.5 | Required for NetCDF/HDF5 I/O. |
 | NetCDF-C | ≥ 4.4.1.1 | Required for NetCDF input/output. |
 | NetCDF-Fortran | ≥ 4.4.1 | Required by Fortran-based components. |
 | PnetCDF | ≥ 1.14.1 | Used for parallel NetCDF support. |
 | ADIOS2 | ≥ 2.11.0 | Used for scalable and asynchronous output. |
+| Python | Python 3 | Used by `submit.py`, test tools, and input generators; CLEO input generation also needs NumPy and cleopy's dependencies. |
 
-Lower versions may work but have not been systematically tested. Building the stack from source is covered in the
-[Environment Installation](https://aaron-hsieh-0129.github.io/VVMex/environment/) guide.
+Use the [GPU](docs/environment/gpu.md) or [CPU-only](docs/environment/cpu.md)
+installation guide for a validated dependency stack. Keep backend-specific
+install prefixes and build directories separate. A pure GCC/gfortran build is
+not currently supported. Both guides build ADIOS2 without Kokkos support so I/O
+ranks remain host-only.
 
 
 ## Quick Start
 
-Enough to confirm the model builds and runs on your machine. `<preset>` is an entry in `CMakePresets.json`; the shipped presets target specific clusters, so add one for yours with the paths to your dependency stack.
+Install the dependencies first, then select or create a machine entry in
+`CMakePresets.json`. A preset names the backend, dependency prefixes, and build
+directory; `submit.py` reads the same preset when launching the model.
 
 ```bash
 git clone --recursive https://github.com/Aaron-Hsieh-0129/VVMex.git
 cd VVMex
 export VVM_ROOT=$PWD                      # required before configuring or running
 
-cmake --preset <preset> -DBUILD_TESTS=ON
+# GPU preset: normally builds into build/
+cmake --preset <gpu-preset> -DBUILD_TESTS=ON
 cmake --build build -j 64
-
-./submit.py --local --preset <preset> \
-    -c rundata/input_configs/default_cases/advection_u.json --compute 1
-ctest --test-dir build -L unit            # unit checks (some use MPI/GPU)
 ```
 
-See [tests/README.md](tests/README.md) for suite flags, RLL model tests, and adding tests.
+For a CPU-only preset, use its separate build tree:
 
-`submit.py` derives the runtime environment from the preset, so there is no separate environment script to source. For dependencies, cluster presets, designing an experiment, SLURM submission, and choosing an output engine, see the [Quick Start guide](https://aaron-hsieh-0129.github.io/VVMex/quick-start/).
+```bash
+cmake --preset <cpu-preset> -DBUILD_TESTS=ON
+cmake --build build_cpu -j 64
+```
+
+Launch a small case using the preset you built:
+
+```bash
+./submit.py --local --preset <preset> \
+    -c rundata/input_configs/default_cases/advection_u.json --compute 1
+```
+
+Check the case's input paths and `output.output_dir` before running. Spatial
+NetCDF inputs can be regenerated with `tools/generate_init_nc.py`; see
+[Default cases](docs/examples/default-cases.md). CLEO cases also need inputs
+generated with `tools/cleo/gen_cleo_inputs.py` as described in the
+[CLEO guide](docs/user-guides/cleo.md).
+
+Run `./submit.py` without arguments for interactive setup. Use `--local` for
+local execution, or omit it for SLURM submission. For local GPU runs,
+`VVM_GPU_LIST` selects physical device IDs; for CPU runs, `--cpus` and
+`--omp-threads` control cores and threads per rank. See the
+[Quick Start](docs/quick-start.md) and [Job Submission](docs/user-guides/job-submission.md)
+guides for environment preparation and resource sizing.
+
+
+## Output and restarts
+
+Set `output.engine` in the case JSON:
+
+| Engine | Output | Dedicated I/O ranks |
+|---|---|---|
+| `HDF5` | One `.h5` file per output time; useful for small runs and reference output. | None |
+| `SST` | Streams to host-only I/O ranks that write HDF5; GPU production path. | Required (`--io N`) |
+| `BP5` | One multi-step `.bp` dataset; validated on CPU and host-staged on GPU. | None |
+
+HDF5 and BP5 reject nonzero `--io`. All three engines support restart workflows;
+SST produces HDF5 restart files. Keep `output.precision` at `native` when a
+restart must preserve the model's working precision. See [Output](docs/user-guides/output.md)
+for engine settings, restart configuration, and GrADS descriptors.
+
+
+## Testing and CI
+
+Configure with `-DBUILD_TESTS=ON`. Before running GPU regressions, fetch their
+Git LFS baselines:
+
+```bash
+git lfs pull origin --include="tests/baselines/*.h5" --exclude=""
+python3 tests/scripts/check_hdf5_baselines.py
+```
+
+Run CTest in the preset's build directory with the dependency and MPI
+environment from the installation guide:
+
+```bash
+ctest --test-dir build --output-on-failure       # GPU build
+ctest --test-dir build_cpu --output-on-failure   # CPU build
+```
+
+`-L '^unit$'` selects unit tests; some still use MPI or a GPU.
+
+Optional BP5, physics, CLEO, multi-rank, and RLL suites are enabled at configure
+time. GPU tests use `VVM_TEST_GPUS` to select devices, and multi-rank tests need
+distinct physical GPUs. CPU tests use `VVM_TEST_CPU_THREADS` and CTest's `-j`
+processor budget. See [tests/README.md](tests/README.md) for flags and examples.
+
+| CI workflow | Coverage |
+|---|---|
+| Checks | Python, shell, configurations, test registration, and documentation checks on GitHub-hosted runners. |
+| CPU tests | Clean CPU build, default tests, CLEO coupling, and multi-rank tests. |
+| GPU tests | Clean GPU build, default tests, physics, CLEO coupling, and multi-rank tests. |
+| Nightly | Adds BP5 to both backend suites; scheduled daily at 19:00 UTC or run manually. |
+
+CPU and GPU jobs use self-hosted runners. Administrators run automatically;
+other contributors require approval. Nightly waits up to 30 minutes for its
+selected GPUs to become idle before building. Details are in the
+[CI guide](docs/developer-guides/ci.md).
 
 
 ## Reproducing the paper experiments
 
 The configuration files used for the experiments in the VVMex v1.0 model
 description paper ([Hsieh et al., 2026](https://doi.org/10.5194/egusphere-2026-4205))
-are provided in [`rundata/input_configs/default_cases/`](...).
+are provided in [`rundata/input_configs/default_cases/`](rundata/input_configs/default_cases/).
 
 The exact code archived for the paper is
 [VVMex v1.0.0 on Zenodo](https://doi.org/10.5281/zenodo.21319556), corresponding
