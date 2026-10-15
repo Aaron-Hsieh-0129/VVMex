@@ -26,9 +26,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Everything gpu-tests.yml leaves out of the per-push gate: BP5 and the 4-rank
-  # invariance tier, which needs 4 physical GPUs. It keeps the physics tier as
-  # well, so this job is a complete GPU run rather than a supplement.
+  # Add BP5 to gpu-tests.yml's default, physics, CLEO and multirank tiers.
+  # Like the per-push gate, the multirank tier needs 4 physical GPUs.
   #
   # Gated on VVMEX_GPU_RUNNER, the same switch as gpu-tests.yml, because both
   # dispatch to [self-hosted, vvmex-gpu]. Gating it on VVMEX_RUNNER instead --
@@ -69,8 +68,8 @@ jobs:
 
       - name: Read runner configuration
         run: |
-          test -n "${VVM_CI_PRESET}" || {
-            echo "::error::runner .env is missing VVM_CI_* -- re-run tools/setup_ci_runner.sh --env-only"
+          test "${VVM_CI_BACKEND}" = gpu && test -n "${VVM_CI_PRESET}" || {
+            echo "::error::runner .env needs a GPU preset -- re-run tools/ci/setup_ci_runner.sh --env-only"
             exit 1; }
           echo "preset ${VVM_CI_PRESET}, build dir ${VVM_CI_BUILD_DIR}, jobs ${VVM_CI_BUILD_JOBS}"
           {
@@ -79,6 +78,31 @@ jobs:
             echo "BUILD_JOBS=${VVM_CI_BUILD_JOBS}"
           } >> "$GITHUB_ENV"
 
+      # CTest's RESOURCE_LOCK only coordinates tests in this invocation. It
+      # cannot keep a simulation outside Actions from occupying the devices.
+      - name: Wait for available test GPUs
+        timeout-minutes: 32
+        run: |
+          set -euo pipefail
+          devices="${VVM_TEST_GPUS:-0,1,2,3}"
+          deadline=$(( SECONDS + 1800 ))
+          while true; do
+            nvidia-smi --id="$devices" \
+              --query-gpu=index,name,memory.total,memory.free --format=csv
+            busy=$(nvidia-smi --id="$devices" \
+              --query-compute-apps=pid --format=csv,noheader,nounits)
+            if [ -z "$busy" ]; then
+              echo "Test GPUs $devices have no active compute processes."
+              break
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::Test GPUs $devices are occupied after waiting 30 minutes; retry when simulations finish."
+              exit 1
+            fi
+            echo "GPUs occupied by PIDs: $busy; checking again in 30 seconds."
+            sleep 30
+          done
+
       - name: Clean build tree
         run: rm -rf "$BUILD_DIR"
 
@@ -86,6 +110,7 @@ jobs:
         run: >-
           cmake --preset "$PRESET" -DBUILD_TESTS=ON
           -DVVM_TEST_BP5=ON -DVVM_TEST_PHYSICS=ON -DVVM_TEST_MULTIRANK=ON
+          -DVVM_TEST_CLEO=ON
 
       - name: Build
         run: cmake --build "$BUILD_DIR" -j "$BUILD_JOBS"
@@ -108,10 +133,8 @@ jobs:
         if: always()
         run: rm -rf "$BUILD_DIR"
 
-  # The CPU tiers the pull-request gate leaves out. multirank is the expensive
-  # part: the wind solver exchanges halos many times per step, and at 4 ranks
-  # over MPI on a 32^2 grid that is pure latency, so twisting goes from about a
-  # second at one rank to twenty minutes at four.
+  # Add BP5 to the CPU gate's default, CLEO and multirank tiers. At four ranks,
+  # halo exchanges make the wind solver sensitive to MPI latency.
   cpu-full:
     name: BP5 and multirank (CPU)
     if: >-
@@ -129,8 +152,8 @@ jobs:
 
       - name: Read runner configuration
         run: |
-          test -n "${VVM_CI_PRESET}" || {
-            echo "::error::runner .env is missing VVM_CI_* -- re-run tools/setup_ci_runner.sh --env-only"
+          test "${VVM_CI_BACKEND}" = cpu && test -n "${VVM_CI_PRESET}" || {
+            echo "::error::runner .env needs a CPU preset -- re-run tools/ci/setup_ci_runner.sh --env-only"
             exit 1; }
           # The multirank tier runs 4 ranks at once, so each rank gets a quarter
           # of the per-rank thread count the single-rank gate uses. CTest's
@@ -154,6 +177,7 @@ jobs:
         run: >-
           cmake --preset "$PRESET" -DBUILD_TESTS=ON
           -DVVM_TEST_BP5=ON -DVVM_TEST_MULTIRANK=ON
+          -DVVM_TEST_CLEO=ON
           -DVVM_TEST_CPU_THREADS="$TEST_THREADS"
 
       - name: Build
