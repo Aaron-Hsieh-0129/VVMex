@@ -127,7 +127,7 @@ extra ranks.
 ```
 
 Total MPI ranks = compute + I/O. The first `world_size - N` ranks run the model;
-the last `N` run `VVM::IO::run_io_server()` (`src/io/IOServer.cpp`), open the
+the last `N` run `VVM::IO::run_io_server()` (`src/io/sst/IOServer.cpp`), open the
 stream named from `output_dir` and `output_filename_prefix`, and write collective
 HDF5. Submit with `submit.py --io N` so ranks, cores, and GPUs are requested
 together.
@@ -479,7 +479,10 @@ a writer still holds open, has not been tested separately.
 | Path | Role |
 |---|---|
 | `src/io/OutputManager.*` | HDF5 and SST writer, schema, field packing |
-| `src/io/IOServer.*` | SST reader and HDF5 relay |
+| `src/io/hdf5/` | HDF5 restart reader, metadata and dimension scales |
+| `src/io/netcdf/` | Parallel NetCDF input and restart metadata |
+| `src/io/text/` | Text profile input |
+| `src/io/sst/IOServer.*` | SST reader and HDF5 relay |
 | `src/io/history/HistoryWriter.hpp` | Neutral `write`/`close` interface used by `main.cpp` |
 | `src/io/history/GradsCtl.*` | GrADS descriptor shared by every engine |
 | `src/io/bp5/` | Direct BP5 writer: config, schema, CPU staging, lifecycle |

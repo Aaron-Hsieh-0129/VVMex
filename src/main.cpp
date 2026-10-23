@@ -32,7 +32,7 @@
 #include "utils/TimingManager.hpp"
 
 #include "driver/Model.hpp"
-#include "io/IOServer.hpp"
+#include "io/sst/IOServer.hpp"
 
 #if defined(ENABLE_NCCL)
 void

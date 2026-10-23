@@ -1,7 +1,7 @@
 #ifndef VVM_READERS_TXTREADER_HPP
 #define VVM_READERS_TXTREADER_HPP
 
-#include "Reader.hpp"
+#include "io/Reader.hpp"
 #include "core/Parameters.hpp"
 #include "core/vvm_types.hpp"
 #include "utils/ConfigurationManager.hpp"

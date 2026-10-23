@@ -1,5 +1,5 @@
 // Unit tests for getting the restart clock out of a real file
-// (src/io/Hdf5RestartMetadata.hpp, src/io/PnetcdfRestartMetadata.hpp).
+// (src/io/hdf5/Hdf5RestartMetadata.hpp, src/io/netcdf/PnetcdfRestartMetadata.hpp).
 //
 // tests/unit/test_restart_time.cpp pins the decision logic; this one pins the
 // part that touches bytes on disk. The headline case is the regression that
@@ -25,8 +25,8 @@
 // Reporting goes through <cstdio> rather than <iostream> on purpose -- see the
 // note in test_sst_path.cpp about the NVHPC/libstdc++ mismatch.
 
-#include "io/Hdf5RestartMetadata.hpp"
-#include "io/PnetcdfRestartMetadata.hpp"
+#include "io/hdf5/Hdf5RestartMetadata.hpp"
+#include "io/netcdf/PnetcdfRestartMetadata.hpp"
 #include "utils/RestartTime.hpp"
 
 #include <hdf5.h>

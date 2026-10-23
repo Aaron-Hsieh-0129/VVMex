@@ -3,7 +3,7 @@
 // rather than assuming VVM::Real. Two ranks: one compute, one I/O server.
 #include "OutputPrecisionCheck.hpp"
 
-#include "io/IOServer.hpp"
+#include "io/sst/IOServer.hpp"
 #include "io/OutputManager.hpp"
 #include "utils/ConfigurationManager.hpp"
 

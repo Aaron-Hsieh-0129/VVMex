@@ -3,7 +3,7 @@
 #include "core/Parameters.hpp"
 #include "core/State.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
-#include "io/TxtReader.hpp"
+#include "io/text/TxtReader.hpp"
 #include "utils/ConfigurationManager.hpp"
 
 #include <algorithm>

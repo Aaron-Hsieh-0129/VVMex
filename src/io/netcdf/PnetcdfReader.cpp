@@ -1,5 +1,5 @@
-#include "PnetcdfReader.hpp"
-#include "PnetcdfRestartMetadata.hpp"
+#include "io/netcdf/PnetcdfReader.hpp"
+#include "io/netcdf/PnetcdfRestartMetadata.hpp"
 #include "core/Field.hpp"
 #include "core/RegularLatLonModelConfiguration.hpp"
 #include "io/RestartVariables.hpp"

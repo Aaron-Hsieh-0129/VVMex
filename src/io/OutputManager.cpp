@@ -1,5 +1,5 @@
 #include "OutputManager.hpp"
-#include "Hdf5DimensionScales.hpp"
+#include "io/hdf5/Hdf5DimensionScales.hpp"
 #include "io/history/GradsCtl.hpp"
 #include <sys/stat.h>
 #include <cerrno>
