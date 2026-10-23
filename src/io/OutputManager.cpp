@@ -1,5 +1,5 @@
 #include "OutputManager.hpp"
-#include "Hdf5DimensionScales.hpp"
+#include "io/hdf5/Hdf5DimensionScales.hpp"
 #include "io/history/GradsCtl.hpp"
 #include <sys/stat.h>
 #include <cerrno>
@@ -205,6 +205,11 @@ OutputManager::OutputManager(const Utils::ConfigurationManager& config,
     io_.SetEngine(engine_type_);
 
     if (engine_type_ == "HDF5") {
+        compression_ = hdf5_compression_options(config);
+        if (rank_ == 0 && compression_.enabled) {
+            std::cout << "  [OutputManager] Native HDF5 compression: shuffle, gzip="
+                      << compression_.level << ", Fletcher32; collective writes" << std::endl;
+        }
         const bool use_collective_mpio =
             config.get_value<bool>("output.hdf5_collective_mpio", false);
         const std::string use_collective = use_collective_mpio ? "true" : "false";
@@ -442,7 +447,7 @@ OutputManager::define_field_variable(const std::string& field_name,
 void
 OutputManager::put_field(const std::string& field_name, const VVM::Real* data, size_t elements) {
     if (!converts_precision_) {
-        writer_.Put(field_variables_.at(field_name), data, adios2::Mode::Sync);
+        put_output(field_variables_.at(field_name), data);
         return;
     }
 
@@ -457,7 +462,7 @@ OutputManager::put_field(const std::string& field_name, const VVM::Real* data, s
     for (size_t i = 0; i < elements; ++i) {
         buffer[i] = static_cast<ConvertedReal>(data[i]);
     }
-    writer_.Put(converted_variables_.at(field_name), buffer.data(), adios2::Mode::Sync);
+    put_output(converted_variables_.at(field_name), buffer.data());
 }
 
 void
@@ -474,7 +479,12 @@ OutputManager::write(size_t step, VVM::Real time) {
         if (rank_ == 0) {
             std::cout << "  [OutputManager] HDF5 Writing: " << filename << std::endl;
         }
-        writer_ = io_.Open(filename, adios2::Mode::Write, comm_);
+        if (compression_.enabled) {
+            compressed_writer_ = std::make_unique<CompressedHdf5Writer>(filename, comm_, compression_);
+            copy_hdf5_attributes(io_, *compressed_writer_);
+        } else {
+            writer_ = io_.Open(filename, adios2::Mode::Write, comm_);
+        }
     }
     else if (engine_type_ == "SST") {
         if (!writer_) {
@@ -486,17 +496,17 @@ OutputManager::write(size_t step, VVM::Real time) {
         }
     }
 
-    writer_.BeginStep();
+    if (!compressed_writer_) writer_.BeginStep();
 
     auto var_time = io_.InquireVariable<VVM::Real>("time");
-    writer_.Put<VVM::Real>(var_time, &time, adios2::Mode::Sync);
+    put_output(var_time, &time);
 
     const double model_time_s = static_cast<double>(time);
     const int64_t model_step = static_cast<int64_t>(step);
     auto var_model_time_s = io_.InquireVariable<double>("model_time_s");
-    writer_.Put<double>(var_model_time_s, &model_time_s, adios2::Mode::Sync);
+    put_output(var_model_time_s, &model_time_s);
     auto var_model_step = io_.InquireVariable<int64_t>("model_step");
-    writer_.Put<int64_t>(var_model_step, &model_step, adios2::Mode::Sync);
+    put_output(var_model_step, &model_step);
 
     write_static_data();
 
@@ -640,11 +650,16 @@ OutputManager::write(size_t step, VVM::Real time) {
         }
     }
 
-    writer_.PerformPuts();
-    writer_.EndStep();
+    if (compressed_writer_) {
+        compressed_writer_->close();
+        compressed_writer_.reset();
+    } else {
+        writer_.PerformPuts();
+        writer_.EndStep();
+    }
 
     if (engine_type_ == "HDF5") {
-        writer_.Close();
+        if (!compression_.enabled) writer_.Close();
 
         MPI_Barrier(comm_);
         attach_hdf5_field_metadata(filename);
@@ -675,7 +690,7 @@ OutputManager::write_static_data() {
             }
         }
     }
-    writer_.Put<VVM::Real>(var_x, x_coords.data(), adios2::Mode::Sync);
+    put_output(var_x, x_coords.data());
 
     auto var_y = io_.InquireVariable<VVM::Real>("coordinates/y");
     std::vector<VVM::Real> y_coords;
@@ -693,7 +708,7 @@ OutputManager::write_static_data() {
             }
         }
     }
-    writer_.Put<VVM::Real>(var_y, y_coords.data(), adios2::Mode::Sync);
+    put_output(var_y, y_coords.data());
 
     auto var_z_mid = io_.InquireVariable<VVM::Real>("coordinates/z_mid");
     std::vector<VVM::Real> z_mid_physical;
@@ -704,7 +719,7 @@ OutputManager::write_static_data() {
             z_mid_physical[i] = z_mid_host(i + h);
         }
     }
-    writer_.Put<VVM::Real>(var_z_mid, z_mid_physical.data(), adios2::Mode::Sync);
+    put_output(var_z_mid, z_mid_physical.data());
 }
 
 void

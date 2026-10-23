@@ -119,7 +119,11 @@ void LandProcess::init() {
     const auto& th_v = th_ref_.get(state_, "th").get_device_data();
     const auto& pibar_v = pibar_ref_.get(state_, "pibar").get_device_data();
     const auto& topo_v = topo_ref_.get(state_, "topo").get_device_data();
-    auto& Tg = Tg_ref_.get(state_, "Tg").get_mutable_device_data();
+    const auto& Tg = Tg_ref_.get(state_, "Tg").get_device_data();
+    auto& st1_v = st1_ref_.get(state_, "st1").get_mutable_device_data();
+    auto& st2_v = st2_ref_.get(state_, "st2").get_mutable_device_data();
+    auto& st3_v = st3_ref_.get(state_, "st3").get_mutable_device_data();
+    auto& st4_v = st4_ref_.get(state_, "st4").get_mutable_device_data();
     const auto& sm1_v = sm1_ref_.get(state_, "sm1").get_device_data();
     const auto& sm2_v = sm2_ref_.get(state_, "sm2").get_device_data();
     const auto& sm3_v = sm3_ref_.get(state_, "sm3").get_device_data();
@@ -152,7 +156,8 @@ void LandProcess::init() {
             m_sneqv(i, j) = 0.0;
 
             m_t1(i, j) = th_v(hx, vj, vi) * pibar_v(hx);
-            m_tskin(i, j) = m_t1(i, j); // It it supposed to be equal to Tg but Fortran VVM use m_t1 so we follow it.
+            // VVM uses m_t1 for m_tskin
+            m_tskin(i, j) = Tg(vj, vi);
 
             m_smc(i, 0, j) = sm1_v(vj, vi);
             m_smc(i, 1, j) = sm2_v(vj, vi);
@@ -164,9 +169,15 @@ void LandProcess::init() {
             m_slc(i, 2, j) = sl3_v(vj, vi);
             m_slc(i, 3, j) = sl4_v(vj, vi);
 
+            // Initializer has already selected atmospheric or NetCDF Tg.
+            // Use that same temperature for every soil layer.
             for(int k=0; k<m_nsoil; ++k) {
-                m_stc(i, k, j) = m_t1(i, j); // soil temperature
+                m_stc(i, k, j) = Tg(vj, vi);
             }
+            st1_v(vj, vi) = Tg(vj, vi);
+            st2_v(vj, vi) = Tg(vj, vi);
+            st3_v(vj, vi) = Tg(vj, vi);
+            st4_v(vj, vi) = Tg(vj, vi);
         }
     );
     prepare_static_data();

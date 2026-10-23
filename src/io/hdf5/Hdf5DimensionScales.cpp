@@ -1,4 +1,4 @@
-#include "Hdf5DimensionScales.hpp"
+#include "io/hdf5/Hdf5DimensionScales.hpp"
 
 #include <hdf5_hl.h>
 #include <array>

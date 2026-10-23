@@ -1,12 +1,12 @@
 set(VVM_IO_SOURCES
-    TxtReader.cpp
+    text/TxtReader.cpp
     OutputManager.cpp
     OutputPrecision.cpp
-    PnetcdfReader.cpp
-    Hdf5RestartReader.cpp
+    netcdf/PnetcdfReader.cpp
+    hdf5/Hdf5RestartReader.cpp
     RestartVariables.cpp
-    Hdf5DimensionScales.cpp
-    IOServer.cpp
+    hdf5/Hdf5DimensionScales.cpp
+    sst/IOServer.cpp
     history/GradsCtl.cpp
     bp5/Bp5HistoryWriter.cpp
     bp5/Bp5RestartReader.cpp
@@ -19,14 +19,19 @@ set(VVM_IO_SOURCES
 
 set(VVM_IO_HEADERS
     Reader.hpp
-    TxtReader.hpp
+    text/TxtReader.hpp
     OutputManager.hpp
     OutputPrecision.hpp
-    PnetcdfReader.hpp
-    Hdf5RestartReader.hpp
+    hdf5/CompressedHdf5Writer.hpp
+    hdf5/Hdf5Compression.hpp
+    OutputCompression.hpp
+    netcdf/PnetcdfReader.hpp
+    netcdf/PnetcdfRestartMetadata.hpp
+    hdf5/Hdf5RestartReader.hpp
+    hdf5/Hdf5RestartMetadata.hpp
     RestartVariables.hpp
-    Hdf5DimensionScales.hpp
-    IOServer.hpp
+    hdf5/Hdf5DimensionScales.hpp
+    sst/IOServer.hpp
     history/GradsCtl.hpp
     history/HistoryWriter.hpp
     history/LegacyHistoryWriter.hpp

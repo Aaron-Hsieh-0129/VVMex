@@ -305,7 +305,7 @@ def main():
         # globalization sidesteps the probe; the runner needs no locale support.
         "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1",
     ]
-    for key in ("LD_LIBRARY_PATH", "VVM_EXTRA_LD_LIBRARY_PATH", "HPCX_HOME",
+    for key in ("PYTHONPATH", "LD_LIBRARY_PATH", "VVM_EXTRA_LD_LIBRARY_PATH", "HPCX_HOME",
                 "LIBRARY_PATH", "CMAKE_PREFIX_PATH", "PKG_CONFIG_PATH",
                 "INSTALL_DIR", "NVHPC_ROOT", "CUDA_HOME", "CUDA_ROOT",
                 "NVHPC_CUDA_HOME", "OPAL_PREFIX", "NVLOCALRC",

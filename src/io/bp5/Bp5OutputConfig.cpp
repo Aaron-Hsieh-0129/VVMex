@@ -1,7 +1,10 @@
 #include "Bp5OutputConfig.hpp"
+#include "io/OutputCompression.hpp"
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <limits>
 #include <set>
 #include <stdexcept>
 
@@ -58,6 +61,9 @@ Bp5OutputConfig::element_type() const noexcept {
 
 CpuBufferMode
 Bp5OutputConfig::effective_buffer_mode() const noexcept {
+    // Operators consume contiguous host blocks. Do not expose halo-strided
+    // model memory to compression, even when output precision is native.
+    if (compression_enabled) return CpuBufferMode::Pack;
 #if defined(KOKKOS_ENABLE_CUDA)
     // ADIOS2 is deliberately built without Kokkos/CUDA support, so every CUDA
     // field must be copied to host memory before it is handed to the writer.
@@ -80,7 +86,8 @@ Bp5OutputConfig::from_json(const nlohmann::json& value, OutputPrecision default_
         "buffer_mode",
         "existing_dataset",
         "overwrite",
-        "precision"};
+        "precision",
+        "compression"};
     for (const auto& item : value.items()) {
         if (!item.key().empty() && item.key().front() == '_') {
             continue;
@@ -98,6 +105,44 @@ Bp5OutputConfig::from_json(const nlohmann::json& value, OutputPrecision default_
     result.num_subfiles = read_optional<unsigned int>(value, "num_subfiles", result.num_subfiles);
     result.stats_level = read_optional<unsigned int>(value, "stats_level", result.stats_level);
     result.async_write = read_optional<bool>(value, "async_write", result.async_write);
+    if (value.contains("compression")) {
+        const auto& c = value.at("compression");
+        if (!c.is_object())
+            throw std::invalid_argument("output.bp5.compression must be a JSON object");
+        const std::set<std::string> keys = {"enabled", "codec", "level", "threads", "minimum_bytes"};
+        for (const auto& item : c.items()) {
+            if (!item.key().empty() && item.key().front() == '_') continue;
+            if (!keys.count(item.key()))
+                throw std::invalid_argument("Unknown output.bp5.compression key: " + item.key());
+        }
+        try {
+            if (c.contains("enabled")) result.compression_enabled = c.at("enabled").get<bool>();
+            if (c.contains("codec")) result.compression_codec = lower(c.at("codec").get<std::string>());
+            const auto integer = [&](const char* key, int64_t fallback, int64_t maximum) {
+                if (!c.contains(key)) return fallback;
+                const auto& v = c.at(key);
+                if (!v.is_number_integer() || (v.is_number_unsigned() && v.get<uint64_t>() > uint64_t(maximum)))
+                    throw std::invalid_argument(std::string("output.bp5.compression.") + key + " must be an integer in range");
+                const auto n = v.get<int64_t>();
+                if (n < 0 || n > maximum)
+                    throw std::invalid_argument(std::string("output.bp5.compression.") + key + " is out of range");
+                return n;
+            };
+            result.compression_level = static_cast<int>(integer("level", 1, 9));
+            result.compression_threads = static_cast<int>(integer("threads", 1, 32767));
+            const auto minimum = integer("minimum_bytes", 1048576, INT64_MAX);
+            if (result.compression_threads == 0 || minimum == 0)
+                throw std::invalid_argument("output.bp5.compression threads and minimum_bytes must be positive");
+            if (uint64_t(minimum) > std::numeric_limits<std::size_t>::max())
+                throw std::invalid_argument("output.bp5.compression.minimum_bytes exceeds size_t");
+            result.compression_minimum_bytes = static_cast<std::size_t>(minimum);
+        } catch (const nlohmann::json::exception& e) {
+            throw std::invalid_argument(std::string("Invalid output.bp5.compression: ") + e.what());
+        }
+        if (result.compression_codec != "zstd" && result.compression_codec != "lz4" &&
+            result.compression_codec != "zlib")
+            throw std::invalid_argument("output.bp5.compression.codec must be zstd, lz4, or zlib");
+    }
     if (value.contains("existing_dataset") && value.contains("overwrite")) {
         throw std::invalid_argument(
             "output.bp5.existing_dataset and the legacy output.bp5.overwrite "
@@ -165,12 +210,11 @@ Bp5OutputConfig::from_json(const nlohmann::json& value, OutputPrecision default_
 Bp5OutputConfig
 Bp5OutputConfig::from_config(const Utils::ConfigurationManager& config) {
     const OutputPrecision default_precision = configured_output_precision(config);
-    if (!config.has_key("output.bp5")) {
-        Bp5OutputConfig result;
-        result.precision = default_precision;
-        return result;
-    }
-    return from_json(config.get_value<nlohmann::json>("output.bp5"), default_precision);
+    auto value = config.has_key("output.bp5")
+        ? config.get_value<nlohmann::json>("output.bp5") : nlohmann::json::object();
+    if (!value.is_object()) throw std::invalid_argument("output.bp5 must be a JSON object");
+    value["compression"] = configured_output_compression(config, "output.bp5.compression");
+    return from_json(value, default_precision);
 }
 
 std::map<std::string, std::string>
@@ -179,6 +223,15 @@ Bp5OutputConfig::adios_parameters() const {
         {"NumSubFiles", std::to_string(num_subfiles)},
         {"StatsLevel", std::to_string(stats_level)},
         {"AsyncWrite", async_write ? "true" : "false"}};
+}
+
+std::map<std::string, std::string>
+Bp5OutputConfig::compression_parameters() const {
+    return {{"compressor", compression_codec},
+        {"clevel", std::to_string(compression_level)},
+        {"nthreads", std::to_string(compression_threads)},
+        {"threshold", std::to_string(compression_minimum_bytes)},
+        {"doshuffle", "BLOSC_SHUFFLE"}};
 }
 
 } // namespace VVM::IO::BP5

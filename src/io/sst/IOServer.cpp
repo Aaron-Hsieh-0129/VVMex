@@ -1,5 +1,7 @@
-#include "IOServer.hpp"
-#include "Hdf5DimensionScales.hpp"
+#include "io/sst/IOServer.hpp"
+#include "io/hdf5/Hdf5DimensionScales.hpp"
+#include "io/hdf5/Hdf5Compression.hpp"
+#include <memory>
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -152,6 +154,12 @@ run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& config) 
     int rank, size;
     MPI_Comm_rank(io_comm, &rank);
     MPI_Comm_size(io_comm, &size);
+
+    const auto compression = hdf5_compression_options(config);
+    if (rank == 0 && compression.enabled) {
+        std::cout << "  [IO-Server] Native HDF5 compression: shuffle, gzip="
+                  << compression.level << ", Fletcher32; collective writes" << std::endl;
+    }
 
     adios2::ADIOS adios(io_comm);
 
@@ -314,6 +322,8 @@ run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& config) 
             get_local_range(shape[0], rank, size, my_start, my_count);
 
             if (my_count == 0) {
+                // Empty ranks still participate in collective compressed writes.
+                if (compression.enabled) buffers[name].resize(1);
                 return;
             }
 
@@ -405,8 +415,15 @@ run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& config) 
 
         try {
             define_relayed_attributes(outIO, stream_attributes);
-            adios2::Engine writer = outIO.Open(h5_name, adios2::Mode::Write, io_comm);
-            writer.BeginStep();
+            adios2::Engine writer;
+            std::unique_ptr<CompressedHdf5Writer> compressed;
+            if (compression.enabled) {
+                compressed = std::make_unique<CompressedHdf5Writer>(h5_name, io_comm, compression);
+                copy_hdf5_attributes(outIO, *compressed);
+            } else {
+                writer = outIO.Open(h5_name, adios2::Mode::Write, io_comm);
+                writer.BeginStep();
+            }
 
             const auto relay_variable = [&](auto sample, const std::string& name, auto& buffers) {
                 using T = decltype(sample);
@@ -427,7 +444,8 @@ run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& config) 
 
                 // Scalar
                 if (shape.empty()) {
-                    writer.Put(varOut, buffer.data(), adios2::Mode::Deferred);
+                    if (compressed) compressed->write(name, {}, {}, {}, buffer.data());
+                    else writer.Put(varOut, buffer.data(), adios2::Mode::Deferred);
                     return;
                 }
 
@@ -435,7 +453,7 @@ run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& config) 
                 size_t s_count = 0;
                 get_local_range(shape[0], rank, size, s_start, s_count);
 
-                if (s_count == 0) {
+                if (s_count == 0 && !compressed) {
                     return;
                 }
 
@@ -444,9 +462,12 @@ run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& config) 
                 start[0] = s_start;
                 count[0] = s_count;
 
-                varOut.SetSelection({start, count});
-
-                writer.Put(varOut, buffer.data(), adios2::Mode::Deferred);
+                if (compressed) {
+                    compressed->write(name, shape, start, count, buffer.data());
+                } else {
+                    varOut.SetSelection({start, count});
+                    writer.Put(varOut, buffer.data(), adios2::Mode::Deferred);
+                }
             };
 
             for (const auto& name : current_step_vars) {
@@ -454,7 +475,8 @@ run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& config) 
                 if (intIt != int_scalars.end()) {
                     auto intVarOut = outIO.InquireVariable<int64_t>(name);
                     if (intVarOut) {
-                        writer.Put(intVarOut, &intIt->second, adios2::Mode::Deferred);
+                        if (compressed) compressed->write(name, {}, {}, {}, &intIt->second);
+                        else writer.Put(intVarOut, &intIt->second, adios2::Mode::Deferred);
                     }
                     continue;
                 }
@@ -463,9 +485,13 @@ run_io_server(MPI_Comm io_comm, const VVM::Utils::ConfigurationManager& config) 
                 relay_variable(double{}, name, double_buffers);
             }
 
-            writer.PerformPuts();
-            writer.EndStep();
-            writer.Close();
+            if (compressed) {
+                compressed->close();
+            } else {
+                writer.PerformPuts();
+                writer.EndStep();
+                writer.Close();
+            }
         }
         catch (const std::exception& e) {
             if (rank == 0) {

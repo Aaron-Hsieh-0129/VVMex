@@ -26,7 +26,7 @@ cmake_minimum_required(VERSION 3.22)
 project(TestRegistration LANGUAGES CXX)
 list(PREPEND CMAKE_MODULE_PATH "${{CMAKE_CURRENT_SOURCE_DIR}}")
 enable_testing()
-foreach(dep Kokkos::kokkos MPI::MPI_CXX HDF5::HL PnetCDF::pnetcdf
+foreach(dep Kokkos::kokkos MPI::MPI_CXX HDF5::HL HDF5::HDF5 PnetCDF::pnetcdf
             NetCDF::netcdf adios2::adios2)
     add_library(${{dep}} INTERFACE IMPORTED)
 endforeach()
@@ -76,12 +76,17 @@ add_subdirectory("{ROOT.as_posix()}/tests" tests)
 
             physics = registry(RLL_PHYSICS=True)
             added = set(physics) - set(default)
-            self.assertEqual(len(added), 8)
+            self.assertEqual(len(added), 9)
+            self.assertIn("test_p3_column_chunks", added)
             self.assertIn("test_rll_periodic_rest_model", added)
             for name in added:
                 self.assertIn("rll-physics", props(physics[name])["LABELS"])
             self.assertEqual(physics["test_rll_periodic_rest_model"]["command"][-2:],
                              ["--periodic", "--rest"])
+
+            self.assertNotIn("test_p3_column_chunks_r2", physics)
+            physics_multirank = registry(RLL_PHYSICS=True, MULTIRANK=True)
+            self.assertEqual(props(physics_multirank["test_p3_column_chunks_r2"])["PROCESSORS"], 4)
 
             self.assertFalse(any("cleo" in n for n in default))
             cleo = registry(CLEO=True)
@@ -126,6 +131,10 @@ add_subdirectory("{ROOT.as_posix()}/tests" tests)
             self.assertNotIn("RESOURCE_LOCK", props(all_gpu["Prep_cleo_rain"]))
             for name in added | (set(dynamics) - set(default)):
                 self.assertEqual(props(all_gpu[name])["RESOURCE_LOCK"], ["gpu"])
+            chunks = all_gpu["test_p3_column_chunks_r2"]
+            self.assertEqual(chunks["command"][-2:], ["--ranks", "2"])
+            self.assertIn("multirank", props(chunks)["LABELS"])
+            self.assertEqual(props(chunks)["RESOURCE_LOCK"], ["gpu"])
             device = all_gpu["test_horizontal_scalar_gradient"]
             self.assertTrue(device["command"][0].endswith("one_gpu_per_rank.sh"))
             self.assertEqual(props(device)["RESOURCE_LOCK"], ["gpu"])

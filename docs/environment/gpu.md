@@ -143,6 +143,25 @@ make install
 cd ..
 ```
 
+### Blosc2 2.15.2 (optional)
+
+Required only for lossless BP5 compression. Skip this step if compression is disabled.
+
+```bash
+wget https://github.com/Blosc/c-blosc2/archive/refs/tags/v2.15.2.tar.gz -O c-blosc2-2.15.2.tar.gz
+tar -xzf c-blosc2-2.15.2.tar.gz
+cd c-blosc2-2.15.2
+cmake -S . -B build \
+    -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR \
+    -DCMAKE_C_COMPILER=gcc \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_TESTS=OFF -DBUILD_FUZZERS=OFF \
+    -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_PLUGINS=OFF
+cmake --build build -j$(nproc)
+cmake --install build
+cd ..
+```
+
 ### NetCDF-C 4.4.1.1
 
 !!! warning "Use serial compilers for NetCDF-C"
@@ -308,6 +327,7 @@ cmake .. \
     -DCMAKE_PREFIX_PATH=$INSTALL_DIR \
     -DADIOS2_USE_MPI=ON \
     -DADIOS2_USE_HDF5=ON \
+    -DADIOS2_USE_Blosc2=OFF \
     -DADIOS2_USE_Kokkos=OFF \
     -DADIOS2_USE_CUDA=OFF \
     -DHDF5_ROOT=$INSTALL_DIR
@@ -316,6 +336,10 @@ make install
 cd ../..
 
 ```
+
+If Blosc2 was installed above, change `ADIOS2_USE_Blosc2` to `ON`.
+Python readers of compressed BP5 also need a Blosc2-enabled ADIOS2 build;
+enable `ADIOS2_USE_Python=ON` if needed (`mpi4py` is required for MPI builds).
 
 Verify the result before moving on:
 

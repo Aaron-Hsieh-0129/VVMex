@@ -8,6 +8,19 @@
 # 'unset', so the file it writes and every assertion made about it are identical.
 # That the key itself parses to Native is test_output_precision's job.
 set(OUTPUT_PRECISION_WORKDIR "${CMAKE_BINARY_DIR}/output_precision")
+add_executable(test_compressed_hdf5 integration/test_compressed_hdf5.cpp)
+target_include_directories(test_compressed_hdf5 PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_compressed_hdf5 PRIVATE HDF5::HDF5 MPI::MPI_CXX)
+foreach(RANKS 1 4)
+    add_test(NAME test_compressed_hdf5_r${RANKS}
+             COMMAND ${CMAKE_COMMAND} -E env OMPI_MCA_io=romio321
+                     ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${RANKS}
+                     ${VVM_MPI_BIND_ARGS} $<TARGET_FILE:test_compressed_hdf5>
+                     ${CMAKE_BINARY_DIR}/compressed_hdf5_r${RANKS}.h5)
+    set_tests_properties(test_compressed_hdf5_r${RANKS} PROPERTIES
+                        LABELS "integration;compression" TIMEOUT 120)
+    _vvm_set_test_resources(test_compressed_hdf5_r${RANKS} ${RANKS})
+endforeach()
 add_executable(test_hdf5_precision integration/test_hdf5_precision.cpp)
 target_include_directories(test_hdf5_precision PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_hdf5_precision PRIVATE
@@ -50,6 +63,17 @@ endif()
 # ${CMAKE_BINARY_DIR}, so it is off by default rather than paid for on every
 # `ctest`.
 if(VVM_TEST_BP5)
+    add_executable(test_bp5_compression integration/test_bp5_compression.cpp)
+    target_link_libraries(test_bp5_compression PRIVATE adios2::adios2 MPI::MPI_CXX)
+    foreach(RANKS 1 4)
+        add_test(NAME test_bp5_compression_r${RANKS}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${RANKS}
+                         ${VVM_MPI_BIND_ARGS} $<TARGET_FILE:test_bp5_compression>
+                         ${CMAKE_BINARY_DIR}/bp5_compression_r${RANKS}.bp)
+        set_tests_properties(test_bp5_compression_r${RANKS} PROPERTIES
+                             LABELS "bp5;integration;compression" TIMEOUT 120 SKIP_RETURN_CODE 77)
+        _vvm_set_test_resources(test_bp5_compression_r${RANKS} ${RANKS})
+    endforeach()
     # Direct BP5 pure logic and CPU staging. These link the isolated I/O
     # subsystem but do not open a dataset or require multiple ranks.
     foreach(BP5_UNIT_TEST

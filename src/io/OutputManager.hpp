@@ -5,6 +5,8 @@
 #include <vector>
 #include <map>
 #include <utility>
+#include <memory>
+#include "io/hdf5/Hdf5Compression.hpp"
 #include <adios2.h>
 #include <Kokkos_Core.hpp>
 #include <adios2/cxx/KokkosView.h>
@@ -63,6 +65,18 @@ private:
     adios2::ADIOS adios_;
     adios2::IO io_;
     adios2::Engine writer_;
+    Hdf5CompressionOptions compression_;
+    std::unique_ptr<CompressedHdf5Writer> compressed_writer_;
+
+    template<class T>
+    void put_output(adios2::Variable<T> variable, const T* data) {
+        if (compressed_writer_) {
+            compressed_writer_->write(variable.Name(), variable.Shape(), variable.Start(),
+                variable.Count(), data);
+        } else {
+            writer_.Put(variable, data, adios2::Mode::Sync);
+        }
+    }
 
     // Field data carries the configured output precision, which need not be
     // VVM::Real; clocks and coordinates deliberately stay VVM::Real. Exactly

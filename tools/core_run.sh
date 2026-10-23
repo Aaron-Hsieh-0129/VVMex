@@ -609,7 +609,13 @@ for name in NCCL_DEBUG NCCL_SOCKET_IFNAME NCCL_SOCKET_FAMILY NCCL_IB_HCA; do
     fi
 done
 
-mpirun -np $VVM_TOTAL_TASKS \
+MPI_HDF5_IO_ARGS=()
+if [ "${VVM_HDF5_COMPRESSION:-0}" = "1" ]; then
+    MPI_HDF5_IO_ARGS=(--mca io romio321)
+    echo "[IO] Compressed HDF5: using ROMIO for collective filtered writes"
+fi
+
+mpirun -np $VVM_TOTAL_TASKS "${MPI_HDF5_IO_ARGS[@]}" \
  --oversubscribe "${MPIRUN_MAP_ARGS[@]}" \
  -x OMP_NUM_THREADS=${PE} \
  -x OMP_PROC_BIND=false \

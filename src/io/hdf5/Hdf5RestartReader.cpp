@@ -1,6 +1,6 @@
-#include "Hdf5RestartReader.hpp"
+#include "io/hdf5/Hdf5RestartReader.hpp"
 
-#include "Hdf5RestartMetadata.hpp"
+#include "io/hdf5/Hdf5RestartMetadata.hpp"
 #include "io/RestartVariables.hpp"
 #include "core/vvm_types.hpp"
 

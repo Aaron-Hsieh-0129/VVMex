@@ -78,6 +78,7 @@ private:
     adios2::ADIOS adios_;
     adios2::IO io_;
     adios2::Engine writer_;
+    adios2::Operator compression_operator_;
     adios2::Variable<VVM::Real> time_variable_;
     adios2::Variable<double> model_time_variable_;
     adios2::Variable<std::int64_t> model_step_variable_;
