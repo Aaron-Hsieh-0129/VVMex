@@ -22,8 +22,13 @@ set(VVM_IO_HEADERS
     text/TxtReader.hpp
     OutputManager.hpp
     OutputPrecision.hpp
+    hdf5/CompressedHdf5Writer.hpp
+    hdf5/Hdf5Compression.hpp
+    OutputCompression.hpp
     netcdf/PnetcdfReader.hpp
+    netcdf/PnetcdfRestartMetadata.hpp
     hdf5/Hdf5RestartReader.hpp
+    hdf5/Hdf5RestartMetadata.hpp
     RestartVariables.hpp
     hdf5/Hdf5DimensionScales.hpp
     sst/IOServer.hpp

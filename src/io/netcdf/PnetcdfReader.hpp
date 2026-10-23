@@ -34,7 +34,7 @@ public:
 
     // Restart clock stored in the file. NetCDF restart sources are produced
     // outside this model, so only unambiguous metadata is accepted -- see
-    // io/PnetcdfRestartMetadata.hpp. Collective: call it on every rank.
+    // io/netcdf/PnetcdfRestartMetadata.hpp. Collective: call it on every rank.
     VVM::Utils::RestartFileMetadata read_restart_metadata() override;
 
 private:

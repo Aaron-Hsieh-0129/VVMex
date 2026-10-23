@@ -1400,6 +1400,16 @@ def main():
     env["VVM_COMPUTE_PER_NODE"] = str(compute_per_node)
     env["VVM_IO_PER_NODE"] = str(io_per_node)
     env["VVM_IO_ENGINE"] = io_engine
+    compression = output_info.get("compression", {})
+    hdf5_compression = output_info.get("hdf5_compression", {})
+    if not isinstance(compression, dict) or not isinstance(hdf5_compression, dict):
+        raise ValueError("output.compression and output.hdf5_compression must be objects")
+    compression_enabled = hdf5_compression.get("enabled", compression.get("enabled", False))
+    if not isinstance(compression_enabled, bool):
+        raise ValueError("Output compression enabled must be a boolean")
+    env["VVM_HDF5_COMPRESSION"] = (
+        "1" if compression_enabled and io_engine in ("SST", "HDF5") else "0"
+    )
     env["VVM_OUTPUT_DIR"] = out_dir_abs
     env["OMP_NUM_THREADS"] = str(args.cpus)
     if args.omp_threads is not None:

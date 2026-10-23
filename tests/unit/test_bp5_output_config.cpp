@@ -1,9 +1,11 @@
 #include "io/bp5/Bp5OutputConfig.hpp"
+#include "io/OutputCompression.hpp"
 
 #include <cstdio>
 #include <functional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 using VVM::IO::BP5::Bp5OutputConfig;
 using VVM::IO::BP5::CpuBufferMode;
@@ -49,11 +51,53 @@ expect_invalid(const nlohmann::json& value, const char* message) {
 
 int
 main() {
+    const auto shared = VVM::IO::merge_output_compression(
+        {{"enabled", true}, {"level", 2}, {"minimum_bytes", 4096}},
+        {{"codec", "lz4"}, {"threads", 2}, {"level", 3}});
+    const auto unified = Bp5OutputConfig::from_json({{"compression", shared}});
+    check(unified.compression_enabled && unified.compression_level == 3 &&
+          unified.compression_minimum_bytes == 4096 && unified.compression_codec == "lz4" &&
+          unified.compression_threads == 2, "shared configuration with explicit engine overrides");
+    const auto overridden = VVM::IO::merge_output_compression(
+        {{"enabled", true}}, {{"enabled", false}});
+    check(!overridden.at("enabled").get<bool>(), "engine can explicitly disable shared compression");
+    for (const auto& invalid : std::vector<nlohmann::json>{
+            {{"enabled", "true"}}, {{"level", 10}}, {{"minimum_bytes", 0}},
+            {{"minimum_bytes", -1}}, {{"level", 1.5}}, {{"unknown", 1}}}) {
+        try {
+            VVM::IO::merge_output_compression(invalid, nlohmann::json::object());
+            check(false, "invalid shared compression configuration accepted");
+        } catch (const std::invalid_argument&) {}
+    }
     const auto defaults = Bp5OutputConfig::from_json(nlohmann::json::object());
     check(defaults.aggregation_type == "TwoLevelShm", "default aggregation");
     check(defaults.num_subfiles == 10, "default subfiles");
     check(defaults.stats_level == 0, "default stats");
     check(!defaults.async_write, "async defaults off");
+    check(!defaults.compression_enabled, "compression defaults off");
+    check(defaults.compression_codec == "zstd", "default lossless codec");
+    check(defaults.compression_level == 1, "default compression level");
+    check(defaults.compression_threads == 1, "default compression threads");
+    check(defaults.compression_minimum_bytes == 1048576, "default per-block threshold");
+    const auto compressed = Bp5OutputConfig::from_json({{"compression", {
+        {"enabled", true}, {"codec", "ZsTd"}, {"level", 3}, {"threads", 2},
+        {"minimum_bytes", 4096}}}});
+    check(compressed.compression_enabled, "compression enabled");
+    check(compressed.compression_codec == "zstd", "codec normalized");
+    check(compressed.effective_buffer_mode() == CpuBufferMode::Pack, "compression forces host packing");
+    const auto cp = compressed.compression_parameters();
+    check(cp.at("compressor") == "zstd" && cp.at("clevel") == "3" &&
+          cp.at("nthreads") == "2" && cp.at("threshold") == "4096" &&
+          cp.at("doshuffle") == "BLOSC_SHUFFLE", "ADIOS2 lossless operator parameters");
+    expect_invalid({{"compression", true}}, "non-object compression accepted");
+    expect_invalid({{"compression", {{"codec", "zfp"}}}}, "lossy codec accepted");
+    expect_invalid({{"compression", {{"level", 10}}}}, "bad compression level accepted");
+    expect_invalid({{"compression", {{"level", 1.5}}}}, "fractional compression level accepted");
+    expect_invalid({{"compression", {{"threads", 0}}}}, "zero compressor threads accepted");
+    expect_invalid({{"compression", {{"minimum_bytes", -1}}}}, "negative threshold accepted");
+    expect_invalid({{"compression", {{"minimum_bytes", 0}}}}, "zero threshold accepted");
+    expect_invalid({{"compression", {{"enabled", "true"}}}}, "string compression boolean accepted");
+    expect_invalid({{"compression", {{"typo", 1}}}}, "unknown compression key accepted");
     check(defaults.buffer_mode == CpuBufferMode::Direct, "direct defaults on");
     check(defaults.existing_dataset == ExistingDatasetPolicy::Error,
         "existing datasets default to an error");

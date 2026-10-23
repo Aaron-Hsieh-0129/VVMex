@@ -479,7 +479,7 @@ a writer still holds open, has not been tested separately.
 | Path | Role |
 |---|---|
 | `src/io/OutputManager.*` | HDF5 and SST writer, schema, field packing |
-| `src/io/hdf5/` | HDF5 restart reader, metadata and dimension scales |
+| `src/io/hdf5/` | Compressed HDF5 sink, restart reader, metadata and dimension scales |
 | `src/io/netcdf/` | Parallel NetCDF input and restart metadata |
 | `src/io/text/` | Text profile input |
 | `src/io/sst/IOServer.*` | SST reader and HDF5 relay |

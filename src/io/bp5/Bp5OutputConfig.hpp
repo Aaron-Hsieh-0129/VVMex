@@ -38,6 +38,14 @@ struct Bp5OutputConfig {
     // than output.precision, so the writer can say so once on rank 0.
     bool precision_from_bp5_block = false;
 
+    // Native ADIOS2 Blosc2 operator; compression is lossless at the chosen
+    // output precision. The threshold applies to each rank's data block.
+    bool compression_enabled = false;
+    std::string compression_codec = "zstd";
+    int compression_level = 1;
+    int compression_threads = 1;
+    std::size_t compression_minimum_bytes = 1048576;
+
     static Bp5OutputConfig from_json(const nlohmann::json& value,
         OutputPrecision default_precision = OutputPrecision::Native);
     static Bp5OutputConfig from_config(const Utils::ConfigurationManager& config);
@@ -47,6 +55,7 @@ struct Bp5OutputConfig {
     CpuBufferMode effective_buffer_mode() const noexcept;
 
     std::map<std::string, std::string> adios_parameters() const;
+    std::map<std::string, std::string> compression_parameters() const;
 };
 
 } // namespace VVM::IO::BP5

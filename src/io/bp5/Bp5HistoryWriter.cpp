@@ -63,6 +63,21 @@ Bp5HistoryWriter::Bp5HistoryWriter(const Utils::ConfigurationManager& config,
     }
 
     validate_collective_configuration(config);
+    // Check before prepare_dataset_path: a missing optional codec must never
+    // remove an existing dataset selected for replacement.
+    if (config_.compression_enabled) {
+        // DefineOperator checks the loaded library's operator factory. A
+        // header feature macro can describe another installation when Kokkos
+        // and ADIOS2 have separate prefixes with overlapping include trees.
+        try {
+            compression_operator_ = adios_.DefineOperator("VVM_BP5_LOSSLESS", "blosc",
+                config_.compression_parameters());
+        } catch (const std::exception& e) {
+            throw std::runtime_error(std::string("BP5 lossless compression requires ADIOS2 built with ") +
+                "ADIOS2_USE_Blosc2=ON and the selected codec (zstd/lz4/zlib). "
+                "Rebuild ADIOS2 and VVMex, or disable output.compression.enabled. Details: " + e.what());
+        }
+    }
     prepare_dataset_path(config);
 
     try {
@@ -108,6 +123,9 @@ Bp5HistoryWriter::validate_collective_configuration(
     add(config.get_value<std::string>("output.output_dir"));
     add(config.get_value<std::string>("output.output_filename_prefix"));
     add(config_.aggregation_type);
+    add(config_.compression_codec);
+    resolved << config_.compression_enabled << ':' << config_.compression_level << ':'
+             << config_.compression_threads << ':' << config_.compression_minimum_bytes << ':';
     resolved << config_.num_subfiles << ':' << config_.stats_level << ':' << config_.async_write
              << ':' << static_cast<int>(config_.buffer_mode) << ':'
              << static_cast<int>(config_.precision) << ':' << static_cast<int>(element_type_) << ':'
@@ -285,6 +303,8 @@ Bp5HistoryWriter::define_field(const std::string& field_name) {
                     selection.start,
                     selection.count,
                     adios2::ConstantDims);
+                if (config_.compression_enabled && selection.shape.size() >= 2)
+                    typed.AddOperation(compression_operator_, {});
                 if (direct && !selection.empty()) {
                     typed.SetMemorySelection({selection.memory_start, selection.memory_count});
                 }
@@ -296,6 +316,8 @@ Bp5HistoryWriter::define_field(const std::string& field_name) {
                     selection.start,
                     selection.count,
                     adios2::ConstantDims);
+                if (config_.compression_enabled && selection.shape.size() >= 2)
+                    typed.AddOperation(compression_operator_, {});
                 if (direct && !selection.empty()) {
                     typed.SetMemorySelection({selection.memory_start, selection.memory_count});
                 }
@@ -657,14 +679,24 @@ Bp5HistoryWriter::print_configuration() const {
               << "  [BP5] Field buffer mode: " << cpu_buffer_mode_name(effective_buffer_mode_);
     if (effective_buffer_mode_ != config_.buffer_mode) {
         std::cout << "  (requested '" << cpu_buffer_mode_name(config_.buffer_mode) << "'; ";
+        if (config_.compression_enabled) {
+            std::cout << "compression requires contiguous host blocks)";
+        } else {
 #if defined(KOKKOS_ENABLE_CUDA)
         std::cout << "CUDA fields require host staging)";
 #else
         std::cout << "converting precision requires a staging buffer)";
 #endif
+        }
     }
     std::cout << "\n"
               << "  [BP5] Estimated logical bytes/step: " << global_bytes_per_step_ << std::endl;
+    if (config_.compression_enabled) {
+        std::cout << "  [BP5] Lossless compression: Blosc2/" << config_.compression_codec
+                  << ", level=" << config_.compression_level
+                  << ", threads/rank=" << config_.compression_threads
+                  << ", minimum block bytes=" << config_.compression_minimum_bytes << std::endl;
+    }
     if (config_.existing_dataset_from_legacy_overwrite) {
         std::cout << "  [BP5] NOTE: 'output.bp5.overwrite' is deprecated; use "
                      "'output.bp5.existing_dataset'."

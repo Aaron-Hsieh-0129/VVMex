@@ -498,6 +498,35 @@ For SST, replace the HDF5 `output` block with this one and launch with
 }
 ```
 
+### `output.compression`
+
+The shared configuration for HDF5, SST-to-HDF5, and BP5 output is:
+
+```json
+"compression": {
+  "enabled": false,
+  "level": 1,
+  "minimum_bytes": 1048576
+}
+```
+
+Place this block inside `output`. Set `enabled` to `true` to compress output.
+HDF5 uses shuffle + gzip + Fletcher32; BP5 uses Blosc2 with lossless Zstd.
+`level` is 0–9. `minimum_bytes` is the minimum global dataset size for HDF5,
+and the minimum individual rank block size for BP5. Compression is disabled
+by default. Output precision is an independent setting.
+
+BP5-specific codec and CPU thread settings remain under
+`output.bp5.compression`, for example `{"codec":"zstd","threads":1}`.
+Explicit fields in `output.bp5.compression` or the legacy
+`output.hdf5_compression` block override the shared values field by field.
+Existing configurations using only those engine-specific blocks still work.
+
+BP5 requires an ADIOS2 build with `ADIOS2_USE_Blosc2=ON`. The launcher selects
+ROMIO automatically for compressed HDF5 on the current Open MPI stack.
+Rebuild VVMex to use these settings; changing a configuration does not update
+an already running model.
+
 ### `output.bp5`
 
 Read only when `engine` is `BP5`. Unknown keys and invalid values are errors,

@@ -26,7 +26,7 @@ cmake_minimum_required(VERSION 3.22)
 project(TestRegistration LANGUAGES CXX)
 list(PREPEND CMAKE_MODULE_PATH "${{CMAKE_CURRENT_SOURCE_DIR}}")
 enable_testing()
-foreach(dep Kokkos::kokkos MPI::MPI_CXX HDF5::HL PnetCDF::pnetcdf
+foreach(dep Kokkos::kokkos MPI::MPI_CXX HDF5::HL HDF5::HDF5 PnetCDF::pnetcdf
             NetCDF::netcdf adios2::adios2)
     add_library(${{dep}} INTERFACE IMPORTED)
 endforeach()
