@@ -909,7 +909,7 @@ on the rank, so no fixed number is correct for all runs.
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `enable_p3` | bool | `false` | Enables P3 microphysics. |
-| `column_chunk_size` | int | `16384` | Maximum columns processed at once on each rank. Must be positive; capped at local column count. All P3 work arrays and workspace slots are reused between chunks, retaining configured precision and previous-step th/qv history in model fields. Increase for throughput or set to the local column count to process the whole rank at once. |
+| `column_chunk_size` | int | local `nx * ny` | Maximum columns processed at once on each rank. Must be positive; capped at local column count. Set a smaller value to reuse P3 work arrays between chunks and reduce memory use. Previous-step th/qv history is retained in model fields. |
 | `make_lookup_table` | bool | `false` | Generate the P3 lookup table instead of reading the shipped one. |
 | `do_predict_nc` | bool | `true` | Predict cloud droplet number concentration. |
 | `do_prescribed_ccn` | bool | `false` | Use prescribed CCN. |

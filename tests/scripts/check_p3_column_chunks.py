@@ -52,19 +52,9 @@ def main():
               'th_m_diag', 'qv_m_diag', 'qc_before_p3', 'qc_after_p3', 'th_after_p3']
     base['output'].update(engine='HDF5', precision='float64',
                           fields_to_output=fields, output_initial_step=False)
-    # 8192 columns/rank for one rank. Neither small chunk divides the domain
-    # or a horizontal row; both exercise a partially occupied final buffer.
-    sizes = [base['grid']['nx'] * base['grid']['ny'], 257, 511]
-    runs = [(args.executable, size) for size in sizes]
-    if args.reference_executable:
-        runs.insert(0, (args.reference_executable, sizes[0]))
-    reference = None
-    for index, (exe, size) in enumerate(runs):
-        config = copy.deepcopy(base)
-        config['physics']['p3']['column_chunk_size'] = size
-        out = work / f'run-{index}'
-        config['output']['output_dir'] = str(out)
-        config_path = work / f'config-{index}.json'
+
+    def run_model(config, exe, tag):
+        config_path = work / f'config-{tag}.json'
         config_path.write_text(json.dumps(config, indent=2) + '\n')
         cmd = [args.launcher, '--bind-to', 'none', '-n', str(args.ranks)]
         if args.wrapper:
@@ -72,9 +62,39 @@ def main():
         cmd.extend([str(exe.resolve()), str(config_path)])
         result = subprocess.run(cmd, cwd=root, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, timeout=180)
-        (work / f'run-{index}.log').write_text(result.stdout)
-        if result.returncode:
-            raise AssertionError(f'P3 chunk {size} failed:\n{result.stdout}')
+        (work / f'run-{tag}.log').write_text(result.stdout)
+        assert result.returncode == 0, f'P3 run {tag} failed:\n{result.stdout}'
+        return result.stdout
+
+    # Exceed the former 16384-column cap without advancing or writing output.
+    # A standard idealized case permits initialization without a spatial file.
+    default = copy.deepcopy(base)
+    default['grid']['ny'] = 40 * args.ranks
+    default['simulation'].update(total_time_s=0., idealized_test='advection_u')
+    default.pop('netcdf_reader')
+    default['physics']['p3'].pop('column_chunk_size', None)
+    default['output']['output_dir'] = str(work / 'default-capacity')
+    log = run_model(default, args.executable, 'default-capacity')
+    assert 'p3 columns per chunk = 20480 / 20480' in log, (
+        'Default P3 chunk must include every local column, even above 16384')
+    print(f'PASS: default uses all 20480 columns/rank, ranks={args.ranks}')
+
+    # 8192 columns/rank for one rank. Neither small chunk divides the domain
+    # or a horizontal row; both exercise a partially occupied final buffer.
+    sizes = [None, base['grid']['nx'] * base['grid']['ny'], 257, 511]
+    runs = [(args.executable, size) for size in sizes]
+    if args.reference_executable:
+        runs.insert(0, (args.reference_executable, sizes[1]))
+    reference = None
+    for index, (exe, size) in enumerate(runs):
+        config = copy.deepcopy(base)
+        if size is None:
+            config['physics']['p3'].pop('column_chunk_size', None)
+        else:
+            config['physics']['p3']['column_chunk_size'] = size
+        out = work / f'run-{index}'
+        config['output']['output_dir'] = str(out)
+        run_model(config, exe, str(index))
         files = sorted(out.glob('*.h5'))
         assert len(files) == 2, f'Expected two precipitation output intervals: {files}'
         snapshots = [datasets(path) for path in files]
@@ -86,16 +106,22 @@ def main():
                     assert np.isfinite(data).all(), f'Nonfinite {name}, chunk {size}'
         if reference is None:
             reference = snapshots
-            # A moist case must actually exercise hydrometeor production.
-            assert any(name.rsplit('/', 1)[-1] == 'qc' and np.any(data > 0)
-                       for name, data in snapshots[-1].items()), 'No cloud water produced'
+            # Exercise warm rain, ice production and surface precipitation,
+            # rather than comparing inactive P3 fields filled with zeros.
+            for field in ['qc', 'qr', 'qi', 'precip_liq_surf_mass']:
+                assert any(name.rsplit('/', 1)[-1] == field and np.any(data > 0)
+                           for name, data in snapshots[-1].items()), f'No {field} produced'
         else:
             for expected, actual in zip(reference, snapshots):
                 assert expected.keys() == actual.keys(), 'Output schema changed'
                 for name in expected:
-                    assert np.array_equal(expected[name], actual[name]), (
-                        f'{name} differs with chunk {size}')
-        print(f'PASS: {exe.name}, chunk={size}, ranks={args.ranks}; all datasets match exactly')
+                    before, after = expected[name], actual[name]
+                    assert before.dtype == after.dtype and before.shape == after.shape, (
+                        f'{name} layout differs with chunk {size}')
+                    assert before.tobytes() == after.tobytes(), (
+                        f'{name} differs bitwise with chunk {size}; '
+                        f'max absolute difference={np.max(np.abs(before - after))}')
+        print(f'PASS: {exe.name}, chunk={size}, ranks={args.ranks}; all datasets match bitwise')
     print(f'Artifacts: {work}')
 
 

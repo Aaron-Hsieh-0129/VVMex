@@ -58,7 +58,7 @@ VVM_P3_Interface::VVM_P3_Interface(const VVM::Utils::ConfigurationManager &confi
 
     m_output_interval_s = config_.get_value<VVM::Real>("simulation.output_interval_s", 600.0);
 
-    const int requested_cols = config_.get_value<int>("physics.p3.column_chunk_size", 16384);
+    const int requested_cols = config_.get_value<int>("physics.p3.column_chunk_size", m_num_cols);
     if (requested_cols <= 0) {
         throw std::invalid_argument("physics.p3.column_chunk_size must be positive.");
     }
