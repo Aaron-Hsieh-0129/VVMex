@@ -1,11 +1,11 @@
 // Standalone ADIOS2 lossless roundtrip, including empty writer ranks.
 #include <adios2.h>
-#include <adios2/common/ADIOSConfig.h>
 #include <mpi.h>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 int main(int argc, char** argv) {
@@ -13,13 +13,29 @@ int main(int argc, char** argv) {
     int rank = 0, ranks = 1;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &ranks);
-#if !defined(ADIOS2_HAVE_BLOSC2)
-    if (rank == 0) std::puts("SKIP: ADIOS2 was built without Blosc2");
-    MPI_Finalize();
-    return 77;
-#else
     try {
         if (argc != 2) throw std::invalid_argument("usage: test_bp5_compression OUTPUT.bp");
+        // Probe the loaded library, not feature macros from potentially
+        // overlapping dependency include paths. Destroy ADIOS before any
+        // skip path calls MPI_Finalize, and agree on skipping across ranks.
+        int available = 1;
+        {
+            adios2::ADIOS probe(MPI_COMM_WORLD);
+            try {
+                probe.DefineOperator("capability_check", "blosc");
+            } catch (const std::exception& e) {
+                if (std::string(e.what()).find("didn't compile with blosc library") == std::string::npos)
+                    throw;
+                available = 0;
+            }
+        }
+        int all_available = 0;
+        MPI_Allreduce(&available, &all_available, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        if (!all_available) {
+            if (rank == 0) std::puts("SKIP: loaded ADIOS2 library was built without Blosc support");
+            MPI_Finalize();
+            return 77;
+        }
         const size_t plane = 128 * 512;
         const size_t first = 2 * size_t(rank) / size_t(ranks);
         const size_t end = 2 * size_t(rank + 1) / size_t(ranks);
@@ -88,5 +104,4 @@ int main(int argc, char** argv) {
     }
     MPI_Finalize();
     return 0;
-#endif
 }
