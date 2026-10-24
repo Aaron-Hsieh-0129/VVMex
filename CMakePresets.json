@@ -331,7 +331,7 @@
         "NETCDF_Fortran_DIR": "/data/Aaron/libs_VVMex_269",
         "PNETCDF_DIR": "/data/Aaron/libs_VVMex_269",
         "Kokkos_DIR": "/data/Aaron/libs_VVMex_269",
-        "ADIOS2_DIR": "/home/nvidia/vvm_optional_blosc2/prefix/lib/cmake/adios2",
+        "ADIOS2_DIR": "/data/Aaron/libs_VVMex_269",
         "VVM_ENABLE_GPU": "ON",
         "ENABLE_NCCL": "ON",
         "EAMXX_ENABLE_GPU": "ON",
@@ -368,12 +368,12 @@
         "CPATH": null,
         "C_INCLUDE_PATH": null,
         "CPLUS_INCLUDE_PATH": null,
-        "LIBRARY_PATH": "/home/nvidia/vvm_optional_blosc2/prefix/lib:$env{NVHPC_ROOT}/compilers/lib:$env{OPAL_PREFIX}/lib:$env{HPCX_HOME}/ucx/lib:$env{CUDA_HOME}/lib64:$env{NVHPC_ROOT}/math_libs/12.9/lib64:$env{INSTALL_DIR}/gcc11/lib64:$env{INSTALL_DIR}/gcc11/lib:/data/Aaron/libs_VVMex_269/lib:$env{INSTALL_DIR}/lib:$env{INSTALL_DIR}/lib64",
+        "LIBRARY_PATH": "$env{NVHPC_ROOT}/compilers/lib:$env{OPAL_PREFIX}/lib:$env{HPCX_HOME}/ucx/lib:$env{CUDA_HOME}/lib64:$env{NVHPC_ROOT}/math_libs/12.9/lib64:$env{INSTALL_DIR}/gcc11/lib64:$env{INSTALL_DIR}/gcc11/lib:/data/Aaron/libs_VVMex_269/lib:$env{INSTALL_DIR}/lib:$env{INSTALL_DIR}/lib64",
         "LD_LIBRARY_PATH": "$env{LIBRARY_PATH}",
-        "CMAKE_PREFIX_PATH": "/home/nvidia/vvm_optional_blosc2/prefix:/data/Aaron/libs_VVMex_269:$env{INSTALL_DIR}:$env{HPCX_HOME}/ucx",
+        "CMAKE_PREFIX_PATH": "/data/Aaron/libs_VVMex_269:$env{INSTALL_DIR}:$env{HPCX_HOME}/ucx",
         "PKG_CONFIG_PATH": "$env{INSTALL_DIR}/lib/pkgconfig:$env{INSTALL_DIR}/lib64/pkgconfig:$env{HPCX_HOME}/ucx/lib/pkgconfig",
         "NVHPC_CUDA_HOME": "$env{CUDA_HOME}",
-        "PYTHONPATH": "/home/nvidia/vvm_optional_blosc2/prefix/lib/python:/data/Aaron/libs_VVMex_269/sources/CLEO:$penv{PYTHONPATH}"
+        "PYTHONPATH": "/data/Aaron/libs_VVMex_269/lib/python:/data/Aaron/libs_VVMex_269/sources/CLEO:$penv{PYTHONPATH}"
       }
     }
   ],
