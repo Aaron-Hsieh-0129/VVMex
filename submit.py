@@ -585,6 +585,12 @@ def infer_cpus_per_task(cpus, partition, tasks_per_node, gpus_per_node=0,
 # Snapshot
 # ==============================================================================
 
+SNAPSHOT_SECRET_NAMES = [
+    ".env", ".env.*", ".envrc", ".ssh", ".aws", ".azure", ".kube",
+    ".credentials*", "credentials", "credentials.*", "id_rsa*", "id_ed25519*",
+    "*.pem", "*.key", "*.p12", "*.pfx", "*.keystore", "*.kdbx",
+]
+
 SNAPSHOT_IGNORE_NAMES = [
     ".git",
     ".vvm_runtime_libs",
@@ -598,7 +604,7 @@ SNAPSHOT_IGNORE_NAMES = [
     "tags",
     "*.o",
     "output",
-]
+] + SNAPSHOT_SECRET_NAMES
 
 SUBMIT_COMMAND_FILE = "submit_command.sh"
 
@@ -622,7 +628,8 @@ def git_text(repo_root, args):
 
 
 def git_bytes(repo_root, args):
-    result = subprocess.run(["git"] + args, cwd=repo_root, capture_output=True)
+    result = subprocess.run(["git", "--literal-pathspecs"] + args,
+                            cwd=repo_root, capture_output=True)
     if result.returncode != 0:
         return None
     return result.stdout
@@ -647,7 +654,8 @@ def collect_git_version_info(repo_root):
         "author_date": git_text(repo_root, ["log", "-1", "--format=%aI"]),
         "author": git_text(repo_root, ["log", "-1", "--format=%an <%ae>"]),
         "subject": git_text(repo_root, ["log", "-1", "--format=%s"]),
-        "remote": git_text(repo_root, ["config", "--get", "remote.origin.url"]),
+        "remote": re.sub(r"(https?://)[^/\s]*@", r"\1[redacted]@",
+                         git_text(repo_root, ["config", "--get", "remote.origin.url"])),
         "upstream": git_text(repo_root, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]),
         "status": status,
         "dirty": bool(status),
@@ -688,6 +696,8 @@ def write_git_version_file(snapshot_dir, info, repo_root):
 
 
 def write_git_patch_file(snapshot_dir, repo_root, pathspecs):
+    if not pathspecs:
+        return
     args = ["diff", "HEAD", "--binary"]
     if pathspecs:
         args += ["--"] + pathspecs
@@ -709,8 +719,8 @@ def snapshot_ignored(rel_path, ignore_names):
 
 
 def snapshot_tracked_paths(repo_root, ignore_names):
-    listing = git_text(repo_root, ["ls-files", "-z"])
-    paths = [p for p in listing.split("\0") if p]
+    listing = git_bytes(repo_root, ["ls-files", "-z"])
+    paths = [p for p in os.fsdecode(listing or b"").split("\0") if p]
     return [p for p in paths if not snapshot_ignored(p, ignore_names)]
 
 
@@ -754,7 +764,7 @@ def create_baseline_history(repo_root, snapshot_dir, info, ignore_names):
 
     for start in range(0, len(restored), 200):
         subprocess.run(
-            ["git", "add", "-f", "--"] + restored[start:start + 200],
+            ["git", "--literal-pathspecs", "add", "-f", "--"] + restored[start:start + 200],
             cwd=snapshot_dir,
             check=True,
         )
@@ -793,13 +803,8 @@ def create_baseline_history(repo_root, snapshot_dir, info, ignore_names):
 
 def write_submit_command(out_dir_abs, vvm_root, args):
     script = os.path.abspath(sys.argv[0])
-
-    command = getattr(args, "equivalent_command", None)
-    if command:
-        if not os.path.isabs(sys.argv[0]):
-            command = command.replace(sys.argv[0], script, 1)
-    else:
-        command = shlex.join([script] + sys.argv[1:])
+    argv = getattr(args, "equivalent_argv", None)
+    command = shlex.join(argv if argv is not None else [script] + sys.argv[1:])
 
     path = os.path.join(out_dir_abs, SUBMIT_COMMAND_FILE)
     with open(path, "w") as f:
@@ -816,25 +821,56 @@ def write_submit_command(out_dir_abs, vvm_root, args):
     print(f"[Info] Submit command written to: {path}")
 
 
-def create_code_snapshot(repo_root, snapshot_dir, config_path, input_paths, out_dir_raw):
-    print(f"\n[Info] Creating code snapshot at: {snapshot_dir}")
+def copy_snapshot_input(source, snapshot_dir, repo_root, allow_external=False):
+    source = os.path.abspath(source)
+    if not os.path.isfile(source):
+        return
+    if snapshot_ignored(source, SNAPSHOT_SECRET_NAMES) or os.path.realpath(source) != source:
+        print(f"[Warning] Not snapshotting sensitive or symlinked input: {source}")
+        return
+    if not allow_external and os.path.commonpath([repo_root, source]) != repo_root:
+        print(f"[Warning] Not snapshotting external input: {source}; "
+              "use --snapshot-external-inputs to include it")
+        return
+    target = os.path.join(snapshot_dir, os.path.basename(source))
+    if os.path.exists(target):
+        print(f"[Warning] Not overwriting snapshot file with input: {source}")
+        return
+    shutil.copy2(source, target)
 
-    if os.path.exists(snapshot_dir):
-        shutil.rmtree(snapshot_dir)
+
+def create_code_snapshot(repo_root, snapshot_dir, config_path, input_paths, out_dir_raw,
+                         include_external_inputs=False):
+    print(f"\n[Info] Creating code snapshot at: {snapshot_dir}")
 
     out_base = os.path.normpath(out_dir_raw).split(os.sep)[0]
     if out_base in [".", "..", ""]:
         out_base = "output"
 
     ignore_names = SNAPSHOT_IGNORE_NAMES + [out_base]
-    ignore_patterns = shutil.ignore_patterns(*ignore_names)
+    tracked = snapshot_tracked_paths(repo_root, ignore_names)
+    if not tracked:
+        raise RuntimeError("A Git checkout with tracked source files is required for a code snapshot")
 
-    shutil.copytree(repo_root, snapshot_dir, ignore=ignore_patterns)
-    shutil.copy2(config_path, snapshot_dir)
+    if os.path.exists(snapshot_dir):
+        shutil.rmtree(snapshot_dir)
+    os.makedirs(snapshot_dir)
+    root = os.path.realpath(repo_root)
+    for rel in tracked:
+        source = os.path.join(root, rel)
+        # Never dereference source-tree symlinks, including symlinked parents.
+        # Only tracked regular files and explicitly selected inputs are copied.
+        if os.path.realpath(source) != source or not os.path.isfile(source):
+            continue
+        target = os.path.join(snapshot_dir, rel)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        shutil.copy2(source, target)
+    # The config itself was explicitly selected by the user, unlike file paths
+    # supplied inside it. External datasets require a separate CLI opt-in.
+    copy_snapshot_input(config_path, snapshot_dir, root, allow_external=True)
 
     for path in input_paths:
-        if os.path.isfile(path):
-            shutil.copy2(path, snapshot_dir)
+        copy_snapshot_input(path, snapshot_dir, root, allow_external=include_external_inputs)
 
     info = collect_git_version_info(repo_root)
 
@@ -1056,35 +1092,31 @@ def interactive_wizard():
     args.exclusive = DEFAULT_EXCLUSIVE
     args.slurm_arg = []
     args.snapshot_cleo_inputs = False
+    args.snapshot_external_inputs = False
 
-    cmd_parts = [sys.argv[0]]
+    cmd_parts = [os.path.abspath(sys.argv[0])]
 
     if args.local and gpu_preset and os.environ.get("VVM_GPU_LIST"):
-        cmd_parts.insert(0, f'VVM_GPU_LIST={os.environ["VVM_GPU_LIST"]}')
+        cmd_parts[0:0] = ["env", f'VVM_GPU_LIST={os.environ["VVM_GPU_LIST"]}']
 
     if args.local:
         cmd_parts.append("--local")
 
-    cmd_parts.append(f'-c "{args.config}"')
-    cmd_parts.append(f'--preset "{args.preset}"')
-    cmd_parts.append(f"--compute {args.compute}")
-    cmd_parts.append(f"--io {args.io}")
-    cmd_parts.append(f"--io-cpus {args.io_cpus}")
+    cmd_parts.extend(["-c", args.config, "--preset", args.preset,
+                      "--compute", str(args.compute), "--io", str(args.io),
+                      "--io-cpus", str(args.io_cpus)])
     if args.cpus is not None:
-        cmd_parts.append(f"--cpus {args.cpus}")
+        cmd_parts.extend(["--cpus", str(args.cpus)])
     if args.omp_threads is not None:
-        cmd_parts.append(f"--omp-threads {args.omp_threads}")
-    cmd_parts.append(f"--nodes {args.nodes}")
+        cmd_parts.extend(["--omp-threads", str(args.omp_threads)])
+    cmd_parts.extend(["--nodes", str(args.nodes)])
 
     if not args.local:
-        cmd_parts.append(f'-t "{args.time}"')
-        cmd_parts.append(f'--out "{args.out}"')
-        cmd_parts.append(f'--err "{args.err}"')
-        cmd_parts.append(f'--job-name "{args.job_name}"')
-        cmd_parts.append(f'-A "{args.account}"')
-        cmd_parts.append(f'-p "{args.partition}"')
+        cmd_parts.extend(["-t", args.time, "--out", args.out, "--err", args.err,
+                          "--job-name", args.job_name, "-A", args.account, "-p", args.partition])
 
-    args.equivalent_command = " ".join(cmd_parts)
+    args.equivalent_argv = cmd_parts
+    args.equivalent_command = shlex.join(cmd_parts)
 
     print("\n--- Setup Complete ---")
     print("\nEquivalent command:\n")
@@ -1116,6 +1148,10 @@ def parse_args():
         "--snapshot-cleo-inputs",
         action="store_true",
         help="Also copy CLEO's init_gbx_path and init_supers_path into code_snapshot/",
+    )
+    parser.add_argument(
+        "--snapshot-external-inputs", action="store_true",
+        help="Also snapshot explicitly reviewed input files outside the source checkout",
     )
 
     parser.add_argument("--compute", type=int, default=DEFAULT_COMPUTE, help="Compute MPI ranks")
@@ -1367,6 +1403,7 @@ def main():
         config_path_user,
         input_paths,
         out_dir_raw,
+        include_external_inputs=args.snapshot_external_inputs,
     )
 
     compute_per_node = math.ceil(args.compute / args.nodes)

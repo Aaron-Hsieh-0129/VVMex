@@ -380,6 +380,7 @@ else()
     FetchContent_Declare(
         Kokkos
         URL https://github.com/kokkos/kokkos/archive/refs/tags/4.5.01.tar.gz
+        URL_HASH SHA256=e0008c89d7f03ebbe31eb3c89d40fe529b4e4072b40331ae6b9d6599f02dff44
     )
     FetchContent_MakeAvailable(Kokkos)
 endif()

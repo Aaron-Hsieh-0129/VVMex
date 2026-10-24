@@ -1,0 +1,8 @@
+# Python dependencies used by CTest verifiers and CLEO input preparation.
+h5py
+numpy
+matplotlib
+scipy
+ruamel.yaml
+# BP5/RLL history and restart verification scripts use ADIOS2's Python reader.
+adios2>=2.11
