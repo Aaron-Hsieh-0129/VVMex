@@ -386,6 +386,12 @@ GitHub Actions are pinned to commit SHAs. Runner downloads are checksum-verified
 using `--runner-version` for another release also requires its official
 `--runner-sha256`. Dependabot checks action and Python dependency updates weekly.
 
+Dependabot groups updates by ecosystem, with security updates grouped separately.
+Its PRs and bot-branch pushes skip automatic CPU/GPU model tests; hosted checks,
+including dependency-advisory checks, still run. Use **Run workflow** on the
+CPU/GPU workflow and select the bot branch when model testing is needed.
+Nightly tests continue validating the main branch.
+
 Fork PR workflows cannot read the base repository's configuration variables.
 The hosted policy therefore allows a fork PR with an unavailable backend
 switch to reach the approval gate. It does not skip the run before you can

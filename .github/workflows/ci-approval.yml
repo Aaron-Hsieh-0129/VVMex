@@ -41,6 +41,17 @@ jobs:
             core.setOutput('runner_enabled', 'false');
             const setting = (process.env.RUNNER_SETTING || '').trim();
             const pr = context.payload.pull_request;
+            const dependabotPR = context.eventName === 'pull_request' &&
+              pr?.user?.login === 'dependabot[bot]';
+            const dependabotPush = context.eventName === 'push' &&
+              (context.actor === 'dependabot[bot]' ||
+               context.ref?.startsWith('refs/heads/dependabot/'));
+            // Dependency updates use hosted checks. Keep manual dispatch and
+            // scheduled tests available for deliberate model validation.
+            if (dependabotPR || dependabotPush) {
+              core.info('Dependabot update: skipping automatic self-hosted model tests.');
+              return;
+            }
             const baseRepository = `${context.repo.owner}/${context.repo.repo}`;
             const forkPR = context.eventName === 'pull_request' &&
               pr?.head?.repo?.full_name && pr.head.repo.full_name !== baseRepository;

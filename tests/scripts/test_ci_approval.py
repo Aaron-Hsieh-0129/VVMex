@@ -26,6 +26,7 @@ const core = { setOutput: (key, value) => { outputs[key] = value; },
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const run = new AsyncFunction('github', 'core', 'context', 'process', input.script);
 run(github, core, { repo: { owner: 'base-owner', repo: 'base-repo' },
+                   actor: input.source_actor, ref: input.ref,
                    eventName: input.event, payload: input.payload },
     { env: { RUN_ACTOR: input.actor, RUNNER_SETTING: input.runner_setting } }).then(() => {
   process.stdout.write(JSON.stringify({ outputs, calls }));
@@ -35,15 +36,57 @@ run(github, core, { repo: { owner: 'base-owner', repo: 'base-repo' },
 
 class ApprovalTests(unittest.TestCase):
     def run_policy(self, permission=None, actor="contributor", error=None,
-                   runner_setting="true", fork=False, event="pull_request"):
-        payload = {"pull_request": {"head": {"repo": {
+                   runner_setting="true", fork=False, event="pull_request",
+                   author="contributor", source_actor="contributor", ref="refs/heads/topic"):
+        payload = {"pull_request": {"user": {"login": author}, "head": {"repo": {
             "full_name": "fork-owner/base-repo" if fork else "base-owner/base-repo",
         }}}} if event == "pull_request" else {}
         data = dict(script=SCRIPT, actor=actor, permission=permission, error=error,
-                    runner_setting=runner_setting, event=event, payload=payload)
+                    runner_setting=runner_setting, event=event, payload=payload,
+                    source_actor=source_actor, ref=ref)
         result = subprocess.run(["node", "-e", HARNESS], input=json.dumps(data),
                                 capture_output=True, text=True, check=True)
         return json.loads(result.stdout)
+
+    def test_dependabot_pr_skips_model_tests_even_when_admin_reruns_it(self):
+        for actor in ["dependabot[bot]", "administrator"]:
+            with self.subTest(actor=actor):
+                result = self.run_policy("admin", actor=actor, author="dependabot[bot]")
+                self.assertEqual(result["outputs"]["runner_enabled"], "false")
+                self.assertEqual(result["outputs"]["admin_actor"], "")
+                self.assertEqual(result["calls"], [])
+
+    def test_dependabot_pushes_skip_model_tests(self):
+        for source_actor, ref in [("dependabot[bot]", "refs/heads/topic"),
+                                  ("administrator", "refs/heads/dependabot/pip/python")]:
+            with self.subTest(source_actor=source_actor, ref=ref):
+                result = self.run_policy("admin", event="push", source_actor=source_actor, ref=ref)
+                self.assertEqual(result["outputs"]["runner_enabled"], "false")
+                self.assertEqual(result["calls"], [])
+
+    def test_manual_dispatch_can_test_a_dependabot_branch(self):
+        result = self.run_policy("admin", actor="administrator", event="workflow_dispatch",
+                                 ref="refs/heads/dependabot/pip/python")
+        self.assertEqual(result["outputs"]["runner_enabled"], "true")
+        self.assertEqual(result["outputs"]["admin_actor"], "administrator")
+
+    def test_normal_pushes_still_run_model_tests(self):
+        result = self.run_policy("admin", actor="administrator", event="push")
+        self.assertEqual(result["outputs"]["runner_enabled"], "true")
+
+    def test_dependabot_updates_are_grouped_and_limit_routine_open_prs(self):
+        config = yaml.safe_load((ROOT / ".github/dependabot.yml").read_text())
+        self.assertEqual({u["package-ecosystem"] for u in config["updates"]},
+                         {"github-actions", "pip"})
+        for update in config["updates"]:
+            with self.subTest(ecosystem=update["package-ecosystem"]):
+                self.assertEqual(update["open-pull-requests-limit"], 1)
+                groups = list(update["groups"].values())
+                for kind in ["version-updates", "security-updates"]:
+                    self.assertTrue(any(group.get("applies-to", "version-updates") == kind
+                                        and group["patterns"] == ["*"] for group in groups))
+        pip = next(u for u in config["updates"] if u["package-ecosystem"] == "pip")
+        self.assertEqual(set(pip["directories"]), {"/", "/tools/ci"})
 
     def test_verified_admin_runs_automatically(self):
         result = self.run_policy("admin", actor="administrator")
