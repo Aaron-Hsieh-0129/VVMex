@@ -501,8 +501,8 @@ cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_COMPILER=mpicc \
     -DCMAKE_CXX_COMPILER=mpic++ \
-    -DCMAKE_CXX_FLAGS=--gcc-toolchain=$VVM_CPU_DIR/gcc11 \
-    -DCMAKE_C_FLAGS=--gcc-toolchain=$VVM_CPU_DIR/gcc11 \
+    -DCMAKE_CXX_FLAGS="--gcc-toolchain=$VVM_CPU_DIR/gcc11 -Mnobuiltin" \
+    -DCMAKE_C_FLAGS="--gcc-toolchain=$VVM_CPU_DIR/gcc11 -Mnobuiltin" \
     -DCMAKE_PREFIX_PATH=$VVM_CPU_DIR \
     -DHDF5_ROOT=$VVM_CPU_DIR \
     -DADIOS2_USE_MPI=ON \
@@ -516,6 +516,9 @@ make -j$(nproc)
 make install
 cd ../..
 ```
+
+`-Mnobuiltin` works around the NVHPC 26.9 `__builtin_memcpy` linker error
+([NVIDIA explanation](https://forums.developer.nvidia.com/t/nvhpc-26-9-fail-at-building-adios2/385435)).
 
 If Blosc2 was installed above, change `ADIOS2_USE_Blosc2` to `ON`.
 Python readers of compressed BP5 also need a Blosc2-enabled ADIOS2 build;
