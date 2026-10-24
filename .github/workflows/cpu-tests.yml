@@ -60,13 +60,10 @@ jobs:
   cpu:
     name: Build and test (CPU)
     needs: approval
-    # Verified administrators run automatically; everyone else needs approval.
-    # Comparing the verified actor also protects reruns that reuse job outputs.
-    # Configure ci-self-hosted with required reviewers and ci-self-hosted-admin
-    # without required reviewers. See docs/developer-guides/ci.md.
+    # No actor-based bypass: approval is required before a runner is allocated.
     if: needs.approval.outputs.runner_enabled == 'true'
     environment:
-      name: ${{ needs.approval.outputs.admin_actor != '' && needs.approval.outputs.admin_actor == github.triggering_actor && 'ci-self-hosted-admin' || 'ci-self-hosted' }}
+      name: ci-self-hosted
     runs-on: [self-hosted, vvmex-cpu]
     timeout-minutes: 30
 

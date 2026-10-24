@@ -264,29 +264,23 @@ see [What to require](#what-to-require).
 
 Under **Settings → Actions → General → Approval for running fork pull request
 workflows from contributors**, select **Require approval for all external
-contributors** and save. This holds all workflows from outside contributors,
-including `checks.yml`, but does not require approval for repository members.
+contributors**. Keep this server-side safeguard: a PR can change workflow files,
+so review those changes before approving an external workflow run.
 
-Under **Settings → Environments**, create **ci-self-hosted** and configure:
+Under **Settings → Environments**, configure **ci-self-hosted** with:
 
-- **Required reviewers:** `Aaron-Hsieh-0129`.
-- **Allow administrators to bypass configured protection rules:** enabled.
-- **Prevent self-review:** disabled, so a required reviewer can approve a run
-  they initiated if it reaches the protected environment.
-- **Deployment branches and tags:** no restriction, so branch pushes and PR
-  merge refs can reach the approval gate.
+- **Required reviewers:** only `Aaron-Hsieh-0129`.
+- **Allow administrators to bypass configured protection rules:** disabled.
+- **Prevent self-review:** disabled, so the owner can approve their own runs.
+- **Deployment branches and tags:** no restriction, so PR merge refs can request review.
 
-Also create **ci-self-hosted-admin** with **no required reviewers**, no wait
-timer, and no branch or tag restrictions. Verified administrator runs use this
-environment to start automatically.
-
-Both CPU/GPU workflows use the shared `ci-approval.yml` job to check the
-triggering user's repository permissions on GitHub-hosted compute, without
-checking out PR code. That hosted job also evaluates the backend enable
-switch. Only a verified `admin` role selects
-`ci-self-hosted-admin`; all other roles and failed lookups select
-`ci-self-hosted`. Configure both environments before enabling those workflows;
-a YAML environment reference alone does not create a review requirement.
+Protect the legacy **ci-self-hosted-admin** environment with the same rules;
+there must be no unprotected administrator shortcut left for older workflows.
+Both CPU/GPU workflows now use the fixed `ci-self-hosted` environment for every
+run, including owner-authored PRs and administrator reruns. The hosted
+`ci-approval.yml` policy only checks whether a backend is enabled. It cannot
+approve a model job. GitHub holds the job before allocating a self-hosted runner
+or checking out code until the required reviewer approves it.
 See [Approving CPU and GPU tests](#approving-cpu-and-gpu-tests).
 
 The README carries a badge for `checks.yml` only. Add one for the CPU gate once
@@ -386,60 +380,36 @@ GitHub Actions are pinned to commit SHAs. Runner downloads are checksum-verified
 using `--runner-version` for another release also requires its official
 `--runner-sha256`. Dependabot checks action and Python dependency updates weekly.
 
-Fork PR workflows cannot read the base repository's configuration variables.
-The hosted policy therefore allows a fork PR with an unavailable backend
-switch to reach the approval gate. It does not skip the run before you can
-approve it. Ordinary branch pushes, same-repository PRs, and manual runs still
-require their backend's `VVMEX_RUNNER` or `VVMEX_GPU_RUNNER` switch to be
-`true`; an explicit nonempty value other than `true` disables the backend.
-For fork runs, reject or leave a backend pending if you do not want to run it.
+Dependabot groups updates by ecosystem, with security updates grouped separately.
+Its PRs and bot-branch pushes skip automatic CPU/GPU model tests; hosted checks,
+including dependency-advisory checks, still run. Use **Run workflow** on the
+CPU/GPU workflow and select the bot branch when model testing is needed.
+Nightly tests continue validating the main branch.
 
-`cpu-tests.yml` and `gpu-tests.yml` check the triggering user's repository role
-before scheduling a self-hosted job. Verified administrators use the
-unprotected `ci-self-hosted-admin` environment and run automatically, without
-an approval or bypass click. Other contributors, including non-admin members,
-use the protected `ci-self-hosted` environment and wait for its required
-reviewer's approval before a self-hosted runner receives the job. A failed or
-missing permission lookup also requires approval.
+Basic PR checks run on GitHub-hosted `ubuntu-latest` machines and do not use
+`ci-self-hosted`. GitHub may first require its standard fork-workflow approval;
+that approval does not release the separate CPU/GPU environment gate.
 
-The check uses `github.triggering_actor`, including on reruns. The test job
-compares that actor with the verified administrator output, so rerunning an
-administrator's run as a different user does not reuse their automatic access.
-If a rerun reuses another user's role-check output, select **Re-run all jobs**
-to refresh the permission check. Administrators can also manually release a
-protected run using **Start all waiting jobs**; ordinary contributors cannot
-bypass the gate.
+For each requested CPU/GPU run, open **Actions → the run → Review deployments**,
+select `ci-self-hosted`, review the PR diff and commit, then choose
+**Approve and deploy**. Only `Aaron-Hsieh-0129` can release that gate. New commits
+create new runs and require a new approval. Owner-authored PRs, administrator
+reruns and manual CPU/GPU dispatches follow the same rule; none start
+self-hosted work automatically. Dependabot PRs remain skipped unless testing
+is requested with **Run workflow**.
 
-1. Review the commit or pull request, including `.github/workflows/`, build
-   scripts, and test scripts.
-2. For outside contributors' fork PRs, first click **Approve and run** on the
-   PR's workflow notice. This separate repository policy also holds the hosted
-   Checks workflow. Members do not encounter this first gate.
-3. Open the **CPU tests** or **GPU tests** run in the **Actions** tab. Click
-   **Review deployments**, select **ci-self-hosted**, and click **Approve and
-   deploy**. GitHub calls this a deployment review even though the job runs
-   tests. Approve each workflow run you want to execute.
-4. Watch **Build and test (CPU)** and **Build and test (GPU)** in the PR checks.
-   Each enabled backend uses its existing runner and tests the PR's merge
-   commit against the base branch. No branch copy or manual PR checkout is
-   needed.
+Fork PR workflows cannot read repository configuration variables, so the hosted
+policy allows them to request review when the backend switch is unavailable.
+Ordinary branch pushes, same-repository PRs and manual runs still require
+`VVMEX_RUNNER` or `VVMEX_GPU_RUNNER` to be `true`. Disabled backends skip.
+`nightly.yml` remains separate: scheduled runs test the trusted default branch,
+and an owner-started nightly dispatch is an explicit request to run that suite.
 
-For non-admin contributors, approval is per workflow run. New commits require
-another approval; review the updated diff before allowing another run.
-The existing `push` and
-`pull_request` triggers can produce two runs for a branch with an open PR;
-each follows the same administrator-or-approval policy. A backend disabled by
-an available configuration variable
-skips, and an allowed backend
-with no online runner waits in the queue. `nightly.yml` remains automatic for
-scheduled runs and does not reference this environment.
-
-The workflows use a read-only `GITHUB_TOKEN`, and checkout does not persist its
-credentials. GitHub does not pass repository secrets to fork `pull_request`
-runs. Approval still permits the PR's code to execute on the self-hosted
-machine with the runner user's filesystem and network access, so approve code
-you trust to run there. Keep the trigger as `pull_request`:
-`pull_request_target` bypasses GitHub's fork approval policy.
+The workflows keep a read-only `GITHUB_TOKEN` and do not persist checkout
+credentials. Keep PR builds on `pull_request`, not `pull_request_target`.
+Approval permits code to run with the runner account's filesystem and network
+access; it is not sandboxing. Review workflow-file changes before granting the
+initial fork-workflow approval, and use isolated runners for untrusted code.
 
 GitHub documents the [approval policy settings](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository#controlling-changes-from-forks-to-workflows-in-public-repositories)
 and [approving fork workflow runs](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/approve-runs-from-forks),

@@ -4,11 +4,23 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      actions:
+        patterns: ["*"]
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
   - package-ecosystem: pip
-    directory: /
+    directories:
+      - /
+      - /tools/ci
     schedule:
       interval: weekly
-  - package-ecosystem: pip
-    directory: /tools/ci
-    schedule:
-      interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      python:
+        patterns: ["*"]
+      python-security:
+        applies-to: security-updates
+        patterns: ["*"]

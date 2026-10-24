@@ -37,11 +37,10 @@ jobs:
   gpu:
     name: Build and test (GPU)
     needs: approval
-    # The shared role check lets administrators run automatically and requires
-    # approval for all other contributors, including members, as in CPU tests.
+    # No actor-based bypass: approval is required before a runner is allocated.
     if: needs.approval.outputs.runner_enabled == 'true'
     environment:
-      name: ${{ needs.approval.outputs.admin_actor != '' && needs.approval.outputs.admin_actor == github.triggering_actor && 'ci-self-hosted-admin' || 'ci-self-hosted' }}
+      name: ci-self-hosted
     runs-on: [self-hosted, vvmex-gpu]
     timeout-minutes: 30
 
