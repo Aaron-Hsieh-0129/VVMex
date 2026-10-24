@@ -8,13 +8,13 @@
 #include <cuda_runtime.h>
 #endif
 
-#include "core/Grid.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/Parameters.hpp"
-#include "core/State.hpp"
+#include "core/state/State.hpp"
 #include "core/boundary/HorizontalBoundaryStencils.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "core/vvm_types.hpp"
-#include "core/BoundaryConditionManager.hpp"
+#include "core/boundary/BoundaryConditionManager.hpp"
 #include "dynamics/solvers/HorizontalEllipticSolver.hpp"
 #include "dynamics/solvers/HorizontalWindTopologyConstraint.hpp"
 #include "dynamics/solvers/GeneralizedWindDiagnostic.hpp"

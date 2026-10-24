@@ -1,8 +1,8 @@
 set(VVM_CORE_SOURCES
-    State.cpp
-    Grid.cpp
-    GridSpecification.cpp
-    BoundaryConditionManager.cpp
+    state/State.cpp
+    grid/Grid.cpp
+    grid/GridSpecification.cpp
+    boundary/BoundaryConditionManager.cpp
     Parameters.cpp
 
     geometry/CartesianGeometry.cpp
@@ -13,12 +13,17 @@ set(VVM_CORE_SOURCES
 )
 
 set(VVM_CORE_HEADERS
-    State.hpp
-    Grid.hpp
-    GridSpecification.hpp
-    BoundaryConditionManager.hpp
+    state/State.hpp
+    grid/Grid.hpp
+    grid/GridSpecification.hpp
+    boundary/BoundaryConditionManager.hpp
     Parameters.hpp
-    Field.hpp
+    vvm_types.hpp
+    state/Field.hpp
+
+    configuration/ModelConfigurationValidation.hpp
+    configuration/RegularLatLonModelConfiguration.hpp
+    initialization/StartupCollectives.hpp
 
     haloexchange/HaloExchanger.hpp
     haloexchange/HaloExchangeDegenerate.hpp
@@ -32,7 +37,6 @@ set(VVM_CORE_HEADERS
     geometry/HorizontalGridSpec.hpp
     geometry/HorizontalGeometry.hpp
     geometry/HorizontalBoundaryDistances.hpp
-    StartupCollectives.hpp
     geometry/AffineGeometry.hpp
     geometry/StaggeredVectorTransform.hpp
     geometry/CartesianGeometry.hpp
@@ -76,9 +80,9 @@ target_link_libraries(vvm_core
 )
 
 add_library(vvm_initializer STATIC
-    Initializer.cpp
-    InitializeBarotropic.cpp
-    Initializer.hpp
+    initialization/Initializer.cpp
+    initialization/InitializeBarotropic.cpp
+    initialization/Initializer.hpp
 )
 
 target_link_libraries(vvm_initializer

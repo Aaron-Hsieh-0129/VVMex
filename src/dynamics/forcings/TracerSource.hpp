@@ -1,8 +1,8 @@
 #ifndef VVM_DYNAMICS_TRACER_SOURCE_HPP
 #define VVM_DYNAMICS_TRACER_SOURCE_HPP
 
-#include "core/Grid.hpp"
-#include "core/State.hpp"
+#include "core/grid/Grid.hpp"
+#include "core/state/State.hpp"
 #include "core/vvm_types.hpp"
 
 #include <string>

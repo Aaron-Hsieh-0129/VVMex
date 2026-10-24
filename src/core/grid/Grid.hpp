@@ -11,8 +11,8 @@
 #include <Kokkos_Core.hpp>
 
 #include "utils/ConfigurationManager.hpp"
-#include "vvm_types.hpp"
-#include "core/GridSpecification.hpp"
+#include "core/vvm_types.hpp"
+#include "core/grid/GridSpecification.hpp"
 #include "core/geometry/HorizontalGeometry.hpp"
 
 namespace VVM {

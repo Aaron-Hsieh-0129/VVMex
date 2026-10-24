@@ -3,8 +3,8 @@
 
 #include <stdexcept>
 
-#include "core/GridSpecification.hpp"
-#include "core/RegularLatLonModelConfiguration.hpp"
+#include "core/grid/GridSpecification.hpp"
+#include "core/configuration/RegularLatLonModelConfiguration.hpp"
 #include "utils/ConfigurationManager.hpp"
 #include "utils/NumericalConfigurationValidation.hpp"
 

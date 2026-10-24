@@ -54,7 +54,7 @@
 #include "zarr/collective_dataset.hpp"
 #include "zarr/fsstore.hpp"
 
-#include "core/State.hpp"
+#include "core/state/State.hpp"
 #include "core/vvm_types.hpp"
 
 namespace VVM::Physics {

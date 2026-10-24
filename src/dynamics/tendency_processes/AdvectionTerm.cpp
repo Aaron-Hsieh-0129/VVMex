@@ -1,6 +1,6 @@
 #include "AdvectionTerm.hpp"
 
-#include "core/BoundaryConditionManager.hpp"
+#include "core/boundary/BoundaryConditionManager.hpp"
 #include "core/boundary/HorizontalBoundaryStencils.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 

@@ -3,7 +3,7 @@
 
 #include <string>
 
-#include "core/State.hpp"
+#include "core/state/State.hpp"
 #include "core/Parameters.hpp"
 #include "dynamics/operators/GeneralizedHorizontalVorticityTransport.hpp"
 #include "dynamics/operators/GeneralizedHorizontalDeformation.hpp"

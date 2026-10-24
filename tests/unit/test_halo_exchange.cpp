@@ -17,10 +17,10 @@
 //
 // <cstdio> rather than <iostream>: see test_horizontal_mean.cpp.
 
-#include "core/Grid.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "core/Parameters.hpp"
-#include "core/State.hpp"
+#include "core/state/State.hpp"
 #include "utils/ConfigurationManager.hpp"
 #include "core/vvm_types.hpp"
 

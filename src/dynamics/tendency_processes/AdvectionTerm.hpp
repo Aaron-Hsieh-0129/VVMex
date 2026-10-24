@@ -4,7 +4,7 @@
 #include "TendencyTerm.hpp"
 #include "dynamics/spatial_schemes/SpatialScheme.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
-#include "core/BoundaryConditionManager.hpp"
+#include "core/boundary/BoundaryConditionManager.hpp"
 
 #include <memory>
 #include <string>

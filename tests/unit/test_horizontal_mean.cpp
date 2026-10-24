@@ -1,5 +1,5 @@
 // State::calculate_horizontal_mean(), the one API both communication backends
-// share (src/core/State.hpp).
+// share (src/core/state/State.hpp).
 //
 // The same source builds against either backend: with ENABLE_NCCL=ON the global
 // sum is an NCCL all-reduce on the device, with ENABLE_NCCL=OFF it is a host
@@ -23,9 +23,9 @@
 // compiles against the system GCC 13 headers while GCC 11's libstdc++ loads at
 // run time, and that mismatch faults inside the ostream sentry.
 
-#include "core/Grid.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/Parameters.hpp"
-#include "core/State.hpp"
+#include "core/state/State.hpp"
 #include "utils/ConfigurationManager.hpp"
 #include "core/vvm_types.hpp"
 

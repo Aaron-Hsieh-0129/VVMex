@@ -31,10 +31,10 @@
 // The base state is written here rather than by Core::Initializer, so every
 // value CLEO receives is known: th carries a horizontal pattern, which is what
 // turns a gridbox-index mapping error into a failure rather than a no-op.
-#include "core/Grid.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "core/Parameters.hpp"
-#include "core/State.hpp"
+#include "core/state/State.hpp"
 #include "physics/cleo/VVM_cleo_process_interface.hpp"
 #include "utils/ConfigurationManager.hpp"
 

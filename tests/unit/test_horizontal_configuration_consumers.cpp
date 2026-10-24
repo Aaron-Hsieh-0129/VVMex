@@ -1,8 +1,8 @@
-#include "core/BoundaryConditionManager.hpp"
-#include "core/Grid.hpp"
-#include "core/Initializer.hpp"
+#include "core/boundary/BoundaryConditionManager.hpp"
+#include "core/grid/Grid.hpp"
+#include "core/initialization/Initializer.hpp"
 #include "core/Parameters.hpp"
-#include "core/State.hpp"
+#include "core/state/State.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "utils/ConfigurationManager.hpp"
 

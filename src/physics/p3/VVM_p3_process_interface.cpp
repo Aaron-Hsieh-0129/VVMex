@@ -1,6 +1,6 @@
 #include "p3_functions.hpp"
 #include "physics/p3/VVM_p3_process_interface.hpp"
-#include "core/BoundaryConditionManager.hpp"
+#include "core/boundary/BoundaryConditionManager.hpp"
 
 #include <ekat_assert.hpp>
 #include <ekat_units.hpp>

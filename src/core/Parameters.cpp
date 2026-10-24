@@ -2,7 +2,7 @@
 #include <stdexcept>
 #include <iostream>
 
-#include "Parameters.hpp"
+#include "core/Parameters.hpp"
 #include "core/geometry/GeometryKind.hpp"
 
 namespace VVM {

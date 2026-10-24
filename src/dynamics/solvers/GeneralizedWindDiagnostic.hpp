@@ -1,8 +1,8 @@
 #ifndef VVM_DYNAMICS_SOLVERS_GENERALIZED_WIND_DIAGNOSTIC_HPP
 #define VVM_DYNAMICS_SOLVERS_GENERALIZED_WIND_DIAGNOSTIC_HPP
 
-#include "core/Field.hpp"
-#include "core/Grid.hpp"
+#include "core/state/Field.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "core/vvm_types.hpp"
 #include "dynamics/solvers/HorizontalEllipticSolver.hpp"

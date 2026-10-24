@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 #include <mpi.h>
-#include "core/State.hpp"
+#include "core/state/State.hpp"
 
 namespace VVM::Core::StartupCollectives {
 

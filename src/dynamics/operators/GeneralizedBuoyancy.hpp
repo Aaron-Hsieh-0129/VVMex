@@ -3,7 +3,7 @@
 
 #include <Kokkos_Core.hpp>
 
-#include "core/Field.hpp"
+#include "core/state/Field.hpp"
 #include "core/geometry/HorizontalGeometry.hpp"
 
 namespace VVM::Dynamics::Operators {

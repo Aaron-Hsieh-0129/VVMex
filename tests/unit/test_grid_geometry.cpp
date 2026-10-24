@@ -1,4 +1,4 @@
-#include "core/Grid.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/geometry/HorizontalGeometryFactory.hpp"
 #include "core/geometry/StaggeredVectorTransform.hpp"
 #include "dynamics/operators/GeneralizedTerrain.hpp"

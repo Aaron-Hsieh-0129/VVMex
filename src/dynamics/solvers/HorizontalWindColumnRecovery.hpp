@@ -1,7 +1,7 @@
 #ifndef VVM_DYNAMICS_HORIZONTAL_WIND_COLUMN_RECOVERY_HPP
 #define VVM_DYNAMICS_HORIZONTAL_WIND_COLUMN_RECOVERY_HPP
 
-#include "core/Field.hpp"
+#include "core/state/Field.hpp"
 #include "core/geometry/HorizontalGeometry.hpp"
 #include "dynamics/operators/GeneralizedWindRecovery.hpp"
 

@@ -304,7 +304,7 @@ def main():
     sys.path.insert(0, str(path2cleo))
 
     g = read_grid(cfg)
-    grid = model_grid(g, parse_initializer_domain(REPO / "src" / "core" / "Initializer.cpp"))
+    grid = model_grid(g, parse_initializer_domain(REPO / "src" / "core" / "initialization" / "Initializer.cpp"))
     s = read_settings(cfg)
     drawn = s["seed"] is None
     s["seed"] = secrets.randbelow(2**32) if drawn else int(s["seed"])

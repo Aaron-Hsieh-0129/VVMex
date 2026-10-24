@@ -1,7 +1,7 @@
 #ifndef VVM_CORE_REGULAR_LAT_LON_MODEL_CONFIGURATION_HPP
 #define VVM_CORE_REGULAR_LAT_LON_MODEL_CONFIGURATION_HPP
 
-#include "core/GridSpecification.hpp"
+#include "core/grid/GridSpecification.hpp"
 #include "utils/ConfigurationManager.hpp"
 #include <cmath>
 #include <stdexcept>

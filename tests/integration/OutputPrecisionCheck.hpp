@@ -4,9 +4,9 @@
 #ifndef VVM_TESTS_OUTPUT_PRECISION_CHECK_HPP
 #define VVM_TESTS_OUTPUT_PRECISION_CHECK_HPP
 
-#include "core/Grid.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/Parameters.hpp"
-#include "core/State.hpp"
+#include "core/state/State.hpp"
 
 #include <Kokkos_Core.hpp>
 #include <hdf5.h>

@@ -2,8 +2,8 @@
 #define VVM_DYNAMICS_TENDENCY_CALCULATOR_HPP
 
 #include "TendencyTerm.hpp"
-#include "core/State.hpp"
-#include "core/Grid.hpp"
+#include "core/state/State.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/Parameters.hpp"
 #include <vector>
 #include <memory>

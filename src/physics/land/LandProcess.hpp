@@ -1,8 +1,8 @@
 #ifndef VVM_PHYSICS_LAND_PROCESS_HPP
 #define VVM_PHYSICS_LAND_PROCESS_HPP
 
-#include "core/Grid.hpp"
-#include "core/State.hpp"
+#include "core/grid/Grid.hpp"
+#include "core/state/State.hpp"
 #include "core/Parameters.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "core/vvm_types.hpp"

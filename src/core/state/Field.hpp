@@ -8,8 +8,8 @@
 #include <Kokkos_Core.hpp>
 #include <type_traits>
 
-#include "core/Grid.hpp"
-#include "core/GridStaggering.hpp"
+#include "core/grid/Grid.hpp"
+#include "core/grid/GridStaggering.hpp"
 
 namespace VVM {
 namespace Core {

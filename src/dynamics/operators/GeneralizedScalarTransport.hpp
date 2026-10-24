@@ -1,7 +1,7 @@
 #ifndef VVM_DYNAMICS_OPERATORS_GENERALIZED_SCALAR_TRANSPORT_HPP
 #define VVM_DYNAMICS_OPERATORS_GENERALIZED_SCALAR_TRANSPORT_HPP
 
-#include "core/Field.hpp"
+#include "core/state/Field.hpp"
 #include "core/geometry/GeometryField2D.hpp"
 #include "core/geometry/HorizontalGeometry.hpp"
 #include "dynamics/operators/TakacsScalarTransport.hpp"

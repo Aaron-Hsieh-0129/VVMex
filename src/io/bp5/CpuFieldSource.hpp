@@ -12,7 +12,7 @@
 #include "Bp5FieldSchema.hpp"
 #include "Bp5OutputConfig.hpp"
 #include "FieldInput.hpp"
-#include "core/State.hpp"
+#include "core/state/State.hpp"
 
 namespace VVM::IO::BP5 {
 

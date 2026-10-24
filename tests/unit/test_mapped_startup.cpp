@@ -1,4 +1,4 @@
-#include "core/StartupCollectives.hpp"
+#include "core/initialization/StartupCollectives.hpp"
 #include "core/geometry/HorizontalBoundaryDistances.hpp"
 #include "io/RestartVariables.hpp"
 

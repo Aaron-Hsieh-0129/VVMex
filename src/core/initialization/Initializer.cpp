@@ -1,11 +1,11 @@
-#include "Initializer.hpp"
-#include "BoundaryConditionManager.hpp"
+#include "core/initialization/Initializer.hpp"
+#include "core/boundary/BoundaryConditionManager.hpp"
 #include "io/text/TxtReader.hpp"
 #include "io/netcdf/PnetcdfReader.hpp"
 #include "io/hdf5/Hdf5RestartReader.hpp"
 #include "io/bp5/Bp5RestartReader.hpp"
-#include "vvm_types.hpp"
-#include "core/RegularLatLonModelConfiguration.hpp"
+#include "core/vvm_types.hpp"
+#include "core/configuration/RegularLatLonModelConfiguration.hpp"
 #include "dynamics/operators/GeneralizedTerrain.hpp"
 #include <Kokkos_Core.hpp>
 #include <algorithm>

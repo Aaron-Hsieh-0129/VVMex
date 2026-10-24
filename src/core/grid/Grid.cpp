@@ -4,7 +4,7 @@
 #include <string>
 #include <algorithm>
 
-#include "Grid.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/geometry/HorizontalGeometryFactory.hpp"
 
 namespace VVM {

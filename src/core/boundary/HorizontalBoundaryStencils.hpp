@@ -7,8 +7,8 @@
 #include <stdexcept>
 #include <Kokkos_Core.hpp>
 
-#include "core/Field.hpp"
-#include "core/Grid.hpp"
+#include "core/state/Field.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/geometry/GeometryKind.hpp"
 #include "core/geometry/HorizontalLocation.hpp"
 

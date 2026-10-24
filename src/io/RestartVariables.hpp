@@ -5,7 +5,7 @@
 #include <functional>
 #include <vector>
 
-#include "core/State.hpp"
+#include "core/state/State.hpp"
 #include "utils/ConfigurationManager.hpp"
 
 namespace VVM {

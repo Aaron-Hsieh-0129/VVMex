@@ -1,5 +1,5 @@
 #include "dynamics/solvers/HorizontalWindTopologyConstraint.hpp"
-#include "core/StartupCollectives.hpp"
+#include "core/initialization/StartupCollectives.hpp"
 
 #include "core/geometry/GeometryKind.hpp"
 #include "core/geometry/HorizontalLocation.hpp"

@@ -5,8 +5,8 @@
 #include <string>
 #include <memory>
 #include <vector>
-#include "core/State.hpp"
-#include "core/Grid.hpp"
+#include "core/state/State.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/Parameters.hpp"
 #include "core/vvm_types.hpp"
 #include "utils/ConfigurationManager.hpp"
@@ -14,7 +14,7 @@
 #include "tendency_processes/AdvectionTerm.hpp"
 #include "numerical_methods/NumericalMethod.hpp"
 #include "solvers/WindSolver.hpp"
-#include "core/BoundaryConditionManager.hpp"
+#include "core/boundary/BoundaryConditionManager.hpp"
 
 namespace VVM {
 namespace Dynamics {

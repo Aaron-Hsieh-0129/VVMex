@@ -3,7 +3,7 @@
 
 #include "SpatialScheme.hpp"
 #include "Takacs.hpp"
-#include "core/BoundaryConditionManager.hpp"
+#include "core/boundary/BoundaryConditionManager.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "utils/ConfigurationManager.hpp"
 

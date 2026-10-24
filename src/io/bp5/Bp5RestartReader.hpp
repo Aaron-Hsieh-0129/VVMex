@@ -8,10 +8,10 @@
 #include <adios2.h>
 #include <mpi.h>
 
-#include "core/Grid.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "core/Parameters.hpp"
-#include "core/State.hpp"
+#include "core/state/State.hpp"
 #include "io/Reader.hpp"
 #include "utils/ConfigurationManager.hpp"
 

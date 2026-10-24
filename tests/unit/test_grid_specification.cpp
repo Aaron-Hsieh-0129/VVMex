@@ -1,4 +1,4 @@
-#include "core/GridSpecification.hpp"
+#include "core/grid/GridSpecification.hpp"
 #include "utils/ConfigurationManager.hpp"
 
 #include <algorithm>
