@@ -1,5 +1,5 @@
 #include "AreaMeanNudging.hpp"
-#include "core/StartupCollectives.hpp"
+#include "core/initialization/StartupCollectives.hpp"
 #include <netcdf.h>
 #include <algorithm>
 #include <cmath>

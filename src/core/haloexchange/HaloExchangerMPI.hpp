@@ -1,9 +1,9 @@
 #pragma once
 
-#include "core/Grid.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/haloexchange/HaloExchangeDegenerate.hpp"
-#include "core/Field.hpp"
-#include "core/State.hpp"
+#include "core/state/Field.hpp"
+#include "core/state/State.hpp"
 #include "core/vvm_types.hpp"
 #include <algorithm>
 #include <cassert>

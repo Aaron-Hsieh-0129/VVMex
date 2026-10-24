@@ -1,5 +1,5 @@
 #include "GeneralizedWindRecoveryTestGeometry.hpp"
-#include "core/Field.hpp"
+#include "core/state/Field.hpp"
 #include "dynamics/solvers/HorizontalWindColumnRecovery.hpp"
 #include <mpi.h>
 #include <algorithm>

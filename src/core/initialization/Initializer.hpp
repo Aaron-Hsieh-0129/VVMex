@@ -2,11 +2,11 @@
 #define VVM_CORE_INITIALIZER_HPP
 
 #include <memory>
-#include "core/Grid.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/Parameters.hpp"
-#include "core/State.hpp"
+#include "core/state/State.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
-#include "core/RegularLatLonModelConfiguration.hpp"
+#include "core/configuration/RegularLatLonModelConfiguration.hpp"
 #include "core/boundary/HorizontalBoundaryStencils.hpp"
 #include "utils/ConfigurationManager.hpp"
 #include "io/Reader.hpp"

@@ -1,5 +1,5 @@
-#include "core/GridSpecification.hpp"
-#include "core/ModelConfigurationValidation.hpp"
+#include "core/grid/GridSpecification.hpp"
+#include "core/configuration/ModelConfigurationValidation.hpp"
 #include "utils/ConfigurationManager.hpp"
 
 #include <cstdio>

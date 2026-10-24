@@ -1,8 +1,8 @@
 #ifndef VVM_READERS_READER_HPP
 #define VVM_READERS_READER_HPP
 
-#include "core/State.hpp"
-#include "core/Grid.hpp"
+#include "core/state/State.hpp"
+#include "core/grid/Grid.hpp"
 #include "utils/RestartTime.hpp"
 
 namespace VVM {

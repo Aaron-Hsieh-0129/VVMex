@@ -2,8 +2,8 @@
 #define VVM_DYNAMICS_VERTICAL_ELLIPTIC_SOLVER_HPP
 
 #include <memory>
-#include "core/Field.hpp"
-#include "core/Grid.hpp"
+#include "core/state/Field.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/boundary/HorizontalBoundaryStencils.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "dynamics/solvers/VerticalWindDiagnostic.hpp"

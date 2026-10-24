@@ -1,9 +1,9 @@
 #ifndef VVM_CORE_PARAMETERS_HPP
 #define VVM_CORE_PARAMETERS_HPP
 
-#include "Grid.hpp"
+#include "core/grid/Grid.hpp"
 #include "utils/ConfigurationManager.hpp"
-#include "Field.hpp"
+#include "core/state/Field.hpp"
 
 namespace VVM {
 namespace Core {

@@ -1,5 +1,5 @@
-#include "State.hpp"
-#include "BoundaryConditionManager.hpp"
+#include "core/state/State.hpp"
+#include "core/boundary/BoundaryConditionManager.hpp"
 #include <unordered_set>
 
 namespace VVM {

@@ -1,7 +1,7 @@
 #include <Kokkos_Core.hpp>
 #include <stdexcept>
 
-#include "core/BoundaryConditionManager.hpp"
+#include "core/boundary/BoundaryConditionManager.hpp"
 #include "core/geometry/GeometryKind.hpp"
 #include "core/boundary/HorizontalBoundaryStencils.hpp"
 

@@ -1,5 +1,5 @@
-#include "core/Initializer.hpp"
-#include "core/RegularLatLonModelConfiguration.hpp"
+#include "core/initialization/Initializer.hpp"
+#include "core/configuration/RegularLatLonModelConfiguration.hpp"
 #include "core/boundary/HorizontalBoundaryStencils.hpp"
 #include <cmath>
 #include <vector>

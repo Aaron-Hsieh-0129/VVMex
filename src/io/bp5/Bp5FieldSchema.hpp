@@ -8,7 +8,7 @@
 
 #include <adios2.h>
 
-#include "core/Grid.hpp"
+#include "core/grid/Grid.hpp"
 #include "utils/ConfigurationManager.hpp"
 
 namespace VVM::IO::BP5 {

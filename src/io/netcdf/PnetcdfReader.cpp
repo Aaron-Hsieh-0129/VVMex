@@ -1,7 +1,7 @@
 #include "io/netcdf/PnetcdfReader.hpp"
 #include "io/netcdf/PnetcdfRestartMetadata.hpp"
-#include "core/Field.hpp"
-#include "core/RegularLatLonModelConfiguration.hpp"
+#include "core/state/Field.hpp"
+#include "core/configuration/RegularLatLonModelConfiguration.hpp"
 #include "io/RestartVariables.hpp"
 
 #include <iostream>

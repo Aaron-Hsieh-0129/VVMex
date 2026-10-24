@@ -1,5 +1,5 @@
-#include "core/BoundaryConditionManager.hpp"
-#include "core/Grid.hpp"
+#include "core/boundary/BoundaryConditionManager.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/geometry/GeometryKind.hpp"
 #include "utils/ConfigurationManager.hpp"
 

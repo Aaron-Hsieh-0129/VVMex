@@ -11,8 +11,8 @@
 #include <Kokkos_Core.hpp>
 #include <adios2/cxx/KokkosView.h>
 
-#include "core/Grid.hpp"
-#include "core/State.hpp"
+#include "core/grid/Grid.hpp"
+#include "core/state/State.hpp"
 #include "core/Parameters.hpp"
 #include "core/vvm_types.hpp"
 #include "io/OutputPrecision.hpp"

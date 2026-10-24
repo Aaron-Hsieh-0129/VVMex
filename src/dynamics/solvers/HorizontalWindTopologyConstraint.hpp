@@ -3,9 +3,9 @@
 
 #include <memory>
 
-#include "core/Grid.hpp"
-#include "core/State.hpp"
-#include "core/Field.hpp"
+#include "core/grid/Grid.hpp"
+#include "core/state/State.hpp"
+#include "core/state/Field.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 
 namespace VVM::Dynamics {

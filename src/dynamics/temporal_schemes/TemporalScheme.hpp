@@ -1,8 +1,8 @@
 #ifndef VVM_DYNAMICS_TEMPORAL_SCHEME_HPP
 #define VVM_DYNAMICS_TEMPORAL_SCHEME_HPP
 
-#include "core/State.hpp"
-#include "core/Grid.hpp"
+#include "core/state/State.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/Parameters.hpp"
 #include "dynamics/tendency_processes/TendencyTerm.hpp"
 #include <vector>

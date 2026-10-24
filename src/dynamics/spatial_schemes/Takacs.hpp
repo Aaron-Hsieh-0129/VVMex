@@ -4,7 +4,7 @@
 #include "SpatialScheme.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "core/vvm_types.hpp"
-#include "core/BoundaryConditionManager.hpp"
+#include "core/boundary/BoundaryConditionManager.hpp"
 #include "utils/ConfigurationManager.hpp"
 #include "utils/Timer.hpp"
 #include "utils/TimingManager.hpp"

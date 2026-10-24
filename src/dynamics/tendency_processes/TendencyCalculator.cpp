@@ -1,5 +1,5 @@
 #include "TendencyCalculator.hpp"
-#include "core/Field.hpp"
+#include "core/state/Field.hpp"
 #include <stdexcept>
 
 namespace VVM {

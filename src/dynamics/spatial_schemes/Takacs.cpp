@@ -1,6 +1,6 @@
 #include "Takacs.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
-#include "core/BoundaryConditionManager.hpp"
+#include "core/boundary/BoundaryConditionManager.hpp"
 
 namespace VVM {
 namespace Dynamics {

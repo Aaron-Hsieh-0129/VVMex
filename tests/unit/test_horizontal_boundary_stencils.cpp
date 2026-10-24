@@ -1,5 +1,5 @@
-#include "core/Field.hpp"
-#include "core/Grid.hpp"
+#include "core/state/Field.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/boundary/HorizontalBoundaryStencils.hpp"
 #include "utils/ConfigurationManager.hpp"
 

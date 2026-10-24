@@ -5,9 +5,9 @@
 #include <algorithm>
 #include <vector>
 #include <mpi.h>
-#include "core/Grid.hpp"
-#include "core/Field.hpp"
-#include "core/StartupCollectives.hpp"
+#include "core/grid/Grid.hpp"
+#include "core/state/Field.hpp"
+#include "core/initialization/StartupCollectives.hpp"
 
 namespace VVM::Core::Geometry {
 

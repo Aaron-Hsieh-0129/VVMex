@@ -21,6 +21,21 @@ optional NCCL on NVIDIA GPUs.
 
 Fortran pieces (e.g. Noah OpenACC) are linked through the physics/land subtree as required by CMake.
 
+Within `src/core/`, files are grouped by responsibility:
+
+| Folder | Role |
+| ------ | ---- |
+| `grid/` | Grid construction, specifications and staggering |
+| `state/` | Model state and field storage |
+| `initialization/` | Initial conditions, barotropic setup and startup collectives |
+| `configuration/` | Model configuration validation |
+| `boundary/` | Boundary conditions and horizontal boundary stencils |
+| `geometry/` | Horizontal geometry and coordinate transforms |
+| `haloexchange/` | MPI and NCCL halo exchange |
+
+`Parameters` and `vvm_types.hpp` remain at the core root. These folders share
+the existing `vvm_core` and `vvm_initializer` targets.
+
 ## Execution model
 
 1. `MPI_Init` starts every rank. Shared-memory communicator sizing determines

@@ -17,12 +17,12 @@
 #endif
 #include <unistd.h>
 
-#include "core/Field.hpp"
-#include "core/Grid.hpp"
+#include "core/state/Field.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "core/Parameters.hpp"
-#include "core/State.hpp"
-#include "core/ModelConfigurationValidation.hpp"
+#include "core/state/State.hpp"
+#include "core/configuration/ModelConfigurationValidation.hpp"
 #include "io/bp5/Bp5HistoryWriter.hpp"
 #include "io/history/HistoryWriter.hpp"
 #include "io/history/LegacyHistoryWriter.hpp"

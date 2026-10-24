@@ -1,8 +1,8 @@
 #ifndef VVM_DYNAMICS_TENDENCY_TERM_HPP
 #define VVM_DYNAMICS_TENDENCY_TERM_HPP
 
-#include "core/State.hpp"
-#include "core/Grid.hpp"
+#include "core/state/State.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/Parameters.hpp"
 
 namespace VVM {

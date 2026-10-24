@@ -2,7 +2,7 @@
 #define VVM_DYNAMICS_MUSCL_HPP
 
 #include "SpatialScheme.hpp"
-#include "core/Field.hpp"
+#include "core/state/Field.hpp"
 #include "utils/ConfigurationManager.hpp"
 
 #include <Kokkos_Core.hpp>

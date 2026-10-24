@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "core/GridStaggering.hpp"
+#include "core/grid/GridStaggering.hpp"
 #include "core/geometry/HorizontalLocation.hpp"
 
 namespace VVM {

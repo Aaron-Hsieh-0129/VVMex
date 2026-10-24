@@ -1,4 +1,4 @@
-#include "core/Grid.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/Parameters.hpp"
 #include "core/geometry/GeometryKind.hpp"
 #include "utils/ConfigurationManager.hpp"

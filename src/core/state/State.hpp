@@ -3,11 +3,11 @@
 #ifndef VVM_CORE_VVMSTATE_HPP
 #define VVM_CORE_VVMSTATE_HPP
 
-#include "Grid.hpp"
-#include "Field.hpp"
+#include "core/grid/Grid.hpp"
+#include "core/state/Field.hpp"
 #include "utils/ConfigurationManager.hpp"
-#include "Parameters.hpp"
-#include "vvm_types.hpp"
+#include "core/Parameters.hpp"
+#include "core/vvm_types.hpp"
 #include <algorithm>
 #include <cassert>
 #include <string>

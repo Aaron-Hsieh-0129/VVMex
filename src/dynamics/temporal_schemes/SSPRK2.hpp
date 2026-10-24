@@ -2,7 +2,7 @@
 #define VVM_DYNAMICS_SSPRK2_HPP
 
 #include "TemporalScheme.hpp"
-#include "core/Field.hpp"
+#include "core/state/Field.hpp"
 
 #include <array>
 #include <string>

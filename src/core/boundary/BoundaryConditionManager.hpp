@@ -1,8 +1,8 @@
 #ifndef VVM_CORE_BOUNDARYCONDITIONMANAGER_HPP
 #define VVM_CORE_BOUNDARYCONDITIONMANAGER_HPP
 
-#include "core/Grid.hpp"
-#include "core/Field.hpp"
+#include "core/grid/Grid.hpp"
+#include "core/state/Field.hpp"
 #include "core/vvm_types.hpp"
 
 namespace VVM {

@@ -1,6 +1,6 @@
-#include "core/Grid.hpp"
+#include "core/grid/Grid.hpp"
 #include "core/Parameters.hpp"
-#include "core/State.hpp"
+#include "core/state/State.hpp"
 #include "core/geometry/HorizontalLocation.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "physics/turbulence/TurbulenceProcess.hpp"

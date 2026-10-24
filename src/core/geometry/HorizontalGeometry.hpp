@@ -4,7 +4,7 @@
 #include <string>
 #include <Kokkos_Core.hpp>
 
-#include "core/GridStaggering.hpp"
+#include "core/grid/GridStaggering.hpp"
 #include "core/geometry/GeometryField2D.hpp"
 #include "core/geometry/GeometryKind.hpp"
 #include "core/geometry/HorizontalLocation.hpp"

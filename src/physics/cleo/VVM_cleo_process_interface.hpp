@@ -1,8 +1,8 @@
 #ifndef VVM_CLEO_PROCESS_INTERFACE_HPP
 #define VVM_CLEO_PROCESS_INTERFACE_HPP
 
-#include "core/Grid.hpp"
-#include "core/State.hpp"
+#include "core/grid/Grid.hpp"
+#include "core/state/State.hpp"
 #include "core/Parameters.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 
