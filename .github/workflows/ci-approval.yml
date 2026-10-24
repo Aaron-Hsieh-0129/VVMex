@@ -1,5 +1,5 @@
-# No PR checkout: determine the triggering user's role on GitHub-hosted compute.
-name: CI approval policy
+# No PR checkout: decide whether a backend is enabled on GitHub-hosted compute.
+name: CI run policy
 
 on:
   workflow_call:
@@ -13,9 +13,6 @@ on:
       runner_enabled:
         description: Whether this run can proceed to self-hosted CI approval
         value: ${{ jobs.approval.outputs.runner_enabled }}
-      admin_actor:
-        description: Triggering user verified to have repository admin permission
-        value: ${{ jobs.approval.outputs.admin_actor }}
 
 permissions:
   contents: read
@@ -26,18 +23,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      runner_enabled: ${{ steps.role.outputs.runner_enabled }}
-      admin_actor: ${{ steps.role.outputs.admin_actor }}
+      runner_enabled: ${{ steps.policy.outputs.runner_enabled }}
     steps:
-      - name: Check repository role
-        id: role
+      - name: Check backend policy
+        id: policy
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
-          RUN_ACTOR: ${{ github.triggering_actor }}
           RUNNER_SETTING: ${{ inputs.runner_setting }}
         with:
           script: |
-            core.setOutput('admin_actor', '');
             core.setOutput('runner_enabled', 'false');
             const setting = (process.env.RUNNER_SETTING || '').trim();
             const pr = context.payload.pull_request;
@@ -64,25 +58,9 @@ jobs:
               return;
             }
             core.setOutput('runner_enabled', 'true');
+            core.info('Backend enabled; owner approval is required before the self-hosted job starts.');
             if (setting === '' && forkPR) {
               core.info('Fork PR variables are unavailable; self-hosted CI can proceed after approval.');
             }
-            const actor = process.env.RUN_ACTOR;
-            if (!actor) {
-              core.warning('Missing triggering user; CI approval is required.');
-              return;
-            }
-            try {
-              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
-                ...context.repo,
-                username: actor,
-              });
-              if (data.permission === 'admin') {
-                core.setOutput('admin_actor', actor);
-                core.info(`${actor} is a repository administrator; CI runs automatically.`);
-              } else {
-                core.info(`${actor} is not a repository administrator; CI approval is required.`);
-              }
-            } catch (error) {
-              core.warning(`Cannot verify repository role (HTTP ${error.status || 'unknown'}); CI approval is required.`);
-            }
+            // This output only enables the backend. Every self-hosted job
+            // still requires the repository owner's environment approval.
