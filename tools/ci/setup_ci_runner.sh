@@ -18,6 +18,7 @@ set -euo pipefail
 export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
 
 RUNNER_VERSION="2.330.0"
+RUNNER_SHA256=""
 # Empty means "ask the checkout". A hardcoded URL goes stale the moment the
 # repository is renamed, which is exactly what happened to the previous one.
 REPO_URL=""
@@ -45,6 +46,7 @@ Options:
   --build-jobs <n>     compile parallelism (default: all cores)
   --test-threads <n>   OMP threads per rank for CPU tests (default: cores/4)
   --runner-version <v> actions/runner release (default: RUNNER_VERSION above)
+  --runner-sha256 <h>  required SHA-256 for a non-default runner release
   --user-service       install a systemd --user unit instead of a system one
                        (no root needed; use this when you have no sudo)
   --no-service         configure but do not install any service
@@ -64,6 +66,7 @@ while [ $# -gt 0 ]; do
         --build-jobs)     BUILD_JOBS="$2"; shift 2 ;;
         --test-threads)   TEST_THREADS="$2"; shift 2 ;;
         --runner-version) RUNNER_VERSION="$2"; shift 2 ;;
+        --runner-sha256)  RUNNER_SHA256="$2"; shift 2 ;;
         --no-service)     INSTALL_SERVICE=0; shift ;;
         --user-service)   USER_SERVICE=1; shift ;;
         --env-only)       ENV_ONLY=1; shift ;;
@@ -183,10 +186,24 @@ fi
 mkdir -p "$RUNNER_DIR" "$WORK_DIR"
 
 if [ ! -x "$RUNNER_DIR/config.sh" ]; then
+    if [[ ! "$RUNNER_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "invalid runner version: $RUNNER_VERSION" >&2; exit 2
+    fi
+    if [ -z "$RUNNER_SHA256" ] && [ "$RUNNER_VERSION" = "2.330.0" ]; then
+        RUNNER_SHA256="af5c33fa94f3cc33b8e97937939136a6b04197e6dadfcfb3b6e33ae1bf41e79a"
+    fi
+    if [[ ! "$RUNNER_SHA256" =~ ^[a-fA-F0-9]{64}$ ]]; then
+        echo "provide --runner-sha256 from the official release for version $RUNNER_VERSION" >&2
+        exit 2
+    fi
     TARBALL="actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
     echo "==> downloading actions/runner $RUNNER_VERSION"
     curl -fsSL -o "$RUNNER_DIR/$TARBALL" \
         "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${TARBALL}"
+    (
+        cd "$RUNNER_DIR"
+        printf '%s  %s\n' "$RUNNER_SHA256" "$TARBALL" | sha256sum --check --status
+    ) || { echo "runner archive checksum mismatch; refusing extraction" >&2; exit 1; }
     tar xzf "$RUNNER_DIR/$TARBALL" -C "$RUNNER_DIR"
     rm -f "$RUNNER_DIR/$TARBALL"
 else

@@ -45,9 +45,10 @@ jobs:
     env:
       VVM_ROOT: ${{ github.workspace }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: recursive
+          persist-credentials: false
           # tests/baselines/*.h5 are LFS objects and the default tier reads them.
           # NOT lfs: true. actions/checkout implements that by running
           # `git lfs install --local`, which refuses to proceed when a pre-push
@@ -123,7 +124,7 @@ jobs:
 
       - name: Upload test log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ctest-log-gpu-${{ runner.name }}
           path: ${{ env.BUILD_DIR }}/Testing/Temporary/LastTest.log
@@ -145,9 +146,10 @@ jobs:
     env:
       VVM_ROOT: ${{ github.workspace }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: recursive
+          persist-credentials: false
           lfs: false
 
       - name: Read runner configuration
@@ -190,7 +192,7 @@ jobs:
 
       - name: Upload test log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ctest-log-cpu-full-${{ runner.name }}
           path: ${{ env.BUILD_DIR }}/Testing/Temporary/LastTest.log

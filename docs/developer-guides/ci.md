@@ -356,16 +356,35 @@ redundant with it; what the hook still does that nothing else does is run
 
 ## Approving CPU and GPU tests
 
+Workflow approval does not isolate pull-request code from a self-hosted machine.
+The role check and environment selection are PR-editable, so they cannot enforce
+runner authorization independently. Public PR builds need disposable, isolated
+runners with no access to development credentials or private data; do not rely
+on these checks to protect a shared development host.
+
 Install the test dependencies into the Python interpreter selected by the
 machine's `Python3_EXECUTABLE` preset entry before running CI. On gaia-ntu:
 
 ```bash
-/data/Aaron/miniconda3/bin/python3.14 -m pip install -r tools/ci/requirements.txt
+/data/Aaron/miniconda3/bin/python3.14 -m pip install --require-hashes -r tools/ci/requirements.txt
 ```
 
 CLEO imports matplotlib while preparing its inputs even when figures are
 disabled. Both gaia-ntu presets pin the same Python interpreter so CTest uses
 the environment where these dependencies were installed.
+
+Python dependencies are locked with versions and hashes in the requirements
+files. Edit the corresponding `.in` file, then regenerate using Python 3.12:
+
+```bash
+pip-compile --generate-hashes --strip-extras --no-emit-index-url --no-emit-trusted-host requirements-docs.in
+pip-compile --generate-hashes --strip-extras --no-emit-index-url --no-emit-trusted-host tools/ci/requirements.in
+pip-compile --generate-hashes --strip-extras --no-emit-index-url --no-emit-trusted-host tools/ci/requirements-checks.in
+```
+
+GitHub Actions are pinned to commit SHAs. Runner downloads are checksum-verified;
+using `--runner-version` for another release also requires its official
+`--runner-sha256`. Dependabot checks action and Python dependency updates weekly.
 
 Fork PR workflows cannot read the base repository's configuration variables.
 The hosted policy therefore allows a fork PR with an unavailable backend
