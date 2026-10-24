@@ -76,11 +76,13 @@ class CompressedHdf5Writer {
         return H5Fcreate(filename.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, access);
     }
     template<class T> static hid_t type() {
+        static_assert(std::is_same_v<T, float> || std::is_same_v<T, double> ||
+                      std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>,
+                      "Unsupported HDF5 output type");
         if constexpr (std::is_same_v<T, float>) return H5T_NATIVE_FLOAT;
         else if constexpr (std::is_same_v<T, double>) return H5T_NATIVE_DOUBLE;
         else if constexpr (std::is_same_v<T, int64_t>) return H5T_NATIVE_INT64;
-        else if constexpr (std::is_same_v<T, uint64_t>) return H5T_NATIVE_UINT64;
-        else static_assert(!sizeof(T), "Unsupported HDF5 output type");
+        else return H5T_NATIVE_UINT64;
     }
     Handle file_;
     Handle group_;
