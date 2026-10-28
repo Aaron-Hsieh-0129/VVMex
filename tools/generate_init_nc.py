@@ -23,7 +23,7 @@ if not VVM_ROOT:
 os.chdir(VVM_ROOT)
 print(f"[Info] Change to VVM_ROOT: {VVM_ROOT}")
 
-CONFIG_PATH = os.environ.get('VVM_CONFIG_PATH', './rundata/input_configs/tropical_rll/uniform80.json')
+CONFIG_PATH = os.environ.get('VVM_CONFIG_PATH', './rundata/input_configs/rll_tropical/rll_tropical_0.5.json')
 SOURCE_TW_DATA = './rundata/land/topolsm_TW.nc'
 
 with open(CONFIG_PATH, 'r') as f:
@@ -263,9 +263,10 @@ HALO = GRID_CONFIG['n_halo_cells']
 NSOIL = 4
 
 
-# Roll Data (User can change this)
-roll_idx_x = 0  # GRID_CONFIG['nx']//4
+# Roll Data (User can change this). RLL coordinate bounds remain fixed.
+roll_idx_x = NX // 2
 roll_idx_y = 0  # GRID_CONFIG['ny']//4
+print(f"[Info] Surface-field roll: x={roll_idx_x}, y={roll_idx_y} grid cells")
 
 FILENAME = os.environ.get('VVM_INIT_OUTPUT', config['netcdf_reader']['source_file'])
 output_directory = os.path.dirname(FILENAME)
@@ -950,17 +951,25 @@ for j in range(NY):
         
 lon_2d, lat_2d = np.meshgrid(lon_1d, lat_1d)
 
+# RLL coordinates describe the configured grid, while np.roll below moves
+# fields on that grid. Offsetting the coordinate labels as well would count
+# the roll twice (a half-domain roll would appear unchanged modulo 360 deg).
+# Preserve the historical coordinate offsets for non-RLL configurations.
+if GRID_CONFIG['geometry_kind'] not in ('regular_latlon', 'latlon', 'rll'):
+    lon_2d = lon_2d + lon_roll_step_deg * roll_idx_x
+    lat_2d = lat_2d + lat_roll_step_deg * roll_idx_y
+
 # ==============================================================================
 # Output to NetCDF
 # ==============================================================================
 
 variables_config = {
     'lon': {
-        'data': lon_2d + lon_roll_step_deg * roll_idx_x, 'dims': ('ny', 'nx'), 'units': 'degrees_east', 'dtype': 'f8',
+        'data': lon_2d, 'dims': ('ny', 'nx'), 'units': 'degrees_east', 'dtype': 'f8',
         'long_name': 'Longitude (2D matrix)'
     },
     'lat': {
-        'data': lat_2d + lat_roll_step_deg * roll_idx_y, 'dims': ('ny', 'nx'), 'units': 'degrees_north', 'dtype': 'f8',
+        'data': lat_2d, 'dims': ('ny', 'nx'), 'units': 'degrees_north', 'dtype': 'f8',
         'long_name': 'Latitude (2D matrix)'
     },
     'topo': {
