@@ -1,4 +1,4 @@
 # Lightweight checks that run on GitHub-hosted Python 3.12 runners.
-ruff==0.17.1
+ruff==0.17.3
 PyYAML
 pip-audit==2.10.1
