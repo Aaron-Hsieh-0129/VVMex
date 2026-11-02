@@ -5,6 +5,7 @@ set(VVM_CORE_SOURCES
     boundary/BoundaryConditionManager.cpp
     Parameters.cpp
 
+    geometry/HorizontalGeometry.cpp
     geometry/CartesianGeometry.cpp
     geometry/RegularLatLonGeometry.cpp
     geometry/HorizontalGeometryFactory.cpp

@@ -25,6 +25,7 @@ public:
     Kokkos::View<VVM::Real> nx;
     Kokkos::View<VVM::Real> ny;
     Kokkos::View<VVM::Real> nz;
+    // dx/dy are nominal physical coordinate-line lengths at the rank's first interior T point.
     Kokkos::View<VVM::Real> dx;
     Kokkos::View<VVM::Real> dy;
     Kokkos::View<VVM::Real> dz;

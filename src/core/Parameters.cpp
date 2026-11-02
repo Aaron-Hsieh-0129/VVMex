@@ -3,30 +3,10 @@
 #include <iostream>
 
 #include "core/Parameters.hpp"
-#include "core/geometry/GeometryKind.hpp"
+#include "core/geometry/HorizontalGeometry.hpp"
 
 namespace VVM {
 namespace Core {
-
-namespace {
-
-// NVCC extended lambdas must be enclosed by an addressable function.
-// Keep the device kernel outside the Parameters constructor.
-void
-apply_nominal_horizontal_metric(const Grid& grid, Real& dx, Real& dy) {
-    const auto metric = grid.geometry().device_view(Geometry::HorizontalLocation::T).g_cov;
-    Kokkos::View<Real*> reference("nominal horizontal lengths", 2);
-    const int h = grid.get_halo_cells();
-    Kokkos::parallel_for("NominalHorizontalLengths", 1, KOKKOS_LAMBDA(int) {
-        reference(0) = Kokkos::sqrt(metric.a11(h, h));
-        reference(1) = Kokkos::sqrt(metric.a22(h, h));
-    });
-    const auto host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), reference);
-    dx *= host(0);
-    dy *= host(1);
-}
-
-} // namespace
 
 Parameters::Parameters(const Utils::ConfigurationManager& config, const Grid& grid)
     : gravity("gravity"), Rd("Rd"), PSFC("PSFC"), P0("P0"), Cp("Cp"), Lv("Lv"), dx("dx"), dy("dy"),
@@ -45,7 +25,6 @@ Parameters::Parameters(const Utils::ConfigurationManager& config, const Grid& gr
       CGAU("CGAU", {grid.get_local_total_points_z()}),
       bn_new("bn_new", {grid.get_local_total_points_z()}),
       cn_new("cn_new", {grid.get_local_total_points_z()}) {
-    const auto& horizontal = grid.horizontal_specification();
     const auto& vertical = grid.vertical_specification();
 
     Kokkos::deep_copy(gravity, config.get_value<VVM::Real>("constants.gravity"));
@@ -53,13 +32,13 @@ Parameters::Parameters(const Utils::ConfigurationManager& config, const Grid& gr
     Kokkos::deep_copy(P0, config.get_value<VVM::Real>("constants.P0"));
     Kokkos::deep_copy(Cp, config.get_value<VVM::Real>("constants.Cp"));
 
-    // Legacy spacing fields retain metres. Mapped stencils consume geometry
-    // directly; these nominal local physical lengths are for scalar diagnostics.
-    VVM::Real dx_val = horizontal.geometry.dq1;
-    VVM::Real dy_val = horizontal.geometry.dq2;
-    if (horizontal.geometry.kind != Geometry::GeometryKind::Cartesian) {
-        apply_nominal_horizontal_metric(grid, dx_val, dy_val);
-    }
+    // Scalar spacing fields retain nominal lengths in metres at the first
+    // interior T point on this rank. Spatially varying operators use geometry
+    // at their own cells and staggering rather than these reference values.
+    const int h = grid.get_halo_cells();
+    const auto spacing = grid.geometry().physical_spacing(Geometry::HorizontalLocation::T, h, h);
+    const VVM::Real dx_val = spacing[0];
+    const VVM::Real dy_val = spacing[1];
     const VVM::Real dz_val = vertical.dz;
 
     VVM::Real dt_val = config.get_value<VVM::Real>("simulation.dt_s");

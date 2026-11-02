@@ -1,6 +1,5 @@
 #include <sstream>
 #include <stdexcept>
-#include <cmath>
 #include <string>
 #include <algorithm>
 

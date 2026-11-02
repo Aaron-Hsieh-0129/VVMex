@@ -12,10 +12,6 @@ namespace VVM {
 namespace Core {
 
 // Model-startup validation using the same configuration precedence as Grid.
-//
-// This adapter belongs in core because GridSpecification belongs in core.
-// The existing value-level validator remains independent in vvm_utils.
-//
 // MPI must already be initialized. Kokkos initialization and Grid construction
 // are not required.
 inline void

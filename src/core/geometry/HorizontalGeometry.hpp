@@ -1,6 +1,7 @@
 #ifndef VVM_CORE_GEOMETRY_HORIZONTAL_GEOMETRY_HPP
 #define VVM_CORE_GEOMETRY_HORIZONTAL_GEOMETRY_HPP
 
+#include <array>
 #include <string>
 #include <Kokkos_Core.hpp>
 
@@ -199,6 +200,21 @@ struct HorizontalGeometryDeviceView {
     VVM::Real rdq1 = VVM::real(0.0);
     VVM::Real rdq2 = VVM::real(0.0);
 
+    // Local physical lengths in metres along the q1/q2 coordinate lines.
+    // On a skew grid these are not perpendicular face separations, and their
+    // product is not the cell area; conservative operators must use the metric.
+    KOKKOS_INLINE_FUNCTION
+    VVM::Real
+    physical_spacing_q1(const int j, const int i) const noexcept {
+        return dq1 * Kokkos::sqrt(g_cov.a11(j, i));
+    }
+
+    KOKKOS_INLINE_FUNCTION
+    VVM::Real
+    physical_spacing_q2(const int j, const int i) const noexcept {
+        return dq2 * Kokkos::sqrt(g_cov.a22(j, i));
+    }
+
     // Recover the unweighted inverse metric when an operator needs g^ij.
     // Most conservative operators should use sqrt_g_g_contra directly.
     KOKKOS_INLINE_FUNCTION
@@ -246,6 +262,12 @@ public:
     //     dq1 and dq2 are angular computational-coordinate increments in radians.
     virtual VVM::Real dq1() const noexcept = 0;
     virtual VVM::Real dq2() const noexcept = 0;
+
+    // Host query of {q1 length, q2 length} in metres at local (j, i).
+    // Evaluates on the device and copies the result to the host. Kernels should
+    // call the device view's physical_spacing_q1/q2 methods directly.
+    std::array<VVM::Real, 2>
+    physical_spacing(HorizontalLocation location, int j, int i) const;
 
     // Select geometry explicitly using T/U/V/Z.
     HorizontalGeometryDeviceView

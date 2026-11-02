@@ -94,20 +94,4 @@ validate_numerical_configuration_values(const NumericalConfigurationValues& valu
     }
 }
 
-void
-validate_numerical_configuration(const ConfigurationManager& config, int compute_ranks) {
-    validate_numerical_configuration_values(
-        {config.get_value<int>("grid.nx"),
-            config.get_value<int>("grid.ny"),
-            config.get_value<int>("grid.nz"),
-            config.get_value<int>("grid.n_halo_cells"),
-            config.get_value<double>("grid.dx"),
-            config.get_value<double>("grid.dy"),
-            config.get_value<double>("grid.dz"),
-            config.get_value<double>("simulation.dt_s"),
-            config.get_value<double>("simulation.total_time_s"),
-            config.get_value<double>("simulation.output_interval_s")},
-        compute_ranks);
-}
-
 } // namespace VVM::Utils

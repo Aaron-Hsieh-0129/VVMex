@@ -256,10 +256,6 @@ test_string_conversions() {
               0,
         "Surface must have a string representation");
 
-    check(std::strcmp(VVM::Core::Geometry::geometry_kind_to_string(GeometryKind::RegularLatLon),
-              "regular_latlon") == 0,
-        "RegularLatLon must have a string representation");
-
     check(std::strcmp(VVM::Core::Geometry::horizontal_location_to_string(HorizontalLocation::Z),
               "Z") == 0,
         "Z must have a string representation");

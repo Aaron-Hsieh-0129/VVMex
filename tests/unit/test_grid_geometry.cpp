@@ -46,6 +46,30 @@ close(const VVM::Real actual, const VVM::Real expected) {
 }
 
 void
+check_physical_spacing(const VVM::Core::Geometry::HorizontalGeometry& geometry,
+    const HorizontalLocation location,
+    const int j,
+    const int i,
+    const VVM::Real expected_q1,
+    const VVM::Real expected_q2) {
+    const auto host_spacing = geometry.physical_spacing(location, j, i);
+    check(close(host_spacing[0], expected_q1), "Host q1 spacing must match the physical length");
+    check(close(host_spacing[1], expected_q2), "Host q2 spacing must match the physical length");
+
+    const auto device = geometry.device_view(location);
+    Kokkos::View<VVM::Real*> results("physical_spacing_results", 2);
+    Kokkos::parallel_for("EvaluatePhysicalSpacing", 1, KOKKOS_LAMBDA(const int) {
+        results(0) = device.physical_spacing_q1(j, i);
+        results(1) = device.physical_spacing_q2(j, i);
+    });
+    const auto device_spacing = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), results);
+    check(close(device_spacing(0), expected_q1),
+        "Device q1 spacing must match the physical length");
+    check(close(device_spacing(1), expected_q2),
+        "Device q2 spacing must match the physical length");
+}
+
+void
 test_host_metadata(const Grid& grid) {
     const auto& specification = grid.specification();
     const auto& geometry = grid.geometry();
@@ -224,6 +248,11 @@ test_cartesian_device_values(const Grid& grid) {
     check(close(host_results(17), VVM::real(0.0)), "Cartesian latitude must remain zero");
     check(close(host_results(18), dx), "Device geometry dq1 must equal Grid dx");
     check(close(host_results(19), dy), "Device geometry dq2 must equal Grid dy");
+
+    for (const auto location :
+        {HorizontalLocation::T, HorizontalLocation::U, HorizontalLocation::V, HorizontalLocation::Z}) {
+        check_physical_spacing(geometry, location, h, h, dx, dy);
+    }
 }
 
 HorizontalGridSpec
@@ -298,6 +327,26 @@ test_regular_lat_lon_factory(const Grid& grid) {
     check(close(host_results(4), radius_squared * std::cos(expected_t_latitude)),
         "Factory must forward the Earth radius into the RLL Jacobian");
     check(close(host_results(5), radius_squared), "Factory must forward the Earth radius into g22");
+
+    // Verify latitude dependence and staggering against spherical arc lengths,
+    // including an interior row away from the reference-cell latitude.
+    for (const auto location :
+        {HorizontalLocation::T, HorizontalLocation::U, HorizontalLocation::V, HorizontalLocation::Z}) {
+        const bool centered_latitude =
+            location == HorizontalLocation::T || location == HorizontalLocation::U;
+        const VVM::Real offset = centered_latitude ? VVM::real(0.5) : VVM::real(1.0);
+        for (int row = 0; row < 2; ++row) {
+            const int j = h + row * (grid.get_local_physical_points_y() / 2);
+            const VVM::Real latitude = spec.regular_lat_lon.latitude_south_edge +
+                                      (start_j + VVM::Real(j - h) + offset) * spec.dq2;
+            check_physical_spacing(*geometry,
+                location,
+                j,
+                h,
+                spec.regular_lat_lon.radius * std::cos(latitude) * spec.dq1,
+                spec.regular_lat_lon.radius * spec.dq2);
+        }
+    }
 }
 
 void
@@ -345,6 +394,17 @@ test_affine_mixed_components(const Grid& grid) {
                gv = geometry->device_view(HorizontalLocation::V);
     const int ny = grid.get_local_total_points_y(), nx = grid.get_local_total_points_x(),
               h = grid.get_halo_cells();
+    // B maps the coordinate-cell edges to (4, -0.5) and (1.5, 4.5).
+    // Their norms differ from both computational spacing and normal spacing.
+    for (const auto location :
+        {HorizontalLocation::T, HorizontalLocation::U, HorizontalLocation::V, HorizontalLocation::Z}) {
+        check_physical_spacing(*geometry,
+            location,
+            h,
+            h,
+            std::hypot(real(4.0), real(-0.5)),
+            std::hypot(real(1.5), real(4.5)));
+    }
     Kokkos::View<Real***> first("affine physical first", 3, ny, nx),
         second("affine physical second", 3, ny, nx);
     Kokkos::View<Real***> q1("affine canonical first", 3, ny, nx),
