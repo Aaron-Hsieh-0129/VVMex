@@ -12,6 +12,8 @@ from pathlib import Path
 import h5py
 import numpy as np
 
+from mpi_test_launcher import mpi_bind_args
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -49,7 +51,7 @@ def run(name, config, rejection=None):
     config["output"]["output_dir"] = str(directory / "output")
     path = directory / "config.json"
     path.write_text(json.dumps(config, indent=2) + "\n")
-    command = [args.launcher, "--bind-to", "none", "-n", "1"] + ([args.wrapper] if args.wrapper else []) + [str(args.executable.resolve()), str(path)]
+    command = [args.launcher, *mpi_bind_args(), "-n", "1"] + ([args.wrapper] if args.wrapper else []) + [str(args.executable.resolve()), str(path)]
     result = subprocess.run(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=120)
     (directory / "run.log").write_text(result.stdout)
     if rejection is not None:

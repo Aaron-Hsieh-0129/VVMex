@@ -11,6 +11,8 @@ import tempfile
 import h5py
 import numpy as np
 
+from mpi_test_launcher import mpi_bind_args
+
 ROOT = Path(__file__).resolve().parents[2]
 FIELDS = ("u", "v", "w", "xi", "eta", "zeta")
 
@@ -76,7 +78,7 @@ def main():
         config["output"]["output_dir"] = str(directory/"output")
         path = directory/"config.json"
         path.write_text(json.dumps(config, indent=2)+"\n")
-        command = [args.launcher, "--bind-to", "none", "-n", str(args.ranks)]
+        command = [args.launcher, *mpi_bind_args(), "-n", str(args.ranks)]
         command += ([args.wrapper] if args.wrapper else []) + [str(args.executable.resolve()), str(path)]
         result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
         (directory/"run.log").write_text(result.stdout)

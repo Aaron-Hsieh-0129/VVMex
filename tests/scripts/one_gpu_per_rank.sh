@@ -10,7 +10,7 @@
 #
 # VVM_TEST_GPUS may hold a comma-separated device list (default: 0,1,2,...).
 set -u
-LOCAL_RANK="${OMPI_COMM_WORLD_LOCAL_RANK:-${SLURM_LOCALID:-${PMI_RANK:-0}}}"
+LOCAL_RANK="${OMPI_COMM_WORLD_LOCAL_RANK:-${SLURM_LOCALID:-${PMI_LOCAL_RANK:-${PALS_LOCAL_RANKID:-${PMI_RANK:-0}}}}}"
 
 if [ -n "${VVM_TEST_GPUS:-}" ]; then
     IFS=',' read -ra _gpus <<< "$VVM_TEST_GPUS"

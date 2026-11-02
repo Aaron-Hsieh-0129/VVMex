@@ -37,6 +37,8 @@ from pathlib import Path
 import h5py
 import numpy as np
 
+from mpi_test_launcher import mpi_bind_args
+
 ROOT = Path(__file__).resolve().parents[2]
 
 parser = argparse.ArgumentParser(description=__doc__,
@@ -155,7 +157,7 @@ def prepare(case_dir, config, inputs_from=None):
 
 
 def run_model(case_dir, config_path, ranks):
-    command = [args.launcher, "--bind-to", "none", "-n", str(ranks)]
+    command = [args.launcher, *mpi_bind_args(), "-n", str(ranks)]
     if args.wrapper:
         command.append(args.wrapper)
     command += [str(args.executable.resolve()), str(config_path)]

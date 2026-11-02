@@ -11,6 +11,8 @@ import tempfile
 import adios2
 import numpy as np
 
+from mpi_test_launcher import mpi_bind_args
+
 ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("executable", type=Path)
@@ -49,7 +51,7 @@ def run(name, config):
     config["output"]["output_dir"] = str(directory / "output")
     path = directory / "config.json"
     path.write_text(json.dumps(config, indent=2) + "\n")
-    command = [args.launcher, "--bind-to", "none", "-n", str(args.ranks)]
+    command = [args.launcher, *mpi_bind_args(), "-n", str(args.ranks)]
     command += ([args.wrapper] if args.wrapper else []) + [str(args.executable.resolve()), str(path)]
     result = subprocess.run(command, cwd=ROOT, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, timeout=180)
