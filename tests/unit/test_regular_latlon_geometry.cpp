@@ -301,7 +301,7 @@ test_metric_and_vector_transforms() {
             results(11) = t.g_contra_22(j, i);
 
             results(12) = t.sqrt_g_g_contra.a11(j, i) * t.sqrt_g_g_contra.a22(j, i) -
-                          t.sqrt_g_g_contra.a12(j, i) * t.sqrt_g_g_contra.a12(j, i);
+                          t.sqrt_g_g_contra.a12(j, i) * t.sqrt_g_g_contra.a21(j, i);
 
             VVM::Real contravariant_1;
             VVM::Real contravariant_2;

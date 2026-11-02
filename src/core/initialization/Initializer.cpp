@@ -1462,7 +1462,8 @@ Initializer::initialize_perturbation() const {
                               Kokkos::pow(((global_j + 1) - global_center_j) * dy() / real(1000.),
                                   2) +
                               Kokkos::pow((z_mid(k) - real(5000.)) / real(1000.), 2))
-                        : (metric.a11(j, i) * s1 * s1 + real(2.0) * metric.a12(j, i) * s1 * s2 +
+                        : (metric.a11(j, i) * s1 * s1 +
+                              (metric.a12(j, i) + metric.a21(j, i)) * s1 * s2 +
                               metric.a22(j, i) * s2 * s2 +
                               Kokkos::pow((z_mid(k) - real(5000.)) / real(1000.), 2)));
                 if (radius_norm <= real(1.)) {
@@ -1512,7 +1513,8 @@ Initializer::initialize_perturbation() const {
                               Kokkos::pow(((global_j + 1) - global_center_j) * dy() / real(2000.),
                                   2) +
                               Kokkos::pow((z_mid(k) - real(3000.)) / real(2000.), 2))
-                        : (metric.a11(j, i) * s1 * s1 + real(2.0) * metric.a12(j, i) * s1 * s2 +
+                        : (metric.a11(j, i) * s1 * s1 +
+                              (metric.a12(j, i) + metric.a21(j, i)) * s1 * s2 +
                               metric.a22(j, i) * s2 * s2 +
                               Kokkos::pow((z_mid(k) - real(3000.)) / real(2000.), 2)));
                 if (radius_norm <= real(1.)) {

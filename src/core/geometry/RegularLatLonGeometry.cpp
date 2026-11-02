@@ -340,10 +340,12 @@ RegularLatLonGeometry::device_view_impl(const HorizontalLocation location) const
 
     result.g_cov.a11 = GeometryField2D::varying_j(metrics.g_cov_11);
     result.g_cov.a12 = zero;
+    result.g_cov.a21 = result.g_cov.a12;
     result.g_cov.a22 = radius_squared;
 
     result.sqrt_g_g_contra.a11 = GeometryField2D::varying_j(metrics.sqrt_g_g_contra_11);
     result.sqrt_g_g_contra.a12 = zero;
+    result.sqrt_g_g_contra.a21 = result.sqrt_g_g_contra.a12;
     result.sqrt_g_g_contra.a22 = GeometryField2D::varying_j(metrics.sqrt_g_g_contra_22);
 
     result.physical_to_contravariant.a11 =

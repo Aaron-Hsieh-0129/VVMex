@@ -122,7 +122,8 @@ WindSolver::initialize_generalized_solver(const int nz) {
     const auto zero = [](const auto& field) {
         return field.layout == GeometryFieldLayout::Constant && field.constant == real(0.0);
     };
-    if (!zero(gu.sqrt_g_g_contra.a12) || !zero(gv.sqrt_g_g_contra.a12)) {
+    if (!zero(gu.sqrt_g_g_contra.a12) || !zero(gu.sqrt_g_g_contra.a21) ||
+        !zero(gv.sqrt_g_g_contra.a12) || !zero(gv.sqrt_g_g_contra.a21)) {
         const std::array<int, 2> plane_shape{grid_.get_local_total_points_y(),
             grid_.get_local_total_points_x()};
         mapped_top_correction_q1_ =
@@ -383,7 +384,7 @@ WindSolver::commit_generalized_recovered_wind(const GeneralizedWindDiagnosticFie
         const auto gv = grid_.geometry().device_view(HorizontalLocation::V);
         const auto c11 = gu.sqrt_g_g_contra.a11, c12v = gv.sqrt_g_g_contra.a12,
                    inv_ju = gu.inv_sqrt_g;
-        const auto c22 = gv.sqrt_g_g_contra.a22, c12u = gu.sqrt_g_g_contra.a12,
+        const auto c22 = gv.sqrt_g_g_contra.a22, c21u = gu.sqrt_g_g_contra.a21,
                    inv_jv = gv.inv_sqrt_g;
         const auto reconstruction = mapped_reconstruction_;
         const auto psi = fields.psi.get_device_data(), chi = fields.chi.get_device_data();
@@ -411,7 +412,7 @@ WindSolver::commit_generalized_recovered_wind(const GeneralizedWindDiagnosticFie
             KOKKOS_LAMBDA(int j, int i) {
                 const Real raised = inv_jv(j, i) * c22(j, i) * original2(top, j, i) +
                                     Operators::weighted_cross<false>(original1,
-                                        Core::Geometry::InverseMetricCoefficient{c12u, inv_ju},
+                                        Core::Geometry::InverseMetricCoefficient{c21u, inv_ju},
                                         top,
                                         j,
                                         i);

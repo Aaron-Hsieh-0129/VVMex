@@ -74,6 +74,7 @@ struct VerticalWindEllipticRow {
 //
 //     J^2 g^11 =  g_22
 //     J^2 g^12 = -g_12
+//     J^2 g^21 = -g_21
 //     J^2 g^22 =  g_11
 //
 // CVVM RELAX_3D uses both J*g^ij and J^2*g^ij. The latter is recovered
@@ -87,11 +88,11 @@ struct VerticalWindDiagnosticDeviceView {
     Core::Geometry::GeometryField2D jacobian_v;
     Core::Geometry::GeometryField2D jacobian_z;
 
-    Core::Geometry::SymmetricTensorDeviceView g_cov_u;
-    Core::Geometry::SymmetricTensorDeviceView g_cov_v;
+    Core::Geometry::Matrix2DeviceView g_cov_u;
+    Core::Geometry::Matrix2DeviceView g_cov_v;
 
-    Core::Geometry::SymmetricTensorDeviceView weighted_contra_u;
-    Core::Geometry::SymmetricTensorDeviceView weighted_contra_v;
+    Core::Geometry::Matrix2DeviceView weighted_contra_u;
+    Core::Geometry::Matrix2DeviceView weighted_contra_v;
 
     // Legacy physical-vorticity compatibility factors.
     //
@@ -149,6 +150,7 @@ struct VerticalWindDiagnosticDeviceView {
         //
         //     GG11 =  g22
         //     GG12 = -g12
+        //     GG21 = -g21
         //     GG22 =  g11
 
         const Real omega2_east = -eta_con(k, j, i);
@@ -174,11 +176,11 @@ struct VerticalWindDiagnosticDeviceView {
 
         // CVVM mixed q2 derivative:
         //
-        //   +d_q2( GG12 * omega2 )
-        const Real cross_q2 = ((-g_cov_u.a12(j + 1, i)) * (-eta_con(k, j + 1, i)) +
-                                  (-g_cov_u.a12(j + 1, i - 1)) * (-eta_con(k, j + 1, i - 1)) -
-                                  (-g_cov_u.a12(j - 1, i)) * (-eta_con(k, j - 1, i)) -
-                                  (-g_cov_u.a12(j - 1, i - 1)) * (-eta_con(k, j - 1, i - 1))) /
+        //   +d_q2( GG21 * omega2 )
+        const Real cross_q2 = ((-g_cov_u.a21(j + 1, i)) * (-eta_con(k, j + 1, i)) +
+                                  (-g_cov_u.a21(j + 1, i - 1)) * (-eta_con(k, j + 1, i - 1)) -
+                                  (-g_cov_u.a21(j - 1, i)) * (-eta_con(k, j - 1, i)) -
+                                  (-g_cov_u.a21(j - 1, i - 1)) * (-eta_con(k, j - 1, i - 1))) /
                               (real(4.0) * dq2);
 
         return direct_q1 + direct_q2 + cross_q1 + cross_q2;
@@ -307,16 +309,16 @@ struct VerticalWindDiagnosticDeviceView {
                 weighted_contra_v.a12(j - 1, i - 1) *
                     (previous(k, j, i - 1) - previous(k, j - 1, i - 1)) +
 
-                weighted_contra_u.a12(j + 1, i) *
+                weighted_contra_u.a21(j + 1, i) *
                     (previous(k, j + 1, i + 1) - previous(k, j + 1, i)) +
 
-                weighted_contra_u.a12(j + 1, i - 1) *
+                weighted_contra_u.a21(j + 1, i - 1) *
                     (previous(k, j + 1, i) - previous(k, j + 1, i - 1)) -
 
-                weighted_contra_u.a12(j - 1, i) *
+                weighted_contra_u.a21(j - 1, i) *
                     (previous(k, j - 1, i + 1) - previous(k, j - 1, i)) -
 
-                weighted_contra_u.a12(j - 1, i - 1) *
+                weighted_contra_u.a21(j - 1, i - 1) *
                     (previous(k, j - 1, i) - previous(k, j - 1, i - 1))) /
             (real(4.0) * dq1 * dq2);
 

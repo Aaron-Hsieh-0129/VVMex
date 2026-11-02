@@ -132,8 +132,8 @@ protected:
         HorizontalGeometryDeviceView v;
         v.sqrt_g = f(0);
         v.inv_sqrt_g = f(1);
-        v.g_cov = {f(2), f(3), f(4)};
-        v.sqrt_g_g_contra = {f(5), f(6), f(7)};
+        v.g_cov = {f(2), f(3), f(3), f(4)};
+        v.sqrt_g_g_contra = {f(5), f(6), f(6), f(7)};
         v.dq1 = dq1();
         v.dq2 = dq2();
         v.rdq1 = real(1) / dq1();

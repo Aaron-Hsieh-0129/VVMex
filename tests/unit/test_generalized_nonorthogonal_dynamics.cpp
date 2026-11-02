@@ -69,8 +69,11 @@ protected:
         const Real s = shear_;
         v.sqrt_g = c(real(6));
         v.inv_sqrt_g = c(real(1) / real(6));
-        v.g_cov = {c(real(4)), c(real(2) * s), c(real(9) + s * s)};
-        v.sqrt_g_g_contra = {c((real(9) + s * s) / real(6)), c(-s / real(3)), c(real(2) / real(3))};
+        v.g_cov = {c(real(4)), c(real(2) * s), c(real(2) * s), c(real(9) + s * s)};
+        v.sqrt_g_g_contra = {c((real(9) + s * s) / real(6)),
+            c(-s / real(3)),
+            c(-s / real(3)),
+            c(real(2) / real(3))};
         v.contravariant_to_physical = {c(real(2)), c(s), c(real(0)), c(real(3))};
         v.physical_to_contravariant = {c(real(.5)),
             c(-s / real(6)),

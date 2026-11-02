@@ -19,7 +19,7 @@ namespace {
 // three complete HorizontalGeometryDeviceViews brings geographic coordinates,
 // inverse metrics and unused transforms into every GPU launch.
 struct TurbulenceGeometryDeviceView {
-    Core::Geometry::SymmetricTensorDeviceView g_cov;
+    Core::Geometry::Matrix2DeviceView g_cov;
     Core::Geometry::Matrix2DeviceView physical_to_contravariant;
     Core::Geometry::GeometryField2D sqrt_g;
     VVM::Real dq1, dq2, rdq1, rdq2;
@@ -79,6 +79,7 @@ horizontal_strain_at_t(const U1View& u1,
 
     const VVM::Real g11 = geom.g_cov.a11(j, i);
     const VVM::Real g12 = geom.g_cov.a12(j, i);
+    const VVM::Real g21 = geom.g_cov.a21(j, i);
     const VVM::Real g22 = geom.g_cov.a22(j, i);
 
     CovariantHorizontalStrain result;
@@ -91,7 +92,7 @@ horizontal_strain_at_t(const U1View& u1,
     result.r11 =
         u1_t * dg11_dq1 + u2_t * dg11_dq2 + VVM::real(2.0) * (g11 * du1_dq1 + g12 * du2_dq1);
     result.r22 =
-        u1_t * dg22_dq1 + u2_t * dg22_dq2 + VVM::real(2.0) * (g12 * du1_dq2 + g22 * du2_dq2);
+        u1_t * dg22_dq1 + u2_t * dg22_dq2 + VVM::real(2.0) * (g21 * du1_dq2 + g22 * du2_dq2);
     result.r12 = u1_t * dg12_dq1 + u2_t * dg12_dq2 + g12 * du1_dq1 + g22 * du2_dq1 + g11 * du1_dq2 +
                  g12 * du2_dq2;
 
@@ -133,6 +134,7 @@ horizontal_strain_at_z(const U1View& u1,
 
     const VVM::Real g11 = geom.g_cov.a11(j, i);
     const VVM::Real g12 = geom.g_cov.a12(j, i);
+    const VVM::Real g21 = geom.g_cov.a21(j, i);
     const VVM::Real g22 = geom.g_cov.a22(j, i);
 
     CovariantHorizontalStrain result;
@@ -140,7 +142,7 @@ horizontal_strain_at_z(const U1View& u1,
     result.r11 =
         u1_z * dg11_dq1 + u2_z * dg11_dq2 + VVM::real(2.0) * (g11 * du1_dq1 + g12 * du2_dq1);
     result.r22 =
-        u1_z * dg22_dq1 + u2_z * dg22_dq2 + VVM::real(2.0) * (g12 * du1_dq2 + g22 * du2_dq2);
+        u1_z * dg22_dq1 + u2_z * dg22_dq2 + VVM::real(2.0) * (g21 * du1_dq2 + g22 * du2_dq2);
     result.r12 = u1_z * dg12_dq1 + u2_z * dg12_dq2 + g12 * du1_dq1 + g22 * du2_dq1 + g11 * du1_dq2 +
                  g12 * du2_dq2;
 
@@ -866,7 +868,7 @@ TurbulenceProcess::compute_generalized_deformation(Core::State& state) {
                 dw_dq1_u + geom_u.g_cov.a11(j, i) * du1_dz_u + geom_u.g_cov.a12(j, i) * du2_dz_u;
 
             const VVM::Real r23_u =
-                dw_dq2_u + geom_u.g_cov.a12(j, i) * du1_dz_u + geom_u.g_cov.a22(j, i) * du2_dz_u;
+                dw_dq2_u + geom_u.g_cov.a21(j, i) * du1_dz_u + geom_u.g_cov.a22(j, i) * du2_dz_u;
 
             R_eta(k, j, i) = geom_u.physical_to_contravariant.a11(j, i) * r13_u +
                              geom_u.physical_to_contravariant.a21(j, i) * r23_u;
@@ -895,7 +897,7 @@ TurbulenceProcess::compute_generalized_deformation(Core::State& state) {
                 dw_dq1_v + geom_v.g_cov.a11(j, i) * du1_dz_v + geom_v.g_cov.a12(j, i) * du2_dz_v;
 
             const VVM::Real r23_v =
-                dw_dq2_v + geom_v.g_cov.a12(j, i) * du1_dz_v + geom_v.g_cov.a22(j, i) * du2_dz_v;
+                dw_dq2_v + geom_v.g_cov.a21(j, i) * du1_dz_v + geom_v.g_cov.a22(j, i) * du2_dz_v;
 
             R_xi(k, j, i) = geom_v.physical_to_contravariant.a12(j, i) * r13_v +
                             geom_v.physical_to_contravariant.a22(j, i) * r23_v;

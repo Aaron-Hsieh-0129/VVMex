@@ -233,7 +233,7 @@ struct HorizontalScalarGradientDeviceView {
             (VVM::real(4.0) * v.dq1);
         const VVM::Real dscalar_dq2_at_v = (scalar.north - scalar.center) / v.dq2;
 
-        return v.g_contra_12(j, i) * dscalar_dq1_at_v + v.g_contra_22(j, i) * dscalar_dq2_at_v;
+        return v.g_contra_21(j, i) * dscalar_dq1_at_v + v.g_contra_22(j, i) * dscalar_dq2_at_v;
     }
 
     KOKKOS_INLINE_FUNCTION
@@ -256,7 +256,7 @@ struct HorizontalScalarGradientDeviceView {
 
         result.q1_at_u_j_im1 = u.g_contra_11(j, i - 1) * dscalar_dq1_at_u_j_im1 +
                                u.g_contra_12(j, i - 1) * dscalar_dq2_at_u_j_im1;
-        result.q2_at_v_jm1_i = v.g_contra_12(j - 1, i) * dscalar_dq1_at_v_jm1_i +
+        result.q2_at_v_jm1_i = v.g_contra_21(j - 1, i) * dscalar_dq1_at_v_jm1_i +
                                v.g_contra_22(j - 1, i) * dscalar_dq2_at_v_jm1_i;
 
         return result;
@@ -291,10 +291,10 @@ struct HorizontalScalarGradientDeviceView {
                                v.g_contra_12(j, i + 1) * dscalar_dq2_at_v_j_ip1;
         result.q1_at_v_j_i =
             v.g_contra_11(j, i) * dscalar_dq1_at_v_j_i + v.g_contra_12(j, i) * dscalar_dq2_at_v_j_i;
-        result.q2_at_u_jp1_i = u.g_contra_12(j + 1, i) * dscalar_dq1_at_u_jp1_i +
+        result.q2_at_u_jp1_i = u.g_contra_21(j + 1, i) * dscalar_dq1_at_u_jp1_i +
                                u.g_contra_22(j + 1, i) * dscalar_dq2_at_u_jp1_i;
         result.q2_at_u_j_i =
-            u.g_contra_12(j, i) * dscalar_dq1_at_u_j_i + u.g_contra_22(j, i) * dscalar_dq2_at_u_j_i;
+            u.g_contra_21(j, i) * dscalar_dq1_at_u_j_i + u.g_contra_22(j, i) * dscalar_dq2_at_u_j_i;
 
         return result;
     }
@@ -329,8 +329,8 @@ struct HorizontalScalarGradientAtUVDeviceView {
 
         result.q1_at_t_j_ip1 = t.g_contra_11(j, i + 1) * d1_t_e + t.g_contra_12(j, i + 1) * d2_t_e;
         result.q1_at_t_j_i = t.g_contra_11(j, i) * d1_t_w + t.g_contra_12(j, i) * d2_t_w;
-        result.q2_at_z_j_i = z.g_contra_12(j, i) * d1_z_n + z.g_contra_22(j, i) * d2_z_n;
-        result.q2_at_z_jm1_i = z.g_contra_12(j - 1, i) * d1_z_s + z.g_contra_22(j - 1, i) * d2_z_s;
+        result.q2_at_z_j_i = z.g_contra_21(j, i) * d1_z_n + z.g_contra_22(j, i) * d2_z_n;
+        result.q2_at_z_jm1_i = z.g_contra_21(j - 1, i) * d1_z_s + z.g_contra_22(j - 1, i) * d2_z_s;
 
         return result;
     }
@@ -360,8 +360,8 @@ struct HorizontalScalarGradientAtUVDeviceView {
 
         result.q1_at_z_j_i = z.g_contra_11(j, i) * d1_z_e + z.g_contra_12(j, i) * d2_z_e;
         result.q1_at_z_j_im1 = z.g_contra_11(j, i - 1) * d1_z_w + z.g_contra_12(j, i - 1) * d2_z_w;
-        result.q2_at_t_jp1_i = t.g_contra_12(j + 1, i) * d1_t_n + t.g_contra_22(j + 1, i) * d2_t_n;
-        result.q2_at_t_j_i = t.g_contra_12(j, i) * d1_t_s + t.g_contra_22(j, i) * d2_t_s;
+        result.q2_at_t_jp1_i = t.g_contra_21(j + 1, i) * d1_t_n + t.g_contra_22(j + 1, i) * d2_t_n;
+        result.q2_at_t_j_i = t.g_contra_21(j, i) * d1_t_s + t.g_contra_22(j, i) * d2_t_s;
 
         return result;
     }

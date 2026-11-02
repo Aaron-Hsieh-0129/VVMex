@@ -25,7 +25,9 @@ struct GeneralizedHorizontalWindReconstructionDeviceView {
     using Metric = Core::Geometry::GeometryField2D;
 
     Metric jacobian_u, jacobian_v;
-    Metric weighted_11_u, weighted_12_u, weighted_22_u;
+    // Keep only coefficients used at each native face, preserving compact
+    // device captures while distinguishing the two cross entries.
+    Metric weighted_11_u, weighted_21_u, weighted_22_u;
     Metric weighted_11_v, weighted_12_v, weighted_22_v;
     Real dq1 = real(0.0), dq2 = real(0.0);
 
@@ -60,11 +62,11 @@ struct GeneralizedHorizontalWindReconstructionDeviceView {
             weighted_22_v(j, i) / jacobian_v(j, i) * (chi(j + 1, i) - chi(j, i)) / dq2;
 
         const Real cross =
-            (weighted_12_u(j, i) / jacobian_u(j, i) * (chi(j, i + 1) - chi(j, i)) +
-                weighted_12_u(j, i - 1) / jacobian_u(j, i - 1) * (chi(j, i) - chi(j, i - 1)) +
-                weighted_12_u(j + 1, i) / jacobian_u(j + 1, i) *
+            (weighted_21_u(j, i) / jacobian_u(j, i) * (chi(j, i + 1) - chi(j, i)) +
+                weighted_21_u(j, i - 1) / jacobian_u(j, i - 1) * (chi(j, i) - chi(j, i - 1)) +
+                weighted_21_u(j + 1, i) / jacobian_u(j + 1, i) *
                     (chi(j + 1, i + 1) - chi(j + 1, i)) +
-                weighted_12_u(j + 1, i - 1) / jacobian_u(j + 1, i - 1) *
+                weighted_21_u(j + 1, i - 1) / jacobian_u(j + 1, i - 1) *
                     (chi(j + 1, i) - chi(j + 1, i - 1))) /
             (real(4.0) * dq1);
 
@@ -95,10 +97,10 @@ struct GeneralizedHorizontalWindReconstructionDeviceView {
         const PsiView& psi, const ChiView& chi, int j, int i) const noexcept {
         const Real direct = weighted_11_v(j, i) * (psi(j, i) - psi(j, i - 1)) / dq1;
 
-        const Real cross = (weighted_12_u(j + 1, i) * (psi(j + 1, i) - psi(j, i)) +
-                               weighted_12_u(j, i) * (psi(j, i) - psi(j - 1, i)) +
-                               weighted_12_u(j + 1, i - 1) * (psi(j + 1, i - 1) - psi(j, i - 1)) +
-                               weighted_12_u(j, i - 1) * (psi(j, i - 1) - psi(j - 1, i - 1))) /
+        const Real cross = (weighted_21_u(j + 1, i) * (psi(j + 1, i) - psi(j, i)) +
+                               weighted_21_u(j, i) * (psi(j, i) - psi(j - 1, i)) +
+                               weighted_21_u(j + 1, i - 1) * (psi(j + 1, i - 1) - psi(j, i - 1)) +
+                               weighted_21_u(j, i - 1) * (psi(j, i - 1) - psi(j - 1, i - 1))) /
                            (real(4.0) * dq2);
 
         const Real divergent = (chi(j + 1, i) - chi(j, i)) / dq2;
@@ -162,7 +164,7 @@ make_generalized_horizontal_wind_reconstruction_device_view(
     return {u.sqrt_g,
         v.sqrt_g,
         u.sqrt_g_g_contra.a11,
-        u.sqrt_g_g_contra.a12,
+        u.sqrt_g_g_contra.a21,
         u.sqrt_g_g_contra.a22,
         v.sqrt_g_g_contra.a11,
         v.sqrt_g_g_contra.a12,

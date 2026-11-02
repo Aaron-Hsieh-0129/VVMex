@@ -75,8 +75,9 @@ protected:
         result.latitude = c(latitude_);
         result.sqrt_g = c(determinant_);
         result.inv_sqrt_g = c(real(1.0) / determinant_);
-        result.g_cov = {c(g11), c(g12), c(g22)};
+        result.g_cov = {c(g11), c(g12), c(g12), c(g22)};
         result.sqrt_g_g_contra = {c(g22 / determinant_),
+            c(-g12 / determinant_),
             c(-g12 / determinant_),
             c(g11 / determinant_)};
         result.contravariant_to_physical = {c(b_[0]), c(b_[1]), c(b_[2]), c(b_[3])};

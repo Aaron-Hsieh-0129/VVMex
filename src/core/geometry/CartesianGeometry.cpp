@@ -235,10 +235,12 @@ CartesianGeometry::device_view_impl(const HorizontalLocation location) const {
 
     result.g_cov.a11 = one;
     result.g_cov.a12 = zero;
+    result.g_cov.a21 = result.g_cov.a12;
     result.g_cov.a22 = one;
 
     result.sqrt_g_g_contra.a11 = one;
     result.sqrt_g_g_contra.a12 = zero;
+    result.sqrt_g_g_contra.a21 = result.sqrt_g_g_contra.a12;
     result.sqrt_g_g_contra.a22 = one;
 
     result.physical_to_contravariant.a11 = one;

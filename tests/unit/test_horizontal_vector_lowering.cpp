@@ -95,14 +95,21 @@ test_cartesian_identity() {
 }
 
 void
-test_nonorthogonal_metric() {
+test_cross_matrix_lowering(const bool distinguish_rows) {
     HorizontalVectorLoweringDeviceView lowering;
 
     lowering.u.g_cov.a11 = GeometryField2D::constant_value(VVM::real(2.0));
     lowering.u.g_cov.a12 = GeometryField2D::constant_value(VVM::real(0.5));
+    lowering.u.g_cov.a21 = lowering.u.g_cov.a12;
 
     lowering.v.g_cov.a12 = GeometryField2D::constant_value(VVM::real(0.5));
+    lowering.v.g_cov.a21 = lowering.v.g_cov.a12;
     lowering.v.g_cov.a22 = GeometryField2D::constant_value(VVM::real(3.0));
+
+    // Nonsymmetric coefficients distinguish the two matrix rows for this
+    // indexing test; production geometry metrics remain symmetric.
+    const VVM::Real coefficient_21 = distinguish_rows ? VVM::real(-0.25) : VVM::real(0.5);
+    lowering.u.g_cov.a21 = GeometryField2D::constant_value(coefficient_21);
 
     ContravariantVectorStencilAtU vector_at_u;
     vector_at_u.q1_at_u_j_i = VVM::real(4.0);
@@ -132,12 +139,12 @@ test_nonorthogonal_metric() {
     const VVM::Real expected_q1 = VVM::real(2.0) * VVM::real(4.0) + VVM::real(0.5) * VVM::real(5.0);
 
     const VVM::Real expected_q2 =
-        VVM::real(3.0) * VVM::real(-2.0) + VVM::real(0.5) * VVM::real(4.0);
+        VVM::real(3.0) * VVM::real(-2.0) + coefficient_21 * VVM::real(4.0);
 
     check(close(result_host(0), expected_q1),
         "Covariant q1 must contain the interpolated g12 q2 contribution");
     check(close(result_host(1), expected_q2),
-        "Covariant q2 must contain the interpolated g12 q1 contribution");
+        "Covariant q2 must contain the interpolated g21 q1 contribution");
 }
 
 void
@@ -168,8 +175,10 @@ test_metric_weighting_before_interpolation() {
 
     lowering.u.g_cov.a11 = GeometryField2D::constant_value(VVM::real(2.0));
     lowering.u.g_cov.a12 = GeometryField2D::full_2d(g12_at_u);
+    lowering.u.g_cov.a21 = lowering.u.g_cov.a12;
 
     lowering.v.g_cov.a12 = GeometryField2D::full_2d(g12_at_v);
+    lowering.v.g_cov.a21 = lowering.v.g_cov.a12;
     lowering.v.g_cov.a22 = GeometryField2D::constant_value(VVM::real(3.0));
 
     Kokkos::View<VVM::Real*> result("weighted_lowering_result", 4);
@@ -295,8 +304,10 @@ smooth_lowering_error(const int n) {
 
     lowering.u.g_cov.a11 = GeometryField2D::constant_value(VVM::real(1.5));
     lowering.u.g_cov.a12 = GeometryField2D::full_2d(g12_at_u);
+    lowering.u.g_cov.a21 = lowering.u.g_cov.a12;
 
     lowering.v.g_cov.a12 = GeometryField2D::full_2d(g12_at_v);
+    lowering.v.g_cov.a21 = lowering.v.g_cov.a12;
     lowering.v.g_cov.a22 = GeometryField2D::constant_value(VVM::real(1.25));
 
     Kokkos::parallel_for("EvaluateSmoothVectorLowering",
@@ -375,7 +386,8 @@ main(int argc, char** argv) {
     {
         try {
             test_cartesian_identity();
-            test_nonorthogonal_metric();
+            test_cross_matrix_lowering(false);
+            test_cross_matrix_lowering(true);
             test_metric_weighting_before_interpolation();
             test_three_dimensional_stencil_loaders();
             test_second_order_cross_component_interpolation();

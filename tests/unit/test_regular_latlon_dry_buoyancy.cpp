@@ -243,8 +243,9 @@ protected:
         };
         v.sqrt_g = c(real(6.0));
         v.inv_sqrt_g = c(real(1.0) / real(6.0));
-        v.g_cov = {c(real(4.0)), c(real(1.5)), c(real(9.5625))};
+        v.g_cov = {c(real(4.0)), c(real(1.5)), c(real(1.5)), c(real(9.5625))};
         v.sqrt_g_g_contra = {c(real(9.5625) / real(6.0)),
+            c(real(-1.5) / real(6.0)),
             c(real(-1.5) / real(6.0)),
             c(real(4.0) / real(6.0))};
         v.contravariant_to_physical = {c(real(2.0)), c(real(0.75)), c(real(0.0)), c(real(3.0))};

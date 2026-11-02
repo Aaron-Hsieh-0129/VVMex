@@ -110,15 +110,15 @@ raise_staggered_wind(const Volume1& first,
     const int ny = static_cast<int>(first.extent(1));
     const int nx = static_cast<int>(first.extent(2));
     // Keep the compact coefficients on device to avoid large graph captures.
-    // g^12 is evaluated at the source face before interpolation, matching
-    // the generalized Helmholtz reconstruction.
+    // Cross coefficients are evaluated at the source face before interpolation,
+    // matching the generalized Helmholtz reconstruction.
     const auto inv_ju = gu.inv_sqrt_g, inv_jv = gv.inv_sqrt_g;
     const auto c11 = gu.sqrt_g_g_contra.a11, c12v = gv.sqrt_g_g_contra.a12;
-    const auto c22 = gv.sqrt_g_g_contra.a22, c12u = gu.sqrt_g_g_contra.a12;
+    const auto c22 = gv.sqrt_g_g_contra.a22, c21u = gu.sqrt_g_g_contra.a21;
     const auto zero = [](const auto& field) {
         return field.layout == GeometryFieldLayout::Constant && field.constant == real(0.0);
     };
-    if (zero(c12v) && zero(c12u)) {
+    if (zero(c12v) && zero(c21u)) {
         Kokkos::parallel_for("RaiseDiagonalStaggeredWind",
             Kokkos::Experimental::require(
                 Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
@@ -145,7 +145,7 @@ raise_staggered_wind(const Volume1& first,
         KOKKOS_LAMBDA(int k, int j, int i) {
             output_second(k, j, i) =
                 inv_jv(j, i) * c22(j, i) * second(k, j, i) +
-                weighted_cross<false>(first, InverseMetricCoefficient{c12u, inv_ju}, k, j, i);
+                weighted_cross<false>(first, InverseMetricCoefficient{c21u, inv_ju}, k, j, i);
         });
 }
 

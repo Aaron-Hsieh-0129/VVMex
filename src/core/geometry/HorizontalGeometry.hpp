@@ -42,52 +42,14 @@ struct HorizontalDomainLayout {
     }
 };
 
-// Concrete geometry classes own mutable Kokkos::View<VVM::Real**> arrays.
-// A symmetric horizontal tensor:
-//
-//     [ a11  a12 ]
-//     [ a12  a22 ]
-//
-// Used for:
-//   - the covariant metric g_ij
-//   - the Jacobian-weighted contravariant metric J*g^ij
-struct SymmetricTensorDeviceView {
-    GeometryField2D a11;
-    GeometryField2D a12;
-    GeometryField2D a22;
-
-    KOKKOS_INLINE_FUNCTION
-    void
-    apply(const int j,
-        const int i,
-        const VVM::Real x1,
-        const VVM::Real x2,
-        VVM::Real& y1,
-        VVM::Real& y2) const noexcept {
-        y1 = a11(j, i) * x1 + a12(j, i) * x2;
-        y2 = a12(j, i) * x1 + a22(j, i) * x2;
-    }
-
-    KOKKOS_INLINE_FUNCTION
-    VVM::Real
-    component_1(const int j, const int i, const VVM::Real x1, const VVM::Real x2) const noexcept {
-        return a11(j, i) * x1 + a12(j, i) * x2;
-    }
-
-    KOKKOS_INLINE_FUNCTION
-    VVM::Real
-    component_2(const int j, const int i, const VVM::Real x1, const VVM::Real x2) const noexcept {
-        return a12(j, i) * x1 + a22(j, i) * x2;
-    }
-};
-
-// A general 2x2 transformation matrix:
+// A general 2x2 matrix of geometry fields:
 //
 //     [ a11  a12 ]
 //     [ a21  a22 ]
 //
-// This is used for transformations between computational contravariant
-// components and physical tangent-plane components.
+// Used for metrics and physical/computational component transformations.
+// Metric providers explicitly set a21 = a12; the field handles can share
+// storage. The matrix itself does not assume symmetry.
 struct Matrix2DeviceView {
     GeometryField2D a11;
     GeometryField2D a12;
@@ -176,8 +138,8 @@ struct HorizontalGeometryDeviceView {
     GeometryField2D sqrt_g;
     GeometryField2D inv_sqrt_g;
 
-    SymmetricTensorDeviceView g_cov;
-    SymmetricTensorDeviceView sqrt_g_g_contra;
+    Matrix2DeviceView g_cov;
+    Matrix2DeviceView sqrt_g_g_contra;
 
     Matrix2DeviceView physical_to_contravariant;
     Matrix2DeviceView contravariant_to_physical;
@@ -227,6 +189,12 @@ struct HorizontalGeometryDeviceView {
     VVM::Real
     g_contra_12(const int j, const int i) const noexcept {
         return inv_sqrt_g(j, i) * sqrt_g_g_contra.a12(j, i);
+    }
+
+    KOKKOS_INLINE_FUNCTION
+    VVM::Real
+    g_contra_21(const int j, const int i) const noexcept {
+        return inv_sqrt_g(j, i) * sqrt_g_g_contra.a21(j, i);
     }
 
     KOKKOS_INLINE_FUNCTION

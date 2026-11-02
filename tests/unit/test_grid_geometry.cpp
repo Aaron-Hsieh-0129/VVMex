@@ -57,16 +57,35 @@ check_physical_spacing(const VVM::Core::Geometry::HorizontalGeometry& geometry,
     check(close(host_spacing[1], expected_q2), "Host q2 spacing must match the physical length");
 
     const auto device = geometry.device_view(location);
-    Kokkos::View<VVM::Real*> results("physical_spacing_results", 2);
+    Kokkos::View<VVM::Real*> results("physical_spacing_results", 8);
     Kokkos::parallel_for("EvaluatePhysicalSpacing", 1, KOKKOS_LAMBDA(const int) {
         results(0) = device.physical_spacing_q1(j, i);
         results(1) = device.physical_spacing_q2(j, i);
+        results(2) = device.g_cov.a12(j, i) - device.g_cov.a21(j, i);
+        results(3) = device.sqrt_g_g_contra.a12(j, i) - device.sqrt_g_g_contra.a21(j, i);
+        // Both rows of g * g^-1 must give the identity after the providers
+        // populate all four entries, including the shared cross fields.
+        results(4) = device.g_cov.a11(j, i) * device.g_contra_11(j, i) +
+                     device.g_cov.a12(j, i) * device.g_contra_21(j, i);
+        results(5) = device.g_cov.a11(j, i) * device.g_contra_12(j, i) +
+                     device.g_cov.a12(j, i) * device.g_contra_22(j, i);
+        results(6) = device.g_cov.a21(j, i) * device.g_contra_11(j, i) +
+                     device.g_cov.a22(j, i) * device.g_contra_21(j, i);
+        results(7) = device.g_cov.a21(j, i) * device.g_contra_12(j, i) +
+                     device.g_cov.a22(j, i) * device.g_contra_22(j, i);
     });
     const auto device_spacing = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), results);
     check(close(device_spacing(0), expected_q1),
         "Device q1 spacing must match the physical length");
     check(close(device_spacing(1), expected_q2),
         "Device q2 spacing must match the physical length");
+    check(close(device_spacing(2), VVM::real(0.0)), "Metric a21 must equal a12");
+    check(close(device_spacing(3), VVM::real(0.0)), "Weighted inverse metric a21 must equal a12");
+    check(close(device_spacing(4), VVM::real(1.0)) &&
+              close(device_spacing(5), VVM::real(0.0)) &&
+              close(device_spacing(6), VVM::real(0.0)) &&
+              close(device_spacing(7), VVM::real(1.0)),
+        "The full metric times its inverse must equal the identity");
 }
 
 void

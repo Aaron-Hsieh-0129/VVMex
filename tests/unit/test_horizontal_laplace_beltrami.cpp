@@ -73,6 +73,7 @@ set_constant_geometry(HorizontalGeometryDeviceView& geometry,
     geometry.inv_sqrt_g = GeometryField2D::constant_value(VVM::real(1.0) / sqrt_g);
     geometry.sqrt_g_g_contra.a11 = GeometryField2D::constant_value(sqrt_g * g11);
     geometry.sqrt_g_g_contra.a12 = GeometryField2D::constant_value(sqrt_g * g12);
+    geometry.sqrt_g_g_contra.a21 = geometry.sqrt_g_g_contra.a12;
     geometry.sqrt_g_g_contra.a22 = GeometryField2D::constant_value(sqrt_g * g22);
 }
 

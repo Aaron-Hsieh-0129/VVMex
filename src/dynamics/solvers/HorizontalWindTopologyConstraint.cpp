@@ -167,8 +167,8 @@ public:
             state_.get_field<3>("v_con").get_device_data(),
             covariant_q1_wind_.get_mutable_device_data(),
             covariant_q2_wind_.get_mutable_device_data(),
-            Core::Geometry::Matrix2DeviceView{u.a11, u.a12, u.a12, u.a22},
-            Core::Geometry::Matrix2DeviceView{v.a11, v.a12, v.a12, v.a22});
+            u,
+            v);
         measure_recovered_covariant_wind();
         capture_target();
     }
@@ -479,7 +479,8 @@ public:
                    b22 = basis_22_->get_mutable_device_data();
         // Analytic harmonic covectors for any orthogonal metric depending
         // only on q2. This also retains the inexpensive spherical channel path.
-        if (zero(gu.sqrt_g_g_contra.a12) && zero(gv.sqrt_g_g_contra.a12) &&
+        if (zero(gu.sqrt_g_g_contra.a12) && zero(gu.sqrt_g_g_contra.a21) &&
+            zero(gv.sqrt_g_g_contra.a12) && zero(gv.sqrt_g_g_contra.a21) &&
             row(gu.sqrt_g_g_contra.a11) && row(gv.sqrt_g_g_contra.a22)) {
             Kokkos::deep_copy(b11, real(1.0));
             const auto weighted22 = gv.sqrt_g_g_contra.a22;

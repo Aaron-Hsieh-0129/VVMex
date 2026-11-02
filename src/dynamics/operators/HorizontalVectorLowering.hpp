@@ -162,9 +162,9 @@ struct HorizontalVectorLoweringDeviceView {
 
         const VVM::Real cross_component =
             VVM::real(0.25) *
-            (u.g_cov.a12(j, i) * vector.q1_at_u_j_i + u.g_cov.a12(j + 1, i) * vector.q1_at_u_jp1_i +
-                u.g_cov.a12(j, i - 1) * vector.q1_at_u_j_im1 +
-                u.g_cov.a12(j + 1, i - 1) * vector.q1_at_u_jp1_im1);
+            (u.g_cov.a21(j, i) * vector.q1_at_u_j_i + u.g_cov.a21(j + 1, i) * vector.q1_at_u_jp1_i +
+                u.g_cov.a21(j, i - 1) * vector.q1_at_u_j_im1 +
+                u.g_cov.a21(j + 1, i - 1) * vector.q1_at_u_jp1_im1);
 
         return direct_component + cross_component;
     }

@@ -64,6 +64,7 @@ set_constant_inverse_metric(HorizontalGeometryDeviceView& geometry,
     geometry.inv_sqrt_g = GeometryField2D::constant_value(VVM::real(1.0));
     geometry.sqrt_g_g_contra.a11 = GeometryField2D::constant_value(g11);
     geometry.sqrt_g_g_contra.a12 = GeometryField2D::constant_value(g12);
+    geometry.sqrt_g_g_contra.a21 = geometry.sqrt_g_g_contra.a12;
     geometry.sqrt_g_g_contra.a22 = GeometryField2D::constant_value(g22);
 }
 
@@ -87,7 +88,7 @@ make_affine_stencil(
 }
 
 void
-test_cross_metric_affine_gradient() {
+test_cross_matrix_gradient(const bool distinguish_rows) {
     const VVM::Real dq1 = VVM::real(2.0);
     const VVM::Real dq2 = VVM::real(3.0);
     const VVM::Real slope_q1 = VVM::real(1.25);
@@ -104,6 +105,13 @@ test_cross_metric_affine_gradient() {
 
     set_constant_inverse_metric(gradient.v, VVM::real(2.0), VVM::real(0.5), VVM::real(1.5));
 
+    // Distinct off-diagonal entries are an indexing sentinel, not a physical
+    // metric. This catches consumers that still use row one's cross entry
+    // when evaluating row two after the matrix-storage refactor.
+    const VVM::Real coefficient_21 = distinguish_rows ? VVM::real(-0.25) : VVM::real(0.5);
+    gradient.u.sqrt_g_g_contra.a21 = GeometryField2D::constant_value(coefficient_21);
+    gradient.v.sqrt_g_g_contra.a21 = GeometryField2D::constant_value(coefficient_21);
+
     const ScalarStencilAtT scalar = make_affine_stencil(slope_q1, slope_q2, dq1, dq2);
 
     Kokkos::View<VVM::Real*> result("cross_metric_gradient", 2);
@@ -118,10 +126,10 @@ test_cross_metric_affine_gradient() {
     const auto result_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), result);
 
     const VVM::Real expected_q1 = VVM::real(2.0) * slope_q1 + VVM::real(0.5) * slope_q2;
-    const VVM::Real expected_q2 = VVM::real(0.5) * slope_q1 + VVM::real(1.5) * slope_q2;
+    const VVM::Real expected_q2 = coefficient_21 * slope_q1 + VVM::real(1.5) * slope_q2;
 
     check(close(result_host(0), expected_q1), "The U gradient component must include g11 and g12");
-    check(close(result_host(1), expected_q2), "The V gradient component must include g12 and g22");
+    check(close(result_host(1), expected_q2), "The V gradient component must include g21 and g22");
 }
 
 void
@@ -339,7 +347,8 @@ main(int argc, char** argv) {
 
     {
         try {
-            test_cross_metric_affine_gradient();
+            test_cross_matrix_gradient(false);
+            test_cross_matrix_gradient(true);
             test_constant_cartesian_scalar();
             test_cartesian_affine_scalar();
             test_three_dimensional_stencil_loader();

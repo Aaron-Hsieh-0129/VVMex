@@ -142,8 +142,10 @@ test_nonorthogonal_linear_vector() {
     vorticity.vector_lowering.u.g_cov.a11 = GeometryField2D::constant_value(g11);
 
     vorticity.vector_lowering.u.g_cov.a12 = GeometryField2D::constant_value(g12);
+    vorticity.vector_lowering.u.g_cov.a21 = vorticity.vector_lowering.u.g_cov.a12;
 
     vorticity.vector_lowering.v.g_cov.a12 = GeometryField2D::constant_value(g12);
+    vorticity.vector_lowering.v.g_cov.a21 = vorticity.vector_lowering.v.g_cov.a12;
 
     vorticity.vector_lowering.v.g_cov.a22 = GeometryField2D::constant_value(g22);
 
@@ -267,8 +269,10 @@ periodic_nonorthogonal_error(const int n) {
     vorticity.vector_lowering.u.g_cov.a11 = GeometryField2D::constant_value(g11);
 
     vorticity.vector_lowering.u.g_cov.a12 = GeometryField2D::constant_value(g12);
+    vorticity.vector_lowering.u.g_cov.a21 = vorticity.vector_lowering.u.g_cov.a12;
 
     vorticity.vector_lowering.v.g_cov.a12 = GeometryField2D::constant_value(g12);
+    vorticity.vector_lowering.v.g_cov.a21 = vorticity.vector_lowering.v.g_cov.a12;
 
     vorticity.vector_lowering.v.g_cov.a22 = GeometryField2D::constant_value(g22);
 

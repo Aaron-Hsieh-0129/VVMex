@@ -416,7 +416,7 @@ public:
         const int ny = grid_.get_local_total_points_y(), nx = grid_.get_local_total_points_x();
         const int nz = Dim == 3 ? grid_.get_local_total_points_z() : 1;
         const auto gv = grid_.geometry().device_view(Geometry::HorizontalLocation::V);
-        const auto c12 = gv.sqrt_g_g_contra.a12, c22 = gv.sqrt_g_g_contra.a22;
+        const auto c21 = gv.sqrt_g_g_contra.a21, c22 = gv.sqrt_g_g_contra.a22;
         const Real spacing = grid_.geometry().dq2() / (real(2.0) * grid_.geometry().dq1());
         for (int side = 0; side < 2; ++side) {
             if (side == 0 && grid_.get_local_physical_start_y() != 0) {
@@ -437,7 +437,7 @@ public:
                     const int interior = side == 0 ? h + d : ny - h - 1 - d;
                     const int im = i > 0 ? i - 1 : i, ip = i + 1 < nx ? i + 1 : i;
                     const Real scale = (side == 0 ? real(1.0) : real(-1.0)) * real(2 * d + 1) *
-                                       spacing * c12(wall, i) / c22(wall, i);
+                                       spacing * c21(wall, i) / c22(wall, i);
                     if constexpr (Dim == 2) {
                         values(exterior, i) =
                             values(interior, i) + scale * (values(interior, ip) - values(interior, im));
