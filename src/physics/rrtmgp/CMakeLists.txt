@@ -78,7 +78,13 @@ set(SCREAM_RRTMGP_SOURCES
 )
 
 add_library(scream_rrtmgp ${SCREAM_RRTMGP_SOURCES})
-target_link_libraries(scream_rrtmgp PUBLIC scream_share eamxx_rrtmgp_interface Kokkos::kokkos)
+target_link_libraries(scream_rrtmgp PUBLIC scream_share eamxx_rrtmgp_interface Kokkos::kokkos
+                      PRIVATE MPI::MPI_Fortran)
+# These Fortran helpers run on the host; avoid CUDA registration stubs that
+# nvcc cannot link from NVHPC's Fortran objects.
+target_compile_options(scream_rrtmgp PRIVATE
+  $<$<COMPILE_LANG_AND_ID:Fortran,NVHPC>:-acc=host>
+)
 set_target_properties(scream_rrtmgp PROPERTIES
   Fortran_MODULE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/modules
 )
