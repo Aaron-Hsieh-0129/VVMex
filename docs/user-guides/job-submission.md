@@ -73,6 +73,48 @@ cd $VVM_ROOT
 `--cpus` is omitted on purpose: left alone, the wrapper sizes it to fill the node.
 See [CPU allocation](#cpu-allocation).
 
+### PBS on Derecho
+
+Select PBS explicitly. The default account is `NMMM0004` and the default queue
+is `main`; override them with `-A` and `-q`/`--queue`. The default wall time is
+`12:00:00` (43200 seconds); override it with `-t`. Run from the same
+compiler/MPI environment used to build the selected preset; `qsub -V` forwards
+the prepared runtime environment to the job.
+
+```bash
+./submit.py --scheduler pbs --preset derecho \
+  -c ./rundata/input_configs/default_cases/advection_u.json \
+  --compute 4 --nodes 1 --gpus 4 --cpus 16 \
+  -t 01:00:00
+```
+
+PBS requests `select=<nodes>:ncpus=<tasks-per-node * cpus>:mpiprocs=<tasks-per-node>:ompthreads=<cpus>`
+and adds `ngpus` for GPU builds. Tasks include compute and SST I/O ranks;
+GPUs cover compute ranks only. PBS defaults to one CPU per task, so set
+`--cpus` explicitly to match the resources you need. No SLURM resource queries
+are made. Nodes are scattered, and the queue decides exclusivity by default
+(`place=scatter`). Use `--exclusive` or `--no-exclusive` to explicitly request
+exclusive or shared access.
+
+For a PALS launcher configured through `MPIEXEC_EXECUTABLE`, the wrapper uses
+PALS options and round-robin rank placement, including SST I/O ranks. PBS
+without a configured launcher defaults to PALS `mpiexec` from `PATH`.
+
+PBS logs default to `<output.output_dir>/pbs_%j.out` and `pbs_%j.err`.
+For paths containing `%j`, the wrapper submits the job on hold, replaces `%j`
+with the PBS job number (without the server suffix), sets both log paths using
+`qalter`, and releases the job. Job `12345.server` writes `pbs_12345.out` and
+`pbs_12345.err` directly through PBS, without extra `.o`/`.e` logs.
+Use `--out` and `--err` to choose other names or extensions, such as
+`--out 'output/pbs_%j.log'`. Literal filenames continue to work.
+`%j` works in both directories and filenames, and each stream can use a different
+path. Literal paths are passed directly to PBS. If log setup fails, the job stays
+on hold; inspect the reported job ID with `qstat` before releasing it. An explicit
+`--pbs-arg=-h` keeps the job held after log setup as well.
+Additional PBS options can be passed as separate tokens, for example
+`--pbs-arg=-l --pbs-arg=mem=200GB`. Use `--queue` instead of `--partition`;
+other SLURM-only options are rejected in PBS mode.
+
 ### SLURM with SST I/O
 
 ```bash
@@ -96,8 +138,8 @@ infers the same number.
 ## Full option reference
 
 Every `submit.py` flag, with the value used when it is omitted. `--config` is the
-only one that is mandatory in command-line mode; run the wizard instead and it
-fills the rest in for you.
+only one that is mandatory in command-line mode. Run the wizard instead to
+fill in the common options interactively.
 
 ### Run selection
 
@@ -105,7 +147,10 @@ fills the rest in for you.
 | --- | --- | --- |
 | `-c`, `--config PATH` | *(required)* | Case JSON handed to the executable. Its `output.engine` decides whether I/O ranks are required, and its `output.output_dir` is created before launch. |
 | `--preset NAME` | *(none)* | `CMakePresets.json` entry to take the environment from. It also selects the **backend** (`VVM_ENABLE_GPU`) and the **binary** (`binaryDir/vvm`), so the launcher can never hand a CPU build a GPU mapping. Without it, library paths are whatever your shell already has. |
-| `--local` | off | Run `tools/core_run.sh` immediately in this shell instead of submitting it with `sbatch`. All SLURM-only flags below are ignored. |
+| `--local` | off | Run `tools/core_run.sh` immediately in this shell instead of submitting through a scheduler. Batch-only flags are ignored. |
+| `--scheduler slurm\|pbs` | `slurm` | Batch scheduler. See [PBS on Derecho](#pbs-on-derecho) for PBS resources and logs. |
+| `-q`, `--queue NAME` | `main` | PBS queue; requires `--scheduler pbs`. |
+| `--pbs-arg ARG` | *(none)* | Append one raw `qsub` argument. Repeat for separate tokens. |
 | `--snapshot-cleo-inputs` | off | With `physics.microphysics.engine` `"cleo"`, also copy `init_gbx_path` and `init_supers_path` into `code_snapshot/`. They can be large; without the flag they are regenerated from the snapshot's JSON. |
 | `--snapshot-external-inputs` | off | Also copy reviewed input files outside the source checkout into the snapshot. |
 

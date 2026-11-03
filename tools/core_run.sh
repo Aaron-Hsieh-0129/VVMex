@@ -52,7 +52,10 @@ dedupe_ld_library_path
 
 TASKS_PER_NODE=$(( VVM_COMPUTE_PER_NODE + VVM_IO_PER_NODE ))
 
-if [ -n "$SLURM_JOB_ID" ]; then
+if [ -n "${PBS_JOBID:-}" ]; then
+    TOTAL_CORES=${VVM_CPUS_PER_NODE:-${NCPUS:-1}}
+    RUN_MODE="PBS Mode"
+elif [ -n "$SLURM_JOB_ID" ]; then
     if [ -n "$SLURM_JOB_CPUS_PER_NODE" ]; then
         TOTAL_CORES=$(echo $SLURM_JOB_CPUS_PER_NODE | awk -F'[(x]' '{print $1}')
     else
@@ -80,7 +83,8 @@ if [ "$VVM_BACKEND" = "cpu" ]; then
     # submit.py already chose --cpus per task; do not apply the GPU IO-rank
     # redistribution formula to a CPU build.
     PE=${OMP_NUM_THREADS:-1}
-elif [ -n "$SLURM_JOB_ID" ] && [ "${VVM_COMPUTE_PER_NODE:-0}" -gt 0 ]; then
+elif { [ -n "$SLURM_JOB_ID" ] || [ -n "${PBS_JOBID:-}" ]; } \
+     && [ "${VVM_COMPUTE_PER_NODE:-0}" -gt 0 ]; then
     # Real GPU allocation: reserve a small slice for the host-only IO ranks and
     # give the rest to the GPU compute ranks.
     IO_CORES_PER_NODE=$(( VVM_IO_PER_NODE * VVM_IO_CPUS ))
@@ -117,7 +121,7 @@ export VVM_GPU_LIST="${VVM_GPU_LIST:-}"
 
 echo "========================================================="
 echo "[$RUN_MODE]"
-echo " Nodes: ${SLURM_JOB_NUM_NODES:-1} | Tasks/Node: $TASKS_PER_NODE"
+echo " Nodes: ${VVM_NODES:-${SLURM_JOB_NUM_NODES:-1}} | Tasks/Node: $TASKS_PER_NODE"
 echo " Logical CPUs Available/Node: $TOTAL_CORES | Cores/compute rank: $PE | Cores/IO rank: $VVM_IO_CPUS"
 echo "========================================================="
 if [ -n "$VVM_GPU_LIST" ]; then
@@ -171,8 +175,8 @@ if printf "%s\n" "$LDD_VVM_OUTPUT" | grep -q "=> not found"; then
     exit 127
 fi
 
-LOCAL_RANK="${OMPI_COMM_WORLD_LOCAL_RANK:-${SLURM_LOCALID:-0}}"
-GLOBAL_RANK="${OMPI_COMM_WORLD_RANK:-${SLURM_PROCID:-NA}}"
+LOCAL_RANK="${OMPI_COMM_WORLD_LOCAL_RANK:-${SLURM_LOCALID:-${PMI_LOCAL_RANK:-${PALS_LOCAL_RANKID:-0}}}}"
+GLOBAL_RANK="${OMPI_COMM_WORLD_RANK:-${SLURM_PROCID:-${PMI_RANK:-${PALS_RANKID:-NA}}}}"
 if [ "$VVM_BACKEND" = "cpu" ]; then
     if [ "$GLOBAL_RANK" != "NA" ] && [ "${VVM_COMPUTE_TASKS:-0}" -gt 0 ] \
        && [ "$GLOBAL_RANK" -ge "$VVM_COMPUTE_TASKS" ]; then
@@ -570,6 +574,30 @@ echo "[GPUMap] host=$(hostname) global_rank=${GLOBAL_RANK} local_rank=${LOCAL_RA
 
 launch_vvm "$@"
 '
+
+# Give PALS one entry per host before requesting round-robin placement.
+# PBS_NODEFILE repeats hosts for their MPI slots; using it directly can pack
+# compute ranks onto one host and put all SST IO ranks on the next host.
+# The wrapper handles GPU visibility and affinity; do not pass OpenMPI options.
+if [ "${VVM_MPI_FLAVOR:-}" = "pals" ]; then
+    PALS_HOST_ARGS=()
+    if [ -n "${PBS_NODEFILE:-}" ]; then
+        PALS_HOSTS=$(awk 'NF && !seen[$1]++ {printf "%s%s", sep, $1; sep=","}' "$PBS_NODEFILE")
+        if [ -z "$PALS_HOSTS" ]; then
+            echo "[VVM launch] ERROR: no hosts found in PBS_NODEFILE=$PBS_NODEFILE" >&2
+            exit 2
+        fi
+        PALS_HOST_ARGS=(--hosts "$PALS_HOSTS")
+        echo "[MPI] PALS round-robin hosts: $PALS_HOSTS"
+    fi
+    export OMP_NUM_THREADS="$PE"
+    export OMP_PROC_BIND=false
+    export HDF5_USE_FILE_LOCKING=FALSE
+    export NCCL_DEBUG="${NCCL_DEBUG:-INFO}"
+    exec "${VVM_MPI_LAUNCHER:-mpiexec}" --genvall --cpu-bind none --gpu-bind none \
+        --ppn 0 -n "$VVM_TOTAL_TASKS" "${PALS_HOST_ARGS[@]}" \
+        bash -c "$INLINE_WRAPPER" -- "$VVM_CONFIG_FILE" $VVM_ARGS
+fi
 
 if [ "$VVM_BACKEND" = "cpu" ]; then
     HOST_LOGICAL_CPUS=$(nproc --all)
