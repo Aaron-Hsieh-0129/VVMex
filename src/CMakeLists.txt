@@ -38,5 +38,5 @@ target_link_libraries(vvm
 )
 
 if(VVM_ENABLE_GPU)
-    target_link_options(vvm PRIVATE -acc -static-nvidia)
+    target_link_options(vvm PRIVATE -acc -Bdynamic)
 endif()
