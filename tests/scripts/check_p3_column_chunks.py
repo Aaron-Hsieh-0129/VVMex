@@ -10,6 +10,8 @@ import tempfile
 import h5py
 import numpy as np
 
+from mpi_test_launcher import mpi_bind_args
+
 
 def datasets(path):
     result = {}
@@ -56,7 +58,7 @@ def main():
     def run_model(config, exe, tag):
         config_path = work / f'config-{tag}.json'
         config_path.write_text(json.dumps(config, indent=2) + '\n')
-        cmd = [args.launcher, '--bind-to', 'none', '-n', str(args.ranks)]
+        cmd = [args.launcher, *mpi_bind_args(), '-n', str(args.ranks)]
         if args.wrapper:
             cmd.append(args.wrapper)
         cmd.extend([str(exe.resolve()), str(config_path)])

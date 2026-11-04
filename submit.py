@@ -31,12 +31,16 @@ DEFAULT_CPUS = None               # SLURM fills the node; local mode falls back 
 DEFAULT_OMP_THREADS = None        # Defaults to allocated CPUs per task
 DEFAULT_IO_CPUS = 1               # IO ranks are host-only and effectively single-threaded
 DEFAULT_TIME = "24:00:00"
+DEFAULT_PBS_TIME = "12:00:00"       # 43200 seconds
 DEFAULT_OUT = None                # None means <output.output_dir>/%j.out
 DEFAULT_ERR = None                # None means <output.output_dir>/%j.err
 DEFAULT_LOG_OUT_NAME = "%j.out"
 DEFAULT_LOG_ERR_NAME = "%j.err"
+DEFAULT_PBS_LOG_OUT_NAME = "pbs_%j.out"
+DEFAULT_PBS_LOG_ERR_NAME = "pbs_%j.err"
 DEFAULT_JOB_NAME = "VVMex"
 DEFAULT_ACCOUNT = "MST114418"
+DEFAULT_PBS_ACCOUNT = "NMMM0004"
 DEFAULT_PARTITION = "normal"
 DEFAULT_EXPORT = "ALL"
 DEFAULT_EXCLUSIVE = True
@@ -194,6 +198,13 @@ def setup_environment(preset_name):
         configured = _read_cmake_cache(binary_dir_raw.replace("${sourceDir}", vvm_root))
         if configured:
             cache_vars.update({k: v for k, v in configured.items() if v})
+
+        mpi_launcher = cache_vars.get("MPIEXEC_EXECUTABLE", "")
+        if mpi_launcher and not mpi_launcher.endswith("-NOTFOUND"):
+            env["VVM_MPI_LAUNCHER"] = mpi_launcher
+            env["VVM_MPI_FLAVOR"] = (
+                "pals" if "/pals/" in os.path.realpath(mpi_launcher) else "openmpi"
+            )
 
         print(f"[Info] Loaded environment from CMake preset: '{preset_name}'")
 
@@ -581,6 +592,62 @@ def infer_cpus_per_task(cpus, partition, tasks_per_node, gpus_per_node=0,
     return inferred, f"{reason} / {tasks_per_node} tasks/node", warnings
 
 
+def pbs_submission(args, script_path, vvm_root, tasks_per_node):
+    """Return qsub arguments and a script; PBS reads the script from stdin."""
+    resources = (f"select={args.nodes}:ncpus={tasks_per_node * args.cpus}"
+                 f":mpiprocs={tasks_per_node}:ompthreads={args.cpus}")
+    if args.gpus:
+        resources += f":ngpus={args.gpus}"
+    placement = "scatter"
+    if args.exclusive is not None:
+        placement += ":excl" if args.exclusive else ":shared"
+    cmd = ["qsub", "-V", "-N", args.job_name, "-A", args.account,
+           "-q", args.queue, "-l", resources, "-l", f"walltime={args.time}",
+           "-l", f"place={placement}"]
+    # Hold template jobs until their job-number-dependent log paths are set.
+    # PBS then owns the actual logs, including errors at script startup.
+    if any("%j" in path for path in (args.out, args.err)):
+        cmd.append("-h")
+    for option, path in (("-o", args.out), ("-e", args.err)):
+        if "%j" not in path:
+            cmd.extend([option, os.path.abspath(path)])
+    cmd.extend(arg for arg in args.pbs_arg if arg)
+    script = "#!/bin/bash\nset -e\n"
+    script += (f"cd -- {shlex.quote(vvm_root)}\n"
+               f"exec bash {shlex.quote(script_path)}\n")
+    return cmd, script
+
+
+def run_pbs_submission(cmd, script, env, out_dir, log_paths, keep_held=False):
+    """Resolve %j before releasing a held job, so PBS writes the only log pair."""
+    if not any("%j" in path for path in log_paths):
+        subprocess.run(cmd, input=script, text=True, env=env, cwd=out_dir, check=True)
+        return
+
+    result = subprocess.run(cmd, input=script, text=True, env=env, cwd=out_dir,
+                            capture_output=True, check=True)
+    print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
+    job_id = result.stdout.strip()
+    if not re.fullmatch(r"[0-9]+(?:\.[A-Za-z0-9_.-]+)?", job_id):
+        raise ValueError("Could not parse qsub job ID; the submitted job is held. "
+                         "Check qstat before releasing it.")
+    try:
+        job_number = job_id.split(".", 1)[0]
+        paths = [os.path.abspath(path.replace("%j", job_number)) for path in log_paths]
+        for path in paths:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+        subprocess.run(["qalter", "-o", paths[0], "-e", paths[1], job_id],
+                       env=env, check=True)
+        if not keep_held:
+            subprocess.run(["qrls", "-h", "u", job_id], env=env, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        print(f"[Error] PBS job {job_id} was submitted on hold; log setup or "
+              "release failed. Check qstat before releasing it.", file=sys.stderr)
+        raise
+
+
 # ==============================================================================
 # Snapshot
 # ==============================================================================
@@ -932,17 +999,19 @@ def interactive_wizard():
     print("--------------------------------------------------------------------")
     print(" Prompted Options")
     print("--------------------------------------------------------------------")
-    print(f" --local          : Run locally without SLURM (default: False)")
+    print(f" --local          : Run locally without a scheduler (default: False)")
+    print(" --scheduler      : Batch scheduler: slurm or pbs (default: slurm)")
+    print(" --queue          : PBS queue (default: main).")
     print(f" -c, --config     : Configuration file (default: {DEFAULT_CONFIG})")
     print("                    TAB completion is enabled for this path prompt.")
     print(f" --preset         : CMake preset to load environment from")
     print(f" --compute        : Compute MPI ranks (default: {DEFAULT_COMPUTE})")
-    print(f" --nodes          : Number of SLURM nodes (default: {DEFAULT_NODES})")
-    print(f" -t, --time       : Wall time limit (default: {DEFAULT_TIME})")
+    print(f" --nodes          : Number of nodes (default: {DEFAULT_NODES})")
+    print(f" -t, --time       : Wall time limit (SLURM: {DEFAULT_TIME}; PBS: {DEFAULT_PBS_TIME})")
     print(f" --out            : Standard output log file (default: <output.output_dir>/{DEFAULT_LOG_OUT_NAME})")
     print(f" --err            : Standard error log file (default: <output.output_dir>/{DEFAULT_LOG_ERR_NAME})")
-    print(f" --job-name       : SLURM job name (default: {DEFAULT_JOB_NAME})")
-    print(f" -A, --account    : SLURM account (default: {DEFAULT_ACCOUNT})")
+    print(f" --job-name       : Batch job name (default: {DEFAULT_JOB_NAME})")
+    print(f" -A, --account    : Charging account (SLURM: {DEFAULT_ACCOUNT}; PBS: {DEFAULT_PBS_ACCOUNT})")
     print(f" -p, --partition  : SLURM partition (default: {DEFAULT_PARTITION})")
     print("--------------------------------------------------------------------")
     print(" Automatic and Advanced Options")
@@ -979,7 +1048,7 @@ def interactive_wizard():
     print(" Advanced SLURM Options: command-line only")
     print("--------------------------------------------------------------------")
     print(f" --export SPEC    : SLURM export option (default: {DEFAULT_EXPORT})")
-    print(" --exclusive      : Request exclusive nodes. This is the default.")
+    print(" --exclusive      : Request exclusive nodes (SLURM default; PBS defers to the queue).")
     print(" --no-exclusive   : Do not request exclusive nodes.")
     print(" --exclude LIST   : Exclude specific nodes.")
     print("                    Example: --exclude 25a-hgpn062")
@@ -995,7 +1064,7 @@ def interactive_wizard():
 
     args = Args()
 
-    args.local = ask("Run locally without SLURM? (y/N)", "N").upper() == "Y"
+    args.local = ask("Run locally without a scheduler? (y/N)", "N").upper() == "Y"
     args.config = ask_path("Configuration file", DEFAULT_CONFIG)
 
     if presets:
@@ -1012,6 +1081,14 @@ def interactive_wizard():
         args.preset = ask("CMake preset environment", default_preset)
 
     gpu_preset = preset_uses_gpu(vvm_root, args.preset)
+
+    args.scheduler = "slurm"
+    args.queue = "main"
+    args.pbs_arg = []
+    if not args.local:
+        args.scheduler = ask("Batch scheduler (slurm/pbs)", "slurm").lower()
+        if args.scheduler not in ("slurm", "pbs"):
+            raise ValueError("Batch scheduler must be slurm or pbs")
 
     args.compute = int(ask("\nCompute tasks / MPI ranks", DEFAULT_COMPUTE))
 
@@ -1054,6 +1131,9 @@ def interactive_wizard():
             print("[Info] CPUs per task (--cpus) default: 1 in local GPU mode.")
         else:
             print(f"[Info] CPUs per compute rank (--cpus): {args.cpus}  (wizard selection)")
+    elif args.scheduler == "pbs":
+        args.cpus = int(ask("CPUs per MPI task (--cpus)", 1))
+        print(f"[Info] PBS CPUs per task: {args.cpus}; no SLURM resource query is used.")
     else:
         print("[Info] CPUs per task (--cpus) default: fill the SLURM node.")
         print("       The final value is queried from the selected partition before submit.")
@@ -1070,12 +1150,19 @@ def interactive_wizard():
         print("[Info] GPUs per node: none; CPU presets ignore VVM_GPU_LIST.")
 
     if not args.local:
-        args.time = ask("\nTime limit", DEFAULT_TIME)
+        args.time = ask("\nTime limit", DEFAULT_PBS_TIME if args.scheduler == "pbs" else DEFAULT_TIME)
         args.job_name = ask("Job name", DEFAULT_JOB_NAME)
-        args.account = ask("SLURM account", DEFAULT_ACCOUNT)
-        args.partition = ask("SLURM partition", DEFAULT_PARTITION)
-        args.out = ask("Standard output log", default_log_path(peeked_out_dir, DEFAULT_LOG_OUT_NAME, vvm_root))
-        args.err = ask("Standard error log", default_log_path(peeked_out_dir, DEFAULT_LOG_ERR_NAME, vvm_root))
+        if args.scheduler == "pbs":
+            args.account = ask("PBS project account", DEFAULT_PBS_ACCOUNT)
+            args.queue = ask("PBS queue", "main")
+            args.partition = None
+        else:
+            args.account = ask("SLURM account", DEFAULT_ACCOUNT)
+            args.partition = ask("SLURM partition", DEFAULT_PARTITION)
+        out_name = DEFAULT_PBS_LOG_OUT_NAME if args.scheduler == "pbs" else DEFAULT_LOG_OUT_NAME
+        err_name = DEFAULT_PBS_LOG_ERR_NAME if args.scheduler == "pbs" else DEFAULT_LOG_ERR_NAME
+        args.out = ask("Standard output log", default_log_path(peeked_out_dir, out_name, vvm_root))
+        args.err = ask("Standard error log", default_log_path(peeked_out_dir, err_name, vvm_root))
     else:
         args.time = None
         args.job_name = DEFAULT_JOB_NAME
@@ -1089,7 +1176,7 @@ def interactive_wizard():
     args.nodelist = None
     args.contiguous = False
     args.export = DEFAULT_EXPORT
-    args.exclusive = DEFAULT_EXCLUSIVE
+    args.exclusive = None if args.scheduler == "pbs" else DEFAULT_EXCLUSIVE
     args.slurm_arg = []
     args.snapshot_cleo_inputs = False
     args.snapshot_external_inputs = False
@@ -1112,8 +1199,13 @@ def interactive_wizard():
     cmd_parts.extend(["--nodes", str(args.nodes)])
 
     if not args.local:
-        cmd_parts.extend(["-t", args.time, "--out", args.out, "--err", args.err,
-                          "--job-name", args.job_name, "-A", args.account, "-p", args.partition])
+        cmd_parts.extend(["--scheduler", args.scheduler,
+                          "-t", args.time, "--out", args.out, "--err", args.err,
+                          "--job-name", args.job_name, "-A", args.account])
+        if args.scheduler == "pbs":
+            cmd_parts.extend(["--queue", args.queue])
+        else:
+            cmd_parts.extend(["-p", args.partition])
 
     args.equivalent_argv = cmd_parts
     args.equivalent_command = shlex.join(cmd_parts)
@@ -1143,7 +1235,13 @@ def parse_args():
 
     parser.add_argument("-c", "--config", help="Path to JSON configuration file")
     parser.add_argument("--preset", type=str, help="CMake preset name to load environment from")
-    parser.add_argument("--local", action="store_true", help="Run locally without SLURM")
+    parser.add_argument("--local", action="store_true", help="Run locally without a scheduler")
+    parser.add_argument("--scheduler", choices=("slurm", "pbs"), default="slurm",
+                        help="Batch scheduler (default: slurm)")
+    parser.add_argument("-q", "--queue", default="main", help="PBS queue (default: main)")
+    parser.add_argument("--pbs-arg", action="append", default=[],
+                        help="Append a raw qsub argument; repeat for separate tokens, e.g. "
+                             "--pbs-arg=-l --pbs-arg=mem=200GB")
     parser.add_argument(
         "--snapshot-cleo-inputs",
         action="store_true",
@@ -1176,7 +1274,7 @@ def parse_args():
         "--cpus",
         type=int,
         default=DEFAULT_CPUS,
-        help="CPUs allocated per MPI task. OpenMP threads default to this unless --omp-threads is set.",
+        help="CPUs allocated per MPI task (PBS default: 1). OpenMP threads default to this unless --omp-threads is set.",
     )
     parser.add_argument(
         "--omp-threads",
@@ -1185,7 +1283,8 @@ def parse_args():
         help="OpenMP/Kokkos threads per compute rank. Defaults to --cpus; may be lower when the scheduler requires allocation padding.",
     )
 
-    parser.add_argument("-t", "--time", type=str, default=DEFAULT_TIME, help="Wall time limit")
+    parser.add_argument("-t", "--time", type=str, default=None,
+                        help=f"Wall time limit (SLURM: {DEFAULT_TIME}; PBS: {DEFAULT_PBS_TIME})")
     parser.add_argument(
         "--nccl-socket-ifname", default=None,
         help="NCCL bootstrap/socket interface selector, e.g. '=vlan1721'. "
@@ -1198,12 +1297,13 @@ def parse_args():
     )
     parser.add_argument("--out", type=str, default=DEFAULT_OUT,
                         help="Standard output log (default: <output.output_dir>/"
-                             + DEFAULT_LOG_OUT_NAME.replace("%", "%%") + ")")
+                             + DEFAULT_LOG_OUT_NAME.replace("%", "%%") + "; PBS: pbs_%%j.out)")
     parser.add_argument("--err", type=str, default=DEFAULT_ERR,
                         help="Standard error log (default: <output.output_dir>/"
-                             + DEFAULT_LOG_ERR_NAME.replace("%", "%%") + ")")
-    parser.add_argument("--job-name", type=str, default=DEFAULT_JOB_NAME, help="SLURM job name")
-    parser.add_argument("-A", "--account", type=str, default=DEFAULT_ACCOUNT, help="SLURM account")
+                             + DEFAULT_LOG_ERR_NAME.replace("%", "%%") + "; PBS: pbs_%%j.err)")
+    parser.add_argument("--job-name", type=str, default=DEFAULT_JOB_NAME, help="Batch job name")
+    parser.add_argument("-A", "--account", type=str, default=None,
+                        help=f"Charging account (SLURM: {DEFAULT_ACCOUNT}; PBS: {DEFAULT_PBS_ACCOUNT})")
     parser.add_argument("-p", "--partition", type=str, default=DEFAULT_PARTITION, help="SLURM partition")
 
     # Advanced SLURM options. CLI only; not prompted in wizard.
@@ -1220,7 +1320,7 @@ def parse_args():
         "--exclusive",
         dest="exclusive",
         action="store_true",
-        help="Request exclusive node allocation. Default.",
+        help="Request exclusive node allocation (SLURM default; PBS uses the queue default).",
     )
     parser.add_argument(
         "--no-exclusive",
@@ -1228,7 +1328,7 @@ def parse_args():
         action="store_false",
         help="Do not request exclusive node allocation.",
     )
-    parser.set_defaults(exclusive=DEFAULT_EXCLUSIVE)
+    parser.set_defaults(exclusive=None)
 
     parser.add_argument(
         "--slurm-arg",
@@ -1250,6 +1350,13 @@ def parse_args():
         presets = get_available_presets(get_vvm_root())
         args.preset = presets[0] if presets else "unknown"
 
+    if args.account is None:
+        args.account = DEFAULT_PBS_ACCOUNT if args.scheduler == "pbs" else DEFAULT_ACCOUNT
+    if args.time is None:
+        args.time = DEFAULT_PBS_TIME if args.scheduler == "pbs" else DEFAULT_TIME
+    if args.exclusive is None and args.scheduler == "slurm":
+        args.exclusive = DEFAULT_EXCLUSIVE
+
     return args
 
 
@@ -1260,7 +1367,17 @@ def parse_args():
 def main():
     args = parse_args()
 
+    if not args.local and args.scheduler == "pbs":
+        if not args.account:
+            sys.exit("[Error] PBS requires --account/-A <project>.")
+        if (args.exclude or args.nodelist or args.contiguous or args.slurm_arg
+                or args.export != DEFAULT_EXPORT
+                or args.partition not in (None, DEFAULT_PARTITION)):
+            sys.exit("[Error] SLURM-only options cannot be used with PBS; use --queue and --pbs-arg.")
+
     env = setup_environment(args.preset)
+    if args.scheduler == "pbs":
+        env.setdefault("VVM_MPI_FLAVOR", "pals")
     for option, variable in (("nccl_socket_ifname", "NCCL_SOCKET_IFNAME"),
                              ("nccl_ib_hca", "NCCL_IB_HCA")):
         value = getattr(args, option, None)
@@ -1315,7 +1432,7 @@ def main():
     # Derived defaults.
     args.io = infer_io_tasks(io_engine, args.compute, args.io)
 
-    if not args.local and args.partition:
+    if not args.local and args.scheduler == "slurm" and args.partition:
         requested_partition = args.partition
         args.partition, partition_note = resolve_partition(args.partition)
         if partition_note:
@@ -1378,20 +1495,21 @@ def main():
 
     os.makedirs(out_dir_abs, exist_ok=True)
 
+    pbs_batch = not args.local and args.scheduler == "pbs"
     if not args.out:
-        args.out = default_log_path(out_dir_abs, DEFAULT_LOG_OUT_NAME)
+        args.out = default_log_path(out_dir_abs, DEFAULT_PBS_LOG_OUT_NAME if pbs_batch else DEFAULT_LOG_OUT_NAME)
 
     if not args.err:
-        args.err = default_log_path(out_dir_abs, DEFAULT_LOG_ERR_NAME)
+        args.err = default_log_path(out_dir_abs, DEFAULT_PBS_LOG_ERR_NAME if pbs_batch else DEFAULT_LOG_ERR_NAME)
 
     if args.out:
         out_log_dir = os.path.dirname(os.path.abspath(args.out))
-        if out_log_dir:
+        if out_log_dir and not (pbs_batch and "%j" in out_log_dir):
             os.makedirs(out_log_dir, exist_ok=True)
 
     if args.err:
         err_log_dir = os.path.dirname(os.path.abspath(args.err))
-        if err_log_dir:
+        if err_log_dir and not (pbs_batch and "%j" in err_log_dir):
             os.makedirs(err_log_dir, exist_ok=True)
 
     write_submit_command(out_dir_abs, vvm_root, args)
@@ -1417,7 +1535,7 @@ def main():
     # Needs tasks_per_node, so it cannot sit with the other derived defaults.
     args.cpus, cpus_origin, cpus_warnings = infer_cpus_per_task(
         args.cpus,
-        None if args.local else args.partition,
+        args.partition if not args.local and args.scheduler == "slurm" else None,
         tasks_per_node,
         args.gpus,
         compute_per_node,
@@ -1431,6 +1549,8 @@ def main():
         print(f"[Warning] {warning}")
 
     env["VVM_CONFIG_FILE"] = config_path_user
+    env["VVM_NODES"] = str(args.nodes)
+    env["VVM_CPUS_PER_NODE"] = str(tasks_per_node * args.cpus)
     env["VVM_COMPUTE_TASKS"] = str(args.compute)
     env["VVM_IO_TASKS"] = str(args.io)
     env["VVM_TOTAL_TASKS"] = str(total_tasks)
@@ -1462,7 +1582,7 @@ def main():
     print("\n=========================================")
     print(" VVM SUBMISSION SUMMARY")
     print("=========================================")
-    print(f" Mode              : {'LOCAL' if args.local else 'SLURM'}")
+    print(f" Mode              : {'LOCAL' if args.local else args.scheduler.upper()}")
     print(f" Config            : {config_path_user}")
     print(f" Preset            : {args.preset}")
     print(f" Output engine     : {io_engine}")
@@ -1497,10 +1617,12 @@ def main():
     if args.io > 0:
         print(f" CPUs/IO rank      : {args.io_cpus}  (host-only, no GPU)")
     if not args.local:
+        if args.scheduler == "pbs":
+            print(f" PBS queue         : {args.queue}")
         print(f" Stdout log        : {args.out}")
         print(f" Stderr log        : {args.err}")
-        print(f" Exclusive         : {args.exclusive}")
-        print(f" Export            : {args.export}")
+        print(f" Exclusive         : {'queue default' if args.exclusive is None else args.exclusive}")
+        print(f" Export            : {'ALL (-V)' if pbs_batch else args.export}")
         if args.exclude:
             print(f" Exclude           : {args.exclude}")
         if args.nodelist:
@@ -1509,10 +1631,16 @@ def main():
             print(" Contiguous        : True")
         if args.slurm_arg:
             print(f" Extra sbatch args : {' '.join(args.slurm_arg)}")
+        if pbs_batch and args.pbs_arg:
+            print(f" Extra qsub args   : {shlex.join(args.pbs_arg)}")
     print("=========================================\n")
 
+    batch_script = None
     if args.local:
         cmd = ["bash", script_path]
+
+    elif pbs_batch:
+        cmd, batch_script = pbs_submission(args, script_path, vvm_root, tasks_per_node)
 
     else:
         cmd = [
@@ -1562,10 +1690,18 @@ def main():
         cmd.append(script_path)
 
     try:
-        subprocess.run(cmd, env=env, check=True)
+        if batch_script is None:
+            subprocess.run(cmd, env=env, check=True)
+        else:
+            run_pbs_submission(cmd, batch_script, env, out_dir_abs,
+                               (args.out, args.err), keep_held="-h" in args.pbs_arg)
     except subprocess.CalledProcessError as e:
+        if e.stderr:
+            print(e.stderr, end="", file=sys.stderr)
         print(f"\n[Error] Process failed with code {e.returncode}")
         sys.exit(e.returncode)
+    except (OSError, ValueError) as e:
+        sys.exit(f"[Error] {e}")
 
 
 if __name__ == "__main__":

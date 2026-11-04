@@ -109,3 +109,12 @@ else()
             ENVIRONMENT_MODIFICATION "OMP_NUM_THREADS=set:1;OMP_PROC_BIND=set:false")
     endif()
 endif()
+
+# Python model checks launch MPI themselves; use the same binding policy as
+# tests launched directly by CTest (OpenMPI --bind-to or PALS --cpu-bind).
+string(JOIN " " _vvm_mpi_bind_args ${VVM_MPI_BIND_ARGS})
+get_property(VVM_ALL_TESTS DIRECTORY PROPERTY TESTS)
+if(VVM_ALL_TESTS)
+    set_property(TEST ${VVM_ALL_TESTS} APPEND PROPERTY ENVIRONMENT
+        "VVM_TEST_MPI_BIND_ARGS=${_vvm_mpi_bind_args}")
+endif()

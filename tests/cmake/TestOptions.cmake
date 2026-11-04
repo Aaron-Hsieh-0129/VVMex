@@ -30,7 +30,8 @@ message(STATUS "Test reference data: ${VVM_BASELINE_DIR}, ${VVM_REFERENCE_DIR}")
 # Avoid OpenMPI's implicit core binding in tests, including GPU builds: CPU
 # masks imposed by schedulers/containers may exclude a selected core. Tests
 # do not depend on rank affinity; MPIEXEC_PREFLAGS can request it explicitly.
-set(VVM_MPI_BIND_ARGS --bind-to none)
+set(VVM_MPI_BIND_ARGS "--bind-to;none" CACHE STRING
+    "MPI launcher arguments to disable CPU binding")
 
 # Use VVM_ROOT as the runtime working directory for CTest tests.
 # Root CMakeLists.txt already requires VVM_ROOT, so this should normally exist.

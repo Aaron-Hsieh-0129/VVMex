@@ -496,8 +496,9 @@ main(int argc, char** argv) {
     }
     MPI_Bcast(&tag, 1, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
 
+    // CTest's working directory is shared across nodes; /tmp is node-local.
     const fs::path dir =
-        fs::temp_directory_path() / ("vvm_restart_metadata_test_" + std::to_string(tag));
+        fs::current_path() / ("vvm_restart_metadata_test_" + std::to_string(tag));
     if (rank == 0) {
         std::error_code ec;
         fs::create_directories(dir, ec);

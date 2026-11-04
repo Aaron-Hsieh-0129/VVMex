@@ -31,6 +31,8 @@ from pathlib import Path
 import h5py
 import numpy as np
 
+from mpi_test_launcher import mpi_bind_args
+
 # =============================================================================
 # Arguments
 # =============================================================================
@@ -413,8 +415,7 @@ config_path.write_text(
 
 command = [
     args.launcher,
-    "--bind-to",
-    "none",
+    *mpi_bind_args(),
     "-n",
     "1",
 ]
