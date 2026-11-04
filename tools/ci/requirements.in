@@ -5,4 +5,4 @@ matplotlib
 scipy
 ruamel.yaml
 # BP5/RLL history and restart verification scripts use ADIOS2's Python reader.
-adios2>=2.11
+adios2>=2.13.0.1001
