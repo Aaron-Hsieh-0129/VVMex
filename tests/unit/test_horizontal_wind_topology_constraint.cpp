@@ -2,7 +2,7 @@
 #include "core/grid/Grid.hpp"
 #include "core/state/State.hpp"
 #include "core/geometry/HorizontalLocation.hpp"
-#include "core/geometry/RegularLatLonGeometry.hpp"
+#include "core/geometry/HorizontalGeometryBuilders.hpp"
 #include "dynamics/operators/HorizontalVectorConversion.hpp"
 #include "dynamics/solvers/HorizontalWindTopologyConstraint.hpp"
 #include "utils/ConfigurationManager.hpp"
@@ -355,10 +355,9 @@ run_periodic(const std::string& path
 
 #endif
 
-    const auto& geometry =
-        static_cast<const Core::Geometry::RegularLatLonGeometry&>(grid.geometry());
+    const auto& geometry = grid.horizontal_specification().geometry.regular_lat_lon;
 
-    const Real radius = geometry.radius();
+    const Real radius = geometry.radius;
 
     const int nz = grid.get_local_total_points_z();
 
@@ -454,10 +453,9 @@ run_channel(const std::string& path
 
 #endif
 
-    const auto& geometry =
-        static_cast<const Core::Geometry::RegularLatLonGeometry&>(grid.geometry());
+    const auto& geometry = grid.horizontal_specification().geometry.regular_lat_lon;
 
-    const Real radius = geometry.radius();
+    const Real radius = geometry.radius;
 
     const int nz = grid.get_local_total_points_z();
 
@@ -537,8 +535,10 @@ run_channel(const std::string& path
     Kokkos::fence();
     const Values incoming_q1 = snapshot_recovered_domain(covariant_q1_wind, grid);
     const Values incoming_q2 = snapshot_recovered_domain(covariant_q2_wind, grid);
-    auto seeded = Dynamics::make_regular_lat_lon_circulation_constraint(
-        grid, state, covariant_q1_wind, covariant_q2_wind);
+    auto seeded = Dynamics::make_regular_lat_lon_circulation_constraint(grid,
+        state,
+        covariant_q1_wind,
+        covariant_q2_wind);
     seeded->seed_from_physical_wind();
     Kokkos::deep_copy(covariant_q1_wind.get_mutable_device_data(), real(0.0));
     seeded->before_recovery(true);
@@ -569,11 +569,17 @@ run_channel(const std::string& path
         });
     Kokkos::deep_copy(state.get_field<3>("u").get_mutable_device_data(), real(0.0));
     Kokkos::deep_copy(state.get_field<3>("v").get_mutable_device_data(), real(0.0));
-    auto restored = Dynamics::make_regular_lat_lon_circulation_constraint(
-        grid, state, covariant_q1_wind, covariant_q2_wind);
+    auto restored = Dynamics::make_regular_lat_lon_circulation_constraint(grid,
+        state,
+        covariant_q1_wind,
+        covariant_q2_wind);
     restored->seed_from_contravariant_wind();
-    add_covariant_harmonic_drift(grid, covariant_q1_wind, covariant_q2_wind,
-        real(-7.0) * radius, real(0.0), false);
+    add_covariant_harmonic_drift(grid,
+        covariant_q1_wind,
+        covariant_q2_wind,
+        real(-7.0) * radius,
+        real(0.0),
+        false);
     restored->after_recovery(false);
     Kokkos::fence();
     require(close_vectors(snapshot_recovered_domain(covariant_q1_wind, grid), incoming_q1),

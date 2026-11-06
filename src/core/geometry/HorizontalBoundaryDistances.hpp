@@ -1,7 +1,6 @@
 #ifndef VVM_CORE_GEOMETRY_HORIZONTAL_BOUNDARY_DISTANCES_HPP
 #define VVM_CORE_GEOMETRY_HORIZONTAL_BOUNDARY_DISTANCES_HPP
 
-#include <array>
 #include <algorithm>
 #include <vector>
 #include <mpi.h>
@@ -45,16 +44,22 @@ struct HorizontalBoundaryDistances {
 private:
     void
     initialize(const Grid& grid, const State& state) {
-        const int h = grid.get_halo_cells(), ny = grid.get_local_physical_points_y(),
-                  nx = grid.get_local_physical_points_x();
+        const int h = grid.get_halo_cells();
+        const int ny = grid.get_local_physical_points_y(), nx = grid.get_local_physical_points_x();
+
         const auto metric = grid.geometry().device_view(HorizontalLocation::T);
-        const auto inv_j = metric.inv_sqrt_g, c11 = metric.sqrt_g_g_contra.a11,
-                   c22 = metric.sqrt_g_g_contra.a22;
+        const auto inv_j = metric.inv_sqrt_g;
+        const auto c11 = metric.sqrt_g_g_contra.a11, c22 = metric.sqrt_g_g_contra.a22;
+
         const Real dq1 = grid.geometry().dq1(), dq2 = grid.geometry().dq2();
-        auto wx = west.get_mutable_device_data(), sy = south.get_mutable_device_data();
+
+        auto wx = west.get_mutable_device_data();
+        auto sy = south.get_mutable_device_data();
+
         Kokkos::parallel_for("MappedPhysicalNormalSpacing",
             Kokkos::MDRangePolicy<Kokkos::Rank<2>>({h, h}, {h + ny, h + nx}),
             PhysicalNormalSpacing{wx, sy, inv_j, c11, c22, dq1, dq2});
+
         auto x = west.get_host_data(), y = south.get_host_data();
         auto xe = east.get_host_data(), yn = north.get_host_data();
         std::vector<Real> row(ny, real(0.0)), column(nx, real(0.0));
@@ -150,6 +155,6 @@ private:
         Kokkos::deep_copy(sy, y);
         Kokkos::deep_copy(north.get_mutable_device_data(), yn);
     }
-};
+}; // struct HorizontalBoundaryDistances
 }
 #endif

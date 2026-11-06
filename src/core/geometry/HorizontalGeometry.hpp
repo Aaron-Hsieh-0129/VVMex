@@ -2,6 +2,7 @@
 #define VVM_CORE_GEOMETRY_HORIZONTAL_GEOMETRY_HPP
 
 #include <array>
+#include <cstddef>
 #include <string>
 #include <Kokkos_Core.hpp>
 
@@ -48,8 +49,8 @@ struct HorizontalDomainLayout {
 //     [ a21  a22 ]
 //
 // Used for metrics and physical/computational component transformations.
-// Metric providers explicitly set a21 = a12; the field handles can share
-// storage. The matrix itself does not assume symmetry.
+// Physical metric providers can share storage for equal a12/a21 entries.
+// The matrix itself does not assume symmetry.
 struct Matrix2DeviceView {
     GeometryField2D a11;
     GeometryField2D a12;
@@ -204,23 +205,54 @@ struct HorizontalGeometryDeviceView {
     }
 };
 
-// Abstract host-side geometry interface
-// HorizontalGeometry is immutable after construction.
-// Runtime geometry selection happens on the host. Device kernels receive a HorizontalGeometryDeviceView and never call a virtual method.
-class HorizontalGeometry {
+// Inputs at one native T/U/V/Z location. Supply fields at halos too.
+// J and J*g^{-1} are derived from all four independent g_cov entries.
+// Physical metrics are symmetric, but shared matrix algebra does not enforce
+// symmetry, so future providers may supply independent off-diagonal entries.
+struct HorizontalGeometryInput {
+    Matrix2DeviceView g_cov;
+    GeometryField2D q1;
+    GeometryField2D q2;
+    GeometryField2D longitude;
+    GeometryField2D latitude;
+
+    // Coordinate basis in the physical x/y (or east/north) frame. g alone
+    // cannot determine this orientation. The inverse is derived centrally.
+    Matrix2DeviceView contravariant_to_physical;
+};
+
+// One immutable geometry implementation for every horizontal chart.
+// Builders supply coordinates and g; all derived metric data use this class.
+class HorizontalGeometry final {
 public:
-    virtual ~HorizontalGeometry() = default;
+    // Array order is T, U, V, Z. Kokkos handles retain the supplied storage;
+    // callers must not mutate input fields after construction.
+    HorizontalGeometry(HorizontalDomainLayout layout,
+        VVM::Real dq1,
+        VVM::Real dq2,
+        const std::array<HorizontalGeometryInput, 4>& inputs,
+        GeometryKind kind,
+        std::string name);
 
     HorizontalGeometry(const HorizontalGeometry&) = delete;
     HorizontalGeometry& operator=(const HorizontalGeometry&) = delete;
 
-    HorizontalGeometry(HorizontalGeometry&&) = delete;
+    HorizontalGeometry(HorizontalGeometry&&) = default;
     HorizontalGeometry& operator=(HorizontalGeometry&&) = delete;
 
-    virtual GeometryKind kind() const noexcept = 0;
-    virtual const char* name() const noexcept = 0;
+    GeometryKind
+    kind() const noexcept {
+        return kind_;
+    }
+    const char*
+    name() const noexcept {
+        return name_.c_str();
+    }
 
-    virtual const HorizontalDomainLayout& layout() const noexcept = 0;
+    const HorizontalDomainLayout&
+    layout() const noexcept {
+        return layout_;
+    }
 
     // Uniform computational-coordinate spacing.
     // Cartesian:
@@ -228,19 +260,24 @@ public:
     //
     // Regular latitude-longitude and cubed sphere:
     //     dq1 and dq2 are angular computational-coordinate increments in radians.
-    virtual VVM::Real dq1() const noexcept = 0;
-    virtual VVM::Real dq2() const noexcept = 0;
+    VVM::Real
+    dq1() const noexcept {
+        return dq1_;
+    }
+    VVM::Real
+    dq2() const noexcept {
+        return dq2_;
+    }
 
     // Host query of {q1 length, q2 length} in metres at local (j, i).
     // Evaluates on the device and copies the result to the host. Kernels should
     // call the device view's physical_spacing_q1/q2 methods directly.
-    std::array<VVM::Real, 2>
-    physical_spacing(HorizontalLocation location, int j, int i) const;
+    std::array<VVM::Real, 2> physical_spacing(HorizontalLocation location, int j, int i) const;
 
     // Select geometry explicitly using T/U/V/Z.
     HorizontalGeometryDeviceView
     device_view(const HorizontalLocation location) const {
-        return device_view_impl(location);
+        return locations_.at(location_index(location));
     }
 
     // Select geometry from existing VVMex FieldMetadata.
@@ -248,13 +285,16 @@ public:
     // the field has Unspecified or NotApplicable staggering.
     HorizontalGeometryDeviceView
     device_view(const GridStaggering staggering, const std::string& field_name = {}) const {
-        return device_view_impl(horizontal_location_or_throw(staggering, field_name));
+        return device_view(horizontal_location_or_throw(staggering, field_name));
     }
 
-protected:
-    HorizontalGeometry() = default;
-
-    virtual HorizontalGeometryDeviceView device_view_impl(HorizontalLocation location) const = 0;
+private:
+    static std::size_t location_index(HorizontalLocation location);
+    HorizontalDomainLayout layout_;
+    VVM::Real dq1_, dq2_;
+    GeometryKind kind_;
+    std::string name_;
+    std::array<HorizontalGeometryDeviceView, 4> locations_;
 };
 
 } // namespace Geometry

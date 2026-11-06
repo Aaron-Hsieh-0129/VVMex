@@ -1,5 +1,4 @@
-#include "core/geometry/CartesianGeometry.hpp"
-#include "core/geometry/RegularLatLonGeometry.hpp"
+#include "core/geometry/HorizontalGeometryBuilders.hpp"
 #include "dynamics/operators/HorizontalWindReconstruction.hpp"
 
 #include <Kokkos_Core.hpp>
@@ -12,10 +11,10 @@
 
 namespace {
 
-using VVM::Core::Geometry::CartesianGeometry;
 using VVM::Core::Geometry::HorizontalDomainLayout;
 using VVM::Core::Geometry::HorizontalGeometry;
-using VVM::Core::Geometry::RegularLatLonGeometry;
+using VVM::Core::Geometry::make_cartesian_geometry;
+using VVM::Core::Geometry::make_regular_lat_lon_geometry;
 using VVM::Dynamics::Operators::make_horizontal_wind_reconstruction_device_view;
 
 int failures = 0;
@@ -197,13 +196,13 @@ main(int argc, char** argv) {
         try {
             const auto layout = make_layout();
 
-            const CartesianGeometry cartesian(layout, VVM::real(2.0), VVM::real(3.0));
+            const auto cartesian = make_cartesian_geometry(layout, VVM::real(2.0), VVM::real(3.0));
             test_reconstruction(cartesian, false, VVM::real(1.0), VVM::real(0.0));
 
             const VVM::Real radius = VVM::real(6371220.0);
             const VVM::Real south_edge = VVM::real(-0.3);
 
-            const RegularLatLonGeometry rll(layout,
+            const auto rll = make_regular_lat_lon_geometry(layout,
                 VVM::real(0.08),
                 VVM::real(0.04),
                 VVM::real(0.0),

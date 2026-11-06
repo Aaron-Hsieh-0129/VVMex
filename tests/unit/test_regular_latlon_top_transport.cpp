@@ -1,5 +1,5 @@
 #include "core/state/Field.hpp"
-#include "core/geometry/RegularLatLonGeometry.hpp"
+#include "core/geometry/HorizontalGeometryBuilders.hpp"
 #include "dynamics/operators/GeneralizedTopTransport.hpp"
 #include <algorithm>
 #include <cmath>
@@ -8,7 +8,6 @@
 
 using namespace VVM;
 using Core::Field;
-using Core::Geometry::HorizontalLocation;
 using Dynamics::Operators::GeneralizedTopTransportDeviceView;
 
 template <class Volume, class Profile, class Plane>
@@ -40,7 +39,8 @@ main(int argc, char** argv) {
         layout.global_nx = layout.local_physical_nx = nx - 2 * h;
         layout.global_ny = layout.local_physical_ny = ny - 2 * h;
         layout.halo = h;
-        Core::Geometry::RegularLatLonGeometry geometry(layout, dx, dy, 0., south, radius);
+        auto geometry =
+            Core::Geometry::make_regular_lat_lon_geometry(layout, dx, dy, 0., south, radius);
         Field<3> u("u", {nz, ny, nx}), v("v", {nz, ny, nx}), w("w", {nz, ny, nx}),
             z("z", {nz, ny, nx});
         Field<3> u1("u1", {nz, ny, nx}), u2("u2", {nz, ny, nx});

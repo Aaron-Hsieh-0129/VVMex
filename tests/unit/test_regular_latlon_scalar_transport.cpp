@@ -1,6 +1,5 @@
 #include "core/state/Field.hpp"
-#include "core/geometry/CartesianGeometry.hpp"
-#include "core/geometry/RegularLatLonGeometry.hpp"
+#include "core/geometry/HorizontalGeometryBuilders.hpp"
 #include "dynamics/operators/GeneralizedScalarTransport.hpp"
 #include "dynamics/operators/TakacsScalarTransport.hpp"
 
@@ -26,10 +25,10 @@ namespace {
 using VVM::Real;
 using VVM::real;
 using VVM::Core::Field;
-using VVM::Core::Geometry::CartesianGeometry;
 using VVM::Core::Geometry::HorizontalDomainLayout;
 using VVM::Core::Geometry::HorizontalGeometry;
-using VVM::Core::Geometry::RegularLatLonGeometry;
+using VVM::Core::Geometry::make_cartesian_geometry;
+using VVM::Core::Geometry::make_regular_lat_lon_geometry;
 using VVM::Dynamics::Operators::GeneralizedScalarTransport;
 using VVM::Dynamics::Operators::make_takacs_scalar_transport_device_view;
 
@@ -203,10 +202,10 @@ private:
 #endif
 
 void
-test_validation(const RegularLatLonGeometry& geometry) {
+test_validation(const HorizontalGeometry& geometry) {
 
     const HorizontalDomainLayout layout = make_layout();
-    const CartesianGeometry cartesian(layout, real(1000.0), real(1000.0));
+    const auto cartesian = make_cartesian_geometry(layout, real(1000.0), real(1000.0));
 
     const GeneralizedScalarTransport cartesian_transport(cartesian);
     (void)cartesian_transport;
@@ -262,7 +261,7 @@ test_validation(const RegularLatLonGeometry& geometry) {
 
     auto narrow_layout = layout;
     narrow_layout.halo = 1;
-    const CartesianGeometry narrow(narrow_layout, real(1000.0), real(1000.0));
+    const auto narrow = make_cartesian_geometry(narrow_layout, real(1000.0), real(1000.0));
 
     bool rejected_narrow_halo = false;
     try {
@@ -542,7 +541,7 @@ main(int argc, char** argv) {
 
             const Real pi = std::acos(real(-1.0));
 
-            const RegularLatLonGeometry geometry(layout,
+            const auto geometry = make_regular_lat_lon_geometry(layout,
                 real(2.0) * pi / static_cast<Real>(layout.global_nx),
                 (pi / real(3.0)) / static_cast<Real>(layout.global_ny),
                 -pi,
@@ -552,7 +551,7 @@ main(int argc, char** argv) {
             test_validation(geometry);
             test_transport_and_replay(geometry);
 
-            const CartesianGeometry cartesian(layout, real(1000.0), real(1000.0));
+            const auto cartesian = make_cartesian_geometry(layout, real(1000.0), real(1000.0));
             test_transport_and_replay(cartesian);
         }
         catch (const std::exception& error) {

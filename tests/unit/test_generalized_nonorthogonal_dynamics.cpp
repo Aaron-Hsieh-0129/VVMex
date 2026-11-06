@@ -1,4 +1,4 @@
-#include "core/geometry/CartesianGeometry.hpp"
+#include "core/geometry/HorizontalGeometryBuilders.hpp"
 #include "dynamics/operators/HorizontalScalarGradient.hpp"
 #include "dynamics/operators/HorizontalFluxDivergence.hpp"
 #include "dynamics/operators/HorizontalVectorLowering.hpp"
@@ -30,62 +30,6 @@ require(bool condition, const std::string& message) {
         throw std::runtime_error(message);
     }
 }
-
-// Test-only stationary chart: x=2*q1+s*q2, y=3*q2; J=6 and g12=2*s.
-// The Cartesian enum is just an existing fixture label. No production
-// geometry selection or wind-recovery capability is added by this test.
-class AffineGeometry final : public HorizontalGeometry {
-public:
-    AffineGeometry(const HorizontalDomainLayout& layout, Real shear)
-        : coordinates_(layout, real(.25), real(.5)), shear_(shear) {}
-    GeometryKind
-    kind() const noexcept override {
-        return GeometryKind::Cartesian;
-    }
-    const char*
-    name() const noexcept override {
-        return "test_nonorthogonal_affine";
-    }
-    const HorizontalDomainLayout&
-    layout() const noexcept override {
-        return coordinates_.layout();
-    }
-    Real
-    dq1() const noexcept override {
-        return coordinates_.dq1();
-    }
-    Real
-    dq2() const noexcept override {
-        return coordinates_.dq2();
-    }
-
-protected:
-    HorizontalGeometryDeviceView
-    device_view_impl(HorizontalLocation location) const override {
-        auto v = coordinates_.device_view(location);
-        const auto c = [](Real x) {
-            return GeometryField2D::constant_value(x);
-        };
-        const Real s = shear_;
-        v.sqrt_g = c(real(6));
-        v.inv_sqrt_g = c(real(1) / real(6));
-        v.g_cov = {c(real(4)), c(real(2) * s), c(real(2) * s), c(real(9) + s * s)};
-        v.sqrt_g_g_contra = {c((real(9) + s * s) / real(6)),
-            c(-s / real(3)),
-            c(-s / real(3)),
-            c(real(2) / real(3))};
-        v.contravariant_to_physical = {c(real(2)), c(s), c(real(0)), c(real(3))};
-        v.physical_to_contravariant = {c(real(.5)),
-            c(-s / real(6)),
-            c(real(0)),
-            c(real(1) / real(3))};
-        return v;
-    }
-
-private:
-    CartesianGeometry coordinates_;
-    Real shear_;
-};
 
 // Stored in device memory, not captured by value: several primitive operators
 // still carry large geometry views. Only the bundle handle enters the kernel.
@@ -188,7 +132,8 @@ run_case(Real shear, Real offset, const char* layout_name) {
     domain.global_nx = domain.local_physical_nx = 9;
     domain.global_ny = domain.local_physical_ny = 7;
     domain.halo = 2;
-    AffineGeometry geometry(domain, shear);
+    auto geometry =
+        make_affine_geometry(domain, real(.25), real(.5), {real(2), shear, real(0), real(3)});
     const int h = domain.halo, nx = domain.local_total_nx(), ny = domain.local_total_ny();
     const int nz = 8, top = nz - h - 1;
     const Real dq1 = geometry.dq1(), dq2 = geometry.dq2();

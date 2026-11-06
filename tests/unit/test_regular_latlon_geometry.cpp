@@ -1,4 +1,4 @@
-#include "core/geometry/RegularLatLonGeometry.hpp"
+#include "core/geometry/HorizontalGeometryBuilders.hpp"
 
 #include <Kokkos_Core.hpp>
 
@@ -13,8 +13,9 @@ namespace {
 using VVM::Core::Geometry::GeometryFieldLayout;
 using VVM::Core::Geometry::GeometryKind;
 using VVM::Core::Geometry::HorizontalDomainLayout;
+using VVM::Core::Geometry::HorizontalGeometry;
 using VVM::Core::Geometry::HorizontalLocation;
-using VVM::Core::Geometry::RegularLatLonGeometry;
+using VVM::Core::Geometry::make_regular_lat_lon_geometry;
 
 int failures = 0;
 
@@ -61,13 +62,13 @@ make_layout() {
     return layout;
 }
 
-RegularLatLonGeometry
+HorizontalGeometry
 make_geometry() {
     const VVM::Real pi = std::acos(VVM::real(-1.0));
 
     const VVM::Real spacing = VVM::real(0.9) * pi / VVM::real(180.0);
 
-    return RegularLatLonGeometry(make_layout(),
+    return make_regular_lat_lon_geometry(make_layout(),
         spacing,
         spacing,
         VVM::real(0.0),
@@ -91,13 +92,6 @@ test_host_metadata() {
     check(close(geometry.dq1(), spacing), "RLL dq1 must be longitude spacing in radians");
 
     check(close(geometry.dq2(), spacing), "RLL dq2 must be latitude spacing in radians");
-
-    check(close(geometry.longitude_west_edge(), VVM::real(0.0)), "RLL west edge must be retained");
-
-    check(close(geometry.latitude_south_edge(), -pi / VVM::real(4.0)),
-        "RLL south edge must be retained");
-
-    check(close(geometry.radius(), VVM::real(6371220.0)), "RLL radius must be retained");
 }
 
 void
@@ -338,7 +332,7 @@ test_metric_and_vector_transforms() {
 
     const auto host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), results);
 
-    const VVM::Real radius = geometry.radius();
+    const VVM::Real radius = VVM::real(6371220.0);
 
     const VVM::Real cosine = std::cos(host(0));
 
@@ -423,7 +417,7 @@ test_channel_area() {
 
     const VVM::Real north = pi / VVM::real(4.0);
 
-    const VVM::Real exact_area = VVM::real(2.0) * pi * geometry.radius() * geometry.radius() *
+    const VVM::Real exact_area = VVM::real(2.0) * pi * VVM::real(6371220.0) * VVM::real(6371220.0) *
                                  (std::sin(north) - std::sin(south));
 
     const VVM::Real relative_error = std::abs(numerical_area_host - exact_area) / exact_area;
@@ -447,7 +441,7 @@ test_invalid_inputs() {
     bool threw = false;
 
     try {
-        RegularLatLonGeometry unused(layout,
+        auto unused = make_regular_lat_lon_geometry(layout,
             spacing,
             spacing,
             VVM::real(0.0),
@@ -463,7 +457,7 @@ test_invalid_inputs() {
     threw = false;
 
     try {
-        RegularLatLonGeometry unused(layout,
+        auto unused = make_regular_lat_lon_geometry(layout,
             VVM::real(0.0),
             spacing,
             VVM::real(0.0),
@@ -479,7 +473,7 @@ test_invalid_inputs() {
     threw = false;
 
     try {
-        RegularLatLonGeometry unused(layout,
+        auto unused = make_regular_lat_lon_geometry(layout,
             spacing,
             spacing,
             VVM::real(0.0),
@@ -496,7 +490,7 @@ test_invalid_inputs() {
     layout.panel_id = 0;
 
     try {
-        RegularLatLonGeometry unused(layout,
+        auto unused = make_regular_lat_lon_geometry(layout,
             spacing,
             spacing,
             VVM::real(0.0),
@@ -522,26 +516,44 @@ test_periodic_latitude_metrics() {
         const auto radius = VVM::real(6371220.);
         const auto spacing = VVM::real(.001);
         const auto south = VVM::real(-.05);
-        RegularLatLonGeometry geometry(layout, spacing, spacing, VVM::real(0.),
-            south, radius, true);
-        for (const auto location : {HorizontalLocation::T, HorizontalLocation::U,
-                 HorizontalLocation::V, HorizontalLocation::Z}) {
-            const bool face = location == HorizontalLocation::V || location == HorizontalLocation::Z;
+        auto geometry = make_regular_lat_lon_geometry(layout,
+            spacing,
+            spacing,
+            VVM::real(0.),
+            south,
+            radius,
+            true);
+        for (const auto location : {HorizontalLocation::T,
+                 HorizontalLocation::U,
+                 HorizontalLocation::V,
+                 HorizontalLocation::Z}) {
+            const bool face =
+                location == HorizontalLocation::V || location == HorizontalLocation::Z;
             const auto view = geometry.device_view(location);
-            const auto lat = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), view.latitude.one_dimensional);
-            const auto scale = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), view.contravariant_to_physical.a11.one_dimensional);
-            const auto jacobian = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), view.sqrt_g.one_dimensional);
+            const auto lat = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),
+                view.latitude.one_dimensional);
+            const auto scale = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),
+                view.contravariant_to_physical.a11.one_dimensional);
+            const auto jacobian = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),
+                view.sqrt_g.one_dimensional);
             for (int j = 0; j < layout.local_total_ny(); ++j) {
                 const int global = layout.global_start_j + j - layout.halo;
-                const int wrapped = (global % layout.global_ny + layout.global_ny) % layout.global_ny;
-                const auto expected = south + (VVM::real(wrapped) + (face ? VVM::real(1.) : VVM::real(.5)))*spacing;
-                check(close(lat(j), expected), "periodic geographic latitude must wrap at native staggering");
-                check(close(scale(j), radius*std::cos(expected)), "periodic metric must retain latitude dependence");
-                check(close(jacobian(j), radius*radius*std::cos(expected)), "periodic Jacobian must match the field halo owner");
+                const int wrapped =
+                    (global % layout.global_ny + layout.global_ny) % layout.global_ny;
+                const auto expected =
+                    south + (VVM::real(wrapped) + (face ? VVM::real(1.) : VVM::real(.5))) * spacing;
+                check(close(lat(j), expected),
+                    "periodic geographic latitude must wrap at native staggering");
+                check(close(scale(j), radius * std::cos(expected)),
+                    "periodic metric must retain latitude dependence");
+                check(close(jacobian(j), radius * radius * std::cos(expected)),
+                    "periodic Jacobian must match the field halo owner");
                 // Both retained harmonic modes must remain curl/divergence-free:
                 // h1*u = constant; J*v/R = constant, including ghost rows.
-                check(close(scale(j)*(VVM::real(20.)/scale(j)), VVM::real(20.)), "zonal harmonic covariant component");
-                check(close(jacobian(j)*(VVM::real(20.)/scale(j))/radius, VVM::real(20.)), "meridional harmonic mass flux");
+                check(close(scale(j) * (VVM::real(20.) / scale(j)), VVM::real(20.)),
+                    "zonal harmonic covariant component");
+                check(close(jacobian(j) * (VVM::real(20.) / scale(j)) / radius, VVM::real(20.)),
+                    "meridional harmonic mass flux");
             }
         }
     }

@@ -1,4 +1,4 @@
-#include "core/geometry/CartesianGeometry.hpp"
+#include "core/geometry/HorizontalGeometryBuilders.hpp"
 #include "dynamics/operators/VerticalVorticity.hpp"
 
 #include <algorithm>
@@ -10,10 +10,10 @@
 
 namespace {
 
-using VVM::Core::Geometry::CartesianGeometry;
 using VVM::Core::Geometry::GeometryField2D;
 using VVM::Core::Geometry::HorizontalDomainLayout;
 using VVM::Core::Geometry::HorizontalLocation;
+using VVM::Core::Geometry::make_cartesian_geometry;
 using VVM::Dynamics::Operators::make_vertical_vorticity_device_view;
 using VVM::Dynamics::Operators::VerticalVorticityDeviceView;
 
@@ -59,7 +59,7 @@ test_cartesian_equivalence() {
     const VVM::Real dx = VVM::real(2.0);
     const VVM::Real dy = VVM::real(3.0);
 
-    const CartesianGeometry geometry(layout, dx, dy);
+    const auto geometry = make_cartesian_geometry(layout, dx, dy);
     const auto vorticity = make_vertical_vorticity_device_view(geometry);
 
     const int nx = layout.local_total_nx();
@@ -202,7 +202,7 @@ test_three_dimensional_overload() {
     const VVM::Real dy = VVM::real(200.0);
     const VVM::Real angular_velocity = VVM::real(0.002);
 
-    const CartesianGeometry geometry(layout, dx, dy);
+    const auto geometry = make_cartesian_geometry(layout, dx, dy);
     const auto vorticity = make_vertical_vorticity_device_view(geometry);
     const auto u = geometry.device_view(HorizontalLocation::U);
     const auto v = geometry.device_view(HorizontalLocation::V);

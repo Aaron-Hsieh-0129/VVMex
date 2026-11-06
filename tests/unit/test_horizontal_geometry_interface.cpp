@@ -13,7 +13,6 @@ using VVM::Core::Geometry::GeometryKind;
 using VVM::Core::Geometry::horizontal_location_or_throw;
 using VVM::Core::Geometry::HorizontalDomainLayout;
 using VVM::Core::Geometry::HorizontalGeometry;
-using VVM::Core::Geometry::HorizontalGeometryDeviceView;
 using VVM::Core::Geometry::HorizontalLocation;
 using VVM::Core::Geometry::try_horizontal_location;
 
@@ -48,72 +47,31 @@ check_mapping(
     }
 }
 
-// Minimal concrete geometry used only to test the host-side interface.
-//
-// It does not allocate metric fields or launch Kokkos kernels.
-class MockGeometry final : public HorizontalGeometry {
-public:
-    MockGeometry() {
-        layout_.global_nx = 400;
-        layout_.global_ny = 100;
-
-        layout_.local_physical_nx = 100;
-        layout_.local_physical_ny = 50;
-
-        layout_.global_start_i = 200;
-        layout_.global_start_j = 50;
-
-        layout_.halo = 2;
-        layout_.panel_id = -1;
+// Constant inputs exercise the shared host interface without device allocation.
+HorizontalGeometry
+make_geometry() {
+    HorizontalDomainLayout layout;
+    layout.global_nx = 400;
+    layout.global_ny = 100;
+    layout.local_physical_nx = 100;
+    layout.local_physical_ny = 50;
+    layout.global_start_i = 200;
+    layout.global_start_j = 50;
+    layout.halo = 2;
+    std::array<VVM::Core::Geometry::HorizontalGeometryInput, 4> inputs;
+    const auto c = VVM::Core::Geometry::GeometryField2D::constant_value;
+    for (int l = 0; l < 4; ++l) {
+        inputs[l].g_cov = {c(VVM::real(1)), c(VVM::real(0)), c(VVM::real(0)), c(VVM::real(1))};
+        inputs[l].contravariant_to_physical = inputs[l].g_cov;
+        inputs[l].q1 = c(static_cast<VVM::Real>(l));
     }
-
-    GeometryKind
-    kind() const noexcept override {
-        return GeometryKind::RegularLatLon;
-    }
-
-    const char*
-    name() const noexcept override {
-        return "mock_regular_latlon";
-    }
-
-    const HorizontalDomainLayout&
-    layout() const noexcept override {
-        return layout_;
-    }
-
-    VVM::Real
-    dq1() const noexcept override {
-        return VVM::real(0.01);
-    }
-
-    VVM::Real
-    dq2() const noexcept override {
-        return VVM::real(0.02);
-    }
-
-    HorizontalLocation
-    last_location() const noexcept {
-        return last_location_;
-    }
-
-private:
-    HorizontalGeometryDeviceView
-    device_view_impl(const HorizontalLocation location) const override {
-
-        last_location_ = location;
-
-        HorizontalGeometryDeviceView result;
-        result.dq1 = dq1();
-        result.dq2 = dq2();
-
-        return result;
-    }
-
-    HorizontalDomainLayout layout_;
-
-    mutable HorizontalLocation last_location_ = HorizontalLocation::T;
-};
+    return HorizontalGeometry(layout,
+        VVM::real(.01),
+        VVM::real(.02),
+        inputs,
+        GeometryKind::RegularLatLon,
+        "mock_regular_latlon");
+}
 
 void
 test_staggering_mapping() {
@@ -177,7 +135,7 @@ test_strict_mapping_errors() {
 
 void
 test_layout() {
-    const MockGeometry geometry;
+    const auto geometry = make_geometry();
     const auto& layout = geometry.layout();
 
     check(layout.global_nx == 400, "global_nx must be preserved");
@@ -197,7 +155,7 @@ test_layout() {
 
 void
 test_geometry_identity() {
-    const MockGeometry geometry;
+    const auto geometry = make_geometry();
 
     check(geometry.kind() == GeometryKind::RegularLatLon, "geometry kind must be returned");
 
@@ -211,12 +169,11 @@ test_geometry_identity() {
 
 void
 test_explicit_location_dispatch() {
-    MockGeometry geometry;
+    auto geometry = make_geometry();
 
     const auto result = geometry.device_view(HorizontalLocation::U);
 
-    check(geometry.last_location() == HorizontalLocation::U,
-        "explicit U lookup must dispatch to U storage");
+    check(result.q1.constant == VVM::real(1), "explicit U lookup must dispatch to U storage");
 
     check(std::abs(result.dq1 - geometry.dq1()) < VVM::real(1.0e-12),
         "device view must contain dq1");
@@ -227,27 +184,23 @@ test_explicit_location_dispatch() {
 
 void
 test_grid_staggering_dispatch() {
-    MockGeometry geometry;
+    auto geometry = make_geometry();
 
-    (void)geometry.device_view(GridStaggering::Centered, "th");
+    const auto t = geometry.device_view(GridStaggering::Centered, "th");
 
-    check(geometry.last_location() == HorizontalLocation::T,
-        "Centered field must dispatch to T geometry");
+    check(t.q1.constant == VVM::real(0), "Centered field must dispatch to T geometry");
 
-    (void)geometry.device_view(GridStaggering::StaggeredX, "u");
+    const auto u = geometry.device_view(GridStaggering::StaggeredX, "u");
 
-    check(geometry.last_location() == HorizontalLocation::U,
-        "StaggeredX field must dispatch to U geometry");
+    check(u.q1.constant == VVM::real(1), "StaggeredX field must dispatch to U geometry");
 
-    (void)geometry.device_view(GridStaggering::StaggeredYZ, "xi");
+    const auto v = geometry.device_view(GridStaggering::StaggeredYZ, "xi");
 
-    check(geometry.last_location() == HorizontalLocation::V,
-        "StaggeredYZ field must dispatch to V geometry");
+    check(v.q1.constant == VVM::real(2), "StaggeredYZ field must dispatch to V geometry");
 
-    (void)geometry.device_view(GridStaggering::StaggeredXY, "zeta");
+    const auto z = geometry.device_view(GridStaggering::StaggeredXY, "zeta");
 
-    check(geometry.last_location() == HorizontalLocation::Z,
-        "StaggeredXY field must dispatch to Z geometry");
+    check(z.q1.constant == VVM::real(3), "StaggeredXY field must dispatch to Z geometry");
 }
 
 void

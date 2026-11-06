@@ -1,6 +1,5 @@
 #include "core/state/Field.hpp"
-#include "core/geometry/CartesianGeometry.hpp"
-#include "core/geometry/RegularLatLonGeometry.hpp"
+#include "core/geometry/HorizontalGeometryBuilders.hpp"
 #include "dynamics/operators/GeneralizedBuoyancy.hpp"
 
 #include <Kokkos_Core.hpp>
@@ -10,7 +9,6 @@
 #include <cstdio>
 #include <stdexcept>
 #include <string>
-#include <type_traits>
 #include <limits>
 #include <vector>
 
@@ -23,14 +21,10 @@ namespace {
 using VVM::Real;
 using VVM::real;
 using VVM::Core::Field;
-using VVM::Core::Geometry::CartesianGeometry;
-using VVM::Core::Geometry::GeometryField2D;
-using VVM::Core::Geometry::GeometryKind;
 using VVM::Core::Geometry::HorizontalDomainLayout;
 using VVM::Core::Geometry::HorizontalGeometry;
-using VVM::Core::Geometry::HorizontalGeometryDeviceView;
-using VVM::Core::Geometry::HorizontalLocation;
-using VVM::Core::Geometry::RegularLatLonGeometry;
+using VVM::Core::Geometry::make_cartesian_geometry;
+using VVM::Core::Geometry::make_regular_lat_lon_geometry;
 using VVM::Dynamics::Operators::GeneralizedBuoyancy;
 using VVM::Dynamics::Operators::make_generalized_buoyancy_device_view;
 
@@ -159,11 +153,11 @@ expect_invalid(Function function, const char* message) {
 
 void
 test_validation(const HorizontalDomainLayout& layout) {
-    const CartesianGeometry cartesian(layout, real(1000.0), real(1000.0));
+    const auto cartesian = make_cartesian_geometry(layout, real(1000.0), real(1000.0));
     const GeneralizedBuoyancy op(cartesian);
     auto no_halo = layout;
     no_halo.halo = 0;
-    const CartesianGeometry narrow(no_halo, real(1000.0), real(1000.0));
+    const auto narrow = make_cartesian_geometry(no_halo, real(1000.0), real(1000.0));
     expect_invalid([&] {
         GeneralizedBuoyancy invalid(narrow);
     }, "Generalized buoyancy must reject a missing horizontal halo");
@@ -205,60 +199,6 @@ test_validation(const HorizontalDomainLayout& layout) {
         op.add_moist_tendency(th, bar, gravity, wrong, qp, mask, out, 2, 6, 2, false);
     }, "Moist buoyancy must reject incorrect moisture extents");
 }
-
-// Test-only nonorthogonal chart: x=2*q1+0.75*q2, y=3*q2, J=6.
-// Reuse the Cartesian enum as a fixture label; no new production geometry
-// or cubed-sphere implementation is introduced by this test.
-class AffineGeometry final : public HorizontalGeometry {
-public:
-    explicit AffineGeometry(const HorizontalDomainLayout& layout)
-        : coordinates_(layout, real(0.25), real(0.5)) {}
-    GeometryKind
-    kind() const noexcept override {
-        return GeometryKind::Cartesian;
-    }
-    const char*
-    name() const noexcept override {
-        return "test_nonorthogonal_affine";
-    }
-    const HorizontalDomainLayout&
-    layout() const noexcept override {
-        return coordinates_.layout();
-    }
-    Real
-    dq1() const noexcept override {
-        return coordinates_.dq1();
-    }
-    Real
-    dq2() const noexcept override {
-        return coordinates_.dq2();
-    }
-
-protected:
-    HorizontalGeometryDeviceView
-    device_view_impl(HorizontalLocation location) const override {
-        auto v = coordinates_.device_view(location);
-        const auto c = [](Real x) {
-            return GeometryField2D::constant_value(x);
-        };
-        v.sqrt_g = c(real(6.0));
-        v.inv_sqrt_g = c(real(1.0) / real(6.0));
-        v.g_cov = {c(real(4.0)), c(real(1.5)), c(real(1.5)), c(real(9.5625))};
-        v.sqrt_g_g_contra = {c(real(9.5625) / real(6.0)),
-            c(real(-1.5) / real(6.0)),
-            c(real(-1.5) / real(6.0)),
-            c(real(4.0) / real(6.0))};
-        v.contravariant_to_physical = {c(real(2.0)), c(real(0.75)), c(real(0.0)), c(real(3.0))};
-        v.physical_to_contravariant = {c(real(0.5)),
-            c(real(-0.125)),
-            c(real(0.0)),
-            c(real(1.0) / real(3.0))};
-        return v;
-    }
-
-private:
-    CartesianGeometry coordinates_;
-};
 
 std::vector<Real>
 snapshot_volume(const Field<3>& field) {
@@ -448,7 +388,7 @@ test_canonical_fields(const HorizontalGeometry& geometry, const char* label, Jac
 }
 
 void
-test_affine_tensor_sign(const AffineGeometry& geometry) {
+test_affine_tensor_sign(const HorizontalGeometry& geometry) {
     const auto operation = make_generalized_buoyancy_device_view(geometry);
     Kokkos::View<Real*> result("affine_tensor_sign", 2);
     // s=A*x+B*y. Curl(g*s*e_z)=(g*B,-g*A,0) in physical axes.
@@ -484,7 +424,7 @@ main(int argc, char** argv) {
             const Real pi = std::acos(real(-1.0));
             const Real radius = real(6371220.0);
 
-            const RegularLatLonGeometry geometry(layout,
+            const auto geometry = make_regular_lat_lon_geometry(layout,
                 real(2.0) * pi / static_cast<Real>(layout.global_nx),
                 (pi / real(3.0)) / static_cast<Real>(layout.global_ny),
                 -pi,
@@ -498,11 +438,14 @@ main(int argc, char** argv) {
                 const Real phi = south + (real(j - h) + (xi ? real(1.0) : real(0.5))) * dy;
                 return radius * radius * std::cos(phi);
             });
-            const CartesianGeometry cartesian(layout, real(2.0), real(4.0));
+            const auto cartesian = make_cartesian_geometry(layout, real(2.0), real(4.0));
             test_canonical_fields(cartesian, "Cartesian", [](int, bool) {
                 return real(1.0);
             });
-            const AffineGeometry affine(layout);
+            const auto affine = VVM::Core::Geometry::make_affine_geometry(layout,
+                real(.25),
+                real(.5),
+                {real(2), real(.75), real(0), real(3)});
             test_canonical_fields(affine, "Nonorthogonal affine", [](int, bool) {
                 return real(6.0);
             });

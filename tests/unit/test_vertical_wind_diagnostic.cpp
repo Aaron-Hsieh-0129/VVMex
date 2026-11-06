@@ -1,5 +1,4 @@
-#include "core/geometry/CartesianGeometry.hpp"
-#include "core/geometry/RegularLatLonGeometry.hpp"
+#include "core/geometry/HorizontalGeometryBuilders.hpp"
 #include "dynamics/solvers/VerticalWindDiagnostic.hpp"
 
 #include <Kokkos_Core.hpp>
@@ -369,11 +368,16 @@ run() {
         }
     };
 
-    CartesianGeometry cartesian(layout, real(2.0), real(3.0));
+    auto cartesian = make_cartesian_geometry(layout, real(2.0), real(3.0));
     exercise(cartesian, real(1.0), real(0.0));
 
     for (Real radius : {real(8.0), real(6371220.0)}) {
-        RegularLatLonGeometry rll(layout, real(0.08), real(0.04), real(0.0), real(-0.3), radius);
+        auto rll = make_regular_lat_lon_geometry(layout,
+            real(0.08),
+            real(0.04),
+            real(0.0),
+            real(-0.3),
+            radius);
         exercise(rll, radius, real(-0.3));
     }
 

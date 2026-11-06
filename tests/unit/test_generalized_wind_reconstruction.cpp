@@ -17,7 +17,7 @@ run(Real shear, bool varying) {
     const Real dq1 = g.dq1(), dq2 = g.dq2(), sentinel = real(-731);
     Kokkos::View<Real**, Layout> ps("psi", ny, nx), ch("chi", ny, nx);
     Kokkos::View<Real***, Layout> out("reconstructed_wind", 4, ny, nx);
-    const auto op = O::make_generalized_horizontal_wind_reconstruction_device_view(g);
+    const auto op = O::make_generalized_horizontal_wind_reconstruction_device_view(g.geometry());
     const Real tol = real(512) * std::numeric_limits<Real>::epsilon();
     for (int mode = 0; mode < 4; ++mode) {
         for (int version : {1, 3}) {
@@ -103,7 +103,8 @@ main(int argc, char** argv) {
         Geometry no_halo(real(.8), true, 0);
         bool rejected = false;
         try {
-            (void)O::make_generalized_horizontal_wind_reconstruction_device_view(no_halo);
+            (void)O::make_generalized_horizontal_wind_reconstruction_device_view(
+                no_halo.geometry());
         }
         catch (const std::invalid_argument&) {
             rejected = true;

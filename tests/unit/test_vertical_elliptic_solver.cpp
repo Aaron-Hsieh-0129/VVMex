@@ -1,5 +1,4 @@
 #include "dynamics/solvers/VerticalEllipticSolver.hpp"
-#include "core/geometry/RegularLatLonGeometry.hpp"
 #include "utils/ConfigurationManager.hpp"
 
 #include <algorithm>
@@ -66,10 +65,9 @@ struct Reference {
           dx(grid.geometry().dq1()), dy(grid.geometry().dq2()), w(nz * ny * nx, 0.0), history(w),
           rho(nz), rho_up(nz), mid(nz), up(nz) {
         if (spherical) {
-            const auto& geometry =
-                dynamic_cast<const VVM::Core::Geometry::RegularLatLonGeometry&>(grid.geometry());
-            radius = geometry.radius();
-            south = geometry.latitude_south_edge();
+            const auto& geometry = grid.horizontal_specification().geometry.regular_lat_lon;
+            radius = geometry.radius;
+            south = geometry.latitude_south_edge;
         }
         for (int k = 0; k < nz; ++k) {
             rho[k] = Real(stretched ? 1.4 - .02 * k : 1.0);

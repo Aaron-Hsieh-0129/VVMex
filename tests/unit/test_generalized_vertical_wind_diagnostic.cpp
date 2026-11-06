@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
-#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -183,7 +182,8 @@ horizontal_neighbors_reference(const Geometry& geometry,
 void
 run_case(Real shear, bool varying) {
     Geometry geometry(shear, varying, 2);
-    const auto operation = VVM::Dynamics::make_vertical_wind_diagnostic_device_view(geometry);
+    const auto operation =
+        VVM::Dynamics::make_vertical_wind_diagnostic_device_view(geometry.geometry());
 
     constexpr int nz = 7;
     const int ny = geometry.ny();

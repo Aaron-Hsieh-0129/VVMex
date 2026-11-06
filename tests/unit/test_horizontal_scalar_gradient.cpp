@@ -1,4 +1,4 @@
-#include "core/geometry/CartesianGeometry.hpp"
+#include "core/geometry/HorizontalGeometryBuilders.hpp"
 #include "dynamics/operators/HorizontalScalarGradient.hpp"
 
 #include <algorithm>
@@ -10,11 +10,11 @@
 
 namespace {
 
-using VVM::Core::Geometry::CartesianGeometry;
 using VVM::Core::Geometry::GeometryField2D;
 using VVM::Core::Geometry::HorizontalDomainLayout;
 using VVM::Core::Geometry::HorizontalGeometryDeviceView;
 using VVM::Core::Geometry::HorizontalLocation;
+using VVM::Core::Geometry::make_cartesian_geometry;
 using VVM::Dynamics::Operators::HorizontalScalarGradientDeviceView;
 using VVM::Dynamics::Operators::load_scalar_stencil_at_t;
 using VVM::Dynamics::Operators::make_horizontal_scalar_gradient_device_view;
@@ -135,7 +135,7 @@ test_cross_matrix_gradient(const bool distinguish_rows) {
 void
 test_constant_cartesian_scalar() {
     const HorizontalDomainLayout layout = make_layout(12, 10);
-    const CartesianGeometry geometry(layout, VVM::real(500.0), VVM::real(750.0));
+    const auto geometry = make_cartesian_geometry(layout, VVM::real(500.0), VVM::real(750.0));
     const auto gradient = make_horizontal_scalar_gradient_device_view(geometry);
 
     ScalarStencilAtT scalar;
@@ -173,7 +173,7 @@ test_cartesian_affine_scalar() {
     const VVM::Real slope_x = VVM::real(1.25);
     const VVM::Real slope_y = VVM::real(-0.75);
 
-    const CartesianGeometry geometry(layout, dx, dy);
+    const auto geometry = make_cartesian_geometry(layout, dx, dy);
     const auto gradient = make_horizontal_scalar_gradient_device_view(geometry);
     const auto t = geometry.device_view(HorizontalLocation::T);
 
@@ -276,7 +276,7 @@ periodic_gradient_error(const int n) {
     const VVM::Real spacing = domain_length / static_cast<VVM::Real>(n);
 
     const HorizontalDomainLayout layout = make_layout(n, n);
-    const CartesianGeometry geometry(layout, spacing, spacing);
+    const auto geometry = make_cartesian_geometry(layout, spacing, spacing);
     const auto gradient = make_horizontal_scalar_gradient_device_view(geometry);
     const auto t = geometry.device_view(HorizontalLocation::T);
     const auto u = geometry.device_view(HorizontalLocation::U);

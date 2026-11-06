@@ -1,5 +1,4 @@
-#include "core/geometry/CartesianGeometry.hpp"
-#include "core/geometry/RegularLatLonGeometry.hpp"
+#include "core/geometry/HorizontalGeometryBuilders.hpp"
 #include "dynamics/operators/GeneralizedHorizontalDeformation.hpp"
 #include "dynamics/operators/GeneralizedHorizontalVorticityTransport.hpp"
 #include "dynamics/operators/GeneralizedTopDeformation.hpp"
@@ -24,10 +23,10 @@ namespace {
 
 using VVM::Real;
 using VVM::real;
-using VVM::Core::Geometry::CartesianGeometry;
 using VVM::Core::Geometry::HorizontalDomainLayout;
 using VVM::Core::Geometry::HorizontalGeometry;
-using VVM::Core::Geometry::RegularLatLonGeometry;
+using VVM::Core::Geometry::make_cartesian_geometry;
+using VVM::Core::Geometry::make_regular_lat_lon_geometry;
 using VVM::Dynamics::Operators::GeneralizedHorizontalDeformationDeviceView;
 using VVM::Dynamics::Operators::GeneralizedHorizontalVorticityTransportDeviceView;
 using VVM::Dynamics::Operators::GeneralizedTopDeformationDeviceView;
@@ -560,11 +559,11 @@ main(int argc, char* argv[]) {
         }
 
         const auto layout = make_layout();
-        const CartesianGeometry cartesian(layout, real(2.0), real(3.0));
+        const auto cartesian = make_cartesian_geometry(layout, real(2.0), real(3.0));
 
         const Real radius = real(6371220.0);
         const Real south_edge = real(-0.3);
-        const RegularLatLonGeometry rll(layout,
+        const auto rll = make_regular_lat_lon_geometry(layout,
             real(0.08),
             real(0.04),
             real(0.0),
@@ -580,7 +579,7 @@ main(int argc, char* argv[]) {
 
         auto narrow_layout = layout;
         narrow_layout.halo = 1;
-        const RegularLatLonGeometry narrow(narrow_layout,
+        const auto narrow = make_regular_lat_lon_geometry(narrow_layout,
             real(0.08),
             real(0.04),
             real(0.0),

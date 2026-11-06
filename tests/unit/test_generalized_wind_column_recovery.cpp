@@ -101,7 +101,7 @@ run(Real shear, bool varying, bool vvm_sign) {
     Geometry g(shear, varying);
     const int h = g.h(), nx = g.nx(), ny = g.ny(), nz = 9, bottom = 2, top = 6;
     const Real sentinel = real(-731);
-    HorizontalWindColumnRecovery recovery(g);
+    HorizontalWindColumnRecovery recovery(g.geometry());
     Field<2> ps("psi", {ny, nx}), ch("chi", {ny, nx});
     Field<3> w("w", {nz, ny, nx}), om1("omega1", {nz, ny, nx}), om2("omega2", {nz, ny, nx});
     Field<3> eta("eta_con", {nz, ny, nx});

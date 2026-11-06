@@ -1,4 +1,4 @@
-#include "core/geometry/CartesianGeometry.hpp"
+#include "core/geometry/HorizontalGeometryBuilders.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -9,10 +9,10 @@
 
 namespace {
 
-using VVM::Core::Geometry::CartesianGeometry;
 using VVM::Core::Geometry::GeometryKind;
 using VVM::Core::Geometry::HorizontalDomainLayout;
 using VVM::Core::Geometry::HorizontalLocation;
+using VVM::Core::Geometry::make_cartesian_geometry;
 
 int failures = 0;
 
@@ -53,7 +53,8 @@ make_layout() {
 
 void
 test_host_metadata() {
-    const CartesianGeometry geometry(make_layout(), VVM::real(100.0), VVM::real(200.0));
+    const auto geometry =
+        make_cartesian_geometry(make_layout(), VVM::real(100.0), VVM::real(200.0));
 
     check(geometry.kind() == GeometryKind::Cartesian,
         "Cartesian geometry must report Cartesian kind");
@@ -74,7 +75,7 @@ void
 test_device_values() {
     const HorizontalDomainLayout layout = make_layout();
 
-    const CartesianGeometry geometry(layout, VVM::real(100.0), VVM::real(200.0));
+    const auto geometry = make_cartesian_geometry(layout, VVM::real(100.0), VVM::real(200.0));
 
     const auto t = geometry.device_view(HorizontalLocation::T);
 
@@ -266,7 +267,7 @@ test_validation() {
 
         layout.global_nx = 0;
 
-        CartesianGeometry geometry(layout, VVM::real(100.0), VVM::real(200.0));
+        auto geometry = make_cartesian_geometry(layout, VVM::real(100.0), VVM::real(200.0));
     }, "global_nx == 0 must be rejected");
 
     expect_invalid_argument([] {
@@ -274,7 +275,7 @@ test_validation() {
 
         layout.global_start_i = 12;
 
-        CartesianGeometry geometry(layout, VVM::real(100.0), VVM::real(200.0));
+        auto geometry = make_cartesian_geometry(layout, VVM::real(100.0), VVM::real(200.0));
     }, "local x range outside the global range must be rejected");
 
     expect_invalid_argument([] {
@@ -282,15 +283,15 @@ test_validation() {
 
         layout.panel_id = 0;
 
-        CartesianGeometry geometry(layout, VVM::real(100.0), VVM::real(200.0));
+        auto geometry = make_cartesian_geometry(layout, VVM::real(100.0), VVM::real(200.0));
     }, "Cartesian panel_id other than -1 must be rejected");
 
     expect_invalid_argument([] {
-        CartesianGeometry geometry(make_layout(), VVM::real(0.0), VVM::real(200.0));
+        auto geometry = make_cartesian_geometry(make_layout(), VVM::real(0.0), VVM::real(200.0));
     }, "dx == 0 must be rejected");
 
     expect_invalid_argument([] {
-        CartesianGeometry geometry(make_layout(), VVM::real(100.0), VVM::real(-1.0));
+        auto geometry = make_cartesian_geometry(make_layout(), VVM::real(100.0), VVM::real(-1.0));
     }, "negative dy must be rejected");
 }
 

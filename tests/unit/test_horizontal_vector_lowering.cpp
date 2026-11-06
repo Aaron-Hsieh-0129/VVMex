@@ -1,4 +1,4 @@
-#include "core/geometry/CartesianGeometry.hpp"
+#include "core/geometry/HorizontalGeometryBuilders.hpp"
 #include "dynamics/operators/HorizontalVectorLowering.hpp"
 
 #include <algorithm>
@@ -10,9 +10,9 @@
 
 namespace {
 
-using VVM::Core::Geometry::CartesianGeometry;
 using VVM::Core::Geometry::GeometryField2D;
 using VVM::Core::Geometry::HorizontalDomainLayout;
+using VVM::Core::Geometry::make_cartesian_geometry;
 using VVM::Dynamics::Operators::ContravariantVectorStencilAtU;
 using VVM::Dynamics::Operators::ContravariantVectorStencilAtV;
 using VVM::Dynamics::Operators::HorizontalVectorLoweringDeviceView;
@@ -59,7 +59,7 @@ make_layout(const int nx, const int ny, const int halo = 2) {
 void
 test_cartesian_identity() {
     const HorizontalDomainLayout layout = make_layout(12, 10);
-    const CartesianGeometry geometry(layout, VVM::real(500.0), VVM::real(750.0));
+    const auto geometry = make_cartesian_geometry(layout, VVM::real(500.0), VVM::real(750.0));
     const auto lowering = make_horizontal_vector_lowering_device_view(geometry);
 
     ContravariantVectorStencilAtU vector_at_u;

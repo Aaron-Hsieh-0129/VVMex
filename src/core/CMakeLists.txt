@@ -6,8 +6,7 @@ set(VVM_CORE_SOURCES
     Parameters.cpp
 
     geometry/HorizontalGeometry.cpp
-    geometry/CartesianGeometry.cpp
-    geometry/RegularLatLonGeometry.cpp
+    geometry/HorizontalGeometryBuilders.cpp
     geometry/HorizontalGeometryFactory.cpp
 
     boundary/HorizontalBoundaryStencils.cpp
@@ -38,10 +37,8 @@ set(VVM_CORE_HEADERS
     geometry/HorizontalGridSpec.hpp
     geometry/HorizontalGeometry.hpp
     geometry/HorizontalBoundaryDistances.hpp
-    geometry/AffineGeometry.hpp
+    geometry/HorizontalGeometryBuilders.hpp
     geometry/StaggeredVectorTransform.hpp
-    geometry/CartesianGeometry.hpp
-    geometry/RegularLatLonGeometry.hpp
     geometry/HorizontalGeometryFactory.hpp
 
     boundary/HorizontalBoundaryStencils.hpp
@@ -59,8 +56,8 @@ target_include_directories(vvm_core
 
 # NCCL is only a dependency of the NCCL communication backend.
 if(ENABLE_NCCL)
-  target_include_directories(vvm_core PUBLIC ${NCCL_INCLUDE_DIR})
-  target_link_libraries(vvm_core PUBLIC ${NCCL_LIBRARY})
+    target_include_directories(vvm_core PUBLIC ${NCCL_INCLUDE_DIR})
+    target_link_libraries(vvm_core PUBLIC ${NCCL_LIBRARY})
 endif()
 
 

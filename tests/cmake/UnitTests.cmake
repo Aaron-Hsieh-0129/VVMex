@@ -62,6 +62,13 @@ _vvm_set_test_resources(
     1
 )
 
+# Shared geometry construction and native-location dispatch.
+add_vvm_unit_test(test_horizontal_geometry_interface
+    LIBRARIES vvm_core Kokkos::kokkos MPI::MPI_CXX)
+
+add_vvm_unit_test(test_metric_geometry DEVICE
+    LIBRARIES vvm_core Kokkos::kokkos MPI::MPI_CXX)
+
 # Cartesian test
 vvm_add_test_executable(test_cartesian_geometry
     LIBRARIES vvm_core Kokkos::kokkos MPI::MPI_CXX)
@@ -483,7 +490,7 @@ add_vvm_device_unit_test(test_grid_geometry ${TEST_DIR}/configs/2dbubble.json 2)
 add_vvm_device_unit_test(test_horizontal_mean ${TEST_DIR}/configs/2dbubble.json 2)
 
 # Geometry-aware horizontal mean. Cartesian J is uniform, so this pins
-# compatibility with the existing point mean before RegularLatLonGeometry adds
+# compatibility with the existing point mean before latitude-dependent geometry adds
 # nonuniform area weights.
 add_vvm_device_unit_test(test_horizontal_area_weighted_mean ${TEST_DIR}/configs/2dbubble.json 2)
 

@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <stdexcept>
+#include <memory>
 #include <string>
 #include <vector>
 #include "core/geometry/HorizontalGeometry.hpp"
@@ -28,63 +29,61 @@ struct Tensor {
 // Test-only planar chart, NOT a cubed sphere:
 // x=2*p+s*q+b*p*q, y=3*q+d*p*q. The varying case has a genuinely
 // two-dimensional Jacobian and cross metric; the affine case has b=d=0.
-class Geometry final : public HorizontalGeometry {
+class Geometry {
 public:
     Geometry(Real shear, bool varying, int halo = 2)
         : s_(shear), b_(varying ? real(.17) : real(0)), d_(varying ? real(.11) : real(0)) {
         layout_.global_nx = layout_.local_physical_nx = 9;
         layout_.global_ny = layout_.local_physical_ny = 7;
         layout_.halo = halo;
+        std::array<HorizontalGeometryInput, 4> inputs;
         for (int l = 0; l < 4; ++l) {
-            auto& storage = metrics_[l];
-            for (auto& field : storage) {
-                field = Kokkos::View<Real**>("test_chart_metric", ny(), nx());
-            }
-            std::array<Kokkos::View<Real**>::HostMirror, 8> mirrors;
-            for (int m = 0; m < 8; ++m) {
+            std::array<Kokkos::View<Real**>, 7> storage;
+            std::array<Kokkos::View<Real**>::HostMirror, 7> mirrors;
+            for (int m = 0; m < 7; ++m) {
+                storage[m] = Kokkos::View<Real**>("test_chart_input", ny(), nx());
                 mirrors[m] = Kokkos::create_mirror_view(storage[m]);
             }
             for (int j = 0; j < ny(); ++j) {
                 for (int i = 0; i < nx(); ++i) {
                     const auto t = metric(l, j, i);
-                    const std::array<Real, 8> values = {t.J,
-                        real(1) / t.J,
-                        t.g11,
-                        t.g12,
-                        t.g22,
-                        t.J * t.c11,
-                        t.J * t.c12,
-                        t.J * t.c22};
-                    for (int m = 0; m < 8; ++m) {
-                        mirrors[m](j, i) = values[m];
-                    }
+                    mirrors[0](j, i) = t.g11;
+                    mirrors[1](j, i) = t.g12;
+                    mirrors[2](j, i) = t.g22;
+                    mirrors[3](j, i) = real(2) + b_ * q(l, j);
+                    mirrors[4](j, i) = s_ + b_ * p(l, i);
+                    mirrors[5](j, i) = d_ * q(l, j);
+                    mirrors[6](j, i) = real(3) + d_ * p(l, i);
                 }
             }
-            for (int m = 0; m < 8; ++m) {
+            for (int m = 0; m < 7; ++m) {
                 Kokkos::deep_copy(storage[m], mirrors[m]);
             }
+            const auto f = [&](int m) {
+                return GeometryField2D::full_2d(storage[m]);
+            };
+            inputs[l].g_cov = {f(0), f(1), f(1), f(2)};
+            inputs[l].contravariant_to_physical = {f(3), f(4), f(5), f(6)};
         }
+        // Supply only g and the physical basis. All J/inverse coefficients
+        // must agree with the independent analytical map used by metric().
+        geometry_ = std::make_unique<HorizontalGeometry>(layout_,
+            dq1(),
+            dq2(),
+            inputs,
+            GeometryKind::Affine,
+            "test_skew_planar_chart");
     }
-    // Use the reserved non-Cartesian enum to expose accidental kind guards.
-    // This fixture is never installed in Grid or the production factory.
-    GeometryKind
-    kind() const noexcept override {
-        return GeometryKind::CubedSphere;
-    }
-    const char*
-    name() const noexcept override {
-        return "test_skew_planar_chart";
-    }
-    const HorizontalDomainLayout&
-    layout() const noexcept override {
-        return layout_;
+    const HorizontalGeometry&
+    geometry() const {
+        return *geometry_;
     }
     Real
-    dq1() const noexcept override {
+    dq1() const {
         return real(.25);
     }
     Real
-    dq2() const noexcept override {
+    dq2() const {
         return real(.375);
     }
     int
@@ -119,34 +118,10 @@ public:
         return {J, g11, g12, g22, g22 / (J * J), -g12 / (J * J), g11 / (J * J)};
     }
 
-protected:
-    HorizontalGeometryDeviceView
-    device_view_impl(HorizontalLocation loc) const override {
-        const int l = loc == HorizontalLocation::T   ? 0
-                      : loc == HorizontalLocation::U ? 1
-                      : loc == HorizontalLocation::V ? 2
-                                                     : 3;
-        const auto f = [&](int m) {
-            return GeometryField2D::full_2d(metrics_[l][m]);
-        };
-        HorizontalGeometryDeviceView v;
-        v.sqrt_g = f(0);
-        v.inv_sqrt_g = f(1);
-        v.g_cov = {f(2), f(3), f(3), f(4)};
-        v.sqrt_g_g_contra = {f(5), f(6), f(6), f(7)};
-        v.dq1 = dq1();
-        v.dq2 = dq2();
-        v.rdq1 = real(1) / dq1();
-        v.rdq2 = real(1) / dq2();
-        // Physical conversion fields deliberately remain unset: recovery
-        // must need only metric/J data, not a physical-component adapter.
-        return v;
-    }
-
 private:
     HorizontalDomainLayout layout_;
     Real s_, b_, d_;
-    std::array<std::array<Kokkos::View<Real**>, 8>, 4> metrics_;
+    std::unique_ptr<HorizontalGeometry> geometry_;
 };
 
 inline Real

@@ -192,7 +192,7 @@ test(Real shear, bool varying, const char* layout_name) {
     const Real tol = real(1024) * std::numeric_limits<Real>::epsilon();
     Kokkos::View<Operator> operation("elliptic_operation");
     auto host_op = Kokkos::create_mirror_view(operation);
-    host_op() = make_generalized_horizontal_elliptic_device_view(g);
+    host_op() = make_generalized_horizontal_elliptic_device_view(g.geometry());
     Kokkos::deep_copy(operation, host_op);
     Plane t("chi", ny, nx), z("psi", ny, nx);
     Kokkos::View<Real***, Layout> output("elliptic_output", 4, ny, nx);

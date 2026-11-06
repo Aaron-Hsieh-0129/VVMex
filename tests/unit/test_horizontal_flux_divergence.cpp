@@ -1,5 +1,4 @@
-#include "core/geometry/CartesianGeometry.hpp"
-#include "core/geometry/RegularLatLonGeometry.hpp"
+#include "core/geometry/HorizontalGeometryBuilders.hpp"
 #include "dynamics/operators/HorizontalFluxDivergence.hpp"
 #include "dynamics/operators/TakacsScalarTransport.hpp"
 
@@ -12,11 +11,11 @@
 
 namespace {
 
-using VVM::Core::Geometry::CartesianGeometry;
 using VVM::Core::Geometry::GeometryField2D;
 using VVM::Core::Geometry::HorizontalDomainLayout;
 using VVM::Core::Geometry::HorizontalLocation;
-using VVM::Core::Geometry::RegularLatLonGeometry;
+using VVM::Core::Geometry::make_cartesian_geometry;
+using VVM::Core::Geometry::make_regular_lat_lon_geometry;
 using VVM::Dynamics::Operators::HorizontalFluxDivergenceDeviceView;
 using VVM::Dynamics::Operators::make_horizontal_flux_divergence_device_view;
 using VVM::Dynamics::Operators::make_takacs_scalar_transport_device_view;
@@ -100,7 +99,7 @@ test_cartesian_equivalence() {
     const VVM::Real dx = VVM::real(2.0);
     const VVM::Real dy = VVM::real(3.0);
 
-    const CartesianGeometry geometry(layout, dx, dy);
+    const auto geometry = make_cartesian_geometry(layout, dx, dy);
     const auto divergence = make_horizontal_flux_divergence_device_view(geometry);
 
     const int nx = layout.local_total_nx();
@@ -156,7 +155,7 @@ test_cartesian_equivalence() {
 void
 test_constant_flux() {
     const HorizontalDomainLayout layout = make_layout(12, 10);
-    const CartesianGeometry geometry(layout, VVM::real(500.0), VVM::real(750.0));
+    const auto geometry = make_cartesian_geometry(layout, VVM::real(500.0), VVM::real(750.0));
     const auto divergence = make_horizontal_flux_divergence_device_view(geometry);
 
     Kokkos::View<VVM::Real> result("constant_flux_divergence");
@@ -187,7 +186,7 @@ test_linear_flux() {
     const VVM::Real slope_q1 = VVM::real(1.25);
     const VVM::Real slope_q2 = VVM::real(-0.75);
 
-    const CartesianGeometry geometry(layout, dx, dy);
+    const auto geometry = make_cartesian_geometry(layout, dx, dy);
     const auto divergence = make_horizontal_flux_divergence_device_view(geometry);
     const auto u = geometry.device_view(HorizontalLocation::U);
     const auto v = geometry.device_view(HorizontalLocation::V);
@@ -241,7 +240,7 @@ periodic_sine_error(const int n) {
     const VVM::Real spacing = domain_length / static_cast<VVM::Real>(n);
 
     const HorizontalDomainLayout layout = make_layout(n, n);
-    const CartesianGeometry geometry(layout, spacing, spacing);
+    const auto geometry = make_cartesian_geometry(layout, spacing, spacing);
     const auto divergence = make_horizontal_flux_divergence_device_view(geometry);
     const auto u = geometry.device_view(HorizontalLocation::U);
     const auto v = geometry.device_view(HorizontalLocation::V);
@@ -300,7 +299,7 @@ test_periodic_global_flux_integral() {
     const VVM::Real dy = domain_length / static_cast<VVM::Real>(physical_ny);
 
     const HorizontalDomainLayout layout = make_layout(physical_nx, physical_ny);
-    const CartesianGeometry geometry(layout, dx, dy);
+    const auto geometry = make_cartesian_geometry(layout, dx, dy);
     const auto divergence = make_horizontal_flux_divergence_device_view(geometry);
     const auto t = geometry.device_view(HorizontalLocation::T);
     const auto u = geometry.device_view(HorizontalLocation::U);
@@ -416,7 +415,7 @@ test_cartesian_takacs_linear_scalar() {
     const VVM::Real slope_q1 = VVM::real(0.3);
     const VVM::Real slope_q2 = VVM::real(-0.2);
 
-    const CartesianGeometry geometry(layout, dx, dy);
+    const auto geometry = make_cartesian_geometry(layout, dx, dy);
     const auto transport = make_takacs_scalar_transport_device_view(geometry);
 
     const int nx = layout.local_total_nx();
@@ -487,7 +486,7 @@ test_regular_latlon_constant_tracer() {
     const VVM::Real density = VVM::real(1.2);
     const VVM::Real eastward_wind = VVM::real(18.0);
 
-    const RegularLatLonGeometry geometry(layout,
+    const auto geometry = make_regular_lat_lon_geometry(layout,
         dlongitude,
         dlatitude,
         -pi,
@@ -563,7 +562,7 @@ test_regular_latlon_discrete_mass_budget() {
     const VVM::Real dlatitude = (pi / VVM::real(3.0)) / static_cast<VVM::Real>(physical_ny);
     const VVM::Real radius = VVM::real(6371220.0);
 
-    const RegularLatLonGeometry geometry(layout,
+    const auto geometry = make_regular_lat_lon_geometry(layout,
         dlongitude,
         dlatitude,
         -pi,

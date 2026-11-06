@@ -1,5 +1,4 @@
-#include "core/geometry/CartesianGeometry.hpp"
-#include "core/geometry/RegularLatLonGeometry.hpp"
+#include "core/geometry/HorizontalGeometryBuilders.hpp"
 #include "dynamics/operators/HorizontalLaplaceBeltrami.hpp"
 
 #include <algorithm>
@@ -12,12 +11,12 @@
 
 namespace {
 
-using VVM::Core::Geometry::CartesianGeometry;
 using VVM::Core::Geometry::GeometryField2D;
 using VVM::Core::Geometry::HorizontalDomainLayout;
 using VVM::Core::Geometry::HorizontalGeometryDeviceView;
 using VVM::Core::Geometry::HorizontalLocation;
-using VVM::Core::Geometry::RegularLatLonGeometry;
+using VVM::Core::Geometry::make_cartesian_geometry;
+using VVM::Core::Geometry::make_regular_lat_lon_geometry;
 using VVM::Dynamics::Operators::HorizontalLaplaceBeltramiDeviceView;
 using VVM::Dynamics::Operators::make_horizontal_laplace_beltrami_device_view;
 using VVM::Dynamics::Operators::ScalarStencilAtT;
@@ -102,7 +101,7 @@ make_constant_metric_laplacian(const VVM::Real dq1,
 void
 test_constant_scalar() {
     const HorizontalDomainLayout layout = make_layout(12, 10);
-    const CartesianGeometry geometry(layout, VVM::real(500.0), VVM::real(750.0));
+    const auto geometry = make_cartesian_geometry(layout, VVM::real(500.0), VVM::real(750.0));
     const auto laplacian = make_horizontal_laplace_beltrami_device_view(geometry);
 
     ScalarStencilAtT scalar;
@@ -177,7 +176,7 @@ test_cartesian_five_point_equivalence() {
     const VVM::Real dx = VVM::real(2.0);
     const VVM::Real dy = VVM::real(3.0);
 
-    const CartesianGeometry geometry(layout, dx, dy);
+    const auto geometry = make_cartesian_geometry(layout, dx, dy);
     const auto laplacian = make_horizontal_laplace_beltrami_device_view(geometry);
     const auto t = geometry.device_view(HorizontalLocation::T);
 
@@ -228,7 +227,7 @@ test_cartesian_five_point_equivalence() {
 void
 test_quadratic_scalar() {
     const HorizontalDomainLayout layout = make_layout(16, 12);
-    const CartesianGeometry geometry(layout, VVM::real(100.0), VVM::real(200.0));
+    const auto geometry = make_cartesian_geometry(layout, VVM::real(100.0), VVM::real(200.0));
     const auto laplacian = make_horizontal_laplace_beltrami_device_view(geometry);
     const auto t = geometry.device_view(HorizontalLocation::T);
 
@@ -275,7 +274,7 @@ periodic_laplacian_error(const int n) {
     const VVM::Real spacing = domain_length / static_cast<VVM::Real>(n);
 
     const HorizontalDomainLayout layout = make_layout(n, n);
-    const CartesianGeometry geometry(layout, spacing, spacing);
+    const auto geometry = make_cartesian_geometry(layout, spacing, spacing);
     const auto laplacian = make_horizontal_laplace_beltrami_device_view(geometry);
     const auto t = geometry.device_view(HorizontalLocation::T);
 
@@ -335,7 +334,7 @@ test_regular_latlon_diagonal_matches_center_impulse() {
     const VVM::Real dlongitude = VVM::real(2.0) * pi / static_cast<VVM::Real>(physical_nx);
     const VVM::Real dlatitude = (pi / VVM::real(2.0)) / static_cast<VVM::Real>(physical_ny);
 
-    const RegularLatLonGeometry geometry(layout,
+    const auto geometry = make_regular_lat_lon_geometry(layout,
         dlongitude,
         dlatitude,
         -pi,
@@ -445,7 +444,7 @@ test_regular_latlon_shifted_jacobi_equation() {
     const VVM::Real dlongitude = VVM::real(2.0) * pi / static_cast<VVM::Real>(physical_nx);
     const VVM::Real dlatitude = (pi / VVM::real(2.0)) / static_cast<VVM::Real>(physical_ny);
 
-    const RegularLatLonGeometry geometry(layout,
+    const auto geometry = make_regular_lat_lon_geometry(layout,
         dlongitude,
         dlatitude,
         -pi,

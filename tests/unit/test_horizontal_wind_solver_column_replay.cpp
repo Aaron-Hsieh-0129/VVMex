@@ -1,6 +1,6 @@
 #include "core/state/Field.hpp"
 #include "core/grid/Grid.hpp"
-#include "core/geometry/RegularLatLonGeometry.hpp"
+#include "core/geometry/HorizontalGeometryBuilders.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "dynamics/solvers/HorizontalEllipticSolver.hpp"
 #include "dynamics/solvers/HorizontalWindColumnRecovery.hpp"
@@ -34,7 +34,6 @@ using VVM::Core::Field;
 using VVM::Core::Grid;
 using VVM::Core::HaloExchanger;
 using VVM::Core::Geometry::GeometryKind;
-using VVM::Core::Geometry::RegularLatLonGeometry;
 using VVM::Dynamics::HorizontalEllipticSolver;
 using VVM::Dynamics::HorizontalWindColumnRecovery;
 using VVM::Utils::ConfigurationManager;
@@ -141,7 +140,7 @@ struct Inputs {
 
         Real radius = real(1.0);
         if (grid.geometry().kind() == GeometryKind::RegularLatLon) {
-            radius = static_cast<const RegularLatLonGeometry&>(grid.geometry()).radius();
+            radius = grid.horizontal_specification().geometry.regular_lat_lon.radius;
         }
 
         std::array<Field<2>*, 6> planes =

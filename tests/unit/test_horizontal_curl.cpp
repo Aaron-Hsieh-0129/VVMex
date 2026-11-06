@@ -1,4 +1,4 @@
-#include "core/geometry/CartesianGeometry.hpp"
+#include "core/geometry/HorizontalGeometryBuilders.hpp"
 #include "dynamics/operators/HorizontalCurl.hpp"
 
 #include <algorithm>
@@ -10,10 +10,10 @@
 
 namespace {
 
-using VVM::Core::Geometry::CartesianGeometry;
 using VVM::Core::Geometry::GeometryField2D;
 using VVM::Core::Geometry::HorizontalDomainLayout;
 using VVM::Core::Geometry::HorizontalLocation;
+using VVM::Core::Geometry::make_cartesian_geometry;
 using VVM::Dynamics::Operators::CovariantVectorStencilAtZ;
 using VVM::Dynamics::Operators::HorizontalCurlDeviceView;
 using VVM::Dynamics::Operators::load_covariant_vector_stencil_at_z;
@@ -90,7 +90,7 @@ test_explicit_jacobian_weighting() {
 void
 test_constant_covariant_vector() {
     const HorizontalDomainLayout layout = make_layout(12, 10);
-    const CartesianGeometry geometry(layout, VVM::real(500.0), VVM::real(750.0));
+    const auto geometry = make_cartesian_geometry(layout, VVM::real(500.0), VVM::real(750.0));
 
     const auto curl = make_horizontal_curl_device_view(geometry);
 
@@ -120,7 +120,7 @@ test_cartesian_equivalence() {
     const VVM::Real dx = VVM::real(2.0);
     const VVM::Real dy = VVM::real(3.0);
 
-    const CartesianGeometry geometry(layout, dx, dy);
+    const auto geometry = make_cartesian_geometry(layout, dx, dy);
     const auto curl = make_horizontal_curl_device_view(geometry);
 
     const int nx = layout.local_total_nx();
@@ -177,7 +177,7 @@ test_solid_body_rotation() {
     const VVM::Real dy = VVM::real(200.0);
     const VVM::Real angular_velocity = VVM::real(0.002);
 
-    const CartesianGeometry geometry(layout, dx, dy);
+    const auto geometry = make_cartesian_geometry(layout, dx, dy);
     const auto curl = make_horizontal_curl_device_view(geometry);
     const auto u = geometry.device_view(HorizontalLocation::U);
     const auto v = geometry.device_view(HorizontalLocation::V);
@@ -269,7 +269,7 @@ periodic_curl_error(const int n) {
 
     const HorizontalDomainLayout layout = make_layout(n, n);
 
-    const CartesianGeometry geometry(layout, spacing, spacing);
+    const auto geometry = make_cartesian_geometry(layout, spacing, spacing);
 
     const auto curl = make_horizontal_curl_device_view(geometry);
 

@@ -1,5 +1,4 @@
-#include "core/geometry/CartesianGeometry.hpp"
-#include "core/geometry/RegularLatLonGeometry.hpp"
+#include "core/geometry/HorizontalGeometryBuilders.hpp"
 #include "dynamics/operators/HorizontalCurl.hpp"
 #include "dynamics/operators/HorizontalFluxDivergence.hpp"
 #include "dynamics/operators/HorizontalLaplaceBeltrami.hpp"
@@ -320,8 +319,8 @@ run_tests() {
     const Real radius = real(6371220.0);
     const Real south_edge = real(-0.6);
 
-    const CartesianGeometry cartesian(layout, real(2.0), real(3.0));
-    const RegularLatLonGeometry regular_latlon(layout,
+    const auto cartesian = make_cartesian_geometry(layout, real(2.0), real(3.0));
+    const auto regular_latlon = make_regular_lat_lon_geometry(layout,
         real(0.1),
         real(0.075),
         real(0.0),

@@ -1,6 +1,6 @@
 #include "core/state/Field.hpp"
 #include "core/grid/Grid.hpp"
-#include "core/geometry/RegularLatLonGeometry.hpp"
+#include "core/geometry/HorizontalGeometryBuilders.hpp"
 #include "core/haloexchange/HaloExchanger.hpp"
 #include "dynamics/operators/HorizontalWindReconstruction.hpp"
 #include "dynamics/solvers/HorizontalEllipticSolver.hpp"
@@ -31,7 +31,6 @@ using VVM::Core::Grid;
 using VVM::Core::HaloExchanger;
 using VVM::Core::Geometry::GeometryKind;
 using VVM::Core::Geometry::HorizontalLocation;
-using VVM::Core::Geometry::RegularLatLonGeometry;
 using VVM::Dynamics::HorizontalEllipticSolver;
 using VVM::Dynamics::Operators::make_horizontal_wind_reconstruction_device_view;
 using VVM::Utils::ConfigurationManager;
@@ -224,9 +223,9 @@ run_case(const Grid& grid,
     double south_edge = 0.0;
 
     if (spherical) {
-        const auto& geometry = static_cast<const RegularLatLonGeometry&>(grid.geometry());
-        radius = static_cast<double>(geometry.radius());
-        south_edge = static_cast<double>(geometry.latitude_south_edge());
+        const auto& geometry = grid.horizontal_specification().geometry.regular_lat_lon;
+        radius = static_cast<double>(geometry.radius);
+        south_edge = static_cast<double>(geometry.latitude_south_edge);
     }
 
     // Components: psi, chi, contravariant q1/q2, physical q1/q2.

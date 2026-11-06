@@ -1,6 +1,5 @@
 #include "core/state/Field.hpp"
-#include "core/geometry/CartesianGeometry.hpp"
-#include "core/geometry/RegularLatLonGeometry.hpp"
+#include "core/geometry/HorizontalGeometryBuilders.hpp"
 #include "dynamics/solvers/HorizontalWindColumnRecovery.hpp"
 
 #include <Kokkos_Core.hpp>
@@ -25,10 +24,10 @@ namespace {
 using VVM::Real;
 using VVM::real;
 using VVM::Core::Field;
-using VVM::Core::Geometry::CartesianGeometry;
 using VVM::Core::Geometry::HorizontalDomainLayout;
 using VVM::Core::Geometry::HorizontalGeometry;
-using VVM::Core::Geometry::RegularLatLonGeometry;
+using VVM::Core::Geometry::make_cartesian_geometry;
+using VVM::Core::Geometry::make_regular_lat_lon_geometry;
 using VVM::Dynamics::HorizontalWindColumnRecovery;
 
 int failures = 0;
@@ -390,8 +389,8 @@ main(int argc, char* argv[]) {
         layout.halo = 2;
 
         const Real radius = real(6371220.0);
-        const CartesianGeometry cartesian(layout, real(2.0), real(3.0));
-        const RegularLatLonGeometry rll(layout,
+        const auto cartesian = make_cartesian_geometry(layout, real(2.0), real(3.0));
+        const auto rll = make_regular_lat_lon_geometry(layout,
             real(0.08),
             real(0.04),
             real(0.0),
