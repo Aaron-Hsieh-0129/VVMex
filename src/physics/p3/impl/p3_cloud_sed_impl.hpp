@@ -34,6 +34,12 @@ void Functions<S,D>
     const uview_1d<Spack>& nc_tend,
     Scalar& precip_liq_surf)
 {
+  Kokkos::parallel_for(Kokkos::TeamVectorRange(team, ekat::npack<Spack>(nk)), [&] (int pk) {
+    qc_tend(pk) = qc(pk);
+    nc_tend(pk) = nc(pk);
+  });
+  team.team_barrier();
+
   // Get temporary workspaces needed for the cloud-sed calculation
   uview_1d<Spack> V_qc, V_nc, flux_qx, flux_nx;
   workspace.template take_many_contiguous_unsafe<4>(

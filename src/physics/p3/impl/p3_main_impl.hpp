@@ -280,7 +280,7 @@ Int Functions<S,D>
       ovap_liq_exchange, ovap_ice_exchange, oliq_ice_exchange,
       oqr2qv_evap, oqi2qv_sublim, oqc2qr_accret, oqc2qr_autoconv, oqv2qi_vapdep,
       oqc2qi_berg, oqc2qr_ice_shed, oqc2qi_collect, oqr2qi_collect, oqc2qi_hetero_freeze, oqr2qi_immers_freeze, oqi2qr_melt,
-      pratot, prctot, hydrometeorsPresent, nk, runtime_options);
+      pratot, prctot, hydrometeorsPresent, nk, runtime_options, history_only);
 
     //NOTE: At this point, it is possible to have negative (but small) nc, nr, ni.  This is not
     //      a problem; those values get clipped to zero in the sedimentation section (if necessary).
@@ -300,21 +300,21 @@ Int Functions<S,D>
     cloud_sedimentation(
       qc_incld, rho, inv_rho, ocld_frac_l, acn, inv_dz, lookup_tables.dnu_table_vals, team, workspace,
       nk, ktop, kbot, kdir, infrastructure.dt, inv_dt, infrastructure.predictNc,
-      oqc, onc, nc_incld, mu_c, lamc, oqc_sed, ntend_ignore,
+      oqc, onc, nc_incld, mu_c, lamc, oqc_sed, runtime_options.extra_p3_diags ? ekat::subview(history_only.nc_sed, i) : ntend_ignore,
       diagnostic_outputs.precip_liq_surf(i));
 
     // Rain sedimentation:  (adaptive substepping)
     rain_sedimentation(
       rho, inv_rho, rhofacr, ocld_frac_r, inv_dz, qr_incld, team, workspace,
       lookup_tables.vn_table_vals, lookup_tables.vm_table_vals, nk, ktop, kbot, kdir, infrastructure.dt, inv_dt, oqr,
-      onr, nr_incld, mu_r, lamr, oprecip_liq_flux, oqr_sed, ntend_ignore,
+      onr, nr_incld, mu_r, lamr, oprecip_liq_flux, oqr_sed, runtime_options.extra_p3_diags ? ekat::subview(history_only.nr_sed, i) : ntend_ignore,
       diagnostic_outputs.precip_liq_surf(i), runtime_options);
 
     // Ice sedimentation:  (adaptive substepping)
     ice_sedimentation(
       rho, inv_rho, rhofaci, ocld_frac_i, inv_dz, team, workspace, nk, ktop, kbot,
       kdir, infrastructure.dt, inv_dt, oqi, qi_incld, oni, ni_incld,
-      oqm, qm_incld, obm, bm_incld, oqi_sed, ntend_ignore,
+      oqm, qm_incld, obm, bm_incld, oqi_sed, runtime_options.extra_p3_diags ? ekat::subview(history_only.ni_sed, i) : ntend_ignore,
       lookup_tables.ice_table_vals, diagnostic_outputs.precip_ice_surf(i), runtime_options);
 
     // homogeneous freezing of cloud and rain

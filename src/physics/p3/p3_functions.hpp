@@ -328,6 +328,37 @@ template <typename ScalarT, typename DeviceT> struct Functions {
     view_2d<Spack> qr_sed;
     view_2d<Spack> qc_sed;
     view_2d<Spack> qi_sed;
+    view_2d<Spack> qv2qc_conden;
+    view_2d<Spack> qc2qv_evap;
+    view_2d<Spack> qv2qc_nucleat;
+    view_2d<Spack> qv2qr_conden;
+    view_2d<Spack> qv2qi_nucleat;
+    view_2d<Spack> nc_nuclet;
+    view_2d<Spack> nc_accret;
+    view_2d<Spack> nc_selfcollect;
+    view_2d<Spack> nc2nr_autoconv;
+    view_2d<Spack> nr_selfcollect;
+    view_2d<Spack> nr_evap;
+    view_2d<Spack> ncautr;
+    view_2d<Spack> nr_ice_shed;
+    view_2d<Spack> ni2nr_melt;
+    view_2d<Spack> nc_collect;
+    view_2d<Spack> ncshdc;
+    view_2d<Spack> nc2ni_immers_freeze;
+    view_2d<Spack> nr_collect;
+    view_2d<Spack> ni_selfcollect;
+    view_2d<Spack> ni_nucleat;
+    view_2d<Spack> nr2ni_immers_freeze;
+    view_2d<Spack> ni_sublim;
+    view_2d<Spack> ncheti_cnt;
+    view_2d<Spack> qcheti_cnt;
+    view_2d<Spack> nicnt;
+    view_2d<Spack> qicnt;
+    view_2d<Spack> ninuc_cnt;
+    view_2d<Spack> qinuc_cnt;
+    view_2d<Spack> nc_sed;
+    view_2d<Spack> nr_sed;
+    view_2d<Spack> ni_sed;
   };
 
   // This struct stores kokkos views for the lookup tables needed in p3_main()
@@ -1124,7 +1155,7 @@ template <typename ScalarT, typename DeviceT> struct Functions {
       const uview_1d<Spack> &qc2qi_hetero_freeze, const uview_1d<Spack> &qr2qi_immers_freeze,
       const uview_1d<Spack> &qi2qr_melt, const uview_1d<Spack> &pratot,
       const uview_1d<Spack> &prctot, bool &is_hydromet_present, const Int &nk,
-      const P3Runtime &runtime_options);
+      const P3Runtime &runtime_options, const P3HistoryOnly &history_only);
 
 #ifdef SCREAM_P3_SMALL_KERNELS
   static void p3_main_part2_disp(
@@ -1167,7 +1198,7 @@ template <typename ScalarT, typename DeviceT> struct Functions {
       const uview_2d<Spack> &qc2qi_hetero_freeze, const uview_2d<Spack> &qr2qi_immers_freeze,
       const uview_2d<Spack> &qi2qr_melt, const uview_2d<Spack> &pratot,
       const uview_2d<Spack> &prctot, const uview_1d<bool> &is_nucleat_possible,
-      const uview_1d<bool> &is_hydromet_present, const P3Runtime &runtime_options);
+      const uview_1d<bool> &is_hydromet_present, const P3Runtime &runtime_options, const P3HistoryOnly &history_only);
 #endif
 
   KOKKOS_FUNCTION

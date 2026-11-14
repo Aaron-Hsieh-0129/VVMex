@@ -89,6 +89,12 @@ void Functions<S,D>
   Scalar& precip_ice_surf,
   const P3Runtime& runtime_options)
 {
+  Kokkos::parallel_for(Kokkos::TeamVectorRange(team, ekat::npack<Spack>(nk)), [&] (int pk) {
+    qi_tend(pk) = qi(pk);
+    ni_tend(pk) = ni(pk);
+  });
+  team.team_barrier();
+
   // Get temporary workspaces needed for the ice-sed calculation
   uview_1d<Spack> V_qit, V_nit, flux_nit, flux_bir, flux_qir, flux_qit;
   workspace.template take_many_contiguous_unsafe<6>(

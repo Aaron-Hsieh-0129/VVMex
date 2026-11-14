@@ -12,6 +12,64 @@ using Constants = scream::physics::Constants<Real>;
 namespace VVM {
 namespace Physics {
 
+namespace {
+struct P3TendencyField {
+    const char* name;
+    view_2d P3HistoryOnly::*view;
+};
+const P3TendencyField p3_tendency_fields[] = {
+    {"p3_liq_ice_exchange", &P3HistoryOnly::liq_ice_exchange},
+    {"p3_vap_liq_exchange", &P3HistoryOnly::vap_liq_exchange},
+    {"p3_vap_ice_exchange", &P3HistoryOnly::vap_ice_exchange},
+    {"p3_qr2qv_evap", &P3HistoryOnly::qr2qv_evap},
+    {"p3_qi2qv_sublim", &P3HistoryOnly::qi2qv_sublim},
+    {"p3_qc2qr_accret", &P3HistoryOnly::qc2qr_accret},
+    {"p3_qc2qr_autoconv", &P3HistoryOnly::qc2qr_autoconv},
+    {"p3_qv2qi_vapdep", &P3HistoryOnly::qv2qi_vapdep},
+    {"p3_qc2qi_berg", &P3HistoryOnly::qc2qi_berg},
+    {"p3_qc2qr_ice_shed", &P3HistoryOnly::qc2qr_ice_shed},
+    {"p3_qc2qi_collect", &P3HistoryOnly::qc2qi_collect},
+    {"p3_qr2qi_collect", &P3HistoryOnly::qr2qi_collect},
+    {"p3_qc2qi_hetero_freeze", &P3HistoryOnly::qc2qi_hetero_freeze},
+    {"p3_qr2qi_immers_freeze", &P3HistoryOnly::qr2qi_immers_freeze},
+    {"p3_qi2qr_melt", &P3HistoryOnly::qi2qr_melt},
+    {"p3_qr_sed", &P3HistoryOnly::qr_sed},
+    {"p3_qc_sed", &P3HistoryOnly::qc_sed},
+    {"p3_qi_sed", &P3HistoryOnly::qi_sed},
+    {"p3_qv2qc_conden", &P3HistoryOnly::qv2qc_conden},
+    {"p3_qc2qv_evap", &P3HistoryOnly::qc2qv_evap},
+    {"p3_qv2qc_nucleat", &P3HistoryOnly::qv2qc_nucleat},
+    {"p3_qv2qr_conden", &P3HistoryOnly::qv2qr_conden},
+    {"p3_qv2qi_nucleat", &P3HistoryOnly::qv2qi_nucleat},
+    {"p3_nc_nuclet", &P3HistoryOnly::nc_nuclet},
+    {"p3_nc_accret", &P3HistoryOnly::nc_accret},
+    {"p3_nc_selfcollect", &P3HistoryOnly::nc_selfcollect},
+    {"p3_nc2nr_autoconv", &P3HistoryOnly::nc2nr_autoconv},
+    {"p3_nr_selfcollect", &P3HistoryOnly::nr_selfcollect},
+    {"p3_nr_evap", &P3HistoryOnly::nr_evap},
+    {"p3_ncautr", &P3HistoryOnly::ncautr},
+    {"p3_nr_ice_shed", &P3HistoryOnly::nr_ice_shed},
+    {"p3_ni2nr_melt", &P3HistoryOnly::ni2nr_melt},
+    {"p3_nc_collect", &P3HistoryOnly::nc_collect},
+    {"p3_ncshdc", &P3HistoryOnly::ncshdc},
+    {"p3_nc2ni_immers_freeze", &P3HistoryOnly::nc2ni_immers_freeze},
+    {"p3_nr_collect", &P3HistoryOnly::nr_collect},
+    {"p3_ni_selfcollect", &P3HistoryOnly::ni_selfcollect},
+    {"p3_ni_nucleat", &P3HistoryOnly::ni_nucleat},
+    {"p3_nr2ni_immers_freeze", &P3HistoryOnly::nr2ni_immers_freeze},
+    {"p3_ni_sublim", &P3HistoryOnly::ni_sublim},
+    {"p3_ncheti_cnt", &P3HistoryOnly::ncheti_cnt},
+    {"p3_qcheti_cnt", &P3HistoryOnly::qcheti_cnt},
+    {"p3_nicnt", &P3HistoryOnly::nicnt},
+    {"p3_qicnt", &P3HistoryOnly::qicnt},
+    {"p3_ninuc_cnt", &P3HistoryOnly::ninuc_cnt},
+    {"p3_qinuc_cnt", &P3HistoryOnly::qinuc_cnt},
+    {"p3_nc_sed", &P3HistoryOnly::nc_sed},
+    {"p3_nr_sed", &P3HistoryOnly::nr_sed},
+    {"p3_ni_sed", &P3HistoryOnly::ni_sed},
+};
+} // namespace
+
 VVM_P3_Interface::VVM_P3_Interface(const VVM::Utils::ConfigurationManager &config, const VVM::Core::Grid &grid, const VVM::Core::Parameters &params, Core::HaloExchanger& halo_exchanger, Core::State& state)
     : config_(config), grid_(grid), params_(params), halo_exchanger_(halo_exchanger), 
     m_num_cols(grid_.get_local_physical_points_x() * grid_.get_local_physical_points_y()),
@@ -269,6 +327,8 @@ void VVM_P3_Interface::initialize(VVM::Core::State& state) {
     m_runtime_options.set_cld_frac_i_to_one = false;
     m_runtime_options.set_cld_frac_r_to_one = false;
 
+    m_runtime_options.extra_p3_diags = config_.get_value<bool>("physics.p3.extra_p3_diags", false);
+
     // Note: P3 can tune some constants from the namelist
     // VVM didn't implement this but one can find it in p3/share/physics_constants.hpp
     // m_p3constants.set_p3_from_namelist(m_params);
@@ -344,42 +404,20 @@ void VVM_P3_Interface::initialize(VVM::Core::State& state) {
     m_history_only.vap_liq_exchange  = m_vap_liq_exchange_view;
     m_history_only.vap_ice_exchange  = m_vap_ice_exchange_view;
 
-    if (m_runtime_options.extra_p3_diags) {
-        // if we are doing extra diagnostics, assign the fields to the history only struct
-        // history_only.qr2qv_evap   = get_field_out("qr2qv_evap").get_view<Pack**>();
-        // history_only.qi2qv_sublim = get_field_out("qi2qv_sublim").get_view<Pack**>();
-        // history_only.qc2qr_accret = get_field_out("qc2qr_accret").get_view<Pack**>();
-        // history_only.qc2qr_autoconv = get_field_out("qc2qr_autoconv").get_view<Pack**>();
-        // history_only.qv2qi_vapdep = get_field_out("qv2qi_vapdep").get_view<Pack**>();
-        // history_only.qc2qi_berg = get_field_out("qc2qi_berg").get_view<Pack**>();
-        // history_only.qc2qr_ice_shed = get_field_out("qc2qr_ice_shed").get_view<Pack**>();
-        // history_only.qc2qi_collect = get_field_out("qc2qi_collect").get_view<Pack**>();
-        // history_only.qr2qi_collect = get_field_out("qr2qi_collect").get_view<Pack**>();
-        // history_only.qc2qi_hetero_freeze = get_field_out("qc2qi_hetero_freeze").get_view<Pack**>();
-        // history_only.qr2qi_immers_freeze = get_field_out("qr2qi_immers_freeze").get_view<Pack**>();
-        // history_only.qi2qr_melt = get_field_out("qi2qr_melt").get_view<Pack**>();
-        // history_only.qr_sed = get_field_out("qr_sed").get_view<Pack**>();
-        // history_only.qc_sed = get_field_out("qc_sed").get_view<Pack**>();
-        // history_only.qi_sed = get_field_out("qi_sed").get_view<Pack**>();
-    } 
-    else {
-        // if not, let's use the unused buffer
-        m_history_only.qr2qv_evap = m_unused;
-        m_history_only.qi2qv_sublim = m_unused;
-        m_history_only.qc2qr_accret = m_unused;
-        m_history_only.qc2qr_autoconv = m_unused;
-        m_history_only.qv2qi_vapdep = m_unused;
-        m_history_only.qc2qi_berg = m_unused;
-        m_history_only.qc2qr_ice_shed = m_unused;
-        m_history_only.qc2qi_collect = m_unused;
-        m_history_only.qr2qi_collect = m_unused;
-        m_history_only.qc2qi_hetero_freeze = m_unused;
-        m_history_only.qr2qi_immers_freeze = m_unused;
-        m_history_only.qi2qr_melt = m_unused;
-        m_history_only.qr_sed = m_unused;
-        m_history_only.qc_sed = m_unused;
-        m_history_only.qi_sed = m_unused;
+    for (const auto& field : p3_tendency_fields) {
+        auto& packed = m_history_only.*(field.view);
+        if (m_runtime_options.extra_p3_diags) {
+            if (!state.has_field(field.name)) {
+                state.add_field<3>(field.name, {nz_total, ny_total, nx_total});
+            }
+            packed = view_2d(std::string(field.name), m_num_cols, m_num_lev_packs);
+        } else if (field.view != &P3HistoryOnly::liq_ice_exchange &&
+                   field.view != &P3HistoryOnly::vap_liq_exchange &&
+                   field.view != &P3HistoryOnly::vap_ice_exchange) {
+            packed = m_unused;
+        }
     }
+
     
     auto m_cld_frac_l_in = m_cld_frac_t_view;
     auto m_cld_frac_i_in = m_cld_frac_t_view;
@@ -951,6 +989,20 @@ void VVM_P3_Interface::postprocessing_and_unpacking(VVM::Core::State& state) {
         }
     );
 
+    if (m_runtime_options.extra_p3_diags) {
+        for (const auto& field : p3_tendency_fields) {
+            auto output = state.get_field<3>(field.name).get_mutable_device_data();
+            const auto packed = m_history_only.*(field.view);
+            Kokkos::parallel_for("Unpack_P3_Tendency",
+                Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz_phys, ny_phys, nx_phys}),
+                KOKKOS_LAMBDA(const int k, const int j, const int i) {
+                    const int kv = nz_phys - 1 - k + halo;
+                    output(kv, j + halo, i + halo) = ITYPEW(kv, j + halo, i + halo) == 1
+                        ? packed(j * nx_phys + i, k / Spack::n)[k % Spack::n] : 0.0;
+                });
+        }
+    }
+
     std::vector<std::string> p3_update_vars = {
         "qc", "nc", "qr", "nr", "qi", "qm", "ni", "bm", 
         "th", "qv", "qp", "T"
@@ -990,6 +1042,13 @@ void VVM_P3_Interface::run(VVM::Core::State &state, const VVM::Real dt) {
 
     workspace_mgr.reset_internals();
 
+
+    if (m_runtime_options.extra_p3_diags) {
+        // Clear every step so skipped columns and lanes cannot retain old rates.
+        for (const auto& field : p3_tendency_fields) {
+            Kokkos::deep_copy(m_history_only.*(field.view), Spack(0));
+        }
+    }
 
     P3F::p3_main(
         m_runtime_options, m_prog_state, m_diag_inputs, m_diag_outputs, m_infrastructure,

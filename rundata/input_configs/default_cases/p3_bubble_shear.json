@@ -72,7 +72,20 @@
             "slc1", "slc2", "slc3", "slc4", "sfemis", "zorl",
             "chx", "cmx", "albedo", "th_m_diag", "qv_m_diag", 
             "qv_after_p3", "qc_after_p3", "qr_after_p3", "qi_after_p3", "nc_after_p3",
-            "ni_after_p3", "nr_after_p3", "qm_after_p3", "bm_after_p3", "th_after_p3"
+            "ni_after_p3", "nr_after_p3", "qm_after_p3", "bm_after_p3", "th_after_p3",
+            "p3_liq_ice_exchange", "p3_vap_liq_exchange", "p3_vap_ice_exchange", "p3_qr2qv_evap",
+            "p3_qi2qv_sublim", "p3_qc2qr_accret", "p3_qc2qr_autoconv", "p3_qv2qi_vapdep",
+            "p3_qc2qi_berg", "p3_qc2qr_ice_shed", "p3_qc2qi_collect", "p3_qr2qi_collect",
+            "p3_qc2qi_hetero_freeze", "p3_qr2qi_immers_freeze", "p3_qi2qr_melt", "p3_qr_sed",
+            "p3_qc_sed", "p3_qi_sed", "p3_qv2qc_conden", "p3_qc2qv_evap",
+            "p3_qv2qc_nucleat", "p3_qv2qr_conden", "p3_qv2qi_nucleat", "p3_nc_nuclet",
+            "p3_nc_accret", "p3_nc_selfcollect", "p3_nc2nr_autoconv", "p3_nr_selfcollect",
+            "p3_nr_evap", "p3_ncautr", "p3_nr_ice_shed", "p3_ni2nr_melt",
+            "p3_nc_collect", "p3_ncshdc", "p3_nc2ni_immers_freeze", "p3_nr_collect",
+            "p3_ni_selfcollect", "p3_ni_nucleat", "p3_nr2ni_immers_freeze", "p3_ni_sublim",
+            "p3_ncheti_cnt", "p3_qcheti_cnt", "p3_nicnt", "p3_qicnt",
+            "p3_ninuc_cnt", "p3_qinuc_cnt", "p3_nc_sed", "p3_nr_sed",
+            "p3_ni_sed"
         ],
         "output_grid": {
             "x_start": 0,
@@ -312,6 +325,7 @@
     "physics": {
         "p3": {
             "enable_p3": true,
+            "extra_p3_diags": true,
             "make_lookup_table": false,
             "do_predict_nc": true,
             "do_prescribed_ccn": false,

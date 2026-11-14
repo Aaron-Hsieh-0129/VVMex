@@ -108,7 +108,7 @@ void Functions<S,D>
   const uview_1d<Spack>& pratot,
   const uview_1d<Spack>& prctot,
   bool& hydrometeorsPresent, const Int& nk,
-  const P3Runtime& runtime_options)
+  const P3Runtime& runtime_options, const P3HistoryOnly& history_only)
 {
   constexpr Scalar qsmall       = C::QSMALL;
   constexpr Scalar nsmall       = C::NSMALL;
@@ -575,11 +575,13 @@ void Functions<S,D>
     else{
       qv2qi_depos_tend(k)         .set(not_skip_all, qv2qi_vapdep_tend - qi2qv_sublim_tend + qv2qi_nucleat_tend);
     }
-    precip_total_tend(k)           .set(not_skip_all, qc2qr_accret_tend + qc2qr_autoconv_tend + qc2qr_ice_shed_tend + qc2qi_collect_tend);
+    // Aaron: add qv2qr_conden_tend
+    precip_total_tend(k)           .set(not_skip_all, qc2qr_accret_tend + qc2qr_autoconv_tend + qc2qr_ice_shed_tend + qc2qi_collect_tend + qv2qr_conden_tend);
     nevapr(k)          .set(not_skip_all, qi2qv_sublim_tend + qr2qv_evap_tend);
     qr_evap_tend(k)       .set(not_skip_all, qr2qv_evap_tend);
     vap_ice_exchange(k).set(not_skip_all, qv2qi_vapdep_tend - qi2qv_sublim_tend + qv2qi_nucleat_tend);
-    vap_liq_exchange(k).set(not_skip_all, -qr2qv_evap_tend);
+    // Aaron: add qv qc tendency
+    vap_liq_exchange(k).set(not_skip_all, qv2qc_conden_tend + qv2qc_nucleat_tend + qv2qr_conden_tend - qc2qv_evap_tend - qr2qv_evap_tend);
     liq_ice_exchange(k).set(not_skip_all, qc2qi_hetero_freeze_tend + qr2qi_immers_freeze_tend - qi2qr_melt_tend + qc2qi_berg_tend + qc2qi_collect_tend + qr2qi_collect_tend);
 
     // set tendencies if extra_p3_diags is true
@@ -596,6 +598,34 @@ void Functions<S,D>
       qc2qi_hetero_freeze(k).set(not_skip_all, qc2qi_hetero_freeze_tend);
       qr2qi_immers_freeze(k).set(not_skip_all, qr2qi_immers_freeze_tend);
       qi2qr_melt(k).set(not_skip_all, qi2qr_melt_tend);
+      history_only.qv2qc_conden(team.league_rank(), k).set(not_skip_all, qv2qc_conden_tend);
+      history_only.qc2qv_evap(team.league_rank(), k).set(not_skip_all, qc2qv_evap_tend);
+      history_only.qv2qc_nucleat(team.league_rank(), k).set(not_skip_all, qv2qc_nucleat_tend);
+      history_only.nc_nuclet(team.league_rank(), k).set(not_skip_all, nc_nuclet_tend);
+      history_only.qv2qr_conden(team.league_rank(), k).set(not_skip_all, qv2qr_conden_tend);
+      history_only.nc_accret(team.league_rank(), k).set(not_skip_all, nc_accret_tend);
+      history_only.nc_selfcollect(team.league_rank(), k).set(not_skip_all, nc_selfcollect_tend);
+      history_only.nc2nr_autoconv(team.league_rank(), k).set(not_skip_all, nc2nr_autoconv_tend);
+      history_only.nr_selfcollect(team.league_rank(), k).set(not_skip_all, nr_selfcollect_tend);
+      history_only.nr_evap(team.league_rank(), k).set(not_skip_all, nr_evap_tend);
+      history_only.ncautr(team.league_rank(), k).set(not_skip_all, ncautr);
+      history_only.nr_ice_shed(team.league_rank(), k).set(not_skip_all, nr_ice_shed_tend);
+      history_only.qv2qi_nucleat(team.league_rank(), k).set(not_skip_all, qv2qi_nucleat_tend);
+      history_only.ni2nr_melt(team.league_rank(), k).set(not_skip_all, ni2nr_melt_tend);
+      history_only.nc_collect(team.league_rank(), k).set(not_skip_all, nc_collect_tend);
+      history_only.ncshdc(team.league_rank(), k).set(not_skip_all, ncshdc);
+      history_only.nc2ni_immers_freeze(team.league_rank(), k).set(not_skip_all, nc2ni_immers_freeze_tend);
+      history_only.nr_collect(team.league_rank(), k).set(not_skip_all, nr_collect_tend);
+      history_only.ni_selfcollect(team.league_rank(), k).set(not_skip_all, ni_selfcollect_tend);
+      history_only.ni_nucleat(team.league_rank(), k).set(not_skip_all, ni_nucleat_tend);
+      history_only.nr2ni_immers_freeze(team.league_rank(), k).set(not_skip_all, nr2ni_immers_freeze_tend);
+      history_only.ni_sublim(team.league_rank(), k).set(not_skip_all, ni_sublim_tend);
+      history_only.ncheti_cnt(team.league_rank(), k).set(not_skip_all, ncheti_cnt);
+      history_only.qcheti_cnt(team.league_rank(), k).set(not_skip_all, qcheti_cnt);
+      history_only.nicnt(team.league_rank(), k).set(not_skip_all, nicnt);
+      history_only.qicnt(team.league_rank(), k).set(not_skip_all, qicnt);
+      history_only.ninuc_cnt(team.league_rank(), k).set(not_skip_all, ninuc_cnt);
+      history_only.qinuc_cnt(team.league_rank(), k).set(not_skip_all, qinuc_cnt);
     }
 
     // clipping for small hydrometeor values

@@ -287,7 +287,7 @@ Int Functions<Real,DefaultDevice>
       qr2qv_evap, qi2qv_sublim, qc2qr_accret, qc2qr_autoconv,
       qv2qi_vapdep, qc2qi_berg, qc2qr_ice_shed, qc2qi_collect,
       qr2qi_collect, qc2qi_hetero_freeze, qr2qi_immers_freeze, qi2qr_melt,
-      pratot, prctot, nucleationPossible, hydrometeorsPresent, runtime_options);
+      pratot, prctot, nucleationPossible, hydrometeorsPresent, runtime_options, history_only);
 
   //NOTE: At this point, it is possible to have negative (but small) nc, nr, ni.  This is not
   //      a problem; those values get clipped to zero in the sedimentation section (if necessary).
@@ -304,7 +304,7 @@ Int Functions<Real,DefaultDevice>
   cloud_sedimentation_disp(
       qc_incld, rho, inv_rho, cld_frac_l, acn, inv_dz, lookup_tables.dnu_table_vals, workspace_mgr,
       nj, nk, ktop, kbot, kdir, infrastructure.dt, inv_dt, infrastructure.predictNc,
-      qc, nc, nc_incld, mu_c, lamc, qc_sed, ntend_ignore,
+      qc, nc, nc_incld, mu_c, lamc, qc_sed, runtime_options.extra_p3_diags ? history_only.nc_sed : ntend_ignore,
       diagnostic_outputs.precip_liq_surf, nucleationPossible, hydrometeorsPresent);
 
 
@@ -312,14 +312,14 @@ Int Functions<Real,DefaultDevice>
   rain_sedimentation_disp(
       rho, inv_rho, rhofacr, cld_frac_r, inv_dz, qr_incld, workspace_mgr,
       lookup_tables.vn_table_vals, lookup_tables.vm_table_vals, nj, nk, ktop, kbot, kdir, infrastructure.dt, inv_dt, qr,
-      nr, nr_incld, mu_r, lamr, precip_liq_flux, qr_sed, ntend_ignore,
+      nr, nr_incld, mu_r, lamr, precip_liq_flux, qr_sed, runtime_options.extra_p3_diags ? history_only.nr_sed : ntend_ignore,
       diagnostic_outputs.precip_liq_surf, nucleationPossible, hydrometeorsPresent, runtime_options);
 
   // Ice sedimentation:  (adaptive substepping)
   ice_sedimentation_disp(
       rho, inv_rho, rhofaci, cld_frac_i, inv_dz, workspace_mgr, nj, nk, ktop, kbot,
       kdir, infrastructure.dt, inv_dt, qi, qi_incld, ni, ni_incld,
-      qm, qm_incld, bm, bm_incld, qi_sed, ntend_ignore,
+      qm, qm_incld, bm, bm_incld, qi_sed, runtime_options.extra_p3_diags ? history_only.ni_sed : ntend_ignore,
       lookup_tables.ice_table_vals, diagnostic_outputs.precip_ice_surf, nucleationPossible, hydrometeorsPresent, runtime_options);
 
   // homogeneous freezing f cloud and rain

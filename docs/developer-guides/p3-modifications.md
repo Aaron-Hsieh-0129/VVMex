@@ -53,3 +53,19 @@ These processes are integrated into the `p3_main` execution flow. In `p3_main_im
 ## Tracking the Code Changes
 
 For developers navigating the codebase, the VVMex-specific P3 changes are marked with comments such as `// Aaron - evporation/condensation/deposition/sublimation` and `// Aaron - limit saturation adjustment` within `p3_functions.hpp` and related `_impl.hpp` files.
+
+## Tendency Output
+
+Set `physics.p3.extra_p3_diags` to `true` and add the desired `p3_*` fields to
+`output.fields_to_output`. The `p3_bubble_shear.json` example enables all 49
+fields: individual mass and number process rates (including classical
+heterogeneous nucleation), cloud/rain/ice mass and number sedimentation, and
+three phase-exchange sums. Names follow `P3HistoryOnly` with a `p3_` prefix,
+for example `p3_qv2qc_conden`, `p3_nc_nuclet`, and `p3_qc_sed`.
+
+These are rates from the latest P3 step, not averages over the output interval.
+Mass rates use kg/kg/s and number rates use 1/kg/s. Process rates are recorded
+after limiting and conservation; sedimentation rates are signed changes divided
+by the P3 timestep. Skipped cells and cells below terrain are zeroed. These
+process diagnostics do not include subsequent clipping or homogeneous freezing,
+so their sum is not a complete net prognostic budget.
