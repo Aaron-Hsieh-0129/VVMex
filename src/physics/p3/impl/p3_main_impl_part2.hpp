@@ -295,6 +295,8 @@ void Functions<S,D>
         // Aaron - from ni to qi to align with new table and Fortran P3
         ni_incld(k).set(qi_gt_small, min(ni_incld(k), table_val_ni_lammax*qi_incld(k)));
         ni_incld(k).set(qi_gt_small, max(ni_incld(k), table_val_ni_lammin*qi_incld(k)));
+
+        ni(k).set(qi_gt_small, ni_incld(k) * cld_frac_i(k));
       }
 
       // ----------------------------------------------------------------------

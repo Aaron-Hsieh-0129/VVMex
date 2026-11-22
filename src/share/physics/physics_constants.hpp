@@ -24,9 +24,14 @@ struct Constants
 {
   using ci_string      = ekat::CaseInsensitiveString;
 
-  static constexpr Scalar Cpair         = 1004.5; // Aaron: modify from 1004.64 to 1004.5 to be same as VVM
-  static constexpr Scalar Rair          = 287.04; // Aaron: modify from 287.042 to 287.04 to be same as VVM
-  static constexpr Scalar RH2O          = 461.505;
+  // Match the constants in refs/microphy_p3.F for the P3 comparison.
+  // static constexpr Scalar Cpair         = 1005.0;
+  // static constexpr Scalar Rair          = 287.15;
+  // static constexpr Scalar RH2O          = 461.51;
+  static constexpr Scalar Cpair         = 1004.5;
+  static constexpr Scalar Rair          = 287.04;
+  static constexpr Scalar RH2O          = 461.51;
+
   static constexpr Scalar RV            = RH2O;         // Water vapor gas constant ~ J/K/kg     !461.51
   static constexpr Scalar RHO_H2O       = 1000.0;
   static constexpr Scalar INV_RHO_H2O   = 1.0/RHO_H2O;
@@ -34,9 +39,9 @@ struct Constants
   static constexpr Scalar MWH2O         = 18.016;
   static constexpr Scalar MWdry         = 28.966;
   static constexpr Scalar o2mmr         = 0.23143;      // o2 mass mixing ratio
-  static constexpr Scalar ep_2          = MWH2O/MWdry;  // ratio of molecular mass of water to the molecular mass of dry air !0.622
-  static constexpr Scalar gravit        = 9.806; // Aaron: modify from 9.80616 to 9.806 to be same as VVM
-  static constexpr Scalar LatVap        = 2501000.0;
+  static constexpr Scalar ep_2          = 0.622; // Fortran P3 saturation mixing-ratio coefficient
+  static constexpr Scalar gravit        = 9.806;
+  static constexpr Scalar LatVap        = 2.5e6;
   static constexpr Scalar LatIce        = 333700.0;
   static constexpr Scalar CpLiq         = 4188.0;
   static constexpr Scalar Tmelt         = 273.15;
@@ -63,7 +68,7 @@ struct Constants
   static constexpr Scalar QSMALL        = 1.e-14;
   static constexpr Scalar QTENDSMALL    = 1e-20;
   static constexpr Scalar BSMALL        = QSMALL * INV_RHO_RIMEMAX;
-  static constexpr Scalar NSMALL        = 1.e-20;
+  static constexpr Scalar NSMALL        = 1.e-16;
   static constexpr Scalar ZERO          = 0.0;
   static constexpr Scalar ONE           = 1.0;
   static constexpr Scalar P0            = 100000.0;        // reference pressure, Pa

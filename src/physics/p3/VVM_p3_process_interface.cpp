@@ -13,6 +13,33 @@ namespace VVM {
 namespace Physics {
 
 namespace {
+#ifdef SCREAM_P3_SMALL_KERNELS
+constexpr int P3_NUM_WSM_VARS = 6;
+#else
+constexpr int P3_NUM_WSM_VARS = 64;
+#endif
+// Use one workspace slot per column on GPUs. EKAT's shared-slot fallback
+// indexes a default RNG pool by league_rank(), which can exceed that pool on
+// large domains. A factor equal to the league size makes EKAT cap the slot
+// count at the league size, disabling sharing without changing external code.
+double p3_wsm_overprovision(const TeamPolicy& policy) {
+    return ekat::OnGpu<KT::ExeSpace>::value
+        ? static_cast<double>(std::max(1, policy.league_size()))
+        : WSM::GPU_DEFAULT_OVERPROVISION_FACTOR();
+}
+
+// Same formula as ekat's WorkspaceManager::get_total_bytes_needed, in 64-bit
+// arithmetic: the ekat version returns int and overflows for large domains.
+size_t p3_wsm_bytes(const TeamPolicy& policy, int nk_pack_p1, int num_wsm_vars) {
+    ekat::TeamUtils<Spack, KT::ExeSpace> tu(policy, p3_wsm_overprovision(policy));
+    const size_t reserve_slots = (sizeof(Spack) > 2*sizeof(int))
+                                 ? 1 : (2*sizeof(int) + sizeof(Spack) - 1) / sizeof(Spack);
+    return static_cast<size_t>(tu.get_num_ws_slots()) * (static_cast<size_t>(nk_pack_p1) + reserve_slots)
+           * static_cast<size_t>(num_wsm_vars) * sizeof(Spack);
+}
+} // namespace
+
+namespace {
 struct P3TendencyField {
     const char* name;
     view_2d P3HistoryOnly::*view;
@@ -97,30 +124,10 @@ VVM_P3_Interface::VVM_P3_Interface(const VVM::Utils::ConfigurationManager &confi
     // Set Kokkos execution policy
     // Aaron: a safe team size mode is turned on.
     using TPF = ekat::TeamPolicyFactory<KT::ExeSpace>;
-    auto default_policy = TPF::get_default_team_policy(m_num_cols, m_num_lev_packs);
-    int safe_team_size = default_policy.team_size();
-    
-    long long max_int32 = 2147483647LL;
-#ifdef SCREAM_P3_SMALL_KERNELS
-    long long num_wsm_vars = 6LL; 
-#else
-    long long num_wsm_vars = 64LL; 
-#endif
-    long long multiplier = num_wsm_vars * static_cast<long long>(m_num_cols) * static_cast<long long>(ekat::npack<Spack>(m_num_levs+1));
-    
-    if (multiplier * safe_team_size >= max_int32) {
-        if (grid_.get_mpi_rank() == 0) std::cout << "P3 note: the register memory size becomes too small because of large domain, so it's recommended to turn on SCREAM_P3_SMALL_KERNELS option when compiling to reduce memory allocation and append team size." << std::endl;
-        safe_team_size = max_int32 / multiplier;
-        if (safe_team_size < 1) safe_team_size = 1;
-    }
-    
-    m_policy = TeamPolicy(m_num_cols, safe_team_size, Spack::n);
+    const auto default_policy = TPF::get_default_team_policy(m_num_cols, m_num_lev_packs);
+    m_policy = TeamPolicy(m_num_cols, default_policy.team_size(), Spack::n);
     m_team_size = m_policy.team_size();
 
-    if (grid_.get_mpi_rank() == 0) {
-        std::cout << "p3 team size = " << m_team_size << std::endl;
-        std::cout << "p3 Spack n = " << Spack::n << std::endl;
-    }
     allocate_p3_buffers();
 
     int nx_total = grid.get_local_total_points_x();
@@ -142,6 +149,17 @@ VVM_P3_Interface::VVM_P3_Interface(const VVM::Utils::ConfigurationManager &confi
     if (declare_p3_diag_) {
         if (!state.has_field("th_m_diag")) state.add_field<3>("th_m_diag", {nz_total, ny_total, nx_total});
         if (!state.has_field("qv_m_diag")) state.add_field<3>("qv_m_diag", {nz_total, ny_total, nx_total});
+        if (!state.has_field("qv_before_p3")) state.add_field<3>("qv_before_p3", {nz_total, ny_total, nx_total});
+        if (!state.has_field("qc_before_p3")) state.add_field<3>("qc_before_p3", {nz_total, ny_total, nx_total});
+        if (!state.has_field("qi_before_p3")) state.add_field<3>("qi_before_p3", {nz_total, ny_total, nx_total});
+        if (!state.has_field("qr_before_p3")) state.add_field<3>("qr_before_p3", {nz_total, ny_total, nx_total});
+        if (!state.has_field("nc_before_p3")) state.add_field<3>("nc_before_p3", {nz_total, ny_total, nx_total});
+        if (!state.has_field("nr_before_p3")) state.add_field<3>("nr_before_p3", {nz_total, ny_total, nx_total});
+        if (!state.has_field("ni_before_p3")) state.add_field<3>("ni_before_p3", {nz_total, ny_total, nx_total});
+        if (!state.has_field("qm_before_p3")) state.add_field<3>("qm_before_p3", {nz_total, ny_total, nx_total});
+        if (!state.has_field("bm_before_p3")) state.add_field<3>("bm_before_p3", {nz_total, ny_total, nx_total});
+        if (!state.has_field("th_before_p3")) state.add_field<3>("th_before_p3", {nz_total, ny_total, nx_total});
+
         if (!state.has_field("qv_after_p3")) state.add_field<3>("qv_after_p3", {nz_total, ny_total, nx_total});
         if (!state.has_field("qc_after_p3")) state.add_field<3>("qc_after_p3", {nz_total, ny_total, nx_total});
         if (!state.has_field("qi_after_p3")) state.add_field<3>("qi_after_p3", {nz_total, ny_total, nx_total});
@@ -221,15 +239,15 @@ void VVM_P3_Interface::allocate_p3_buffers() {
     Kokkos::deep_copy(m_unused, 0.0);                                                                                
     Kokkos::deep_copy(m_dummy_input, 0.0);   
 
-#ifdef SCREAM_P3_SMALL_KERNELS
-    const int num_wsm_vars = 6; 
-#else
-    const int num_wsm_vars = 64; 
-#endif
-
-    const size_t wsm_size_in_bytes = WSM::get_total_bytes_needed(nk_pack_p1, num_wsm_vars, m_policy);
-    // const size_t wsm_size_in_bytes = num_wsm_vars * static_cast<size_t>(nk_pack_p1) * static_cast<size_t>(m_policy.league_size()) * static_cast<size_t>(m_policy.team_size()) * sizeof(Spack);
+    // ekat's WSM::get_total_bytes_needed returns int, which wraps negative on a
+    // large domain and then reads back as a ~2^64 request; size it in 64 bits.
+    const size_t wsm_size_in_bytes = p3_wsm_bytes(m_policy, nk_pack_p1, P3_NUM_WSM_VARS);
     const size_t wsm_size_in_spacks = (wsm_size_in_bytes + sizeof(Spack) - 1) / sizeof(Spack);
+    if (grid_.get_mpi_rank() == 0) {
+        std::cout << "p3 workspace = " << (wsm_size_in_bytes / (1024.0*1024.0)) << " MiB"
+                  << (ekat::OnGpu<KT::ExeSpace>::value ? " (dedicated column slots)" : "")
+                  << std::endl;
+    }
     m_wsm_view_storage = Kokkos::View<Spack*>("P3 WSM Storage", wsm_size_in_spacks);
     m_wsm_data = m_wsm_view_storage.data();
     if (m_wsm_data == nullptr) std::cerr << "ERROR: FAILED TO ALLOCATE WORKSPACE MANAGER MEMORY FOR P3." << std::endl;
@@ -486,14 +504,16 @@ void VVM_P3_Interface::initialize_constant_buffers(VVM::Core::State& initial_sta
     Kokkos::parallel_for("AssignValues",
         Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0, 0, 0}, {nz, ny, nx}),
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
+            double pi_p3 = pow(pbar(k) / Constants::P0, Constants::Rair / Constants::Cpair);
+
             dz_mid_3d(k,j,i) = dz_mid(k);
             // pbar_3d(k,j,i) = pbar(k);
             // dpbar_mid_3d(k,j,i) = dpbar_mid(k);
             p_dry_3d(k,j,i) = pbar(k);
             dp_dry_3d(k,j,i) = dpbar_mid(k);
             rhobar_3d(k,j,i) = rhobar(k);
-            inv_pibar_3d(k,j,i) = 1. / pibar(k);
-            T(k,j,i) = th(k,j,i) * pibar(k);
+            inv_pibar_3d(k,j,i) = 1. / pi_p3;
+            T(k,j,i) = th(k,j,i) * pi_p3;
         }
     );
     pack_3d_to_2d_packed(dz_mid_3d, m_dz_view, 100.);
@@ -775,7 +795,7 @@ void VVM_P3_Interface::preprocessing_and_packing(VVM::Core::State& state) {
                         Real th_in = th_3d(k_vvm, iy_vvm, ix_vvm);
                         Real thm_in = thm_3d(k_vvm, iy_vvm, ix_vvm);
 
-                        Real pi_val = pibar(k_vvm);
+                        Real pi_val = pow(pbar(k_vvm) / Constants::P0, Constants::Rair / Constants::Cpair);
                         Real pb_val = pbar(k_vvm);
                         Real dp_val = dpbar_mid(k_vvm);
 
@@ -860,6 +880,7 @@ void VVM_P3_Interface::postprocessing_and_unpacking(VVM::Core::State& state) {
     auto ITYPEW = state.get_field<3>("ITYPEW").get_device_data();
     auto thbar  = state.get_field<1>("thbar").get_device_data();
     auto pibar  = state.get_field<1>("pibar").get_device_data();
+    auto pbar  = state.get_field<1>("pbar").get_device_data();
     auto topo = state.get_field<2>("topo").get_device_data();
 
     auto qc_p3 = m_qc_view;
@@ -943,6 +964,8 @@ void VVM_P3_Interface::postprocessing_and_unpacking(VVM::Core::State& state) {
                             precip_liq_surf_2d(iy_vvm, ix_vvm) += precip_liq_flux_pack[k_vec] * dt;
                             precip_ice_surf_2d(iy_vvm, ix_vvm) += precip_ice_flux_pack[k_vec] * dt;
                         }
+
+                        Real pi_val = pow(pbar(k_vvm) / Constants::P0, Constants::Rair / Constants::Cpair);
                         
                         if (ITYPEW(k_vvm, iy_vvm, ix_vvm) != 1) {
                             qc_3d(k_vvm, iy_vvm, ix_vvm) = 0.0;
@@ -956,7 +979,7 @@ void VVM_P3_Interface::postprocessing_and_unpacking(VVM::Core::State& state) {
                             qv_3d(k_vvm, iy_vvm, ix_vvm) = 0.0;
                             th_3d(k_vvm, iy_vvm, ix_vvm) = thbar(k_vvm);
                             
-                            T_3d(k_vvm, iy_vvm, ix_vvm) = thbar(k_vvm) * pibar(k_vvm);
+                            T_3d(k_vvm, iy_vvm, ix_vvm) = thbar(k_vvm) * pi_val;
                             qp_3d(k_vvm, iy_vvm, ix_vvm) = 0.0;
 
                             eff_rad_qc_3d(k_vvm, iy_vvm, ix_vvm) = 0.0;
@@ -975,7 +998,7 @@ void VVM_P3_Interface::postprocessing_and_unpacking(VVM::Core::State& state) {
                             th_3d(k_vvm, iy_vvm, ix_vvm) = th_pack[k_vec];
                             qv_3d(k_vvm, iy_vvm, ix_vvm) = qv_pack[k_vec];
                             
-                            T_3d(k_vvm, iy_vvm, ix_vvm)  = th_pack[k_vec] * pibar(k_vvm);
+                            T_3d(k_vvm, iy_vvm, ix_vvm)  = th_pack[k_vec] * pi_val;
 
                             qp_3d(k_vvm, iy_vvm, ix_vvm) = qc_pack[k_vec] + qr_pack[k_vec] + qi_pack[k_vec];
 
@@ -1048,6 +1071,18 @@ void VVM_P3_Interface::run(VVM::Core::State &state, const VVM::Real dt) {
         for (const auto& field : p3_tendency_fields) {
             Kokkos::deep_copy(m_history_only.*(field.view), Spack(0));
         }
+    }
+    if (declare_p3_diag_) {
+        Kokkos::deep_copy(state.get_field<3>("qv_before_p3").get_mutable_device_data(), state.get_field<3>("qv").get_device_data());
+        Kokkos::deep_copy(state.get_field<3>("qc_before_p3").get_mutable_device_data(), state.get_field<3>("qc").get_device_data());
+        Kokkos::deep_copy(state.get_field<3>("qr_before_p3").get_mutable_device_data(), state.get_field<3>("qr").get_device_data());
+        Kokkos::deep_copy(state.get_field<3>("qi_before_p3").get_mutable_device_data(), state.get_field<3>("qi").get_device_data());
+        Kokkos::deep_copy(state.get_field<3>("nc_before_p3").get_mutable_device_data(), state.get_field<3>("nc").get_device_data());
+        Kokkos::deep_copy(state.get_field<3>("ni_before_p3").get_mutable_device_data(), state.get_field<3>("ni").get_device_data());
+        Kokkos::deep_copy(state.get_field<3>("nr_before_p3").get_mutable_device_data(), state.get_field<3>("nr").get_device_data());
+        Kokkos::deep_copy(state.get_field<3>("qm_before_p3").get_mutable_device_data(), state.get_field<3>("qm").get_device_data());
+        Kokkos::deep_copy(state.get_field<3>("bm_before_p3").get_mutable_device_data(), state.get_field<3>("bm").get_device_data());
+        Kokkos::deep_copy(state.get_field<3>("th_before_p3").get_mutable_device_data(), state.get_field<3>("th").get_device_data());
     }
 
     P3F::p3_main(
